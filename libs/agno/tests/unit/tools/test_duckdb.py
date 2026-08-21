@@ -24,7 +24,7 @@ def mock_duckdb_connection():
 @pytest.fixture
 def duckdb_tools_instance(mock_duckdb_connection):
     """Fixture to instantiate DuckDbTools with mocked connection."""
-    tools = DuckDbTools()
+    tools = DuckDbTools(all=True)
     # Override the connection property to use the mock
     tools._connection = mock_duckdb_connection
     return tools
@@ -38,7 +38,7 @@ def test_create_table_from_path_no_quotes_around_table_name(duckdb_tools_instanc
     path = "/path/to/test-file.csv"
     expected_table_name = "test_file"
 
-    result = duckdb_tools_instance.create_table_from_path(path)
+    result = duckdb_tools_instance.create_duckdb_table_from_path(path)
 
     # Verify the table name returned
     assert result == expected_table_name
@@ -58,7 +58,7 @@ def test_create_table_from_path_with_replace(duckdb_tools_instance, mock_duckdb_
     path = "/path/to/data.json"
     expected_table_name = "data"
 
-    result = duckdb_tools_instance.create_table_from_path(path, replace=True)
+    result = duckdb_tools_instance.create_duckdb_table_from_path(path, replace=True)
 
     assert result == expected_table_name
     call_args = mock_duckdb_connection.sql.call_args[0][0]
@@ -72,7 +72,7 @@ def test_create_table_from_path_custom_table_name(duckdb_tools_instance, mock_du
     path = "/path/to/file.csv"
     custom_table = "my_custom_table"
 
-    result = duckdb_tools_instance.create_table_from_path(path, table=custom_table)
+    result = duckdb_tools_instance.create_duckdb_table_from_path(path, table=custom_table)
 
     assert result == custom_table
     call_args = mock_duckdb_connection.sql.call_args[0][0]
@@ -85,7 +85,7 @@ def test_load_local_path_to_table_no_quotes(duckdb_tools_instance, mock_duckdb_c
     path = "/local/path/jira-backlog.csv"
     expected_table_name = "jira_backlog"
 
-    table_name, sql_statement = duckdb_tools_instance.load_local_path_to_table(path)
+    table_name, sql_statement = duckdb_tools_instance.load_duckdb_table_from_local_path(path)
 
     assert table_name == expected_table_name
     assert f"CREATE OR REPLACE TABLE {expected_table_name} AS" in sql_statement
@@ -100,7 +100,7 @@ def test_load_local_csv_to_table_no_quotes(duckdb_tools_instance, mock_duckdb_co
     path = "/local/path/test.data.csv"
     expected_table_name = "test_data"
 
-    table_name, sql_statement = duckdb_tools_instance.load_local_csv_to_table(path)
+    table_name, sql_statement = duckdb_tools_instance.load_duckdb_table_from_local_csv(path)
 
     assert table_name == expected_table_name
     assert f"CREATE OR REPLACE TABLE {expected_table_name} AS" in sql_statement
@@ -115,7 +115,7 @@ def test_load_local_csv_to_table_with_delimiter(duckdb_tools_instance, mock_duck
     delimiter = "|"
     expected_table_name = "pipe_separated"
 
-    table_name, sql_statement = duckdb_tools_instance.load_local_csv_to_table(path, delimiter=delimiter)
+    table_name, sql_statement = duckdb_tools_instance.load_duckdb_table_from_local_csv(path, delimiter=delimiter)
 
     assert table_name == expected_table_name
     assert f"CREATE OR REPLACE TABLE {expected_table_name} AS" in sql_statement
@@ -128,7 +128,7 @@ def test_load_s3_path_to_table_no_quotes(duckdb_tools_instance, mock_duckdb_conn
     path = "s3://bucket/path/my-data-file.parquet"
     expected_table_name = "my_data_file"
 
-    table_name, sql_statement = duckdb_tools_instance.load_s3_path_to_table(path)
+    table_name, sql_statement = duckdb_tools_instance.load_duckdb_table_from_s3_path(path)
 
     assert table_name == expected_table_name
     assert f"CREATE OR REPLACE TABLE {expected_table_name} AS" in sql_statement
@@ -140,7 +140,7 @@ def test_load_s3_csv_to_table_no_quotes(duckdb_tools_instance, mock_duckdb_conne
     path = "s3://bucket/data/sales-report.csv"
     expected_table_name = "sales_report"
 
-    table_name, sql_statement = duckdb_tools_instance.load_s3_csv_to_table(path)
+    table_name, sql_statement = duckdb_tools_instance.load_duckdb_table_from_s3_csv(path)
 
     assert table_name == expected_table_name
     assert f"CREATE OR REPLACE TABLE {expected_table_name} AS" in sql_statement
@@ -197,7 +197,7 @@ def test_run_query_success(duckdb_tools_instance, mock_duckdb_connection):
     mock_duckdb_connection.sql.return_value = mock_result
 
     query = "SELECT id, issue_id, priority FROM test_table"
-    result = duckdb_tools_instance.run_query(query)
+    result = duckdb_tools_instance.run_duckdb_sql(query)
 
     expected_output = "id,issue_id,priority\n1,issue-1,High\n2,issue-2,Medium"
     assert result == expected_output
@@ -214,7 +214,7 @@ def test_run_query_removes_backticks(duckdb_tools_instance, mock_duckdb_connecti
     query_with_backticks = "SELECT `column` FROM `table`"
     expected_cleaned_query = "SELECT column FROM table"
 
-    duckdb_tools_instance.run_query(query_with_backticks)
+    duckdb_tools_instance.run_duckdb_sql(query_with_backticks)
 
     mock_duckdb_connection.sql.assert_called_with(expected_cleaned_query)
 
@@ -232,7 +232,7 @@ def test_describe_table_success(duckdb_tools_instance, mock_duckdb_connection):
     mock_duckdb_connection.sql.return_value = mock_result
 
     table_name = "test_table"
-    result = duckdb_tools_instance.describe_table(table_name)
+    result = duckdb_tools_instance.describe_duckdb_table(table_name)
 
     expected_output = f"{table_name}\ncolumn_name,column_type,null,key,default,extra\nissue_id,VARCHAR,YES,None,None,None\npriority,VARCHAR,YES,None,None,None\nstatus,VARCHAR,YES,None,None,None"
     assert result == expected_output
@@ -250,7 +250,7 @@ def test_integration_create_and_query_table(duckdb_tools_instance, mock_duckdb_c
     expected_table_name = "jira_backlog"
 
     # Step 1: Create table
-    table_name = duckdb_tools_instance.create_table_from_path(path)
+    table_name = duckdb_tools_instance.create_duckdb_table_from_path(path)
     assert table_name == expected_table_name
 
     # Verify table creation SQL doesn't have quoted table name
@@ -267,7 +267,7 @@ def test_integration_create_and_query_table(duckdb_tools_instance, mock_duckdb_c
 
     # Step 3: Query the table (this was failing before the fix)
     query = f"SELECT row_number() OVER () AS rownum, issue_id, priority FROM {expected_table_name}"
-    result = duckdb_tools_instance.run_query(query)
+    result = duckdb_tools_instance.run_duckdb_sql(query)
 
     # Verify query executed successfully
     expected_output = "rownum,issue_id,priority\n1,ISSUE-1,High\n2,ISSUE-2,Medium"
@@ -294,7 +294,7 @@ def test_run_query_duckdb_error(duckdb_tools_instance, mock_duckdb_connection):
         mock_duckdb_connection.sql.side_effect = MockDuckDBError("Test error")
 
         query = "SELECT * FROM non_existent_table"
-        result = duckdb_tools_instance.run_query(query)
+        result = duckdb_tools_instance.run_duckdb_sql(query)
 
         assert "Test error" in result
 
@@ -316,7 +316,7 @@ def test_run_query_programming_error(duckdb_tools_instance, mock_duckdb_connecti
         mock_duckdb_connection.sql.side_effect = MockProgrammingError("Syntax error")
 
         query = "INVALID SQL SYNTAX"
-        result = duckdb_tools_instance.run_query(query)
+        result = duckdb_tools_instance.run_duckdb_sql(query)
 
         assert "Syntax error" in result
 
@@ -332,7 +332,7 @@ def test_run_query_single_column_result(duckdb_tools_instance, mock_duckdb_conne
     mock_duckdb_connection.sql.return_value = mock_result
 
     query = "SELECT single_col FROM test_table"
-    result = duckdb_tools_instance.run_query(query)
+    result = duckdb_tools_instance.run_duckdb_sql(query)
 
     expected_output = "single_col\nvalue1\nvalue2\nvalue3"
     assert result == expected_output
@@ -346,7 +346,7 @@ def test_run_query_no_results(duckdb_tools_instance, mock_duckdb_connection):
     mock_duckdb_connection.sql.return_value = mock_result
 
     query = "SELECT * FROM empty_table"
-    result = duckdb_tools_instance.run_query(query)
+    result = duckdb_tools_instance.run_duckdb_sql(query)
 
     expected_output = "col1,col2\n"
     assert result == expected_output
@@ -357,7 +357,7 @@ def test_custom_table_name_with_special_chars(duckdb_tools_instance, mock_duckdb
     path = "/path/to/file.csv"
     custom_table = "my_custom_table_123"
 
-    result = duckdb_tools_instance.create_table_from_path(path, table=custom_table)
+    result = duckdb_tools_instance.create_duckdb_table_from_path(path, table=custom_table)
 
     assert result == custom_table
     call_args = mock_duckdb_connection.sql.call_args[0][0]
@@ -368,7 +368,7 @@ def test_create_table_from_path_escapes_single_quote_in_path(duckdb_tools_instan
     """Test that a single quote in the path is escaped so it can't break the SQL string literal."""
     path = "/path/to/team's-data.csv"
 
-    result = duckdb_tools_instance.create_table_from_path(path, replace=True)
+    result = duckdb_tools_instance.create_duckdb_table_from_path(path, replace=True)
 
     # The derived table name is sanitized to a valid identifier
     assert result == "team_s_data"
@@ -381,7 +381,7 @@ def test_load_local_csv_to_table_escapes_single_quote_in_path(duckdb_tools_insta
     """Test that a single quote in the path is escaped in the generated load statement."""
     path = "/local/path/team's-data.csv"
 
-    table_name, sql_statement = duckdb_tools_instance.load_local_csv_to_table(path)
+    table_name, sql_statement = duckdb_tools_instance.load_duckdb_table_from_local_csv(path)
 
     assert table_name == "team_s_data"
     # The apostrophe in the path is doubled inside the SQL string literal
