@@ -1,9 +1,9 @@
 import json
 from os import getenv
-from typing import Any, Callable, List, Optional
+from typing import Any, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error
+from agno.utils.log import log_debug, logger
 
 try:
     from google.cloud import bigquery
@@ -21,19 +21,6 @@ def _clean_sql(sql: str) -> str:
 
 
 class GoogleBigQueryTools(Toolkit):
-    """Toolkit for interacting with Google BigQuery.
-
-    Args:
-        dataset: BigQuery dataset name.
-        project: GCP project ID. Falls back to GOOGLE_CLOUD_PROJECT env var.
-        location: GCP location. Falls back to GOOGLE_CLOUD_LOCATION env var.
-        credentials: Pre-fetched credentials object.
-        list_tables: Enable list_tables tool. Defaults to True.
-        describe_table: Enable describe_table tool. Defaults to True.
-        run_sql_query: Enable run_sql_query tool. Defaults to False (executes arbitrary SQL).
-        all: Enable all tools. Defaults to False.
-    """
-
     def __init__(
         self,
         dataset: str,
@@ -42,18 +29,10 @@ class GoogleBigQueryTools(Toolkit):
         credentials: Optional[Any] = None,
         list_tables: bool = True,
         describe_table: bool = True,
-        run_sql_query: bool = False,
+        run_sql_query: bool = True,
         all: bool = False,
         **kwargs,
     ):
-        # Backwards compat: enable_X -> X
-        if "enable_list_tables" in kwargs:
-            list_tables = kwargs.pop("enable_list_tables")
-        if "enable_describe_table" in kwargs:
-            describe_table = kwargs.pop("enable_describe_table")
-        if "enable_run_sql_query" in kwargs:
-            run_sql_query = kwargs.pop("enable_run_sql_query")
-
         self.project = project or getenv("GOOGLE_CLOUD_PROJECT")
         self.location = location or getenv("GOOGLE_CLOUD_LOCATION")
 
@@ -67,17 +46,17 @@ class GoogleBigQueryTools(Toolkit):
         # Initialize the BQ CLient
         self.client = bigquery.Client(project=self.project, credentials=credentials)
 
-        tools: List[Callable] = []
+        tools: List[Any] = []
         if all or list_tables:
-            tools.append(self.list_bigquery_tables)
+            tools.append(self.list_tables)
         if all or describe_table:
-            tools.append(self.describe_bigquery_table)
+            tools.append(self.describe_table)
         if all or run_sql_query:
-            tools.append(self.run_bigquery_sql)
+            tools.append(self.run_sql_query)
 
         super().__init__(name="google_bigquery_tools", tools=tools, **kwargs)
 
-    def list_bigquery_tables(self) -> str:
+    def list_tables(self) -> str:
         """Use this function to get a list of table names in the dataset.
         Returns:
             str: list of tables in the dataset.
@@ -85,14 +64,14 @@ class GoogleBigQueryTools(Toolkit):
         try:
             log_debug("listing tables in the database")
             tables = self.client.list_tables(self.dataset)
-            table_names = [table.table_id for table in tables]
-            log_debug(f"table_names: {table_names}")
-            return json.dumps({"tables": table_names})
+            tables_str = str([table.table_id for table in tables])
+            log_debug(f"table_names: {tables_str}")
+            return tables_str
         except Exception as e:
-            log_error(f"Error getting tables: {e}")
-            return json.dumps({"error": f"Error getting tables: {e}"})
+            logger.exception("Error getting tables")
+            return f"Error getting tables: {e}"
 
-    def describe_bigquery_table(self, table_id: str) -> str:
+    def describe_table(self, table_id: str) -> str:
         """Use this function to describe a table.
         Args:
             table_name (str): The name of the table to get the schema for.
@@ -104,14 +83,15 @@ class GoogleBigQueryTools(Toolkit):
             log_debug(f"Describing table: {table_id}")
             api_response = self.client.get_table(table_id)
             table_api_repr = api_response.to_api_repr()
-            desc = table_api_repr.get("description", "")
-            columns = [column["name"] for column in table_api_repr["schema"]["fields"]]
-            return json.dumps({"table_description": desc, "columns": columns})
+            desc = str(table_api_repr.get("description", ""))
+            col_names = str([column["name"] for column in table_api_repr["schema"]["fields"]])  # Columns in a table
+            result = json.dumps({"table_description": desc, "columns": col_names})
+            return result
         except Exception as e:
-            log_error(f"Error getting table schema: {e}")
-            return json.dumps({"error": f"Error getting table schema: {e}"})
+            logger.exception("Error getting table schema")
+            return f"Error getting table schema: {e}"
 
-    def run_bigquery_sql(self, query: str) -> str:
+    def run_sql_query(self, query: str) -> str:
         """Use this function to run a BigQuery SQL query and return the result.
         Args:
             query (str): The query to run.
@@ -121,13 +101,26 @@ class GoogleBigQueryTools(Toolkit):
             - The result may be empty if the query does not return any data.
         """
         try:
-            log_debug(f"Running Google SQL |\n{query}")
-            cleaned_query = _clean_sql(query)
+            return json.dumps(self._run_sql(sql=query), default=str)
+        except Exception as e:
+            logger.exception("Error running query")
+            return f"Error running query: {e}"
+
+    def _run_sql(self, sql: str) -> str:
+        """Internal function to run a sql query.
+        Args:
+            sql (str): The sql query to run.
+        Returns:
+            results (str): The result of the query.
+        """
+        try:
+            log_debug(f"Running Google SQL |\n{sql}")
+            cleaned_query = _clean_sql(sql)
             job_config = bigquery.QueryJobConfig(default_dataset=f"{self.project}.{self.dataset}")
             query_job = self.client.query(cleaned_query, job_config)
             results = query_job.result()
-            rows = [dict(row) for row in results]
-            return json.dumps({"rows": rows}, default=str)
-        except Exception as e:
-            log_error(f"Error running query: {e}")
-            return json.dumps({"error": f"Error running query: {e}"})
+            results_str = str([dict(row) for row in results])
+            return results_str.replace("\n", " ")
+        except Exception:
+            logger.exception("Error while executing SQL")
+            return ""

@@ -13,31 +13,6 @@ except ImportError:
 
 
 class RedditTools(Toolkit):
-    """Reddit API tools for interacting with subreddits, posts, and comments.
-
-    Requires a Reddit API application. Create one at https://www.reddit.com/prefs/apps
-    and set REDDIT_CLIENT_ID, REDDIT_CLIENT_SECRET environment variables.
-    For posting/replying, also set REDDIT_USERNAME and REDDIT_PASSWORD.
-
-    Args:
-        reddit_instance: Pre-configured praw.Reddit instance.
-        client_id: Reddit API client ID. Falls back to REDDIT_CLIENT_ID env var.
-        client_secret: Reddit API client secret. Falls back to REDDIT_CLIENT_SECRET env var.
-        user_agent: User agent string. Falls back to REDDIT_USER_AGENT env var.
-        username: Reddit username for authenticated actions. Falls back to REDDIT_USERNAME env var.
-        password: Reddit password for authenticated actions. Falls back to REDDIT_PASSWORD env var.
-        allowed_subreddits: List of subreddit names to restrict operations to.
-        get_user_info: Enable get_user_info tool. Defaults to True.
-        get_top_posts: Enable get_top_posts tool. Defaults to True.
-        get_subreddit_info: Enable get_subreddit_info tool. Defaults to True.
-        get_trending_subreddits: Enable get_trending_subreddits tool. Defaults to True.
-        get_subreddit_stats: Enable get_subreddit_stats tool. Defaults to True.
-        create_post: Enable create_post tool. Defaults to False (creates public content).
-        reply_to_post: Enable reply_to_post tool. Defaults to False (creates public content).
-        reply_to_comment: Enable reply_to_comment tool. Defaults to False (creates public content).
-        all: Enable all tools. Defaults to False.
-    """
-
     def __init__(
         self,
         reddit_instance: Optional[praw.Reddit] = None,
@@ -75,7 +50,7 @@ class RedditTools(Toolkit):
             self.username = username or getenv("REDDIT_USERNAME")
             self.password = password or getenv("REDDIT_PASSWORD")
 
-            self.reddit = None  # type: ignore[assignment]
+            self.reddit = None
             # Check if we have all required credentials
             if builtins.all([self.client_id, self.client_secret]):
                 # Initialize with read-only access if no user credentials
@@ -150,12 +125,12 @@ class RedditTools(Toolkit):
 
         error_msg = f"Error: r/{subreddit} is not in the allowed_subreddits scope"
         log_error(error_msg)
-        return json.dumps({"error": error_msg})
+        return error_msg
 
     def get_user_info(self, username: str) -> str:
         """Get information about a Reddit user."""
         if not self.reddit:
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         try:
             log_info(f"Getting info for u/{username}")
@@ -174,7 +149,7 @@ class RedditTools(Toolkit):
             return json.dumps(info)
 
         except Exception as e:
-            return json.dumps({"error": f"Error getting user info: {e}"})
+            return f"Error getting user info: {e}"
 
     def get_top_posts(self, subreddit: str, time_filter: str = "week", limit: int = 10) -> str:
         """
@@ -187,7 +162,7 @@ class RedditTools(Toolkit):
             str: JSON string containing top posts.
         """
         if not self.reddit:
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         try:
             log_debug(f"Getting top posts from r/{subreddit}")
@@ -209,7 +184,7 @@ class RedditTools(Toolkit):
             ]
             return json.dumps({"top_posts": top_posts})
         except Exception as e:
-            return json.dumps({"error": f"Error getting top posts: {e}"})
+            return f"Error getting top posts: {e}"
 
     def get_subreddit_info(self, subreddit_name: str) -> str:
         """
@@ -220,7 +195,7 @@ class RedditTools(Toolkit):
             str: JSON string containing subreddit information.
         """
         if not self.reddit:
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         try:
             log_info(f"Getting info for r/{subreddit_name}")
@@ -242,12 +217,12 @@ class RedditTools(Toolkit):
             return json.dumps(info)
 
         except Exception as e:
-            return json.dumps({"error": f"Error getting subreddit info: {e}"})
+            return f"Error getting subreddit info: {e}"
 
     def get_trending_subreddits(self) -> str:
         """Get currently trending subreddits."""
         if not self.reddit:
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         try:
             log_debug("Getting trending subreddits")
@@ -255,7 +230,7 @@ class RedditTools(Toolkit):
             trending: List[str] = [subreddit.display_name for subreddit in popular_subreddits]
             return json.dumps({"trending_subreddits": trending})
         except Exception as e:
-            return json.dumps({"error": f"Error getting trending subreddits: {e}"})
+            return f"Error getting trending subreddits: {e}"
 
     def get_subreddit_stats(self, subreddit: str) -> str:
         """
@@ -266,7 +241,7 @@ class RedditTools(Toolkit):
             str: JSON string containing subreddit statistics
         """
         if not self.reddit:
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         try:
             log_debug(f"Getting stats for r/{subreddit}")
@@ -282,7 +257,7 @@ class RedditTools(Toolkit):
             }
             return json.dumps({"subreddit_stats": stats})
         except Exception as e:
-            return json.dumps({"error": f"Error getting subreddit stats: {e}"})
+            return f"Error getting subreddit stats: {e}"
 
     def create_post(
         self,
@@ -305,12 +280,10 @@ class RedditTools(Toolkit):
             str: JSON string containing the created post information.
         """
         if not self.reddit:
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         if not self._check_user_auth():
-            return json.dumps(
-                {"error": "User authentication required for posting. Please provide username and password."}
-            )
+            return "User authentication required for posting. Please provide username and password."
 
         try:
             scope_error = self._validate_allowed_subreddit(subreddit)
@@ -324,7 +297,7 @@ class RedditTools(Toolkit):
             if flair:
                 available_flairs = [f["text"] for f in subreddit_obj.flair.link_templates]
                 if flair not in available_flairs:
-                    return json.dumps({"error": f"Invalid flair. Available flairs: {', '.join(available_flairs)}"})
+                    return f"Invalid flair. Available flairs: {', '.join(available_flairs)}"
 
             if is_self:
                 submission = subreddit_obj.submit(
@@ -353,7 +326,7 @@ class RedditTools(Toolkit):
             return json.dumps({"post": post_info})
 
         except Exception as e:
-            return json.dumps({"error": f"Error creating post: {e}"})
+            return f"Error creating post: {e}"
 
     def reply_to_post(self, post_id: str, content: str, subreddit: Optional[str] = None) -> str:
         """
@@ -371,13 +344,11 @@ class RedditTools(Toolkit):
         """
         if not self.reddit:
             log_error("Reddit instance not initialized")
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         if not self._check_user_auth():
             log_error("User authentication failed")
-            return json.dumps(
-                {"error": "User authentication required for posting replies. Please provide username and password."}
-            )
+            return "User authentication required for posting replies. Please provide username and password."
 
         try:
             log_debug(f"Creating reply to post {post_id}")
@@ -393,7 +364,7 @@ class RedditTools(Toolkit):
             if not self._check_post_exists(post_id):
                 error_msg = f"Post with ID {post_id} does not exist or is not accessible"
                 log_error(error_msg)
-                return json.dumps({"error": error_msg})
+                return error_msg
 
             # Get the submission object
             submission = self.reddit.submission(id=post_id)
@@ -406,7 +377,7 @@ class RedditTools(Toolkit):
             if subreddit and submission.subreddit.display_name.lower() != subreddit.lower():
                 error_msg = f"Error: Post ID belongs to r/{submission.subreddit.display_name}, not r/{subreddit}"
                 log_error(error_msg)
-                return json.dumps({"error": error_msg})
+                return error_msg
 
             scope_error = self._validate_allowed_subreddit(submission.subreddit.display_name)
             if scope_error:
@@ -415,9 +386,6 @@ class RedditTools(Toolkit):
             # Create the reply
             log_debug(f"Attempting to post reply with content length: {len(content)}")
             reply = submission.reply(body=content)
-
-            if reply is None:
-                return json.dumps({"error": "Failed to create reply - no response from Reddit"})
 
             # Prepare the response information
             reply_info: Dict[str, Union[str, int, float]] = {
@@ -440,12 +408,12 @@ class RedditTools(Toolkit):
             error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
             log_error(error_msg)
-            return json.dumps({"error": error_msg})
+            return error_msg
 
         except Exception as e:
             error_msg = f"Error creating reply: {str(e)}"
             log_error(error_msg)
-            return json.dumps({"error": error_msg})
+            return error_msg
 
     def reply_to_comment(self, comment_id: str, content: str, subreddit: Optional[str] = None) -> str:
         """
@@ -463,13 +431,11 @@ class RedditTools(Toolkit):
         """
         if not self.reddit:
             log_error("Reddit instance not initialized")
-            return json.dumps({"error": "Please provide Reddit API credentials"})
+            return "Please provide Reddit API credentials"
 
         if not self._check_user_auth():
             log_error("User authentication failed")
-            return json.dumps(
-                {"error": "User authentication required for posting replies. Please provide username and password."}
-            )
+            return "User authentication required for posting replies. Please provide username and password."
 
         try:
             log_debug(f"Creating reply to comment {comment_id}")
@@ -489,7 +455,7 @@ class RedditTools(Toolkit):
             if subreddit and comment.subreddit.display_name.lower() != subreddit.lower():
                 error_msg = f"Error: Comment ID belongs to r/{comment.subreddit.display_name}, not r/{subreddit}"
                 log_error(error_msg)
-                return json.dumps({"error": error_msg})
+                return error_msg
 
             scope_error = self._validate_allowed_subreddit(comment.subreddit.display_name)
             if scope_error:
@@ -498,9 +464,6 @@ class RedditTools(Toolkit):
             # Create the reply
             log_debug(f"Attempting to post reply with content length: {len(content)}")
             reply = comment.reply(body=content)
-
-            if reply is None:
-                return json.dumps({"error": "Failed to create reply - no response from Reddit"})
 
             # Prepare the response information
             reply_info: Dict[str, Union[str, int, float]] = {
@@ -523,12 +486,12 @@ class RedditTools(Toolkit):
             error_messages = [f"{error.error_type}: {error.message}" for error in api_error.items]
             error_msg = f"Reddit API Error: {'; '.join(error_messages)}"
             log_error(error_msg)
-            return json.dumps({"error": error_msg})
+            return error_msg
 
         except Exception as e:
             error_msg = f"Error creating reply: {str(e)}"
             log_error(error_msg)
-            return json.dumps({"error": error_msg})
+            return error_msg
 
     def _check_post_exists(self, post_id: str) -> bool:
         """

@@ -65,7 +65,7 @@ class WikipediaTools(Toolkit):
         """
 
         if self.knowledge is None:
-            return json.dumps({"error": "Knowledge not provided"})
+            return "Knowledge not provided"
 
         log_debug(f"Adding to knowledge: {topic}")
         self.knowledge.insert(

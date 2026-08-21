@@ -1,4 +1,3 @@
-import json
 from os import getenv
 from typing import Any, Callable, Dict, List, Optional
 
@@ -117,7 +116,7 @@ class FinancialDatasetsTools(Toolkit):
             return response.text
         except requests.exceptions.RequestException as e:
             log_error(f"Error making request to {url}: {str(e)}")
-            return json.dumps({"error": f"Error making request to {url}: {str(e)}"})
+            return f"Error making request to {url}: {str(e)}"
 
     # Financial Statements
     def get_income_statements(self, ticker: str, period: str = "annual", limit: int = 10) -> str:

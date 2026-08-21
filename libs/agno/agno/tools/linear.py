@@ -1,6 +1,5 @@
-import json
 from os import getenv
-from typing import Callable, List, Optional
+from typing import Any, List, Optional
 
 import requests
 
@@ -9,24 +8,6 @@ from agno.utils.log import log_error, log_info, logger
 
 
 class LinearTools(Toolkit):
-    """Linear project management toolkit for issue tracking and team collaboration.
-
-    Requires a Linear API key. Get one from Linear Settings > API > Personal API keys.
-    Set LINEAR_API_KEY environment variable or pass api_key parameter.
-
-    Example:
-        from agno.tools.linear import LinearTools
-
-        # Read-only by default
-        tools = LinearTools()
-
-        # Enable issue creation/updates
-        tools = LinearTools(create_issue=True, update_issue=True)
-
-        # Enable all tools
-        tools = LinearTools(all=True)
-    """
-
     def __init__(
         self,
         api_key: Optional[str] = None,
@@ -41,20 +22,6 @@ class LinearTools(Toolkit):
         all: bool = False,
         **kwargs,
     ):
-        """Initialize LinearTools for project management and issue tracking.
-
-        Args:
-            api_key: Linear API key. Falls back to LINEAR_API_KEY env var.
-            get_user_details: Enable get_user_details tool. Defaults to True.
-            get_teams_details: Enable get_teams_details tool. Defaults to True.
-            get_issue_details: Enable get_issue_details tool. Defaults to True.
-            create_issue: Enable create_issue tool. Defaults to False (creates external records).
-            update_issue: Enable update_issue tool. Defaults to False (modifies external records).
-            get_user_assigned_issues: Enable get_user_assigned_issues tool. Defaults to True.
-            get_workflow_issues: Enable get_workflow_issues tool. Defaults to True.
-            get_high_priority_issues: Enable get_high_priority_issues tool. Defaults to True.
-            all: Enable all tools. Defaults to False.
-        """
         self.api_key = api_key or getenv("LINEAR_API_KEY")
 
         if not self.api_key:
@@ -63,7 +30,7 @@ class LinearTools(Toolkit):
         self.endpoint = "https://api.linear.app/graphql"
         self.headers = {"Authorization": f"{self.api_key}"}
 
-        tools: List[Callable] = []
+        tools: List[Any] = []
         if all or get_user_details:
             tools.append(self.get_user_details)
         if all or get_teams_details:
@@ -107,12 +74,18 @@ class LinearTools(Toolkit):
             logger.exception("Unexpected error")
             raise
 
-    def get_user_details(self) -> str:
-        """Fetch authenticated user details including ID, name, and email.
+    def get_user_details(self) -> Optional[str]:
+        """
+        Fetch authenticated user details.
+        It will return the user's unique ID, name, and email address from the viewer object in the GraphQL response.
 
         Returns:
-            JSON with user id, name, and email.
+            str or None: A string containing user details like user id, name, and email.
+
+        Raises:
+            Exception: If an error occurs during the query execution or data retrieval.
         """
+
         query = """
         query Me {
           viewer {
@@ -131,21 +104,27 @@ class LinearTools(Toolkit):
                 log_info(
                     f"Retrieved authenticated user details with name: {user['name']}, ID: {user['id']}, Email: {user['email']}"
                 )
-                return json.dumps(user)
+                return str(user)
             else:
                 log_error("Failed to retrieve the current user details")
-                return json.dumps({"error": "Failed to retrieve user details"})
+                return None
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error fetching authenticated user details")
-            return json.dumps({"error": f"Error fetching user details: {e}"})
+            raise
 
-    def get_teams_details(self) -> str:
-        """Fetch the list of teams with their IDs and names.
+    def get_teams_details(self) -> Optional[str]:
+        """
+        Fetch the list of authenticated teams.
+        It will return the unique ID and team name for each team, from the viewer object in the GraphQL response.
 
         Returns:
-            JSON array of teams with id and name.
+            str or None: A dictionary containing team details like team name, id.
+
+        Raises:
+            Exception: If an error occurs during the query execution or data retrieval.
         """
+
         query = """
         query Teams {
           teams {
@@ -163,24 +142,30 @@ class LinearTools(Toolkit):
             if response.get("teams"):
                 teams = response["teams"]["nodes"]
                 log_info(f"Retrieved authenticated team details: {teams}")
-                return json.dumps(teams)
+                return str(teams)
             else:
-                log_error("Failed to retrieve team details")
-                return json.dumps({"error": "Failed to retrieve team details"})
+                log_error("Failed to retrieve the current user details")
+                return None
 
-        except Exception as e:
-            logger.exception("Error fetching team details")
-            return json.dumps({"error": f"Error fetching team details: {e}"})
+        except Exception:
+            logger.exception("Error fetching authenticated user details")
+            raise
 
-    def get_issue_details(self, issue_id: str) -> str:
-        """Retrieve details of a specific issue by issue ID.
+    def get_issue_details(self, issue_id: str) -> Optional[str]:
+        """
+        Retrieve details of a specific issue by issue ID.
 
         Args:
-            issue_id: The unique identifier of the issue to retrieve.
+            issue_id (str): The unique identifier of the issue to retrieve.
 
         Returns:
-            JSON with issue id, title, and description.
+            str or None: A string containing issue details like issue id, issue title, and issue description.
+                  Returns `None` if the issue is not found.
+
+        Raises:
+            Exception: If an error occurs during the query execution or data retrieval.
         """
+
         query = """
         query IssueDetails ($issueId: String!){
         issue(id: $issueId) {
@@ -197,14 +182,14 @@ class LinearTools(Toolkit):
             if response.get("issue"):
                 issue = response["issue"]
                 log_info(f"Issue '{issue['title']}' retrieved successfully with ID {issue['id']}.")
-                return json.dumps(issue)
+                return str(issue)
             else:
                 log_error(f"Failed to retrieve issue with ID {issue_id}.")
-                return json.dumps({"error": f"Issue with ID {issue_id} not found"})
+                return None
 
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error retrieving issue with ID {issue_id}")
-            return json.dumps({"error": f"Error retrieving issue: {e}"})
+            raise
 
     def create_issue(
         self,
@@ -213,19 +198,25 @@ class LinearTools(Toolkit):
         team_id: str,
         project_id: Optional[str] = None,
         assignee_id: Optional[str] = None,
-    ) -> str:
-        """Create a new issue within a specific project and team.
+    ) -> Optional[str]:
+        """
+        Create a new issue within a specific project and team.
 
         Args:
-            title: The title of the new issue.
-            description: The description of the new issue.
-            team_id: The unique identifier of the team in which to create the issue.
-            project_id: The ID of the project (optional).
-            assignee_id: The ID of the assignee (optional).
+            title (str): The title of the new issue.
+            description (str): The description of the new issue.
+            team_id (str): The unique identifier of the team in which to create the issue.
+            project_id (Optional[str]): The ID of the project (optional).
+            assignee_id (Optional[str]): The ID of the assignee (optional).
 
         Returns:
-            JSON with created issue id, title, and url.
+            str or None: A string containing the created issue's details like issue id and issue title.
+                  Returns `None` if the issue creation fails.
+
+        Raises:
+            Exception: If an error occurs during the mutation execution or data retrieval.
         """
+
         query = """
         mutation IssueCreate ($title: String!, $description: String!, $teamId: String!, $projectId: String, $assigneeId: String){
           issueCreate(
@@ -258,25 +249,31 @@ class LinearTools(Toolkit):
             if response["issueCreate"]["success"]:
                 issue = response["issueCreate"]["issue"]
                 log_info(f"Issue '{issue['title']}' created successfully with ID {issue['id']}")
-                return json.dumps(issue)
+                return str(issue)
             else:
                 log_error("Issue creation failed.")
-                return json.dumps({"error": "Issue creation failed"})
+                return None
 
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error creating issue '{title}' for team ID {team_id}")
-            return json.dumps({"error": f"Error creating issue: {e}"})
+            raise
 
-    def update_issue(self, issue_id: str, title: Optional[str]) -> str:
-        """Update the title of a specific issue by issue ID.
+    def update_issue(self, issue_id: str, title: Optional[str]) -> Optional[str]:
+        """
+        Update the title or state of a specific issue by issue ID.
 
         Args:
-            issue_id: The unique identifier of the issue to update.
-            title: The new title for the issue. If None, the title remains unchanged.
+            issue_id (str): The unique identifier of the issue to update.
+            title (str, optional): The new title for the issue. If None, the title remains unchanged.
 
         Returns:
-            JSON with updated issue id, title, and state.
+            str or None: A string containing the updated issue's details with issue id, issue title, and issue state (which includes `id` and `name`).
+                  Returns `None` if the update is unsuccessful.
+
+        Raises:
+            Exception: If an error occurs during the mutation execution or data retrieval.
         """
+
         query = """
         mutation IssueUpdate ($issueId: String!, $title: String!){
           issueUpdate(
@@ -303,24 +300,31 @@ class LinearTools(Toolkit):
             if response["issueUpdate"]["success"]:
                 issue = response["issueUpdate"]["issue"]
                 log_info(f"Issue ID {issue_id} updated successfully.")
-                return json.dumps(issue)
+                return str(issue)
             else:
                 log_error(f"Failed to update issue ID {issue_id}. Success flag was false.")
-                return json.dumps({"error": f"Failed to update issue ID {issue_id}"})
+                return None
 
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error updating issue ID {issue_id}")
-            return json.dumps({"error": f"Error updating issue: {e}"})
+            raise
 
-    def get_user_assigned_issues(self, user_id: str) -> str:
-        """Retrieve issues assigned to a specific user by user ID.
+    def get_user_assigned_issues(self, user_id: str) -> Optional[str]:
+        """
+        Retrieve issues assigned to a specific user by user ID.
 
         Args:
-            user_id: The unique identifier of the user for whom to retrieve assigned issues.
+            user_id (str): The unique identifier of the user for whom to retrieve assigned issues.
 
         Returns:
-            JSON array of issues with id and title.
+            str or None: A string representing the assigned issues to user id,
+            where each issue contains issue details (e.g., `id`, `title`).
+            Returns None if the user or issues cannot be retrieved.
+
+        Raises:
+            Exception: If an error occurs while querying for the user's assigned issues.
         """
+
         query = """
         query UserAssignedIssues($userId: String!) {
         user(id: $userId) {
@@ -344,24 +348,31 @@ class LinearTools(Toolkit):
                 user = response["user"]
                 issues = user["assignedIssues"]["nodes"]
                 log_info(f"Retrieved {len(issues)} issues assigned to user '{user['name']}' (ID: {user['id']}).")
-                return json.dumps(issues)
+                return str(issues)
             else:
                 log_error("Failed to retrieve user or issues.")
-                return json.dumps({"error": f"User with ID {user_id} not found"})
+                return None
 
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error retrieving issues for user ID {user_id}")
-            return json.dumps({"error": f"Error retrieving assigned issues: {e}"})
+            raise
 
-    def get_workflow_issues(self, workflow_id: str) -> str:
-        """Retrieve issues within a specific workflow state by workflow ID.
+    def get_workflow_issues(self, workflow_id: str) -> Optional[str]:
+        """
+        Retrieve issues within a specific workflow state by workflow ID.
 
         Args:
-            workflow_id: The unique identifier of the workflow state to retrieve issues from.
+            workflow_id (str): The unique identifier of the workflow state to retrieve issues from.
 
         Returns:
-            JSON array of issues with title.
+            str or None: A string representing the issues within the specified workflow state,
+            where each issue contains details of an issue (e.g., `title`).
+            Returns None if no issues are found or if the workflow state cannot be retrieved.
+
+        Raises:
+            Exception: If an error occurs while querying issues for the specified workflow state.
         """
+
         query = """
         query WorkflowStateIssues($workflowId: String!) {
         workflowState(id: $workflowId) {
@@ -380,21 +391,28 @@ class LinearTools(Toolkit):
             if response.get("workflowState"):
                 issues = response["workflowState"]["issues"]["nodes"]
                 log_info(f"Retrieved {len(issues)} issues in workflow state ID {workflow_id}.")
-                return json.dumps(issues)
+                return str(issues)
             else:
                 log_error("Failed to retrieve issues for the specified workflow state.")
-                return json.dumps({"error": f"Workflow state with ID {workflow_id} not found"})
+                return None
 
-        except Exception as e:
+        except Exception:
             logger.exception(f"Error retrieving issues for workflow state ID {workflow_id}")
-            return json.dumps({"error": f"Error retrieving workflow issues: {e}"})
+            raise
 
-    def get_high_priority_issues(self) -> str:
-        """Retrieve issues with a high priority (priority <= 2).
+    def get_high_priority_issues(self) -> Optional[str]:
+        """
+        Retrieve issues with a high priority (priority <= 2).
 
         Returns:
-            JSON array of issues with id, title, and priority.
+            str or None: A str representing high-priority issues, where it
+            contains details of an issue (e.g., `id`, `title`, `priority`).
+            Returns None if no issues are retrieved.
+
+        Raises:
+            Exception: If an error occurs during the query process.
         """
+
         query = """
         query HighPriorityIssues {
         issues(filter: {
@@ -414,11 +432,11 @@ class LinearTools(Toolkit):
             if response.get("issues"):
                 high_priority_issues = response["issues"]["nodes"]
                 log_info(f"Retrieved {len(high_priority_issues)} high-priority issues.")
-                return json.dumps(high_priority_issues)
+                return str(high_priority_issues)
             else:
                 log_error("Failed to retrieve high-priority issues.")
-                return json.dumps({"error": "Failed to retrieve high-priority issues"})
+                return None
 
-        except Exception as e:
+        except Exception:
             logger.exception("Error retrieving high-priority issues")
-            return json.dumps({"error": f"Error retrieving high-priority issues: {e}"})
+            raise
