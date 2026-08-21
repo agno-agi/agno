@@ -556,6 +556,8 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                     # attribution they carry so it survives the round trip.
                     if tool.owning_toolkit:
                         func_dict["toolkit"] = tool.owning_toolkit
+                    if getattr(tool, "toolkit_complete", None):
+                        func_dict["toolkit_complete"] = True
                     serialized_tools.append(func_dict)
                 elif isinstance(tool, Toolkit):
                     # get_functions() is the exposed subset -- the only functions
@@ -567,6 +569,7 @@ def to_dict(team: "Team") -> Dict[str, Any]:
                         # Registry.rehydrate_function).
                         if isinstance(tool.name, str) and tool.name:
                             func_dict["toolkit"] = tool.name
+                        func_dict["toolkit_complete"] = True
                         serialized_tools.append(func_dict)
                 elif isinstance(tool, dict):
                     # Provider-native tool dicts serialize as themselves.

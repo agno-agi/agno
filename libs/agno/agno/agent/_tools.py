@@ -360,7 +360,7 @@ def parse_tools(
     _function_names: List[str] = []
     _functions: List[Union[Function, dict]] = []
     _toolkit_instruction_keys: Set[ToolkitKey] = set()
-    _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys = _group_source_toolkits(tools)
+    _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys, _toolkit_complete_keys = _group_source_toolkits(tools)
     agent._tool_instructions = []
 
     def toolkit_key(toolkit: Toolkit) -> ToolkitKey:
@@ -389,6 +389,7 @@ def parse_tools(
             last_index=_source_toolkit_last_index,
             members=_source_toolkit_members,
             async_mode=async_mode,
+            complete_keys=_toolkit_complete_keys,
         )
 
     # Get output_schema from run_context

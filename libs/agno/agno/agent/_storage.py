@@ -581,6 +581,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
     # processed in declaration order and the first one to claim a name wins.
     _owning_toolkit: Dict[str, str] = {}
+    _toolkit_complete_names: Set[str] = set()
     if agent.model is not None and agent.tools and isinstance(agent.tools, list):
         _tools = parse_tools(
             agent,
@@ -598,11 +599,14 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
                     _claimed_names.add(_func.name)
                     if isinstance(_tool.name, str) and _tool.name:
                         _owning_toolkit[_func.name] = _tool.name
+                        _toolkit_complete_names.add(_func.name)
             elif isinstance(_tool, Function):
                 if _tool.name not in _claimed_names:
                     _claimed_names.add(_tool.name)
                     if _tool.owning_toolkit:
                         _owning_toolkit[_tool.name] = _tool.owning_toolkit
+                    if getattr(_tool, "toolkit_complete", None):
+                        _toolkit_complete_names.add(_tool.name)
             elif callable(_tool) and getattr(_tool, "__name__", None) is not None:
                 _claimed_names.add(_tool.__name__)
     if _tools:
@@ -614,6 +618,8 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
                     _toolkit_name = _owning_toolkit.get(tool.name)
                     if _toolkit_name is not None:
                         tool_dict["toolkit"] = _toolkit_name
+                    if tool.name in _toolkit_complete_names or getattr(tool, "toolkit_complete", None):
+                        tool_dict["toolkit_complete"] = True
                     serialized_tools.append(tool_dict)
                 else:
                     serialized_tools.append(tool)

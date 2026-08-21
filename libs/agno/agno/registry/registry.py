@@ -249,6 +249,8 @@ class Registry:
             # re-stamps the "toolkit" key even though the loaded component holds
             # bare Functions instead of Toolkits.
             func.owning_toolkit = toolkit_name
+        if func_dict.get("toolkit_complete") is True:
+            func.toolkit_complete = True
 
         owner_maps = rebuild_state.get("owners")
         if owner_maps is None:
