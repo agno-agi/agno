@@ -1384,4 +1384,6 @@ class OpenAIResponses(Model):
         if output_tokens_details := response_usage.output_tokens_details:
             metrics.reasoning_tokens = output_tokens_details.reasoning_tokens
 
+        metrics.cost = getattr(response_usage, "cost", None)
+
         return metrics
