@@ -1396,8 +1396,10 @@ def _handle_model_response_chunk(
             content_type = "str"
 
             should_yield = False
-            # Process content
-            if model_response_event.content is not None:
+            # Process content. An empty string is a provider stop/metadata chunk
+            # that carries no visible text; skip it so it does not surface a
+            # blank content event (see issue #9491).
+            if model_response_event.content is not None and model_response_event.content != "":
                 if parse_structured_output:
                     full_model_response.content = model_response_event.content
                     _convert_response_to_structured_format(team, full_model_response, run_context=run_context)
