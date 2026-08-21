@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.learn.machine import LearningMachine
     from agno.team.mode import TeamMode
     from agno.team.team import Team
     from agno.offload.store import ResultStore
@@ -33,7 +34,6 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.models.base import Model
@@ -717,6 +717,8 @@ def _set_learning_machine(team: "Team") -> None:
     - learning=False/None: Disabled
     - learning=LearningMachine(...): Use provided, inject db/model
     """
+    from agno.learn.machine import LearningMachine
+
     team._learning_init_attempted = True
 
     if team.learning is None or team.learning is False:
