@@ -42,6 +42,7 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, merge_background_metrics
+from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
@@ -539,6 +540,7 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -1666,6 +1668,7 @@ async def _arun(
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -3707,6 +3710,7 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -4902,6 +4906,7 @@ async def _acontinue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,

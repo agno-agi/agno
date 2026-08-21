@@ -17,6 +17,7 @@ from agno.db.base import (
 )
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.utils import DB_TABLE_NAME_KEYS
+from agno.exceptions import AgnoError
 from agno.os.auth import get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.schema import (
@@ -38,7 +39,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import draft_preview_identity, may_read_draft_configs
+from agno.os.utils import AgnoHTTPException, draft_preview_identity, may_read_draft_configs
 from agno.registry import Registry
 from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_component_id_from_name, hash_string_sha256, validate_component_id
@@ -742,6 +743,8 @@ def attach_routes(
             )
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error listing components: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -844,6 +847,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error creating component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -873,6 +878,8 @@ def attach_routes(
             return ComponentResponse(**component)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error getting component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -962,6 +969,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error updating component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1020,6 +1029,8 @@ def attach_routes(
             raise HTTPException(status_code=409, detail=_conflict_detail(db, component_id, scoped_user_id, e))
         except ComponentDraftRequiredError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error deleting component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1062,6 +1073,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error restoring component: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1092,6 +1105,8 @@ def attach_routes(
             return [_config_response(c, component_row, scoped_user_id) for c in configs]
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error listing configs: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1155,6 +1170,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error creating config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1222,6 +1239,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error updating config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1250,6 +1269,8 @@ def attach_routes(
             return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error getting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1289,6 +1310,8 @@ def attach_routes(
             return _config_response(config, component_row, scoped_user_id)
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error getting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1326,6 +1349,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error deleting config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
@@ -1390,6 +1415,8 @@ def attach_routes(
             raise HTTPException(status_code=400, detail=str(e))
         except ValueError as e:
             raise HTTPException(status_code=400, detail=str(e))
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error setting current config: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")

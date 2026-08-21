@@ -15,6 +15,7 @@ from agno.db.postgres.schemas import (
     get_table_schema_definition,
 )
 from agno.db.utils import json_serializer
+from agno.exceptions import MigrationRequiredError
 
 
 @pytest.fixture
@@ -397,8 +398,11 @@ def test_get_or_create_table_invalid_schema(mock_is_valid, mock_is_available, po
 
     postgres_db.Session = Mock(return_value=mock_session)
 
-    with pytest.raises(ValueError, match="has an invalid schema"):
+    with pytest.raises(MigrationRequiredError, match="has an invalid schema") as exc_info:
         postgres_db._get_or_create_table("test_table", "sessions", "test_schema")
+
+    assert exc_info.value.table_name == "test_schema.test_table"
+    assert exc_info.value.error_id == "migration_required_error"
 
 
 @patch("agno.db.postgres.postgres.is_table_available")

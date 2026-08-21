@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
+from agno.exceptions import AgnoError
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
@@ -37,6 +38,7 @@ from agno.os.schema import (
 from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug
@@ -311,7 +313,10 @@ def attach_routes(
                     )
                 return db.get_session(session_id=session_id, session_type=session_type, user_id=uid, deserialize=False)
 
-            owned_session = await _get(scoped_user_id)
+            try:
+                owned_session = await _get(scoped_user_id)
+            except AgnoError as e:
+                raise AgnoHTTPException(e)
             if owned_session is not None:
                 # The caller owns (or, as admin/unscoped, can see) the colliding session:
                 # safe to point them at PATCH, since this reveals nothing they can't read.
@@ -320,7 +325,11 @@ def attach_routes(
                     detail=f"Session with id '{session_id}' already exists. "
                     f"Use PATCH /sessions/{session_id} to update it.",
                 )
-            if scoped_user_id is not None and await _get(None) is not None:
+            try:
+                id_taken = scoped_user_id is not None and await _get(None) is not None
+            except AgnoError as e:
+                raise AgnoHTTPException(e)
+            if id_taken:
                 # The id is taken by another owner. session_id is a global primary key, so
                 # the collision itself is unavoidable (as with any client-chosen unique id),
                 # but the response must not confirm that the session belongs to someone else
@@ -397,6 +406,8 @@ def attach_routes(
                 return TeamSessionDetailSchema.from_session(created_session)  # type: ignore
             else:
                 return WorkflowSessionDetailSchema.from_session(created_session)  # type: ignore
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             logger.exception("Error creating session")
             raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")

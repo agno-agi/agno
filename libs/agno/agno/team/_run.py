@@ -37,6 +37,7 @@ from agno.exceptions import (
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics, merge_background_metrics
+from agno.agent._tools import result_store_kwargs
 from agno.models.base import Model
 from agno.models.fallback import acall_model_with_fallback, call_model_with_fallback
 from agno.models.message import Message
@@ -391,6 +392,7 @@ def _run_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                **result_store_kwargs(team),
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
                 ),
@@ -1228,6 +1230,7 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    **result_store_kwargs(team),
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
@@ -2248,6 +2251,7 @@ async def _arun_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                **result_store_kwargs(team),
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
                 ),
@@ -3175,6 +3179,7 @@ async def _arun(
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    **result_store_kwargs(team),
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
                     ),
@@ -4562,6 +4567,66 @@ def _iter_member_runs_for_team_run(session: TeamSession, team_run_id: Optional[s
             yield idx, entry
 
 
+def _media_offloaded(team: "Team", session: TeamSession, member_run: Any, cache: Any) -> Any:
+    """The member run with its media offloaded, or the run itself when there is nothing to offload."""
+    return build_offloaded_storage_copy(team, member_run, session.session_id, cache=cache) or member_run
+
+
+async def _amedia_offloaded(team: "Team", session: TeamSession, member_run: Any, cache: Any) -> Any:
+    """Async variant of :func:`_media_offloaded`."""
+    return await abuild_offloaded_storage_copy(team, member_run, session.session_id, cache=cache) or member_run
+
+
+def _member_opted_out_of_the_store(team: "Team", member_run: Any) -> bool:
+    """True when the member that produced ``member_run`` set offload_tool_results=False.
+
+    That member has no read-back tools and no instruction about envelopes, so
+    its stored run, the history it replays, must keep the whole text. A member
+    this seam cannot resolve (a callable member factory needs a run context
+    that storage does not carry, or the member left the team) is treated the
+    same way: storing the whole text is always safe, an envelope a member
+    cannot read never is.
+    """
+    member_id = getattr(member_run, "agent_id", None) or getattr(member_run, "team_id", None)
+    if not member_id:
+        return True
+    found = team._find_member_by_id(str(member_id))
+    if found is None:
+        return True
+    return getattr(found[1], "offload_tool_results", None) is False
+
+
+def _member_run_for_storage(team: "Team", session: TeamSession, member_run: Any) -> Any:
+    """The member run as it should be stored, with big messages offloaded.
+
+    The live object is returned unchanged when offloading is off, so callers
+    reading ``RunOutput.member_responses`` always see the whole answer. A
+    sub-team offloads too: its member runs are written by the parent through
+    the session copy. A workflow step's member runs are never written, so no
+    storage copy is made for them.
+    """
+    store = getattr(team, "_result_store", None)
+    if store is None or not store.member_responses:
+        return member_run
+    if getattr(team, "workflow_id", None) is not None or _member_opted_out_of_the_store(team, member_run):
+        return member_run
+    from agno.offload.runs import offload_run_for_storage
+
+    return offload_run_for_storage(store, member_run, session_id=session.session_id, user_id=session.user_id)
+
+
+async def _amember_run_for_storage(team: "Team", session: TeamSession, member_run: Any) -> Any:
+    """Async variant of ``_member_run_for_storage``."""
+    store = getattr(team, "_result_store", None)
+    if store is None or not store.member_responses:
+        return member_run
+    if getattr(team, "workflow_id", None) is not None or _member_opted_out_of_the_store(team, member_run):
+        return member_run
+    from agno.offload.runs import aoffload_run_for_storage
+
+    return await aoffload_run_for_storage(store, member_run, session_id=session.session_id, user_id=session.user_id)
+
+
 def _persist_member_runs_for_team_run(
     team: "Team", session: TeamSession, team_run_id: Optional[str], team_run: Optional[TeamRunOutput] = None
 ) -> None:
@@ -4576,7 +4641,7 @@ def _persist_member_runs_for_team_run(
             # sharing the team run's cache keeps the same bytes from being uploaded twice.
             save_run(
                 team,
-                run=build_offloaded_storage_copy(team, member_run, session.session_id, cache=cache) or member_run,
+                run=_media_offloaded(team, session, _member_run_for_storage(team, session, member_run), cache),
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
@@ -4597,8 +4662,9 @@ async def _apersist_member_runs_for_team_run(
         try:
             await asave_run(
                 team,
-                run=await abuild_offloaded_storage_copy(team, member_run, session.session_id, cache=cache)
-                or member_run,
+                run=await _amedia_offloaded(
+                    team, session, await _amember_run_for_storage(team, session, member_run), cache
+                ),
                 session_id=session.session_id,
                 user_id=session.user_id,
                 run_index=idx,
@@ -4628,6 +4694,14 @@ def _cleanup_and_store(
 
     if run_response.run_id:
         cleanup_member_runs(run_response.run_id)
+
+    if storage_copy.member_responses and team.store_member_responses:
+        # The embedded member copies hold envelopes like the session's member rows; the live
+        # member runs the caller reads stay whole.
+        storage_copy.member_responses = [
+            _member_run_for_storage(team, session, member_run)
+            for member_run in copy.deepcopy(storage_copy.member_responses)
+        ]
 
     # Isolate member_responses: the scrub recurses into the same objects the member rows are written from.
     if not team.store_media:
@@ -4703,6 +4777,14 @@ async def _acleanup_and_store(
 
     if run_response.run_id:
         await acleanup_member_runs(run_response.run_id)
+
+    if storage_copy.member_responses and team.store_member_responses:
+        # The embedded member copies hold envelopes like the session's member rows; the live
+        # member runs the caller reads stay whole.
+        storage_copy.member_responses = [
+            await _amember_run_for_storage(team, session, member_run)
+            for member_run in copy.deepcopy(storage_copy.member_responses)
+        ]
 
     # Isolate member_responses: the scrub recurses into the same objects the member rows are written from.
     if not team.store_media:
@@ -4853,7 +4935,11 @@ def _persist_team_run_in_session(
     if storage_copy.member_responses and team.store_member_responses:
         # save_session -> _scrub_member_responses scrubs each member in place;
         # deep-copy so it operates on the storage copy, not the live member runs.
-        storage_copy.member_responses = copy.deepcopy(storage_copy.member_responses)
+        # The embedded copies hold envelopes like the session's member rows.
+        storage_copy.member_responses = [
+            _member_run_for_storage(team, session, member_run)
+            for member_run in copy.deepcopy(storage_copy.member_responses)
+        ]
     scrub_run_output_for_storage(team, storage_copy)
 
     if run_context is not None and run_context.session_state is not None:
@@ -4909,7 +4995,11 @@ async def _apersist_team_run_in_session(
     if storage_copy.member_responses and team.store_member_responses:
         # save_session -> _scrub_member_responses scrubs each member in place;
         # deep-copy so it operates on the storage copy, not the live member runs.
-        storage_copy.member_responses = copy.deepcopy(storage_copy.member_responses)
+        # The embedded copies hold envelopes like the session's member rows.
+        storage_copy.member_responses = [
+            await _amember_run_for_storage(team, session, member_run)
+            for member_run in copy.deepcopy(storage_copy.member_responses)
+        ]
     scrub_run_output_for_storage(team, storage_copy)
 
     if run_context is not None and run_context.session_state is not None:
@@ -5392,17 +5482,17 @@ def _handle_team_tool_call_updates(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_external_execution_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -5460,17 +5550,17 @@ def _handle_team_tool_call_updates_stream(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_external_execution_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t, run_response=run_response)  # type: ignore
             _t.requires_user_input = False
             _t.answered = True
 
@@ -5525,17 +5615,38 @@ async def _ahandle_team_tool_call_updates(
             _t.requires_confirmation = False
 
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_external_execution_update,
+                team,  # type: ignore[arg-type]
+                run_messages=run_messages,
+                tool=_t,
+                run_response=run_response,  # type: ignore[arg-type]
+            )
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_get_user_input_tool_update,
+                team,  # type: ignore[arg-type]
+                run_messages=run_messages,
+                tool=_t,
+                run_response=run_response,  # type: ignore[arg-type]
+            )
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_ask_user_tool_update,
+                team,  # type: ignore[arg-type]
+                run_messages=run_messages,
+                tool=_t,
+                run_response=run_response,  # type: ignore[arg-type]
+            )
             _t.requires_user_input = False
             _t.answered = True
 
@@ -5594,17 +5705,38 @@ async def _ahandle_team_tool_call_updates_stream(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_external_execution_update,
+                team,  # type: ignore[arg-type]
+                run_messages=run_messages,
+                tool=_t,
+                run_response=run_response,  # type: ignore[arg-type]
+            )
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_get_user_input_tool_update,
+                team,  # type: ignore[arg-type]
+                run_messages=run_messages,
+                tool=_t,
+                run_response=run_response,  # type: ignore[arg-type]
+            )
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(team, run_messages=run_messages, tool=_t)  # type: ignore
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_ask_user_tool_update,
+                team,  # type: ignore[arg-type]
+                run_messages=run_messages,
+                tool=_t,
+                run_response=run_response,  # type: ignore[arg-type]
+            )
             _t.requires_user_input = False
             _t.answered = True
 
@@ -6374,11 +6506,11 @@ def _route_requirements_to_members(
 
             _propagate_member_pause(run_response, member, member_response)
             # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(member_response)
+            session.upsert_run(_member_run_for_storage(team, session, member_response))
         else:
             # Update the member's run in the team session so its status is persisted
             # (member agents skip save_session when team_id is set)
-            session.upsert_run(member_response)
+            session.upsert_run(_member_run_for_storage(team, session, member_response))
 
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
@@ -6484,9 +6616,9 @@ def _route_requirements_to_members_stream(
 
             _propagate_member_pause(run_response, member, member_response)
             # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(member_response)
+            session.upsert_run(_member_run_for_storage(team, session, member_response))
         else:
-            session.upsert_run(member_response)
+            session.upsert_run(_member_run_for_storage(team, session, member_response))
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
@@ -6560,12 +6692,12 @@ async def _aroute_requirements_to_members(
 
             _propagate_member_pause(run_response, member, member_response)
             # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(member_response)
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
             return None
         else:
             # Update the member's run in the team session so its status is persisted
             # (member agents skip save_session when team_id is set, so we do it here)
-            session.upsert_run(member_response)
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
 
             content = getattr(member_response, "content", None) or "Task completed"
             return f"[{member.name or member_id}]: {content}"
@@ -6684,9 +6816,9 @@ async def _aroute_requirements_to_members_stream(
 
             _propagate_member_pause(run_response, member, member_response)
             # Persist paused member run so continue_run can find it after session reload
-            session.upsert_run(member_response)
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
         else:
-            session.upsert_run(member_response)
+            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
             content = getattr(member_response, "content", None) or "Task completed"
             member_results.append(f"[{member.name or member_id}]: {content}")
 
@@ -6787,6 +6919,7 @@ async def _ahandle_model_response_for_continue(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        **result_store_kwargs(team),
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
         ),
@@ -8106,6 +8239,7 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    **result_store_kwargs(team),
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),

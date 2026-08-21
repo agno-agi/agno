@@ -148,6 +148,20 @@ async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
         await asyncio.wait(pending, timeout=remaining)
 
 
+def _error_body(detail: str, exc: BaseException) -> Dict[str, Any]:
+    """Build the JSON error body, carrying the error's identity when the exception has one.
+
+    ``AgnoError`` subclasses (and ``AgnoHTTPException``, which wraps them) expose ``error_id``
+    and a type so clients can branch on the kind of failure rather than on ``detail`` text.
+    """
+    body: Dict[str, Any] = {"detail": detail}
+    error_id = getattr(exc, "error_id", None)
+    if error_id:
+        body["error_id"] = error_id
+        body["error_type"] = getattr(exc, "error_type", None) or getattr(exc, "type", None)
+    return body
+
+
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
     """Initializes databases in the event loop and closes them on shutdown."""
@@ -1212,7 +1226,7 @@ class AgentOS:
                 log_error(f"HTTP exception: {exc.status_code} {exc.detail}")
                 return JSONResponse(
                     status_code=exc.status_code,
-                    content={"detail": str(exc.detail)},
+                    content=_error_body(str(exc.detail), exc),
                 )
 
             @fastapi_app.exception_handler(HTTPStatusError)
@@ -1241,7 +1255,7 @@ class AgentOS:
                 detail = str(exc) if status_code < 500 else f"Internal server error ({type(exc).__name__})"
                 return JSONResponse(
                     status_code=status_code,
-                    content={"detail": detail},
+                    content=_error_body(detail, exc),
                 )
 
         # Update CORS middleware

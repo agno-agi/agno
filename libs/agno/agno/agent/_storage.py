@@ -19,6 +19,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.offload.store import ResultStore
 
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.schemas.scheduler import strip_reserved_run_metadata
@@ -180,6 +181,30 @@ def resolve_memory_manager_reference(
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
+
+
+def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
+    """The offload_tool_results setting as it is stored: True, False, or the ResultStore settings."""
+    from agno.offload.store import ResultStore
+
+    if value is True or value is False:
+        return value
+    if isinstance(value, ResultStore):
+        return value.to_dict()
+    raise TypeError(
+        "offload_tool_results must be True, False, None or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+    )
+
+
+def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
+    """The offload_tool_results setting from a stored config: unset, True, False, or a ResultStore."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        from agno.offload.store import ResultStore
+
+        return ResultStore.from_dict(value)
+    return bool(value)
 
 
 def get_run_output(
@@ -1060,6 +1085,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Context compression settings ---
     if agent.compress_tool_results:
         config["compress_tool_results"] = agent.compress_tool_results
+
+    # --- Result offloading settings ---
+    if agent.offload_tool_results is not None:
+        config["offload_tool_results"] = _offload_to_config(agent.offload_tool_results)
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
@@ -1366,6 +1395,8 @@ def from_dict(
         # --- Compression settings ---
         compress_tool_results=config.get("compress_tool_results", False),
         # compression_manager=config.get("compression_manager"),  # TODO
+        # --- Result offloading settings ---
+        offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
         # --- Debug and telemetry settings ---
         debug_mode=config.get("debug_mode", False),
         debug_level=config.get("debug_level", 1),
