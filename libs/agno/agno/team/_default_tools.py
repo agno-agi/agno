@@ -14,6 +14,7 @@ from copy import copy
 from typing import (
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -242,6 +243,23 @@ def _update_session_state_tool(team: "Team", run_context: RunContext, session_st
         session_state[key] = value
 
     return f"Updated session state: {session_state}"
+
+
+def make_update_session_state_entrypoint(team: "Team") -> Callable:
+    """Create a closure that binds team to the _update_session_state_tool function."""
+
+    def _entrypoint(run_context: RunContext, session_state_updates: dict) -> str:
+        """
+        Update the shared session state.  Provide any updates as a dictionary of key-value pairs.
+        Example:
+            "session_state_updates": {"shopping_list": ["milk", "eggs", "bread"]}
+
+        Args:
+            session_state_updates (dict): The updates to apply to the shared session state. Should be a dictionary of key-value pairs.
+        """
+        return _update_session_state_tool(team, run_context, session_state_updates)
+
+    return _entrypoint
 
 
 def _search_past_sessions_function(
