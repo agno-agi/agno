@@ -130,8 +130,9 @@ def test_parse_documents_with_missing_fields(seltz_tools):
 def test_search_empty_query(seltz_tools):
     """Test search with empty query returns error."""
     result = seltz_tools.search_seltz("")
-    assert "Error" in result
-    assert "provide a query" in result
+    data = json.loads(result)
+    assert "error" in data
+    assert "provide a query" in data["error"]
 
 
 def test_search_without_api_key():
@@ -159,8 +160,9 @@ def test_init_invalid_max_results():
 def test_search_invalid_max_results(seltz_tools):
     """Test search with invalid max_results returns error."""
     result = seltz_tools.search_seltz("test query", max_results=0)
-    assert "Error" in result
-    assert "max_results must be greater than 0" in result
+    data = json.loads(result)
+    assert "error" in data
+    assert "max_results must be greater than 0" in data["error"]
 
 
 def test_parse_documents_skips_empty(seltz_tools):
@@ -175,11 +177,11 @@ def test_parse_documents_skips_empty(seltz_tools):
     assert len(result_data) == 0
 
 
-def test_init_with_all_flag():
-    """Test initialization with all=True enables all tools."""
+def test_init_with_search_enabled():
+    """Test initialization with search=True (default) enables search tool."""
     with patch("agno.tools.seltz.Seltz"):
         with patch.dict("os.environ", {"SELTZ_API_KEY": "test_key"}):
-            tools = SeltzTools(all=True, enable_search=False)
+            tools = SeltzTools(search=True)
             assert "search_seltz" in [func.name for func in tools.functions.values()]
 
 
@@ -199,7 +201,8 @@ def test_error_handling(seltz_tools, mock_seltz_client, exception):
     mock_seltz_client.search.side_effect = exception
 
     result = seltz_tools.search_seltz("test query")
-    assert "Error" in result
+    data = json.loads(result)
+    assert "error" in data
 
 
 def test_search_with_current_sdk_filters(seltz_tools, mock_seltz_client):

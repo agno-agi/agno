@@ -1,3 +1,4 @@
+import json
 import os
 from unittest.mock import MagicMock, patch
 
@@ -15,7 +16,8 @@ def test_list_labels():
         mock_run.return_value = [{"label": "Person"}, {"label": "Movie"}]
 
         tools = Neo4jTools("uri", "user", "password")
-        labels = tools.list_neo4j_labels()
+        result = tools.list_neo4j_labels()
+        labels = json.loads(result)
         assert labels == ["Person", "Movie"]
         mock_run.assert_called_with("CALL db.labels()")
 
@@ -35,8 +37,9 @@ def test_list_labels_runtime_error():
         mock_session.run.side_effect = Exception("Query failed")
 
         tools = Neo4jTools("uri", "user", "password")
-        labels = tools.list_neo4j_labels()
-        assert labels == []
+        result = tools.list_neo4j_labels()
+        data = json.loads(result)
+        assert "error" in data
 
 
 def test_list_relationship_types():
@@ -47,7 +50,8 @@ def test_list_relationship_types():
         mock_run.return_value = [{"relationshipType": "ACTED_IN"}, {"relationshipType": "DIRECTED"}]
 
         tools = Neo4jTools("uri", "user", "password")
-        rel_types = tools.list_neo4j_relationship_types()
+        result = tools.list_neo4j_relationship_types()
+        rel_types = json.loads(result)
         assert rel_types == ["ACTED_IN", "DIRECTED"]
         mock_run.assert_called_with("CALL db.relationshipTypes()")
 
@@ -59,8 +63,9 @@ def test_list_relationship_types_error():
         mock_session.run.side_effect = Exception("Query failed")
 
         tools = Neo4jTools("uri", "user", "password")
-        rel_types = tools.list_neo4j_relationship_types()
-        assert rel_types == []
+        result = tools.list_neo4j_relationship_types()
+        data = json.loads(result)
+        assert "error" in data
 
 
 def test_get_schema():
@@ -74,7 +79,8 @@ def test_get_schema():
         mock_session.run.return_value = mock_result
 
         tools = Neo4jTools("uri", "user", "password")
-        schema = tools.get_neo4j_schema()
+        result = tools.get_neo4j_schema()
+        schema = json.loads(result)
         assert len(schema) == 1
         assert "nodes" in schema[0]
         assert "relationships" in schema[0]
@@ -88,8 +94,9 @@ def test_get_schema_error():
         mock_session.run.side_effect = Exception("Schema query failed")
 
         tools = Neo4jTools("uri", "user", "password")
-        schema = tools.get_neo4j_schema()
-        assert schema == []
+        result = tools.get_neo4j_schema()
+        data = json.loads(result)
+        assert "error" in data
 
 
 def test_run_cypher_query():
@@ -102,7 +109,8 @@ def test_run_cypher_query():
 
         tools = Neo4jTools("uri", "user", "password")
         query = "MATCH (p:Person) RETURN p.name as name, p.age as age"
-        result = tools.run_neo4j_cypher_query(query)
+        result_str = tools.run_neo4j_cypher_query(query)
+        result = json.loads(result_str)
 
         assert len(result) == 2
         assert result[0]["name"] == "John"
@@ -118,7 +126,8 @@ def test_run_cypher_query_error():
 
         tools = Neo4jTools("uri", "user", "password")
         result = tools.run_neo4j_cypher_query("INVALID QUERY")
-        assert result == []
+        data = json.loads(result)
+        assert "error" in data
 
 
 def test_initialization_with_env_vars():
