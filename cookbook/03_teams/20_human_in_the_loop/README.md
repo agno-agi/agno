@@ -6,9 +6,13 @@ Examples for team workflows in human_in_the_loop.
 
 - Load `OPENAI_API_KEY` (for example, with `direnv allow`).
 - Use `.venvs/demo/bin/python` to run cookbook examples.
-- Examples that persist paused runs use SQLite files under `tmp/`, except
-  `team_tool_confirmation_stream.py`, which uses PostgreSQL. Start the local
+- Most examples persist paused runs to SQLite files under `tmp/`.
+  `team_tool_confirmation_stream.py` uses PostgreSQL instead. Start the local
   database with `./cookbook/scripts/run_pgvector.sh` before running it.
+- `confirmation_required_async.py`, `confirmation_rejected.py`,
+  `confirmation_required_with_dependencies.py`, and `team_tool_confirmation.py`
+  configure no database. They pause and resume within a single process, so the
+  paused run is not recoverable after the script exits.
 
 ## Files
 

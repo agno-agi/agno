@@ -71,6 +71,9 @@ caller resolves that requirement and resumes the Team directly with
 - Most persisted examples use SQLite under `tmp/`
 - `team_tool_confirmation_stream.py` uses PostgreSQL at
   `postgresql+psycopg://ai:ai@localhost:5532/ai`
+- `confirmation_required_async.py`, `confirmation_rejected.py`,
+  `confirmation_required_with_dependencies.py`, and `team_tool_confirmation.py`
+  configure no `db`, so they need no database setup and write no session rows
 - The `tmp/` directory must be writable (created automatically)
 
 ---
