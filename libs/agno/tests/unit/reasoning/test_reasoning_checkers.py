@@ -578,7 +578,7 @@ def test_groq_without_deepseek():
     """Test Groq model without deepseek in ID returns False."""
     model = MockModel(
         class_name="Groq",
-        model_id="llama-3.3-70b-versatile",
+        model_id="meta-llama/llama-4-scout-17b-16e-instruct",
     )
     assert is_groq_reasoning_model(model) is False
 
