@@ -1178,6 +1178,20 @@ class TestRespondDirectlyMemberContinuation:
         leader_model.assert_not_called()
         assert cleanup.call_count == 2
 
+    @pytest.mark.parametrize("content", [False, 0, "", [], {}])
+    def test_records_falsey_direct_member_content_exactly(self, content):
+        from agno.team._run import _record_member_continuation_result
+
+        team, _, run_response, _, _, _, member_response = self._make_case()
+        member_response.content = content
+        member_response.content_type = "application/json"
+
+        recorded = _record_member_continuation_result(team, run_response, member_response)
+
+        assert recorded == content
+        assert run_response.content == content
+        assert run_response.content_type == "application/json"
+
     def test_sync_coordinate_mode_still_runs_leader_after_member_continue(self):
         from agno.team._run import continue_run_dispatch
 
@@ -1390,6 +1404,84 @@ class TestRespondDirectlyMemberContinuation:
             member.acontinue_run.assert_called_once()
             leader_stream.assert_not_called()
             assert cleanup.await_count == 2
+
+        asyncio.run(_exercise())
+
+    def test_async_direct_cancellation_after_member_resume_stays_cancelled(self):
+        from agno.exceptions import RunCancelledException
+        from agno.team._run import _acontinue_run
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        run_context = MagicMock()
+
+        async def _exercise():
+            cancellation_check = AsyncMock(side_effect=RunCancelledException("cancelled during member resume"))
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._run.araise_if_cancelled", new=cancellation_check),
+                patch(
+                    "agno.team._run._ahandle_model_response_for_continue",
+                    new=AsyncMock(return_value=None),
+                ) as leader_continue,
+                patch("agno.team._run.adrain_member_tasks", new=AsyncMock()),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+            ):
+                result = await _acontinue_run(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                )
+
+            cancellation_check.assert_awaited_once_with("team-run-1")
+            assert result.status == RunStatus.cancelled
+            leader_continue.assert_not_awaited()
+
+        asyncio.run(_exercise())
+
+    def test_async_stream_direct_cancellation_after_member_resume_stays_cancelled(self):
+        from agno.exceptions import RunCancelledException
+        from agno.run.agent import RunOutput
+        from agno.run.team import RunCancelledEvent
+        from agno.team._run import _acontinue_run_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        run_context = MagicMock()
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.cancelled,
+            content="cancelled during member resume",
+        )
+
+        async def _member_stream(*args, **kwargs):
+            yield member_final
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+
+        async def _exercise():
+            cancellation_check = AsyncMock(side_effect=RunCancelledException("cancelled during member resume"))
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._run.araise_if_cancelled", new=cancellation_check),
+                patch("agno.team._run.adrain_member_tasks", new=AsyncMock()),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                    stream_events=True,
+                    yield_run_output=True,
+                ):
+                    events.append(event)
+
+            cancellation_check.assert_awaited_once_with("team-run-1")
+            assert any(isinstance(event, RunCancelledEvent) for event in events)
+            assert events[-1] is run_response
+            assert run_response.status == RunStatus.cancelled
 
         asyncio.run(_exercise())
 

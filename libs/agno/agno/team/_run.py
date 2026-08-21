@@ -6360,7 +6360,9 @@ def _record_member_continuation_result(
     again, so the continuation router must preserve the member's final content
     on the team run instead.
     """
-    content = getattr(member_response, "content", None) or "Task completed"
+    content = getattr(member_response, "content", None)
+    if content is None:
+        content = "Task completed"
     if team.respond_directly:
         run_response.content = content
         content_type = getattr(member_response, "content_type", None)
@@ -9006,6 +9008,7 @@ async def _acontinue_run(
                         return paused_result
 
                 elif member_results and team.respond_directly:
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     run_messages, _ = _prepare_direct_member_continuation(
                         team,
                         run_response,
@@ -9588,6 +9591,7 @@ async def _acontinue_run_stream(
                         yield event
 
                 elif member_results and team.respond_directly:
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     run_messages, _ = _prepare_direct_member_continuation(
                         team,
                         run_response,
