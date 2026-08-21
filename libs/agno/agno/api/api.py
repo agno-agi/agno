@@ -1,8 +1,10 @@
+import atexit
 import os
 import threading
+import time
 import weakref
-from queue import Full, Queue
-from typing import Dict, Optional, Tuple
+from queue import Empty, Full, Queue
+from typing import Callable, Dict, Optional, Tuple, cast
 
 from httpx import AsyncClient as HttpxAsyncClient
 from httpx import Client as HttpxClient
@@ -15,31 +17,277 @@ from agno.utils.log import log_debug
 # when it fills, new events are dropped (telemetry is best-effort).
 TELEMETRY_QUEUE_SIZE = 2000
 TELEMETRY_TIMEOUT = 5.0
+TELEMETRY_SHUTDOWN_TIMEOUT = 2.0
+
+_STOP = object()
+
+
+def _telemetry_headers() -> Dict[str, str]:
+    return {
+        "user-agent": f"{agno_api_settings.app_name}/{agno_api_settings.app_version}",
+        "Content-Type": "application/json",
+    }
+
+
+def _create_telemetry_client() -> HttpxClient:
+    """Create the background worker's short-timeout HTTP client."""
+    return HttpxClient(
+        base_url=agno_api_settings.api_url,
+        headers=_telemetry_headers(),
+        timeout=TELEMETRY_TIMEOUT,
+        http2=True,
+    )
+
+
+class _TelemetryDispatcher:
+    """Process-wide, bounded dispatcher for best-effort telemetry events."""
+
+    def __init__(
+        self,
+        client_factory: Callable[[], HttpxClient] = _create_telemetry_client,
+        *,
+        register_at_fork: bool = True,
+    ) -> None:
+        self._client_factory = client_factory
+        self._queue: "Queue[object]" = Queue(maxsize=TELEMETRY_QUEUE_SIZE)
+        self._worker: Optional[threading.Thread] = None
+        self._client: Optional[HttpxClient] = None
+        self._lock = threading.Lock()
+        # This lock is used only after a PID mismatch, so normal parent work
+        # cannot leave it held across a hook-bypassing fork.
+        self._fork_fallback_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._pid = os.getpid()
+        self._accepting = True
+        self._stop_enqueued = False
+
+        if register_at_fork and hasattr(os, "register_at_fork"):
+            ref = weakref.ref(self)
+
+            def _reset_in_child() -> None:
+                instance = ref()
+                if instance is not None:
+                    instance._reset_after_fork()
+
+            # Register before the lazy worker starts. AgentOS and preloaded apps
+            # can then fork while this module is imported but still single-threaded.
+            os.register_at_fork(after_in_child=_reset_in_child)
+
+    def post(self, route: str, payload: dict) -> None:
+        """Queue one event without waiting for network I/O; never raises."""
+        try:
+            self._ensure_process_state()
+            closed = False
+            with self._lock:
+                if not self._accepting:
+                    closed = True
+                else:
+                    # Enqueue first so a transient Thread.start() failure does
+                    # not discard the event; a later post or shutdown can retry
+                    # startup.
+                    try:
+                        self._queue.put_nowait((route, payload))
+                    except Full:
+                        # If an earlier Thread.start() failed and filled the
+                        # queue, retry the stranded worker before dropping this
+                        # new event.
+                        self._start_worker_locked()
+                        raise
+                    self._start_worker_locked()
+            if closed:
+                log_debug(f"Telemetry dispatcher closed, dropping event for {route}")
+        except Full:
+            log_debug(f"Telemetry queue full, dropping event for {route}")
+        except Exception as e:
+            log_debug(f"Could not queue telemetry event for {route}: {type(e).__name__}")
+
+    def close(self, flush_timeout: float = TELEMETRY_SHUTDOWN_TIMEOUT) -> None:
+        """Request shutdown and wait at most ``flush_timeout`` seconds.
+
+        Pending events are given that bounded window to finish. An event already
+        in flight can outlive this call, but its worker remains a daemon and
+        closes the shared client when the request returns.
+        """
+        # A hook-bypassing child may have inherited a held close lock. Reset
+        # process state before acquiring any lifecycle lock from the parent.
+        try:
+            self._ensure_process_state()
+
+            # A client or transport callback can request shutdown from inside
+            # the worker. Bypass the close-serialization lock so it cannot wait
+            # behind another closer that is itself waiting for this request.
+            current_worker = threading.current_thread()
+            if self._worker is current_worker:
+                with self._lock:
+                    self._accepting = False
+                    queue = self._queue
+                self._enqueue_stop(queue, current_worker)
+                return
+
+            deadline = time.monotonic() + max(0.0, flush_timeout)
+            remaining = deadline - time.monotonic()
+            acquired = self._close_lock.acquire(timeout=remaining) if remaining > 0 else self._close_lock.acquire(False)
+            if not acquired:
+                return
+            try:
+                with self._lock:
+                    self._accepting = False
+                    if self._queue.unfinished_tasks and (self._worker is None or not self._worker.is_alive()):
+                        try:
+                            self._start_worker_locked()
+                        except Exception:
+                            # There is no worker that can flush the queued work.
+                            # The pending events are discarded below.
+                            pass
+                    worker = self._worker
+                    queue = self._queue
+
+                if worker is None:
+                    self._discard_pending(queue)
+                    return
+
+                while queue.unfinished_tasks and time.monotonic() < deadline:
+                    time.sleep(0.01)
+
+                # Once the deadline expires, discard work the worker has not
+                # taken yet. An in-flight request remains bounded by its own
+                # timeout and the daemon cannot delay interpreter termination.
+                if queue.unfinished_tasks:
+                    self._discard_pending(queue)
+
+                self._enqueue_stop(queue, worker)
+                remaining = deadline - time.monotonic()
+                if remaining > 0:
+                    worker.join(remaining)
+            finally:
+                self._close_lock.release()
+        except Exception as e:
+            log_debug(f"Could not close telemetry dispatcher: {type(e).__name__}")
+
+    def _ensure_process_state(self) -> None:
+        # Bind the old lock before checking the PID. Concurrent callers that
+        # observe the same stale PID must serialize on the same inherited lock,
+        # even though the winning reset installs a fresh lock for future forks.
+        reset_lock = self._fork_fallback_lock
+        current_pid = os.getpid()
+        if self._pid == current_pid:
+            return
+        with reset_lock:
+            current_pid = os.getpid()
+            if self._pid != current_pid:
+                # Keep every concurrent stale-PID caller on this same old lock
+                # until the new PID is published. The at-fork hook, which runs
+                # single-threaded, may instead install a fresh fallback lock.
+                self._reset_after_fork(replace_fallback_lock=False)
+
+    def _start_worker_locked(self) -> None:
+        if self._worker is not None and self._worker.is_alive():
+            return
+        queue = self._queue
+        worker = threading.Thread(target=self._drain, args=(queue,), name="agno-telemetry", daemon=True)
+        self._worker = worker
+        try:
+            worker.start()
+        except Exception:
+            self._worker = None
+            raise
+
+    def _reset_after_fork(self, *, replace_fallback_lock: bool = True) -> None:
+        # Runs in the single surviving child thread for normal Python forks.
+        # Do not close the inherited client here: httpx/OpenSSL locks are not
+        # safe to acquire in an at-fork callback.
+        self._queue = Queue(maxsize=TELEMETRY_QUEUE_SIZE)
+        self._worker = None
+        self._client = None
+        self._lock = threading.Lock()
+        if replace_fallback_lock:
+            self._fork_fallback_lock = threading.Lock()
+        self._close_lock = threading.Lock()
+        self._accepting = True
+        self._stop_enqueued = False
+        # Publish the new PID last so other callers cannot observe partially
+        # initialized child state.
+        self._pid = os.getpid()
+
+    def _drain(self, queue: "Queue[object]") -> None:
+        client: Optional[HttpxClient] = None
+        try:
+            while True:
+                item = queue.get()
+                try:
+                    if item is _STOP:
+                        return
+                    route, payload = cast(Tuple[str, dict], item)
+                    try:
+                        if client is None:
+                            client = self._client_factory()
+                            self._client = client
+                        response = client.post(route, json=payload)
+                        if invalid_response(response):
+                            log_debug(f"Telemetry request to {route} returned status {response.status_code}")
+                    except Exception as e:
+                        log_debug(f"Could not send telemetry event to {route}: {type(e).__name__}")
+                finally:
+                    # Use the queue bound when this worker started. A process
+                    # reset must never pair get() from one queue with task_done()
+                    # on its replacement.
+                    queue.task_done()
+        finally:
+            if client is not None:
+                try:
+                    client.close()
+                except Exception as e:
+                    log_debug(f"Could not close telemetry client: {type(e).__name__}")
+            with self._lock:
+                if self._client is client:
+                    self._client = None
+                if self._worker is threading.current_thread():
+                    self._worker = None
+
+    def _discard_pending(self, queue: "Queue[object]") -> None:
+        while True:
+            try:
+                item = queue.get_nowait()
+            except Empty:
+                return
+            else:
+                queue.task_done()
+                if item is _STOP:
+                    self._stop_enqueued = False
+
+    def _enqueue_stop(self, queue: "Queue[object]", worker: threading.Thread) -> None:
+        with self._lock:
+            if self._stop_enqueued or not worker.is_alive():
+                return
+            try:
+                queue.put_nowait(_STOP)
+            except Full:
+                # close() has stopped producers and discarded pending events,
+                # so this is defensive against a concurrent worker dequeue.
+                self._discard_pending(queue)
+                queue.put_nowait(_STOP)
+            self._stop_enqueued = True
+
+
+_telemetry_dispatcher = _TelemetryDispatcher()
+atexit.register(_telemetry_dispatcher.close)
 
 
 class Api:
     """Client for the Agno telemetry API.
 
-    Telemetry events go through ``post_in_background``: they are queued and
-    sent from a single daemon thread over one keep-alive connection, so the
-    caller never waits on telemetry I/O and consecutive events reuse the same
-    TCP/TLS session instead of paying a fresh handshake per event.
+    Telemetry events go through ``post_in_background``: they are queued on one
+    process-wide dispatcher and sent from a daemon thread over a reusable HTTP
+    client, so callers never wait on telemetry I/O.
 
-    Delivery is best-effort: events still queued when the process exits are
-    dropped, matching telemetry's fire-and-forget contract.
+    Delivery is best-effort. Process shutdown gives queued events a bounded
+    chance to finish; events are dropped after that deadline or when the queue
+    is full.
     """
 
-    def __init__(self):
-        self.headers: Dict[str, str] = {
-            "user-agent": f"{agno_api_settings.app_name}/{agno_api_settings.app_version}",
-            "Content-Type": "application/json",
-        }
-        self._client: Optional[HttpxClient] = None
-        self._queue: "Queue[Tuple[str, dict]]" = Queue(maxsize=TELEMETRY_QUEUE_SIZE)
-        self._worker: Optional[threading.Thread] = None
-        self._lock = threading.Lock()
-        self._pid: int = os.getpid()
-        self._fork_reset_registered = False
+    def __init__(self, dispatcher: _TelemetryDispatcher = _telemetry_dispatcher) -> None:
+        self.headers = _telemetry_headers()
+        self._dispatcher = dispatcher
 
     def Client(self) -> HttpxClient:
         return HttpxClient(
@@ -59,13 +307,7 @@ class Api:
 
     def post_in_background(self, route: str, payload: dict) -> None:
         """Queue a telemetry POST without waiting on network I/O; never raises."""
-        try:
-            self._ensure_worker()
-            self._queue.put_nowait((route, payload))
-        except Full:
-            log_debug(f"Telemetry queue full, dropping event for {route}")
-        except Exception as e:
-            log_debug(f"Could not queue telemetry event for {route}: {e}")
+        self._dispatcher.post(route, payload)
 
     async def apost_in_background(self, route: str, payload: dict) -> None:
         """Async pair of ``post_in_background``.
@@ -75,79 +317,6 @@ class Api:
         paired and safe to await from event-loop code.
         """
         self.post_in_background(route, payload)
-
-    def _ensure_worker(self) -> None:
-        current_pid = os.getpid()
-        if self._pid != current_pid:
-            # A child created without invoking Python's at-fork hooks can inherit
-            # a lock held by a vanished parent thread. Replace inherited state
-            # before acquiring that lock; the child is single-threaded here.
-            self._reset_after_fork()
-
-        if self._worker is not None and self._worker.is_alive():
-            return
-        with self._lock:
-            if self._worker is None or not self._worker.is_alive():
-                self._register_fork_reset()
-                self._worker = threading.Thread(target=self._drain, name="agno-telemetry", daemon=True)
-                self._worker.start()
-
-    def _register_fork_reset(self) -> None:
-        """Reinitialize dispatcher state in forked children, before any user code runs.
-
-        A lock (ours, or the queue's internal mutex) held by another thread at
-        fork time is inherited permanently locked by the child; resetting in an
-        ``after_in_child`` hook closes that window entirely. The pid check in
-        ``_ensure_worker`` remains as a fallback for forks that bypass the hooks.
-        """
-        if self._fork_reset_registered:
-            return
-        self._fork_reset_registered = True
-        if not hasattr(os, "register_at_fork"):  # Windows
-            return
-        ref = weakref.ref(self)
-
-        def _reset_in_child() -> None:
-            instance = ref()
-            if instance is not None:
-                instance._reset_after_fork()
-
-        os.register_at_fork(after_in_child=_reset_in_child)
-
-    def _reset_after_fork(self) -> None:
-        # Runs single-threaded in the child, so plain reassignment is safe.
-        self._lock = threading.Lock()
-        self._queue = Queue(maxsize=TELEMETRY_QUEUE_SIZE)
-        self._worker = None
-        self._client = None
-        self._pid = os.getpid()
-
-    def _drain(self) -> None:
-        while True:
-            route, payload = self._queue.get()
-            try:
-                response = self._shared_client().post(route, json=payload)
-                if invalid_response(response):
-                    log_debug(f"Telemetry request to {route} returned status {response.status_code}")
-            except Exception as e:
-                log_debug(f"Could not send telemetry event to {route}: {type(e).__name__}")
-            finally:
-                self._queue.task_done()
-
-    def _shared_client(self) -> HttpxClient:
-        # Only ever touched from the worker thread, so no lock is needed.
-        if self._client is None:
-            self._client = self._telemetry_client()
-        return self._client
-
-    def _telemetry_client(self) -> HttpxClient:
-        """Create the worker's short-timeout, connection-reusing client."""
-        return HttpxClient(
-            base_url=agno_api_settings.api_url,
-            headers=self.headers,
-            timeout=TELEMETRY_TIMEOUT,
-            http2=True,
-        )
 
 
 api = Api()
