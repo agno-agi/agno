@@ -57,7 +57,12 @@ def nested_model_dump(value):
         return v if isinstance(v, (str, int, float, bool, type(None))) else value.name
     # Plain objects with __dict__ (e.g. Todoist SDK)
     elif hasattr(value, "__dict__") and not isinstance(value, type):
-        return {k: nested_model_dump(v) for k, v in value.__dict__.items() if not k.startswith("_")}
+        # Extract non-private attributes
+        extracted = {k: nested_model_dump(v) for k, v in value.__dict__.items() if not k.startswith("_")}
+        # If all attrs were private (e.g. Neo4j DateTime), return original value
+        # so json_serializer can handle it via str() fallback
+        if extracted:
+            return extracted
     return value
 
 
