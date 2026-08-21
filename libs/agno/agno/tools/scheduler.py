@@ -18,14 +18,401 @@ Example:
     )
 """
 
+import asyncio
 import json
 import time
-from typing import Any, Callable, Dict, List, Optional
+from functools import partial
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
+from agno.db.schemas.scheduler import RUN_ENDPOINT_RE, Schedule, match_run_endpoint
 from agno.run import RunContext
 from agno.scheduler.manager import ScheduleManager
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_debug, log_exception
+from agno.utils.log import log_debug, logger
+
+
+def _parse_target_archived_reason(disabled_reason: Optional[str]) -> Optional[Tuple[str, str]]:
+    """Parse a system ``target_archived:<type>:<id>`` disabled_reason into (type, id).
+
+    Format authority for the cascade's reason string. Deliberately NOT part of
+    the enable predicate: the reason records why a row was disabled, not what
+    it targets now, so refusing on it would brick a row repointed at a live
+    target and miss a row that was disabled before the archive.
+    """
+    if not disabled_reason or not disabled_reason.startswith("target_archived:"):
+        return None
+    parts = disabled_reason.split(":", 2)
+    if len(parts) != 3 or not parts[1] or not parts[2]:
+        return None
+    return parts[1], parts[2]
+
+
+def _is_archived_component(row: Optional[Dict[str, Any]]) -> bool:
+    """True only for a real archived row: a dict with ``deleted_at`` set."""
+    return isinstance(row, dict) and row.get("deleted_at") is not None
+
+
+def _endpoint_target(endpoint: Optional[str]) -> Optional[Tuple[str, str]]:
+    """(singular type, id) of the component a run endpoint addresses, else None."""
+    if not endpoint:
+        return None
+    match = RUN_ENDPOINT_RE.match(endpoint)
+    if match is None:
+        return None
+    return match.group(1)[:-1], match.group(2)  # "agents" -> "agent"
+
+
+def _schedule_component_target(schedule: Schedule) -> Optional[Tuple[str, str]]:
+    """The component *schedule* actually targets: provenance when stamped, else its run endpoint."""
+    if schedule.target_id:
+        return schedule.target_type or "component", schedule.target_id
+    return _endpoint_target(schedule.endpoint)
+
+
+# ``(target_type, target_id) -> True`` when that component is defined in code and
+# served from the running process. Pure in-memory lookup: the async refusal paths
+# call it directly rather than handing it to a worker thread.
+CodeDefinedProbe = Callable[[str, str], bool]
+
+
+def code_defined_probe(
+    agents: Optional[Sequence[Any]] = None,
+    teams: Optional[Sequence[Any]] = None,
+    workflows: Optional[Sequence[Any]] = None,
+) -> Optional[CodeDefinedProbe]:
+    """A probe over the in-process components, or None when none were given.
+
+    The component catalog cannot see a component that is defined in code: the run
+    routes resolve those from the in-process lists BEFORE they consult the
+    catalog, so a code-defined target answers its run endpoint no matter what a
+    catalog row of the same id holds. A caller that owns those lists builds a
+    probe here and hands it to the draft-only refusal; a caller that owns none
+    passes nothing, and the catalog stands alone.
+
+    The answer is per (type, id), never per id: a code-defined AGENT and a
+    draft-only TEAM row can share an id, and exempting the team on the agent's
+    account would arm a schedule that resolves to nothing.
+
+    The lists are read on every probe call, not snapshotted here, so a list that
+    is still empty when the probe is built - AgentOS fills its own lists after
+    the toolkits and routers are wired - answers for whatever it holds at
+    refusal time. Passing no list at all is the "no evidence" case and yields
+    None, which leaves the catalog to decide alone.
+    """
+    if agents is None and teams is None and workflows is None:
+        return None
+    by_type: Dict[str, Optional[Sequence[Any]]] = {"agent": agents, "team": teams, "workflow": workflows}
+
+    def probe(target_type: str, target_id: str) -> bool:
+        return any(getattr(entry, "id", None) == target_id for entry in by_type.get(target_type) or [])
+
+    return probe
+
+
+def _component_type_arg(target_type: str) -> Optional[Any]:
+    """``target_type`` as a ComponentType, or None when it names no real type."""
+    from agno.db.base import ComponentType
+
+    try:
+        return ComponentType(target_type)
+    except ValueError:
+        return None
+
+
+def _archived_component_refusal(
+    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """(type, id) iff that component's catalog row exists with ``deleted_at`` set.
+
+    ``user_id`` scopes the read to the caller: without it a scoped caller gets a
+    different answer for another owner's archived component than for an id that
+    does not exist, which discloses that the component exists.
+    """
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    try:
+        # The type predicate matters: a code-defined component of another type
+        # can hold the same id, and an archived catalog row must not be read as
+        # THIS schedule's target. upsert_component refuses to rewrite a type,
+        # so the type recorded when the schedule was made still identifies it.
+        row = get_component(
+            target_id,
+            component_type=_component_type_arg(target_type),
+            user_id=user_id,
+            include_deleted=True,
+        )
+    except NotImplementedError:
+        return None
+    if _is_archived_component(row):
+        return target_type, target_id
+    return None
+
+
+async def _aarchived_component_refusal(
+    db: Any, target_type: str, target_id: str, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """Async variant of ``_archived_component_refusal``; same predicate."""
+    if db is None:
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    component_type = _component_type_arg(target_type)
+    try:
+        if asyncio.iscoroutinefunction(get_component):
+            row = await get_component(target_id, component_type=component_type, user_id=user_id, include_deleted=True)
+        else:
+            # A sync adapter would hold the event loop for the whole query
+            row = await asyncio.to_thread(
+                partial(
+                    get_component,
+                    target_id,
+                    component_type=component_type,
+                    user_id=user_id,
+                    include_deleted=True,
+                )
+            )
+    except NotImplementedError:
+        return None
+    if _is_archived_component(row):
+        return target_type, target_id
+    return None
+
+
+def archived_target_refusal(db: Any, schedule: Schedule, user_id: Optional[str] = None) -> Optional[Tuple[str, str]]:
+    """(type, id) of the still-archived component that blocks enabling *schedule*, else None.
+
+    The verdict is the target's ACTUAL liveness, never the disabled_reason: the
+    target is the provenance (target_type/target_id) when stamped, else the
+    component named by the schedule's run endpoint. Enable is refused if and
+    only if that component's catalog row has ``deleted_at`` set - regardless of
+    why (or whether) the schedule was disabled - so a row disabled before the
+    archive is still refused, and a row since repointed at a live target is not
+    refused over a stale reason. A missing catalog row is a live code-defined
+    target (allow); a restored or hard-deleted target no longer blocks;
+    adapters without a component catalog (``get_component`` raising
+    NotImplementedError) allow.
+
+    The REST enable route and the create guards apply this same predicate;
+    keep them identical.
+
+    ``user_id`` is accepted for call-site symmetry with the create-side guards
+    and deliberately not forwarded: the liveness read here is unscoped. The
+    caller already holds the schedule row, which names its own target, so an
+    unscoped read discloses nothing it cannot read off that row -- while a
+    scoped one hides another owner's archived component behind "live" and
+    lets the caller re-arm the very schedule the archive cascade disabled.
+    """
+    target = _schedule_component_target(schedule)
+    if target is None:
+        return None
+    return _archived_component_refusal(db, target[0], target[1])
+
+
+async def aarchived_target_refusal(
+    db: Any, schedule: Schedule, user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """Async variant of ``archived_target_refusal``; same predicate, and the
+    same deliberately unscoped liveness read."""
+    target = _schedule_component_target(schedule)
+    if target is None:
+        return None
+    return await _aarchived_component_refusal(db, target[0], target[1])
+
+
+def archived_endpoint_refusal(
+    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """(type, id) when *endpoint* is a run endpoint aimed at an archived component, else None.
+
+    Create-side twin of ``archived_target_refusal``: a schedule pointed at an
+    archived component can only 404 at fire time, so creating or repointing one
+    is refused up front instead of accepted and left armed.
+    """
+    target = _endpoint_target(endpoint)
+    if target is None:
+        return None
+    return _archived_component_refusal(db, target[0], target[1], user_id=user_id)
+
+
+async def aarchived_endpoint_refusal(
+    db: Any, endpoint: Optional[str], user_id: Optional[str] = None
+) -> Optional[Tuple[str, str]]:
+    """Async variant of ``archived_endpoint_refusal``; same predicate."""
+    target = _endpoint_target(endpoint)
+    if target is None:
+        return None
+    return await _aarchived_component_refusal(db, target[0], target[1], user_id=user_id)
+
+
+def _has_any_config(db: Any, component_id: str) -> bool:
+    """True when the component carries at least one stored config version.
+
+    Distinguishes a real draft-only component from a bare components row that
+    has no configs at all; adapters without a catalog answer False (allow).
+    """
+    list_configs = getattr(db, "list_configs", None)
+    if list_configs is None:
+        return False
+    try:
+        return bool(list_configs(component_id, include_config=False))
+    except (NotImplementedError, TypeError):
+        return False
+
+
+def _draft_only_component_refusal(
+    db: Any,
+    target_type: str,
+    target_id: str,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
+) -> Optional[Tuple[str, str]]:
+    """(type, id) iff that component has an unpublished config and no live version.
+
+    ``current_version is None`` alone is not enough: a components row with no
+    configs at all (a bare registry/control-plane stub) reads the same way, and
+    it behaves like a code-defined target - there is nothing to publish, so
+    refusing it would brick schedules that work today. Only a component that
+    actually carries a config, none of which is live, is a draft-only target.
+
+    A target the caller reports as code-defined is exempt outright, catalog row
+    and all: the run routes resolve it in process, so its draft configs never
+    decide whether the endpoint answers, and "publish it first" names a remedy
+    that would not change the run either way. The exemption is settled before
+    the catalog is read, so it can neither depend on nor disclose a row the
+    caller may not see.
+    """
+    if db is None:
+        return None
+    if is_code_defined is not None and is_code_defined(target_type, target_id):
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    try:
+        row = get_component(target_id, component_type=_component_type_arg(target_type), user_id=user_id)
+    except NotImplementedError:
+        return None
+    if not isinstance(row, dict) or row.get("current_version") is not None:
+        return None
+    if not _has_any_config(db, target_id):
+        return None
+    return target_type, target_id
+
+
+async def _adraft_only_component_refusal(
+    db: Any,
+    target_type: str,
+    target_id: str,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
+) -> Optional[Tuple[str, str]]:
+    """Async variant of ``_draft_only_component_refusal``; same predicate."""
+    if db is None:
+        return None
+    if is_code_defined is not None and is_code_defined(target_type, target_id):
+        return None
+    get_component = getattr(db, "get_component", None)
+    if get_component is None:
+        return None
+    component_type = _component_type_arg(target_type)
+    try:
+        if asyncio.iscoroutinefunction(get_component):
+            row = await get_component(target_id, component_type=component_type, user_id=user_id)
+        else:
+            row = await asyncio.to_thread(
+                partial(get_component, target_id, component_type=component_type, user_id=user_id)
+            )
+    except NotImplementedError:
+        return None
+    if not isinstance(row, dict) or row.get("current_version") is not None:
+        return None
+    if not await asyncio.to_thread(partial(_has_any_config, db, target_id)):
+        return None
+    return target_type, target_id
+
+
+def draft_endpoint_refusal(
+    db: Any,
+    endpoint: Optional[str],
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
+) -> Optional[Tuple[str, str]]:
+    """(type, id) when *endpoint* is aimed at a draft-only component, else None."""
+    target = _endpoint_target(endpoint)
+    if target is None:
+        return None
+    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined)
+
+
+async def adraft_endpoint_refusal(
+    db: Any,
+    endpoint: Optional[str],
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
+) -> Optional[Tuple[str, str]]:
+    """Async variant of ``draft_endpoint_refusal``; same predicate."""
+    target = _endpoint_target(endpoint)
+    if target is None:
+        return None
+    return await _adraft_only_component_refusal(
+        db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined
+    )
+
+
+def draft_target_refusal(
+    db: Any,
+    schedule: Schedule,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
+) -> Optional[Tuple[str, str]]:
+    """(type, id) of the draft-only component that blocks enabling *schedule*."""
+    target = _schedule_component_target(schedule)
+    if target is None:
+        return None
+    return _draft_only_component_refusal(db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined)
+
+
+async def adraft_target_refusal(
+    db: Any,
+    schedule: Schedule,
+    user_id: Optional[str] = None,
+    is_code_defined: Optional[CodeDefinedProbe] = None,
+) -> Optional[Tuple[str, str]]:
+    """(type, id) of the draft-only component that blocks enabling *schedule*."""
+    target = _schedule_component_target(schedule)
+    if target is None:
+        return None
+    return await _adraft_only_component_refusal(
+        db, target[0], target[1], user_id=user_id, is_code_defined=is_code_defined
+    )
+
+
+def endpoint_drift_refusal(schedule: Schedule) -> Optional[str]:
+    """Why enable must stay refused for an endpoint_drift-disabled row, else None.
+
+    The executor disables a managed schedule whose endpoint no longer matches
+    its provenance target (reason ``endpoint_drift:...``). Re-arming without
+    re-checking would fail-and-disable again on the next tick - or fire the
+    wrong component. Enable is allowed only once the endpoint matches the
+    provenance target again; a drift-disabled row without provenance to check
+    against stays refused (fail closed). Pure predicate (no I/O), shared by the
+    sync and async enable paths.
+    """
+    reason = schedule.disabled_reason or ""
+    if not reason.startswith("endpoint_drift:"):
+        return None
+    if (
+        schedule.target_type
+        and schedule.target_id
+        and schedule.endpoint
+        and match_run_endpoint(schedule.endpoint, schedule.target_type, schedule.target_id)
+    ):
+        return None
+    return reason
 
 
 class SchedulerTools(Toolkit):
@@ -36,24 +423,27 @@ class SchedulerTools(Toolkit):
     existing AgentOS scheduler infrastructure.
 
     Args:
-        db: Database adapter implementing scheduler DB methods.
-        default_endpoint: Endpoint to call when schedule fires (e.g. /agents/<id>/runs).
-            The agent can override this per-schedule.
-        default_method: HTTP method for endpoint. Defaults to POST.
-        default_timezone: Default timezone for schedules. Defaults to UTC.
-        default_payload: Default payload for scheduled runs.
-        user_id: Fixed owner for every schedule operation. When unset, the owner
-            is taken from the run's user_id (via run_context), so each user's
-            agent only sees and edits that user's schedules.
-        create_schedule: Enable create_schedule tool. Defaults to False.
-        list_schedules: Enable list_schedules tool. Defaults to True.
-        get_schedule: Enable get_schedule tool. Defaults to True.
-        delete_schedule: Enable delete_schedule tool. Defaults to False.
-        enable_schedule: Enable enable_schedule tool. Defaults to False.
-        disable_schedule: Enable disable_schedule tool. Defaults to False.
-        trigger_schedule: Enable trigger_schedule tool. Defaults to False.
-        get_schedule_runs: Enable get_schedule_runs tool. Defaults to False.
-        all: Enable all tools. Defaults to False.
+        db: A database adapter that implements the scheduler DB methods.
+        default_endpoint: The default endpoint to call when a schedule fires
+            (e.g. ``/agents/<agent_id>/runs``). The agent can override this
+            per-schedule, but having a default simplifies the common case.
+        default_method: HTTP method for the endpoint (default: ``POST``).
+        default_timezone: Default timezone for schedules (default: ``UTC``).
+        default_payload: Default payload to send with each scheduled run.
+            The agent can override or extend this per-schedule.
+        user_id: Fixed owner for every schedule operation. When unset, the
+            owner is taken from the run's ``user_id`` (injected via
+            ``run_context``), so each user's agent only sees and edits that
+            user's schedules.
+        include_agents: Optional live list (e.g. ``agent_os.agents``) of the
+            code-defined agents this process serves. Schedules aimed at one are
+            exempt from the draft-only refusal: run routes resolve code-defined
+            components before they consult the component catalog, so a catalog
+            row of the same id never decides whether the endpoint answers.
+            Without the list the catalog is the only evidence there is, and a
+            code-defined target that also carries a draft row is refused.
+        include_teams: Same as ``include_agents`` but for teams.
+        include_workflows: Same as ``include_agents`` but for workflows.
     """
 
     def __init__(
@@ -64,15 +454,9 @@ class SchedulerTools(Toolkit):
         default_timezone: str = "UTC",
         default_payload: Optional[Dict[str, Any]] = None,
         user_id: Optional[str] = None,
-        create_schedule: bool = False,
-        list_schedules: bool = True,
-        get_schedule: bool = True,
-        delete_schedule: bool = False,
-        enable_schedule: bool = False,
-        disable_schedule: bool = False,
-        trigger_schedule: bool = False,
-        get_schedule_runs: bool = False,
-        all: bool = False,
+        include_agents: Optional[Sequence[Any]] = None,
+        include_teams: Optional[Sequence[Any]] = None,
+        include_workflows: Optional[Sequence[Any]] = None,
         **kwargs: Any,
     ):
         self.manager = ScheduleManager(db=db)
@@ -81,34 +465,31 @@ class SchedulerTools(Toolkit):
         self.default_method = default_method
         self.default_timezone = default_timezone
         self.default_payload = default_payload
+        self.include_agents = include_agents
+        self.include_teams = include_teams
+        self.include_workflows = include_workflows
 
-        tools: List[Callable] = []
-        async_tools: List[tuple[Callable[..., Any], str]] = []
+        tools: List[Callable] = [
+            self.create_schedule,
+            self.list_schedules,
+            self.get_schedule,
+            self.delete_schedule,
+            self.enable_schedule,
+            self.disable_schedule,
+            self.trigger_schedule,
+            self.get_schedule_runs,
+        ]
 
-        if all or create_schedule:
-            tools.append(self.create_schedule)
-            async_tools.append((self.acreate_schedule, "create_schedule"))
-        if all or list_schedules:
-            tools.append(self.list_schedules)
-            async_tools.append((self.alist_schedules, "list_schedules"))
-        if all or get_schedule:
-            tools.append(self.get_schedule)
-            async_tools.append((self.aget_schedule, "get_schedule"))
-        if all or delete_schedule:
-            tools.append(self.delete_schedule)
-            async_tools.append((self.adelete_schedule, "delete_schedule"))
-        if all or enable_schedule:
-            tools.append(self.enable_schedule)
-            async_tools.append((self.aenable_schedule, "enable_schedule"))
-        if all or disable_schedule:
-            tools.append(self.disable_schedule)
-            async_tools.append((self.adisable_schedule, "disable_schedule"))
-        if all or trigger_schedule:
-            tools.append(self.trigger_schedule)
-            async_tools.append((self.atrigger_schedule, "trigger_schedule"))
-        if all or get_schedule_runs:
-            tools.append(self.get_schedule_runs)
-            async_tools.append((self.aget_schedule_runs, "get_schedule_runs"))
+        async_tools: List[tuple[Callable[..., Any], str]] = [
+            (self.acreate_schedule, "create_schedule"),
+            (self.alist_schedules, "list_schedules"),
+            (self.aget_schedule, "get_schedule"),
+            (self.adelete_schedule, "delete_schedule"),
+            (self.aenable_schedule, "enable_schedule"),
+            (self.adisable_schedule, "disable_schedule"),
+            (self.atrigger_schedule, "trigger_schedule"),
+            (self.aget_schedule_runs, "get_schedule_runs"),
+        ]
 
         super().__init__(
             name="scheduler",
@@ -136,6 +517,17 @@ class SchedulerTools(Toolkit):
         if self.user_id is not None:
             return self.user_id
         return run_context.user_id if run_context is not None else None
+
+    @property
+    def _code_defined(self) -> Optional[CodeDefinedProbe]:
+        """Probe over this toolkit's in-process components, or None when it has none.
+
+        Built from the attributes on every refusal rather than fixed at
+        construction: the toolkit is usually created before the AgentOS whose
+        component lists it is handed, so those lists are commonly assigned
+        afterwards.
+        """
+        return code_defined_probe(self.include_agents, self.include_teams, self.include_workflows)
 
     # ------------------------------------------------------------------
     # Sync tools
@@ -188,6 +580,47 @@ class SchedulerTools(Toolkit):
                     }
                 )
 
+        # A schedule aimed at an archived component can only 404 at fire time:
+        # refuse the create instead of accepting an armed dead schedule. Scoped
+        # to the acting owner: an unscoped probe answers "archived" for another
+        # owner's component and "fine" for an id that does not exist, which
+        # discloses that the component exists.
+        refusal = archived_endpoint_refusal(self.manager.db, resolved_endpoint, user_id=self._owner(run_context))
+        if refusal is not None:
+            target_type, target_id = refusal
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' is archived. "
+                    "Restore the component first.",
+                    "error_type": "target_archived",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+        # A schedule fires the live published version, so a draft-only target
+        # can only 404 on every tick - and once the cascade disables the row,
+        # the enable guard refuses to re-arm it. The REST create route applies
+        # the same predicate; keep the two surfaces in step.
+        draft_target = draft_endpoint_refusal(
+            self.manager.db,
+            resolved_endpoint,
+            user_id=self._owner(run_context),
+            is_code_defined=self._code_defined,
+        )
+        if draft_target is not None:
+            target_type, target_id = draft_target
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' has no published version. "
+                    "Publish it first.",
+                    "error_type": "target_not_published",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+
         try:
             schedule = self.manager.create(
                 name=name,
@@ -214,7 +647,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to create schedule")
+            logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
     def list_schedules(self, enabled_only: bool = False, run_context: Optional[RunContext] = None) -> str:
@@ -243,7 +676,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
-            log_exception("Failed to list schedules")
+            logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
     def get_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -273,7 +706,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to get schedule")
+            logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
     def delete_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -291,7 +724,7 @@ class SchedulerTools(Toolkit):
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
         except Exception as e:
-            log_exception("Failed to delete schedule")
+            logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
     def enable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -304,6 +737,60 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = self.manager.get(schedule_id, user_id=self._owner(run_context))
+            if existing is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            # A schedule aimed at an archived component can only 404 at fire
+            # time; restoring the component is the way to turn it back on. A
+            # target without a catalog row is a live code-defined component.
+            refusal = archived_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
+            if refusal is not None:
+                target_type, target_id = refusal
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' is archived. "
+                        "Restore the component first.",
+                        "error_type": "target_archived",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
+            # A schedule fires the live published version, so a draft-only
+            # target can only 404 on every tick. The REST enable route applies
+            # the same predicate; keep the two surfaces in step.
+            draft_target = draft_target_refusal(
+                self.manager.db,
+                existing,
+                user_id=self._owner(run_context),
+                is_code_defined=self._code_defined,
+            )
+            if draft_target is not None:
+                target_type, target_id = draft_target
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' has no published version. "
+                        "Publish it first.",
+                        "error_type": "target_not_published",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
+            # A drift-disabled row re-arms only once its endpoint matches its
+            # provenance target again; otherwise it just fails on the next tick.
+            drift = endpoint_drift_refusal(existing)
+            if drift is not None:
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': it was disabled because its "
+                        f"endpoint no longer matches its target ({drift}). "
+                        "Repoint the endpoint back at the target first.",
+                        "error_type": "endpoint_drift",
+                        "target_type": existing.target_type,
+                        "target_id": existing.target_id,
+                    }
+                )
             schedule = self.manager.enable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -316,7 +803,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to enable schedule")
+            logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
     def disable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -341,7 +828,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to disable schedule")
+            logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
     def trigger_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -375,7 +862,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to trigger schedule")
+            logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
     def get_schedule_runs(self, schedule_id: str, limit: int = 10, run_context: Optional[RunContext] = None) -> str:
@@ -402,7 +889,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"runs": result, "count": len(result)})
         except Exception as e:
-            log_exception("Failed to get schedule runs")
+            logger.exception("Failed to get schedule runs")
             return json.dumps({"error": str(e)})
 
     # ------------------------------------------------------------------
@@ -456,6 +943,47 @@ class SchedulerTools(Toolkit):
                     }
                 )
 
+        # A schedule aimed at an archived component can only 404 at fire time:
+        # refuse the create instead of accepting an armed dead schedule. Scoped
+        # to the acting owner: an unscoped probe answers "archived" for another
+        # owner's component and "fine" for an id that does not exist, which
+        # discloses that the component exists.
+        refusal = await aarchived_endpoint_refusal(self.manager.db, resolved_endpoint, user_id=self._owner(run_context))
+        if refusal is not None:
+            target_type, target_id = refusal
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' is archived. "
+                    "Restore the component first.",
+                    "error_type": "target_archived",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+        # A schedule fires the live published version, so a draft-only target
+        # can only 404 on every tick - and once the cascade disables the row,
+        # the enable guard refuses to re-arm it. The REST create route applies
+        # the same predicate; keep the two surfaces in step.
+        draft_target = await adraft_endpoint_refusal(
+            self.manager.db,
+            resolved_endpoint,
+            user_id=self._owner(run_context),
+            is_code_defined=self._code_defined,
+        )
+        if draft_target is not None:
+            target_type, target_id = draft_target
+            return json.dumps(
+                {
+                    "error": f"Cannot create schedule '{name}': its target "
+                    f"{target_type} '{target_id}' has no published version. "
+                    "Publish it first.",
+                    "error_type": "target_not_published",
+                    "target_type": target_type,
+                    "target_id": target_id,
+                }
+            )
+
         try:
             schedule = await self.manager.acreate(
                 name=name,
@@ -482,7 +1010,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to create schedule")
+            logger.exception("Failed to create schedule")
             return json.dumps({"error": str(e)})
 
     async def alist_schedules(self, enabled_only: bool = False, run_context: Optional[RunContext] = None) -> str:
@@ -511,7 +1039,7 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"schedules": result, "count": len(result)})
         except Exception as e:
-            log_exception("Failed to list schedules")
+            logger.exception("Failed to list schedules")
             return json.dumps({"error": str(e)})
 
     async def aget_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -541,7 +1069,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to get schedule")
+            logger.exception("Failed to get schedule")
             return json.dumps({"error": str(e)})
 
     async def adelete_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -559,7 +1087,7 @@ class SchedulerTools(Toolkit):
                 return json.dumps({"status": "deleted", "id": schedule_id})
             return json.dumps({"error": f"Schedule not found or could not be deleted: {schedule_id}"})
         except Exception as e:
-            log_exception("Failed to delete schedule")
+            logger.exception("Failed to delete schedule")
             return json.dumps({"error": str(e)})
 
     async def aenable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -572,6 +1100,60 @@ class SchedulerTools(Toolkit):
             str: JSON string with the updated schedule details.
         """
         try:
+            existing = await self.manager.aget(schedule_id, user_id=self._owner(run_context))
+            if existing is None:
+                return json.dumps({"error": f"Schedule not found: {schedule_id}"})
+            # A schedule aimed at an archived component can only 404 at fire
+            # time; restoring the component is the way to turn it back on. A
+            # target without a catalog row is a live code-defined component.
+            refusal = await aarchived_target_refusal(self.manager.db, existing, user_id=self._owner(run_context))
+            if refusal is not None:
+                target_type, target_id = refusal
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' is archived. "
+                        "Restore the component first.",
+                        "error_type": "target_archived",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
+            # A schedule fires the live published version, so a draft-only
+            # target can only 404 on every tick. The REST enable route applies
+            # the same predicate; keep the two surfaces in step.
+            draft_target = await adraft_target_refusal(
+                self.manager.db,
+                existing,
+                user_id=self._owner(run_context),
+                is_code_defined=self._code_defined,
+            )
+            if draft_target is not None:
+                target_type, target_id = draft_target
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': its target "
+                        f"{target_type} '{target_id}' has no published version. "
+                        "Publish it first.",
+                        "error_type": "target_not_published",
+                        "target_type": target_type,
+                        "target_id": target_id,
+                    }
+                )
+            # A drift-disabled row re-arms only once its endpoint matches its
+            # provenance target again; otherwise it just fails on the next tick.
+            drift = endpoint_drift_refusal(existing)
+            if drift is not None:
+                return json.dumps(
+                    {
+                        "error": f"Cannot enable '{existing.name}': it was disabled because its "
+                        f"endpoint no longer matches its target ({drift}). "
+                        "Repoint the endpoint back at the target first.",
+                        "error_type": "endpoint_drift",
+                        "target_type": existing.target_type,
+                        "target_id": existing.target_id,
+                    }
+                )
             schedule = await self.manager.aenable(schedule_id, user_id=self._owner(run_context))
             if schedule is None:
                 return json.dumps({"error": f"Schedule not found: {schedule_id}"})
@@ -584,7 +1166,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to enable schedule")
+            logger.exception("Failed to enable schedule")
             return json.dumps({"error": str(e)})
 
     async def adisable_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -609,7 +1191,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to disable schedule")
+            logger.exception("Failed to disable schedule")
             return json.dumps({"error": str(e)})
 
     async def atrigger_schedule(self, schedule_id: str, run_context: Optional[RunContext] = None) -> str:
@@ -643,7 +1225,7 @@ class SchedulerTools(Toolkit):
                 }
             )
         except Exception as e:
-            log_exception("Failed to trigger schedule")
+            logger.exception("Failed to trigger schedule")
             return json.dumps({"error": str(e)})
 
     async def aget_schedule_runs(
@@ -672,5 +1254,5 @@ class SchedulerTools(Toolkit):
             ]
             return json.dumps({"runs": result, "count": len(result)})
         except Exception as e:
-            log_exception("Failed to get schedule runs")
+            logger.exception("Failed to get schedule runs")
             return json.dumps({"error": str(e)})
