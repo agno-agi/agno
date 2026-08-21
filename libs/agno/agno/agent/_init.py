@@ -20,7 +20,6 @@ if TYPE_CHECKING:
 
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb
-from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.utils import get_model
 from agno.session import SessionSummaryManager
@@ -125,6 +124,8 @@ def set_learning_machine(agent: Agent) -> None:
     - learning=False/None: Disabled
     - learning=LearningMachine(...): Use provided, inject db/model/knowledge
     """
+    from agno.learn.machine import LearningMachine
+
     agent._learning_init_attempted = True
 
     # Handle learning=False or learning=None

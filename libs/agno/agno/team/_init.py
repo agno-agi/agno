@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.learn.machine import LearningMachine
     from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
     from agno.team.team import Team
@@ -33,7 +34,7 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
@@ -120,6 +121,7 @@ def __init__(
     add_search_knowledge_instructions: bool = True,
     read_chat_history: bool = False,
     store_media: bool = True,
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
     store_tool_messages: bool = True,
     store_history_messages: bool = False,
     send_media_to_model: bool = True,
@@ -288,6 +290,7 @@ def __init__(
     team.read_chat_history = read_chat_history
 
     team.store_media = store_media
+    team.media_storage = media_storage
     team.store_tool_messages = store_tool_messages
     team.store_history_messages = store_history_messages
     team.send_media_to_model = send_media_to_model
@@ -714,6 +717,8 @@ def _set_learning_machine(team: "Team") -> None:
     - learning=False/None: Disabled
     - learning=LearningMachine(...): Use provided, inject db/model
     """
+    from agno.learn.machine import LearningMachine
+
     team._learning_init_attempted = True
 
     if team.learning is None or team.learning is False:

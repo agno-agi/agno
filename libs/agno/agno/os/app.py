@@ -21,6 +21,7 @@ from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -57,6 +58,7 @@ from agno.os.routers.home import get_home_router
 from agno.os.routers.job_queue import get_queue_router
 from agno.os.routers.knowledge import get_knowledge_router
 from agno.os.routers.learnings import get_learnings_router
+from agno.os.routers.media import get_media_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
 from agno.os.routers.registry import get_registry_router
@@ -273,6 +275,7 @@ class AgentOS:
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
@@ -335,6 +338,8 @@ class AgentOS:
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
+            media_storage: Backend the media routes read stored media from. Defaults to the first
+                one configured on an agent, team or workflow.
             tracing: If True, enables OpenTelemetry tracing for all agents and teams in the OS
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             queue: Configuration for the AgentOS job queue (QueueConfig). Background runs
@@ -426,6 +431,7 @@ class AgentOS:
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
+        self.media_storage = media_storage
 
         # If True, run agent/team hooks as FastAPI background tasks
         self.run_hooks_in_background = run_hooks_in_background
@@ -476,7 +482,6 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
-        self._bind_studio_catalog_dbs()
         self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
@@ -555,13 +560,13 @@ class AgentOS:
 
         # Populate registry with code-defined agents/teams
         self._populate_registry()
-        self._bind_studio_catalog_dbs()
         self._warn_on_foreign_studio_registries()
         self._populate_registry_managers()
 
         # Check for duplicate IDs
         self._raise_if_duplicate_ids()
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
@@ -601,7 +606,8 @@ class AgentOS:
         # The home router is added by _add_built_in_routes below; adding it here too
         # would duplicate the GET / route on every resync.
         updated_routers = [
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
+            get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
@@ -862,25 +868,10 @@ class AgentOS:
         # rather than guessing at the head of registry.dbs: that list is
         # whatever the component tree happened to carry, so guessing binds
         # Studio to an agent-private session db and writes the catalog where no
-        # OS surface reads it. Declaring only when self.db exists would leave
-        # exactly that guess in place for an OS with no db, which is the wiring
-        # most likely to have one - a builder agent carrying its own.
-        #
-        # A db-less OS still does not OVERRIDE a catalog another OS already
-        # named: registries are explicitly shareable, so a second, dispatch-only
-        # OS mounted on the same registry would otherwise unbind the first one's
-        # Studio and turn its working writes into db_not_configured. Toolkits
-        # this OS actually serves are bound to it directly and outrank this
-        # declaration; what is left here is the answer for toolkits no OS
-        # serves.
-        declared_by = self.registry.component_db_declared_by
-        declaring_os = declared_by() if declared_by is not None else None
-        if not self.registry.component_db_declared:
-            # With no db of its own, declare what the USER put on the registry
-            # rather than a flat None. This runs before component discovery, so
-            # registry.dbs can only hold dbs passed to Registry(...) at this
-            # point, never an agent-private one collected from the served tree
-            # - and re-running it later must not reach for that list either.
+        # OS surface reads it.
+        if self.db is not None:
+            # This OS's db backs the catalog. Declared again on every run so a
+            # resync, or a db swapped in place, reaches Studio too.
             #
             # A db that cannot back a synchronous catalog still gets to be the
             # one declared: declare_component_db reads it as a refusal, and a
@@ -889,30 +880,15 @@ class AgentOS:
             # back exactly where this declaration removed it, and would land
             # the catalog behind the listings an OS turns off for such a db:
             # /components, and the stored half of /agents, /teams and
-            # /workflows. The Studio toolkits this OS serves would still read
-            # that catalog on the run surface, so the objection is the guess
-            # rather than the reachability.
-            declared = self.db if self.db is not None else (self.registry.dbs[0] if self.registry.dbs else None)
-            self.registry.declare_component_db(declared, declared_by=self)
-        elif self.db is not None:
-            if self.registry.component_db is None or declaring_os is self:
-                # A declared None is a refusal that a later db-bearing OS lifts,
-                # and the OS that made a declaration can move it - a resync, or
-                # its db swapped in place - so the catalog declaration follows
-                # the same rebinding rule as the toolkit bindings. Without that,
-                # a swapped db would move the toolkits this OS serves while
-                # leaving the declaration on the old db, and a toolkit resolving
-                # through the registry instead would disagree with them.
-                self.registry.declare_component_db(self.db, declared_by=self)
-            elif self.db is not self.registry.component_db:
-                # Not a warning: a legitimate sibling OS with its own db is
-                # normal wiring, and the toolkits it serves are bound to it
-                # directly. Only a toolkit pulled between two of them warns.
-                log_debug(
-                    f"Registry: component catalog stays on db '{self.registry.component_db.id}'; this AgentOS "
-                    f"holds a different db ('{getattr(self.db, 'id', None)}') and binds only the Studio "
-                    "toolkits it serves."
-                )
+            # /workflows.
+            self.registry.declare_component_db(self.db)
+        elif not self.registry.component_db_declared:
+            # With no db of its own, declare what the USER put on the registry
+            # rather than a flat None. This runs before component discovery, so
+            # registry.dbs can only hold dbs passed to Registry(...) at this
+            # point, never an agent-private one collected from the served tree
+            # - and re-running it later must not reach for that list either.
+            self.registry.declare_component_db(self.registry.dbs[0] if self.registry.dbs else None)
 
         # The catalog db also goes first in registry.dbs, so rehydration that
         # walks the list meets it before any component-private db. Ordering is
@@ -1010,116 +986,6 @@ class AgentOS:
             self.registry.add_knowledge(kb, mirrored=True)
         for kb in self.knowledge or []:
             self.registry.add_knowledge(kb, mirrored=True)
-
-    def _bind_studio_catalog_dbs(self) -> None:
-        """Bind every Studio toolkit this OS serves to this OS's own db.
-
-        A Registry is explicitly shareable, so its single catalog declaration
-        cannot say which of several mounted AgentOS instances owns a given
-        toolkit: whichever OS was constructed last would take every unpinned
-        toolkit with it, and its writes would land in a db the OS actually
-        serving that toolkit never reads. Binding follows the OS that SERVES
-        the toolkit, which does not depend on construction order.
-
-        The binding records WHICH OS made it, so this OS can replace its own
-        binding whenever it runs again - a resync, or its db swapped in place
-        - and only a second, different OS naming a different db is held off.
-
-        A toolkit served by an OS with no usable db is deliberately left
-        unbound so it falls through to the registry declaration: that keeps a
-        db-less deployment working once another OS names a catalog db.
-        """
-        from weakref import ref
-
-        for component in self._iter_component_carriers():
-            tools = getattr(component, "tools", None)
-            # tools may be a callable factory; only a materialized list can be
-            # inspected here, and a factory cannot be called safely at
-            # construction time. Stamp the carrier instead and bind when the
-            # factory first runs (agno.utils.callables): a toolkit delivered by
-            # a factory otherwise never learns which OS serves it, falls through
-            # to the registry-wide declaration - which belongs to whichever
-            # AgentOS declared FIRST - and writes its catalog into a db the
-            # serving OS never reads, reporting success either way.
-            if not isinstance(tools, list):
-                if tools is not None:
-                    # First stamp wins, exactly as the first binding does for a
-                    # materialized list: two OS instances serving one component
-                    # must not have the answer decided by which constructed
-                    # last. Only the OS that made the stamp may move it, so a
-                    # resync or a swapped db still follows its own OS. A stamp
-                    # whose OS has been collected is left alone rather than
-                    # replaced, so the outcome never depends on when the
-                    # garbage collector ran.
-                    existing = getattr(component, "_studio_catalog_os", None)
-                    stamped_by = existing() if existing is not None else None
-                    if existing is None or stamped_by is self:
-                        try:
-                            component._studio_catalog_os = ref(self)
-                        except AttributeError:
-                            # A slotted or frozen carrier cannot hold the
-                            # stamp; it keeps the registry-declaration
-                            # behaviour it had before.
-                            pass
-                continue
-            self._bind_studio_tools(component, tools)
-
-    def _bind_studio_tools(self, component: Any, tools: List[Any]) -> None:
-        """Bind the Studio toolkits in one materialized tool list to this OS's db.
-
-        Called with a plain list at construction time, and again from the
-        callable-tools resolver the first time a factory produces its list.
-        """
-        from weakref import ref
-
-        from agno.tools.studio import StudioTools
-        from agno.tools.studio_runner import StudioRunnerTools
-
-        os_db = self.db if isinstance(self.db, BaseDb) else None
-        for tool in tools:
-            if not isinstance(tool, (StudioTools, StudioRunnerTools)):
-                continue
-            # A toolkit on another registry is a different catalog entirely
-            # (warned about separately), and an explicit db always wins.
-            if getattr(tool, "registry", None) is not self.registry or getattr(tool, "_db", None) is not None:
-                continue
-            already = getattr(tool, "_os_db", None)
-            binding = getattr(tool, "_os_binding", None)
-            # Held weakly, so a collected OS reads as None here. That is
-            # not this OS either way, and the first binding stands: making
-            # a rebind depend on whether the other OS happens to still be
-            # alive would make the outcome depend on collection timing.
-            bound_by = binding() if binding is not None else None
-            if bound_by is not self and already is not None and already is not os_db:
-                if os_db is not None:
-                    label = getattr(component, "id", None) or getattr(component, "name", None)
-                    bound_id = getattr(already, "id", None)
-                    this_id = getattr(os_db, "id", None)
-                    # Two dbs can carry the same id, and naming both would
-                    # then read as a contradiction rather than a conflict.
-                    which = (
-                        f"two distinct db instances sharing the id '{bound_id}'"
-                        if bound_id == this_id
-                        else f"bound '{bound_id}', this OS '{this_id}'"
-                    )
-                    # Says what is true in every case this can fire. A
-                    # count of AgentOS instances is not: replacing the OS
-                    # object over the same toolkit reaches here with
-                    # exactly one AgentOS in the user's code.
-                    log_warning(
-                        f"Component '{label}' carries {type(tool).__name__} already bound to a different "
-                        f"database ({which}); keeping the first binding. Pass the toolkit its own db "
-                        "(StudioTools(db=...)) to make the choice explicit."
-                    )
-            else:
-                # StudioTools delegates its component lookups to an embedded
-                # runner toolkit, so both halves have to resolve one db.
-                tool._os_db = os_db
-                tool._os_binding = ref(self)
-                embedded = getattr(tool, "_runner_tools", None)
-                if embedded is not None and getattr(embedded, "_db", None) is None:
-                    embedded._os_db = os_db
-                    embedded._os_binding = ref(self)
 
     def _iter_component_carriers(self) -> Iterator[Any]:
         """Every served component that can carry a toolkit: top-level
@@ -1466,6 +1332,7 @@ class AgentOS:
         self._add_built_in_routes(app=fastapi_app)
 
         self._auto_discover_databases()
+        self._auto_discover_media_storage()
         self._auto_discover_knowledge_instances()
         self._populate_registry_knowledge()
 
@@ -1473,7 +1340,8 @@ class AgentOS:
         self._populate_registry_components()
 
         routers = [
-            get_session_router(dbs=self.dbs),
+            get_session_router(dbs=self.dbs, media_storage=self.media_storage),
+            get_media_router(dbs=self.dbs, media_storage=self.media_storage, settings=self.settings),
             get_memory_router(dbs=self.dbs),
             get_learnings_router(dbs=self.dbs, settings=self.settings),
             get_eval_router(
@@ -1942,6 +1810,36 @@ class AgentOS:
             "workflows": workflow_ids,
             "interfaces": [interface.type for interface in self.interfaces] if self.interfaces else None,
         }
+
+    def _auto_discover_media_storage(self) -> None:
+        """Fall back to the first media storage configured on an agent, team or workflow.
+
+        Media offload is configured per agent/team/workflow, so AgentOS itself is usually left
+        without a backend. Mirrors how tracing falls back to the first available database.
+        """
+        if self.media_storage is not None:
+            return
+
+        # Collected rather than short-circuited so a mixed tree can be reported.
+        found = [
+            entity.media_storage
+            for group in (self._agents, self._teams, self._workflows)
+            for entity in group
+            if entity.media_storage
+        ]
+        if not found:
+            return
+
+        self.media_storage = found[0]
+        # Compared on backend and bucket so two equivalent instances do not read as a conflict.
+        identities = {(getattr(storage, "backend_name", None), getattr(storage, "bucket", None)) for storage in found}
+        if len(identities) > 1:
+            log_warning(
+                "Multiple media storage backends found across the agent tree, serving media with "
+                f"{type(self.media_storage).__name__}. Set media_storage on AgentOS to choose explicitly."
+            )
+        else:
+            log_debug(f"Media storage auto-discovered from the agent tree: {type(self.media_storage).__name__}")
 
     def _auto_discover_databases(self) -> None:
         """Auto-discover and initialize the databases used by all contextual agents, teams and workflows."""

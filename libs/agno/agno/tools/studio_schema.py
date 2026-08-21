@@ -43,6 +43,10 @@ StudioErrorCode = Literal[
     "schedule_conflict",
     "target_not_published",
     "db_not_configured",
+    # The catalog table exists but is on an older shape. Distinct from
+    # db_not_configured, where there is no catalog at all: the remedy is a
+    # migration, not configuration, and the message carries the command.
+    "db_schema_stale",
     "validation_failed",
     "internal_error",
 ]

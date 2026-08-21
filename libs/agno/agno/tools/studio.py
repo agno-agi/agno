@@ -76,6 +76,7 @@ import inspect
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Set, Union
 
+from agno.exceptions import SchemaMismatchError
 from agno.run import RunContext
 from agno.tools.function import Function
 from agno.tools.studio_runner import AmbiguousComponentNameError, StudioRunnerError, StudioRunnerTools, _slugify
@@ -85,8 +86,6 @@ from agno.utils.log import log_debug, logger
 from agno.utils.string import generate_component_id_from_name, validate_component_id
 
 if TYPE_CHECKING:
-    from weakref import ReferenceType
-
     from agno.agent.agent import Agent
     from agno.db.base import BaseDb
     from agno.models.base import Model
@@ -257,16 +256,6 @@ class StudioTools(Toolkit):
         # is filled by AgentOS afterwards, so an __init__ snapshot would leave
         # every write answering db_not_configured forever.
         self._db: Optional["BaseDb"] = db
-        # Set by the AgentOS that SERVES this toolkit (see the db property).
-        # Declared before super().__init__ so a deep copy of the toolkit carries
-        # the field rather than resolving as if it had never been bound.
-        self._os_db: Optional["BaseDb"] = None
-        # Which AgentOS set _os_db, held weakly. Identity is what makes a rebind
-        # decidable: the same OS binding again -- a resync, or its db swapped in
-        # place -- replaces its own binding silently, while a different OS
-        # naming a different db keeps the first binding and warns. A strong
-        # reference would keep a whole served application graph alive.
-        self._os_binding: Optional["ReferenceType[Any]"] = None
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
@@ -562,12 +551,6 @@ class StudioTools(Toolkit):
     def db(self) -> Optional["BaseDb"]:
         if self._db is not None:
             return self._db
-        # The db of the AgentOS that serves this toolkit, when one does. A
-        # registry is shareable, so its declaration alone cannot say which of
-        # several mounted OS instances owns this toolkit's catalog; binding to
-        # the serving OS keeps writes in the db that OS's HTTP surfaces read.
-        if self._os_db is not None:
-            return self._os_db
         # Resolved on every access, never memoized. Studio is built before
         # AgentOS, so a single read before the OS declares its catalog db -- a
         # log line, a debug print, a health check -- would otherwise pin this
@@ -993,6 +976,16 @@ class StudioTools(Toolkit):
             # An adapter without the component catalog (e.g. Mongo): an honest
             # capability answer, not an internal error.
             return error_result("db_not_configured", "This database does not support the component catalog.")
+        if isinstance(exc, SchemaMismatchError):
+            # The catalog table exists but is on an older shape, and the
+            # message names the migration that fixes it. Distinct from
+            # db_not_configured, where no catalog exists at all: the remedy
+            # differs, so the code has to. Matched by type rather than by
+            # class name so MigrationRequiredError and any other subclass are
+            # covered, and kept ahead of the ValueError branch because these
+            # are deliberately not ValueErrors - several routers map those to
+            # 400, which would report a stale database as a client error.
+            return error_result("db_schema_stale", str(exc))
         if isinstance(exc, ValueError) and str(exc):
             return error_result("invalid_request", str(exc))
         logger.exception(fallback_message)
@@ -1009,7 +1002,7 @@ class StudioTools(Toolkit):
         metadata, the field most likely to hold something a caller would not
         publish -- and, on a connection error, the server it was reaching for.
         """
-        if type(exc).__name__ in self._TYPED_ERROR_CODES or isinstance(exc, ValueError):
+        if type(exc).__name__ in self._TYPED_ERROR_CODES or isinstance(exc, (SchemaMismatchError, ValueError)):
             return f"{message}: {exc}"
         logger.exception(message)
         return f"{message}: {type(exc).__name__}. The server log has the details."

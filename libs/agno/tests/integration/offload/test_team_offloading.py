@@ -208,7 +208,8 @@ def test_member_response_is_replaced_by_an_envelope(db):
     output = team.run("go", session_id=_sid())
     tool_message = _tool_messages(output)[0]
     assert tool_message.tool_name == "delegate_task_to_member"
-    assert len(tool_message.content) < 1500
+    assert len(tool_message.content) < 2600
+    assert "lines omitted ...]" in tool_message.content
     assert tool_message.content.startswith('<result id="res_')
     assert 'tool="delegate_task_to_member"' in tool_message.content
     assert BIG not in tool_message.content

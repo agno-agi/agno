@@ -29,8 +29,12 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
+
+if TYPE_CHECKING:
+    from agno.learn.machine import LearningMachine
+
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
@@ -52,7 +56,6 @@ from agno.session import SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.team import (
-    _cli,
     _default_tools,
     _init,
     _managers,
@@ -248,6 +251,8 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set (and store_media is True), media is uploaded here and only references are stored
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output
@@ -510,6 +515,7 @@ class Team:
         add_search_knowledge_instructions: bool = True,
         read_chat_history: bool = False,
         store_media: bool = True,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         send_media_to_model: bool = True,
@@ -628,6 +634,7 @@ class Team:
             add_search_knowledge_instructions=add_search_knowledge_instructions,
             read_chat_history=read_chat_history,
             store_media=store_media,
+            media_storage=media_storage,
             store_tool_messages=store_tool_messages,
             store_history_messages=store_history_messages,
             send_media_to_model=send_media_to_model,
@@ -1247,6 +1254,8 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return _cli.team_print_response(
             self,
             input=input,
@@ -1305,6 +1314,8 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return await _cli.team_aprint_response(
             self,
             input=input,
@@ -1335,6 +1346,8 @@ class Team:
         )
 
     def _get_member_name(self, entity_id: str) -> str:
+        from agno.team import _cli
+
         return _cli._get_member_name(self, entity_id=entity_id)
 
     def scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
@@ -1353,6 +1366,8 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return _cli.cli_app(
             self, input=input, user=user, emoji=emoji, stream=stream, markdown=markdown, exit_on=exit_on, **kwargs
         )
@@ -1369,6 +1384,8 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return await _cli.acli_app(
             self,
             input=input,
@@ -1699,11 +1716,11 @@ class Team:
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
-    def delete_session(self, session_id: str, user_id: Optional[str] = None):
-        return _session.delete_session(self, session_id=session_id, user_id=user_id)
+    def delete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        return _session.delete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
-    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
-        return await _session.adelete_session(self, session_id=session_id, user_id=user_id)
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        return await _session.adelete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
     def get_session_messages(
         self,

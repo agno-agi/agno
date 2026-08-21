@@ -178,7 +178,9 @@ def test_large_result_is_replaced_by_a_small_envelope(db):
     session_id = _sid()
     output = agent.run("go", session_id=session_id)
     tool_message = _tool_messages(output)[0]
-    assert len(tool_message.content) < 1500
+    # Head, an omitted marker, and a tail: still under 2% of the payload.
+    assert len(tool_message.content) < 2600
+    assert "lines omitted ...]" in tool_message.content
     assert tool_message.content.startswith('<result id="res_')
     assert "read_result(" in tool_message.content
 

@@ -120,20 +120,12 @@ def test_refused_envelope_omits_marker_when_everything_fits(store):
     assert "line 5" in envelope
 
 
-def test_preview_honours_lines_then_chars(tmp_path):
-    db = SqliteDb(db_file=str(tmp_path / "p.db"))
-    fs = FileSystem(backend=db, namespace="tool-results")
-    line_bound = ResultStore(db=db, fs=fs, threshold_chars=10, preview_lines=3, preview_chars=10_000)
-    ref = line_bound.offload(
-        session_id="S", run_id="r", tool_call_id="t1", tool_name="x", tool_args={}, output="a\nb\nc\nd\ne"
-    )
-    assert line_bound.get_row(ref.result_id)["preview"] == "a\nb\nc"
+def test_preview_honours_lines_then_chars():
+    from agno.offload.store import _head_preview
 
-    char_bound = ResultStore(db=db, fs=fs, threshold_chars=10, preview_lines=100, preview_chars=3)
-    ref2 = char_bound.offload(
-        session_id="S", run_id="r", tool_call_id="t2", tool_name="x", tool_args={}, output="a\nb\nc\nd\ne"
-    )
-    assert char_bound.get_row(ref2.result_id)["preview"] == "a\nb"
+    # The head of a preview: lines first, then characters.
+    assert _head_preview("a\nb\nc\nd\ne", preview_lines=3, preview_chars=10_000) == "a\nb\nc"
+    assert _head_preview("a\nb\nc\nd\ne", preview_lines=100, preview_chars=3) == "a\nb"
 
 
 def test_multibyte_content_reports_bytes_not_characters(store):
@@ -707,3 +699,40 @@ def test_search_never_reexecutes_a_guardless_caller_script(tmp_path):
     assert completed.returncode == 0, completed.stderr
     assert "MATCHES 1" in completed.stdout
     assert sentinel.read_text() == "ran\n", "the caller script was executed more than once"
+
+
+# ------------------------------------------------------------------
+# The envelope previews the tail as well as the head
+# ------------------------------------------------------------------
+
+
+def test_envelope_preview_carries_head_and_tail(store):
+    output = "\n".join(f"row {i}: value={i * 7}" for i in range(1, 501))
+    envelope = store.offload_for_model(
+        session_id="S1", run_id="r1", tool_call_id="tail-1", tool_name="fetch", tool_args={}, output=output
+    )
+    assert "row 1: value=7" in envelope
+    assert "row 500: value=3500" in envelope
+    assert "lines omitted ...]" in envelope
+    # The stored row carries the same block, so a replayed envelope shows the
+    # tail too, not only the head.
+    rows = [r for r in store.db.get_tool_results_for_session("S1") if r["tool_call_id"] == "tail-1"]
+    assert "row 500: value=3500" in rows[0]["preview"]
+
+
+def test_short_output_previews_whole_with_no_tail_marker(store):
+    envelope = store.offload_for_model(
+        session_id="S1", run_id="r1", tool_call_id="tail-2", tool_name="fetch", tool_args={}, output="x" * 150
+    )
+    assert "lines omitted" not in envelope
+
+
+def test_envelope_previews_a_tail_even_for_one_huge_line(store):
+    # A single very long line - the common oversized JSON tool result - is
+    # cut by the character cap, not by lines, and still shows a tail.
+    envelope = store.offload_for_model(
+        session_id="S1", run_id="r1", tool_call_id="huge-1", tool_name="fetch", tool_args={}, output="x" * 40_000
+    )
+    assert "omitted ...]" in envelope
+    rows = [r for r in store.db.get_tool_results_for_session("S1") if r["tool_call_id"] == "huge-1"]
+    assert "omitted ...]" in rows[0]["preview"]

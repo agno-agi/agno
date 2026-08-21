@@ -76,6 +76,12 @@ def test_handle_names_for_mixed_tools():
 # ------------------------------------------------------------------
 
 
+def test_instructions_name_the_snapshot_caps_when_given():
+    text = build_instructions([], allow_shell=False, allow_restart=False, snapshot_caps=(2_000_000, 64_000_000))
+    assert "a single variable over 2000000 bytes" in text
+    assert "total state over 64000000 bytes is not saved" in text
+
+
 def test_instructions_full_surface_pinned():
     text = build_instructions(["arcade", "file_system"], allow_shell=True, allow_restart=True)
     assert text == (
@@ -87,11 +93,20 @@ def test_instructions_full_surface_pinned():
         "them later instead of re-reading them into your context. Print summaries, not raw data."
         "\n\n"
         "State persists across cells: variables, functions, classes, imports, notes, and parsed "
-        "outputs stay available in every later turn. Attached tools are awaitable calls in this "
+        "outputs stay available in every later turn. The environment outlives your visible "
+        "conversation: variables created in turns you can no longer see are still live, and "
+        "%whos lists everything that exists. Attached tools are awaitable calls in this "
         "environment: arcade, file_system. Tool calls are await expressions, so their return "
         "values can be bound to variables and composed into program logic like any other call. "
         "Do not invent wrappers such as call_tool(...); call the documented function, and use "
         "help(...) on a handle to inspect it."
+        "\n\n"
+        "When result offloading is enabled, stored tool results are values here, not just "
+        "envelopes: text = await result_store.get('res_...') binds the whole payload to a "
+        "variable, await result_store.search('res_...', pattern) and "
+        "await result_store.read('res_...', start_line=...) stay bounded, and "
+        "await result_store.ids() lists what this session has stored. Compute over the "
+        "variable and print summaries; never print the payload."
         "\n\n"
         "This environment is your control environment, not the runtime of the thing you are "
         "investigating. A repository, service, dataset, or benchmark has its own environment and "
@@ -100,9 +115,10 @@ def test_instructions_full_surface_pinned():
         "external project to import. Treat failures from the project's own environment as the "
         "relevant result."
         "\n\n"
-        "Each %%bash cell is a throw-away subshell, so cd, export, and shell variables do not "
-        "carry over. Keep dependent shell steps in one cell, or use %cd and os.environ[...], "
-        "which are kernel-level and apply to every later %%bash cell."
+        "%%bash must be the first line of its cell - no comment, import, or statement before "
+        "it. Each %%bash cell is a throw-away subshell, so cd, export, and shell variables do "
+        "not carry over. Keep dependent shell steps in one cell, or use %cd and "
+        "os.environ[...], which are kernel-level and apply to every later %%bash cell."
         "\n\n"
         "If the environment is corrupted or wedged, call restart to tear it down and start "
         "fresh; every variable and import is lost."
@@ -147,20 +163,33 @@ def test_accumulator_under_cap_is_untouched():
     assert not acc.truncated
 
 
-def test_accumulator_caps_at_accumulation_and_appends_marker():
-    acc = OutputAccumulator(10)
-    acc.add("0123456789ABCDEF")
+def test_accumulator_keeps_the_head_and_the_tail():
+    acc = OutputAccumulator(100)
+    acc.add("H" * 75)
+    acc.add("M" * 1000)
+    acc.add("the traceback lives here")
     assert acc.truncated
-    assert acc.render() == "0123456789\n[... output truncated at 10 chars ...]"
+    text = acc.render()
+    assert text.startswith("H" * 75)
+    assert text.endswith("the traceback lives here"[-25:])
+    assert "chars omitted; output capped at 100" in text
 
 
-def test_accumulator_drops_chunks_after_cap_without_growing():
-    acc = OutputAccumulator(5)
+def test_accumulator_stays_bounded_after_the_cap():
+    acc = OutputAccumulator(100)
     for _ in range(1000):
         acc.add("xxxxxxxxxx")
-    # Bounded at the cap: the internal buffer never exceeds max_chars.
-    assert sum(len(p) for p in acc._parts) == 5
-    assert acc.render() == "xxxxx\n[... output truncated at 5 chars ...]"
+    # Bounded at the cap: head plus tail never exceed max_chars.
+    assert acc._head_length + acc._tail_length <= 100
+    assert "chars omitted; output capped at 100" in acc.render()
+
+
+def test_accumulator_one_huge_chunk_keeps_its_own_tail():
+    acc = OutputAccumulator(100)
+    acc.add("A" * 75 + "B" * 10_000 + "END")
+    text = acc.render()
+    assert text.startswith("A" * 75)
+    assert text.endswith("END")
 
 
 def test_accumulator_exact_cap_is_not_truncated():
@@ -676,10 +705,12 @@ def test_params_from_schema_maps_unusable_names_and_keeps_the_wire_name():
 
     function = _raw_schema_function("fetch", {"from": {"type": "string"}, "start-date": {"type": "string"}}, ["from"])
     params = _params_from_schema(function)
-    assert params == [
-        {"name": "from_", "wire": "from", "required": True},
-        {"name": "start_date", "wire": "start-date", "required": False},
+    assert [(p["name"], p["wire"], p["required"]) for p in params] == [
+        ("from_", "from", True),
+        ("start_date", "start-date", False),
     ]
+    # The schema details ride along for the docstring.
+    assert params[0]["type"] == "string"
 
 
 def test_stub_doc_records_the_renamed_parameters():
@@ -922,3 +953,38 @@ def test_a_toolkit_and_a_callable_share_one_kernel_namespace():
 
     kit = Toolkit(name="foo_tools", tools=[])
     assert handle_names_for([kit, foo]) == ["foo", "foo_2"]
+
+
+# ------------------------------------------------------------------
+# The kernel launches exactly the interpreter it was given
+# ------------------------------------------------------------------
+
+
+def test_kernel_manager_launches_the_given_interpreter():
+    session = KernelSession("spec-test", python="/opt/custom/python")
+    km = session._make_kernel_manager()
+    argv = km.format_kernel_cmd()
+    assert argv[0] == "/opt/custom/python"
+    assert argv[1:3] == ["-m", "ipykernel_launcher"]
+
+
+def test_kernel_manager_never_consults_installed_kernelspecs(monkeypatch):
+    session = KernelSession("spec-test-2")
+    km = session._make_kernel_manager()
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("an installed kernelspec was consulted")
+
+    monkeypatch.setattr(km.kernel_spec_manager, "get_kernel_spec", _boom)
+    assert km.format_kernel_cmd()[0] == session.python
+
+
+def test_stderr_tail_keeps_only_the_last_bytes():
+    import io
+
+    from agno.tools.code.kernel import StderrTail
+
+    tail = StderrTail(io.BytesIO(b"A" * 10_000 + b"the reason it died"), max_bytes=64)
+    tail._thread.join(timeout=5)
+    assert tail.tail().endswith("the reason it died")
+    assert len(tail.tail()) <= 64

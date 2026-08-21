@@ -78,6 +78,47 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
     return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
+# Matched to the most generous object-store metadata budget.
+MAX_FILES_METADATA_BYTES = 8000
+
+
+def parse_files_metadata(files_metadata: Optional[str]) -> List[Optional[Dict[str, Any]]]:
+    """Parse the per-file metadata array, refusing one too large to persist.
+
+    Rejected rather than truncated: a caller who sends metadata expects to read it back.
+    """
+    if not files_metadata:
+        return []
+    if len(files_metadata.encode("utf-8")) > MAX_FILES_METADATA_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"files_metadata exceeds the {MAX_FILES_METADATA_BYTES}-byte limit",
+        )
+    try:
+        parsed = json.loads(files_metadata)
+    except json.JSONDecodeError as e:
+        log_warning(f"Invalid files_metadata JSON: {files_metadata}: {str(e)}")
+        return []
+    if not isinstance(parsed, list):
+        return []
+    # Coerce non-object entries to None so the matching file is still processed without metadata.
+    return [m if isinstance(m, dict) else None for m in parsed]
+
+
+def drop_media_references(media_dicts: Any) -> Any:
+    """Drop ``media_reference`` from inbound media dicts.
+
+    A reference is a pointer into the configured storage bucket, minted by the offload engine and
+    trusted downstream. Honouring one from a request body would let a caller name any key the
+    AgentOS credentials can reach, persist it onto their own session, and read it back.
+    """
+    if isinstance(media_dicts, list):
+        for item in media_dicts:
+            if isinstance(item, dict):
+                item.pop("media_reference", None)
+    return media_dicts
+
+
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
     """Given a Request and an endpoint function, return a dictionary with all extra form data fields.
 
@@ -163,7 +204,7 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             continue
         kwargs.pop(form_key)
         try:
-            reconstructed_media = reconstructor(json.loads(media_value))
+            reconstructed_media = reconstructor(drop_media_references(json.loads(media_value)))
             if reconstructed_media:
                 kwargs[kwarg_key] = reconstructed_media
         except json.JSONDecodeError as e:
@@ -1098,25 +1139,25 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     return None
 
 
-def process_image(file: UploadFile) -> Image:
+def process_image(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Image:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Image(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_audio(file: UploadFile) -> Audio:
+def process_audio(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Audio(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Audio(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_video(file: UploadFile) -> Video:
+def process_video(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Video(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
 # Map document file extensions to their canonical MIME type, used to recover a valid
@@ -1160,7 +1201,7 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     return file.content_type
 
 
-def process_document(file: UploadFile) -> Optional[FileMedia]:
+def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Optional[FileMedia]:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -1172,6 +1213,7 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         filename=file.filename,
         format=extract_format(file),
         mime_type=_resolve_document_mime_type(file),
+        metadata=metadata,
     )
 
 
