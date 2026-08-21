@@ -867,7 +867,15 @@ class AgentOS:
             # registry.dbs can only hold dbs passed to Registry(...) at this
             # point, never an agent-private one collected from the served tree
             # - and re-running it later must not reach for that list either.
-            declared = self.db if self.db is not None else (self.registry.dbs[0] if self.registry.dbs else None)
+            # A db that cannot serve the catalog -- async, or remote -- is no
+            # answer at all, so it does not get to be the one declared. Testing
+            # for presence rather than capability let an async db win here and
+            # then land as a declared None, which refuses a perfectly usable
+            # synchronous db the user had put on the registry for exactly this
+            # purpose. _bind_studio_catalog_dbs already reads the OS db this
+            # way; an OS whose db cannot back the catalog behaves throughout
+            # like an OS with no db.
+            declared = self.db if isinstance(self.db, BaseDb) else (self.registry.dbs[0] if self.registry.dbs else None)
             self.registry.declare_component_db(declared, declared_by=self)
         elif self.db is not None:
             if self.registry.component_db is None or declaring_os is self:

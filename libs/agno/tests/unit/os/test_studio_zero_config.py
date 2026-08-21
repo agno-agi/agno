@@ -672,3 +672,46 @@ class TestASharedRegistryBindsPerOS:
         assert seen_at_declaration, "the catalog db was never declared"
         assert all("builder-private" not in ids for ids in seen_at_declaration), seen_at_declaration
         assert studio.db is None
+
+
+class TestAnAsyncOsDbDoesNotDiscardTheRegistrysCatalogDb:
+    """An AgentOS db that cannot back the catalog must not out-rank one that can.
+
+    An async (or remote) db is declared as None, because the catalog needs a
+    synchronous adapter. Choosing WHICH db to declare on capability rather
+    than mere presence is what keeps that refusal from also throwing away a
+    synchronous db the user put on the registry for exactly this purpose --
+    otherwise a deployment whose OS runs async loses every Studio write to
+    db_not_configured, even though a usable catalog db is sitting right there.
+    """
+
+    def test_the_registrys_sync_db_backs_the_catalog(self, tmp_path):
+        from agno.db.sqlite import AsyncSqliteDb
+
+        catalog = SqliteDb(id="catalog", db_file=str(tmp_path / "catalog.db"))
+        registry = Registry(name="R", models=[_model()], dbs=[catalog])
+        studio = StudioTools(registry=registry)
+        AgentOS(
+            agents=[Agent(id="builder", name="Builder", model=_model(), tools=[studio])],
+            db=AsyncSqliteDb(id="osdb", db_file=str(tmp_path / "os.db")),
+            registry=registry,
+        )
+
+        assert studio.db is catalog
+
+    def test_a_write_lands_instead_of_answering_db_not_configured(self, tmp_path):
+        from agno.db.sqlite import AsyncSqliteDb
+
+        catalog = SqliteDb(id="catalog", db_file=str(tmp_path / "catalog.db"))
+        registry = Registry(name="R", models=[_model()], dbs=[catalog])
+        studio = StudioTools(registry=registry)
+        AgentOS(
+            agents=[Agent(id="builder", name="Builder", model=_model(), tools=[studio])],
+            db=AsyncSqliteDb(id="osdb", db_file=str(tmp_path / "os.db")),
+            registry=registry,
+        )
+
+        created = json.loads(studio.create_agent(name="Researcher", instructions="i", publish=True))
+
+        assert created["ok"] is True, created
+        assert catalog.get_component(created["data"]["id"]) is not None
