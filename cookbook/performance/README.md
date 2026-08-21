@@ -21,16 +21,32 @@ Agno at the feat/v3.0 tip.
 
 | Metric | Agno | LangGraph | PydanticAI | CrewAI |
 |---|---|---|---|---|
-| Single-turn run (mocked model) | 65 us | 320 us (4.9x) | 1,592 us (24x) | 5,234 us (80x) |
-| 5-turn conversation (mocked model) | 2.2 ms | 3.4 ms (1.6x) | 8.3 ms (3.9x) | 24.4 ms (11x) |
-| Agent construction (1 tool) | 4.6 us | 1,105 us (239x) | 9,664 us (2,090x) | 19,323 us (4,178x) |
+| Single-turn run (mocked model) | 63 us | 302 us (4.8x) | 1,533 us (24x) | 4,907 us (78x) |
+| Tool-call run (mocked model) | 318 us | 813 us (2.6x) | 2,389 us (7.5x) | excluded |
+| 5-turn conversation (mocked model) | 2.1 ms | 3.2 ms (1.5x) | 7.7 ms (3.6x) | 18.7 ms (8.8x) |
+| 25-turn conversation (mocked model) | 37.8 ms | 22.3 ms (0.6x) | 38.9 ms (1.0x) | 91.7 ms (2.4x) |
+| Agent construction (1 tool) | 4.5 us | 1,132 us (249x) | 9,911 us (2,182x) | 19,099 us (4,205x) |
 | Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.6x) | 24 KiB (3.4x) |
-| Cold import | 250 ms | 390 ms (1.6x) | 533 ms (2.1x) | 1,105 ms (4.4x) |
+| Cold import | 264 ms | 400 ms (1.5x) | 562 ms (2.1x) | 1,073 ms (4.1x) |
 
 Multipliers are relative to Agno. The committed reference runs, including
 per-benchmark distributions, are under `baselines/`; the definition of each
 metric is below, and `comparison/README.md` documents exactly where each
-framework's mock intervenes.
+framework's mock intervenes and why CrewAI is excluded from the tool-call
+benchmark.
+
+Two results deserve explicit discussion. First, the tool-call run: Agno
+defers tool-schema extraction from construction to run time, so this is the
+benchmark where that deferred cost is paid — it still measures fastest, but
+the 2.6x margin over LangGraph is far narrower than the 249x construction
+margin, and reading those two rows together is the honest picture. Second,
+the 25-turn conversation, which Agno does not win: its per-turn session
+persistence re-serializes the conversation each turn, so cost grows
+quadratically with conversation length, and LangGraph's
+in-memory checkpointer — which stores state by reference and persists
+nothing — is 1.7x faster at that length. The growth term is a known
+optimization target; the number is published as measured and will be
+re-measured when that work lands.
 
 ## 1. Environment setup
 

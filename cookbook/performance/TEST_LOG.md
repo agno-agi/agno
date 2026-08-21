@@ -122,6 +122,27 @@ LangGraph's checkpointer is an in-memory dict. Published as measured.
 
 ---
 
+### comparison/tool_run_comparison.py and comparison/long_conversation_comparison.py (new)
+
+**Status:** PASS
+
+**Description:** Two benchmarks added specifically to probe where Agno's deferred-work
+design should struggle. Tool-call run: one real tool execution per run (mocked model
+requests the call, framework dispatches the actual function, second turn answers; every
+variant asserts execution; CrewAI excluded - its custom-model tool protocol is
+version-internal text). 25-turn conversation: the 5-turn benchmark at length 25, where
+history-proportional costs dominate.
+
+**Result:** Tool-call run: agno 318 us, LangGraph 813 us (2.6x), PydanticAI 2,389 us
+(7.5x) - agno still fastest despite paying deferred schema extraction per run, but the
+margin is far narrower than construction. 25-turn conversation: **agno 37.8 ms LOSES to
+LangGraph 22.3 ms (0.6x)**; PydanticAI 38.9 ms at parity; CrewAI 91.7 ms. Cause: per-turn
+session re-serialization grows quadratically with conversation length versus LangGraph's
+by-reference in-memory checkpointer. Published as measured; the growth term maps to the
+roadmap's serialize-once and history copy-on-write items.
+
+---
+
 ## Review round (2026-08-21)
 
 A 34-agent adversarial review (methodology, mock fidelity, house rules, report, runner

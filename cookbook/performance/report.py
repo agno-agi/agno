@@ -143,6 +143,28 @@ def comparison_groups(versions: dict) -> list:
             ],
         },
         {
+            "key": "cmp_tool_run",
+            "metric": "Tool-call run (mocked model)",
+            "title": "Tool-call run vs other frameworks",
+            "unit": "us",
+            "measure": "time",
+            "ratio_to": "tool_run_compare_agno",
+            "blurb": (
+                "One run with one real tool execution: the mocked model requests "
+                "a tool call, the framework dispatches and executes the actual "
+                "function, and a second model turn answers. Agno pays its "
+                "deferred tool-schema extraction here rather than at "
+                "construction. CrewAI is excluded: with a custom model its tool "
+                "use goes through a version-internal text protocol a mock "
+                "cannot fairly reproduce."
+            ),
+            "rows": [
+                ("tool_run_compare_agno", agno, "sync"),
+                ("tool_run_compare_langgraph", langgraph, "other"),
+                ("tool_run_compare_pydantic_ai", pydantic_ai, "other"),
+            ],
+        },
+        {
             "key": "cmp_multi_turn",
             "metric": "5-turn conversation (mocked model)",
             "title": "Five-turn conversation vs other frameworks",
@@ -162,6 +184,28 @@ def comparison_groups(versions: dict) -> list:
                 ("multi_turn_compare_langgraph", langgraph, "other"),
                 ("multi_turn_compare_pydantic_ai", pydantic_ai, "other"),
                 ("multi_turn_compare_crewai", crewai, "other"),
+            ],
+        },
+        {
+            "key": "cmp_long_conversation",
+            "metric": "25-turn conversation (mocked model)",
+            "title": "Twenty-five-turn conversation vs other frameworks",
+            "unit": "ms",
+            "measure": "time",
+            "ratio_to": "long_conversation_compare_agno",
+            "blurb": (
+                "The five-turn benchmark extended to twenty-five turns, so costs "
+                "that grow with history length dominate. Agno does not currently "
+                "win this one: its per-turn session persistence re-serializes "
+                "the conversation each turn, while LangGraph's in-memory "
+                "checkpointer stores state by reference. Published as measured; "
+                "the growth term is a known optimization target."
+            ),
+            "rows": [
+                ("long_conversation_compare_agno", agno, "sync"),
+                ("long_conversation_compare_langgraph", langgraph, "other"),
+                ("long_conversation_compare_pydantic_ai", pydantic_ai, "other"),
+                ("long_conversation_compare_crewai", crewai, "other"),
             ],
         },
         {
@@ -203,7 +247,9 @@ def comparison_groups(versions: dict) -> list:
 # Row order for the headline comparison table: most decision-relevant first
 COMPARISON_TABLE_ORDER = [
     "cmp_run",
+    "cmp_tool_run",
     "cmp_multi_turn",
+    "cmp_long_conversation",
     "cmp_construction",
     "cmp_memory",
     "cmp_import",

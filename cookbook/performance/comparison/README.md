@@ -27,6 +27,25 @@ Results land in `cookbook/performance/results/comparison/summary.json`
 (with framework versions recorded) and are picked up automatically by
 `report.py`.
 
+## Fairness notes (tool-call run)
+
+The mocked model requests one tool call; the framework dispatches and
+executes the real function; a second model turn answers. Every variant
+asserts the tool actually executed. This is where Agno pays its deferred
+tool-schema extraction (the flip side of its construction number). CrewAI
+is excluded: with a custom model its tool use goes through a text-based
+action protocol whose format is internal to the framework version, so a
+mock would be testing the mock rather than the framework.
+
+## Fairness notes (long conversation)
+
+The twenty-five-turn benchmark uses the same mechanisms and guards as the
+five-turn one; only the length changes, so history-proportional costs
+dominate. Agno does not currently win it: its per-turn session persistence
+re-serializes the conversation each turn (cost quadratic in conversation
+length), while LangGraph's in-memory checkpointer stores state by
+reference. The result is published as measured.
+
 ## Fairness notes (multi-turn conversation)
 
 The five-turn benchmark carries history through each framework's native

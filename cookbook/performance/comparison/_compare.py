@@ -33,6 +33,8 @@ os.environ.setdefault("AGNO_TELEMETRY", "false")
 
 from _bench import (  # noqa: E402,F401
     MockModel,
+    MockToolModel,
+    add_numbers,
     ensure_completed,
     get_machine_info,
     iterations,

@@ -32,7 +32,9 @@ BENCHMARK_FILES = [
     "pydantic_ai_instantiation.py",
     "crewai_instantiation.py",
     "run_overhead_comparison.py",
+    "tool_run_comparison.py",
     "multi_turn_comparison.py",
+    "long_conversation_comparison.py",
 ]
 
 FRAMEWORK_PACKAGES = ["agno", "langgraph", "langchain-openai", "pydantic-ai", "crewai"]
