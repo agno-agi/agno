@@ -6217,14 +6217,16 @@ async def _aroute_requirements_to_members(
 
     member_results: List[str] = []
     for r in results:
-        if isinstance(r, RunNotContinuableError):
-            # A member (e.g. a sub-team) refused the continue outright; the
-            # paused state is intact, so surface it instead of completing
-            # the team run without the approved tool.
-            raise r
         if isinstance(r, BaseException):
-            log_warning(f"Member continue_run failed: {r}")
-        elif isinstance(r, str):
+            # Surface member failures instead of completing the team run silently.
+            # RunNotContinuableError means a member (e.g. a sub-team) refused the
+            # continue outright with its paused state intact; every other exception
+            # (a member-side ValueError, RunNotFoundError, cancellation, ...) is an
+            # error the sync path (_route_requirements_to_members) already lets
+            # propagate. Swallowing them here let the team run report COMPLETED with
+            # an incomplete result. (#9421)
+            raise r
+        if isinstance(r, str):
             member_results.append(r)
     return member_results
 
