@@ -247,3 +247,46 @@ def test_verified_run_on_db_agent_keeps_final_stamp(tmp_path):
     )
     assert result.status == "verified"
     assert result.output.metadata["verification"]["status"] == "verified"
+
+
+def _run_id_probe(seen: List[dict]):
+    def probe_state(run_context: Optional[RunContext] = None) -> str:
+        """Record which run this call believes it belongs to."""
+        state = (run_context.session_state or {}) if run_context else {}
+        seen.append(
+            {
+                "context": run_context.run_id if run_context else None,
+                "state": state.get("current_run_id"),
+            }
+        )
+        return "probed"
+
+    return probe_state
+
+
+@pytest.mark.parametrize("mode", ["sync", "async"])
+def test_each_attempt_reports_its_own_run_id_not_the_parents(mode, tmp_path):
+    """Continuing a completed run forks a sibling with a fresh run_id, but the RunContext is
+    built before the fork. Left unbound, every attempt after the first files its tool calls,
+    hooks and reasoning steps under the PREVIOUS run, and session_state carries a stale
+    current_run_id — so the per-attempt audit trail run_verified advertises is wrong.
+    """
+    seen: List[dict] = []
+    agent = Agent(
+        model=ScriptedModel(_probe_script()),
+        tools=[_run_id_probe(seen)],
+        db=SqliteDb(db_file=str(tmp_path / "runid.db")),
+    )
+    kwargs = dict(limits=VerifierLimits(max_continuations=1), session_id=f"runid-{mode}")
+    if mode == "sync":
+        result = run_verified(agent, "probe twice", [_fail_once()], **kwargs)
+    else:
+        result = asyncio.run(arun_verified(agent, "probe twice", [_fail_once()], **kwargs))
+
+    assert len(result.attempts) == 2
+    first, second = result.attempts[0].run_id, result.attempts[1].run_id
+    assert first != second, "the continuation did not fork a sibling run"
+    assert len(seen) == 2
+    assert seen[0]["context"] == first
+    assert seen[1]["context"] == second, f"the continuation's tool saw the parent run_id: {seen[1]}"
+    assert seen[1]["state"] == second, f"session_state carried a stale current_run_id: {seen[1]}"
