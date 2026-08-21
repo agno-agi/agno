@@ -952,3 +952,37 @@ async def test_a_failed_async_pending_write_keeps_the_login_recoverable(endpoint
     payload = json.loads(await auth.acheck_supergrok_login(run_context=_ctx("u1")))
 
     assert payload == {"message": SIGNED_IN_PER_USER}
+
+
+def test_a_failed_pending_write_does_not_leave_a_stale_row_behind(endpoint, sqlite_db, encryption_key):
+    """Memory holds the fresh device code, but _read_pending reads the database first."""
+
+    class _FailsAfterFirstPendingWrite:
+        def __init__(self, inner: Any):
+            self._inner = inner
+            self.pending_writes = 0
+
+        def get_auth_token(self, provider: str, user_id: str, service: str) -> Any:
+            return self._inner.get_auth_token(provider, user_id, service)
+
+        def delete_auth_token(self, provider: str, user_id: str, service: str) -> Any:
+            return self._inner.delete_auth_token(provider, user_id, service)
+
+        def upsert_auth_token(self, token: Dict[str, Any]) -> Any:
+            if token["service"] == PENDING_SERVICE:
+                self.pending_writes += 1
+                if self.pending_writes > 1:
+                    return None
+            return self._inner.upsert_auth_token(token)
+
+    auth = _toolkit(endpoint, db=_FailsAfterFirstPendingWrite(sqlite_db), encryption_key=encryption_key)
+    auth.sign_in_with_supergrok(run_context=_ctx("u1"))
+
+    # The second grant is a DIFFERENT device code; its write fails, so it lives in memory
+    endpoint.device_json = {**endpoint.device_json, "device_code": "device-code-2", "user_code": "WXYZ-9999"}
+    shown = json.loads(auth.sign_in_with_supergrok(run_context=_ctx("u1"), force=True))
+    auth.check_supergrok_login(run_context=_ctx("u1"))
+
+    # The poll must use the code the user was just shown, not the persisted older one
+    assert "WXYZ-9999" in shown["message"]
+    assert endpoint.poll_requests[-1]["device_code"] == "device-code-2"

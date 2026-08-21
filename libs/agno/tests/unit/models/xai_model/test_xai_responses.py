@@ -1157,3 +1157,91 @@ def test_an_async_stream_401_on_an_api_key_served_request_propagates_the_origina
             assert exc_info.value is error
 
     asyncio.run(go())
+
+
+# ---------------------------------------------------------------------------
+# A row we cannot read is not a row that is absent
+# ---------------------------------------------------------------------------
+
+
+def test_an_undecryptable_user_row_does_not_fall_through_to_the_deployment(sqlite_db, fake_clock):
+    """Falling through would bill someone else's subscription for a user who IS signed in."""
+    from agno.models.xai import oauth as oauth_module
+    from agno.models.xai.oauth import XAITokenManager
+    from agno.utils.encryption import generate_encryption_key
+
+    old_key, current_key = generate_encryption_key(), generate_encryption_key()
+    XAITokenManager(db=sqlite_db, encryption_key=old_key, now_fn=fake_clock)._save(
+        {"access_token": "alice", "expires_at": fake_clock() + 21600}, user_id="alice"
+    )
+    XAITokenManager(db=sqlite_db, encryption_key=current_key, now_fn=fake_clock)._save(
+        {"access_token": "deployment", "expires_at": fake_clock() + 21600}, user_id=""
+    )
+    oauth_module._reset_cache_for_tests()
+    reader = XAITokenManager(db=sqlite_db, encryption_key=current_key, now_fn=fake_clock)
+    model = xAIResponses(token_manager=reader)
+
+    with pytest.raises(ModelAuthenticationError):
+        model.get_request_params(messages=_messages(), run_response=_run("alice"))
+
+
+def test_a_transport_failure_while_picking_the_refresh_slot_keeps_the_401(sqlite_db, fake_clock):
+    """The slot probe can need the network; losing the 401 to a ConnectError helps nobody."""
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    def unreachable(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("network down")
+
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(unreachable)),
+    )
+    manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="u1")
+    parent = MagicMock(side_effect=[ModelProviderError("unauthorized", status_code=401), MagicMock()])
+
+    with patch.object(OpenAIResponses, "invoke", parent):
+        model = xAIResponses(token_manager=manager)
+        model.client = _fake_client()
+        with pytest.raises(ModelProviderError) as exc_info:
+            model.invoke(messages=_messages(), assistant_message=_assistant(), run_response=_run("u1"))
+
+    assert exc_info.value.status_code == 401
+
+
+def test_the_async_path_never_falls_back_to_a_blocking_refresh(sqlite_db, fake_clock):
+    """The warm-up exists so assembly is a cache read; a dead endpoint must not move
+    the refresh onto the event loop."""
+    import httpx
+
+    from agno.models.xai.oauth import XAITokenManager
+
+    sync_calls = []
+
+    def sync_transport(request: httpx.Request) -> httpx.Response:
+        sync_calls.append(str(request.url))
+        raise httpx.ConnectError("network down")
+
+    async def async_transport(request: httpx.Request) -> httpx.Response:
+        raise httpx.ConnectError("network down")
+
+    manager = XAITokenManager(
+        db=sqlite_db,
+        encrypt_tokens=False,
+        now_fn=fake_clock,
+        http_client=httpx.Client(transport=httpx.MockTransport(sync_transport)),
+        async_http_client=httpx.AsyncClient(transport=httpx.MockTransport(async_transport)),
+    )
+    manager._save({"access_token": "stale", "refresh_token": "r", "expires_at": fake_clock() - 1}, user_id="")
+    model = xAIResponses(token_manager=manager)
+
+    async def go():
+        with pytest.raises(httpx.HTTPError):
+            await model._awarm_credential(_run())
+
+    asyncio.run(go())
+
+    assert sync_calls == []
