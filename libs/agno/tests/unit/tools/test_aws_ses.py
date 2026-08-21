@@ -217,9 +217,9 @@ class TestAWSSESTool:
             subject="Second Email", body="Second Body", receiver_email="receiver2@example.com"
         )
 
-        # Assert
-        assert result1 == "Email sent successfully!"
-        assert result2 == "Email sent successfully!"
+        # Assert - v3.0 returns JSON
+        assert json.loads(result1)["success"] is True
+        assert json.loads(result2)["success"] is True
         assert mock_client.send_email.call_count == 2
 
     def test_import_error_handling(self):
@@ -243,9 +243,9 @@ class TestAWSSESTool:
         tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
 
         # Act
-        with patch("agno.tools.aws_ses.log_debug") as mock_log:
-            result = tool.aws_ses_send_email(subject="Test", body="Test", receiver_email="test@example.com")
+        result = tool.aws_ses_send_email(subject="Test", body="Test", receiver_email="test@example.com")
 
-            # Assert
-            assert result == "Email sent successfully!"
-            mock_log.assert_called_once_with(f"Email sent with message ID: {message_id}")
+        # Assert - v3.0 returns JSON with message_id
+        result_json = json.loads(result)
+        assert result_json["success"] is True
+        assert result_json["message_id"] == message_id
