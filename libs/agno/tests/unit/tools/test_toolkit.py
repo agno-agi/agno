@@ -986,3 +986,105 @@ def test_explicit_tools_argument_preserved():
 
     assert example_func in toolkit.tools
     assert "example_func" in toolkit.functions
+
+
+# =============================================================================
+# Legacy backcompat shim tests
+# =============================================================================
+
+
+def _make_builtin_toolkit(extra_attrs=None):
+    """Create a fake builtin toolkit by setting __module__ to agno.tools.*"""
+
+    def _init(self, scrape: bool = True, **kwargs):
+        self.scrape = scrape
+        Toolkit.__init__(self, name="fake_builtin", auto_register=False, **kwargs)
+
+    attrs = {"__module__": "agno.tools._fake", "__init__": _init, **(extra_attrs or {})}
+    return type("FakeBuiltinTools", (Toolkit,), attrs)
+
+
+def test_builtin_toolkit_remaps_legacy_enable_kwarg():
+    """Builtin toolkits (in agno.tools.*) remap enable_* to stripped name."""
+    FakeBuiltin = _make_builtin_toolkit()
+    tools = FakeBuiltin(enable_scrape=False)
+    assert tools.scrape is False
+
+
+def test_builtin_toolkit_alias_map_remaps_custom_names():
+    """Builtin toolkits with _legacy_param_aliases remap to custom targets."""
+    aliases = {"enable_old_name": "new_name"}
+
+    def _init(self, new_name: bool = True, **kwargs):
+        self.new_name = new_name
+        Toolkit.__init__(self, name="aliased", auto_register=False, **kwargs)
+
+    FakeAliased = type(
+        "FakeAliasedTools",
+        (Toolkit,),
+        {"__module__": "agno.tools._fake", "__init__": _init, "_legacy_param_aliases": aliases},
+    )
+    tools = FakeAliased(enable_old_name=False)
+    assert tools.new_name is False
+
+
+def test_user_toolkit_kwargs_enable_param_untouched():
+    """User toolkits consuming enable_* through **kwargs are not affected."""
+
+    class UserKwargsTools(Toolkit):
+        def __init__(self, **kwargs):
+            self.enable_something = kwargs.pop("enable_something", True)
+            super().__init__(name="user_kwargs", auto_register=False, **kwargs)
+
+    tools = UserKwargsTools(enable_something=False)
+    assert tools.enable_something is False
+
+
+def test_user_toolkit_explicit_enable_param_untouched():
+    """User toolkits with explicit enable_* params keep them as-is."""
+
+    class UserExplicitTools(Toolkit):
+        def __init__(self, enable_feature: bool = True, **kwargs):
+            self.enable_feature = enable_feature
+            super().__init__(name="user_explicit", auto_register=False, **kwargs)
+
+    tools = UserExplicitTools(enable_feature=False)
+    assert tools.enable_feature is False
+
+
+def test_user_toolkit_unknown_enable_kwarg_raises_with_original_name():
+    """User toolkits raise TypeError with the original kwarg name, not mangled."""
+
+    class UserPlainTools(Toolkit):
+        def __init__(self, **kwargs):
+            super().__init__(name="user_plain", auto_register=False, **kwargs)
+
+    with pytest.raises(TypeError, match="enable_foo"):
+        UserPlainTools(enable_foo=True)
+
+
+def test_user_subclass_of_builtin_keeps_legacy_remap_via_super():
+    """User subclass of builtin gets legacy remap for inherited params."""
+    FakeBuiltin = _make_builtin_toolkit()
+
+    class UserSub(FakeBuiltin):
+        def __init__(self, enable_custom: bool = True, **kwargs):
+            self.enable_custom = enable_custom
+            super().__init__(**kwargs)
+
+    sub = UserSub(enable_custom=False, enable_scrape=False)
+    # User's own param untouched
+    assert sub.enable_custom is False
+    # Inherited legacy kwarg still remapped via parent's wrapped __init__
+    assert sub.scrape is False
+
+
+def test_bare_user_subclass_of_builtin_inherits_legacy_remap():
+    """Bare user subclass (no __init__) inherits parent's wrapped __init__."""
+    FakeBuiltin = _make_builtin_toolkit()
+
+    class BareSub(FakeBuiltin):
+        pass
+
+    tools = BareSub(enable_scrape=False)
+    assert tools.scrape is False

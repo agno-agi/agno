@@ -170,12 +170,16 @@ class Toolkit:
     def __init_subclass__(cls, **kwargs: Any) -> None:
         """Hook called by Python when any class inherits from Toolkit.
 
-        We use this to automatically wrap the subclass's __init__ with legacy
-        parameter support. This runs once at class definition time, not per
-        instance, so there's no runtime overhead beyond the wrapper itself.
+        Wraps the subclass's __init__ with legacy 2.x parameter support, but
+        only for Agno's built-in toolkits: the 2.x -> 3.0 rename happened in
+        agno.tools, so only classes defined there get the remap. User-defined
+        toolkits own their parameter names and are left untouched. A user
+        subclass of a built-in toolkit still gets legacy support for the
+        inherited params, because super().__init__() resolves to the parent's
+        wrapped __init__. Runs once at class definition time, not per instance.
         """
         super().__init_subclass__(**kwargs)
-        if "__init__" in cls.__dict__:
+        if "__init__" in cls.__dict__ and cls.__module__.startswith("agno.tools."):
             cls.__init__ = _wrap_init_for_legacy_support(cls, cls.__dict__["__init__"])  # type: ignore[method-assign]
 
     def __init__(
