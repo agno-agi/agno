@@ -6772,8 +6772,9 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     # store_events=True the new run's events would otherwise be the parent's
     # events with this run's events appended onto them.
     forked.events = None
-
     _truncate_team_run_to_checkpoint(forked, message_index)
+    # Snapshot executed tools AFTER truncation — fork gets fresh tool_call_limit budget
+    forked.tool_count_at_fork = sum(1 for t in forked.tools if t.result is not None) if forked.tools else 0
     return forked
 
 
@@ -7933,7 +7934,9 @@ def _continue_run(
             try:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Generate model response
+                # 1. Calculate prior tool count for HITL resume (issue #7962)
+
+                # 2. Generate model response
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
                     team.fallback_config,
@@ -7952,7 +7955,7 @@ def _continue_run(
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Parse with output/parser models if needed
+                # 3. Parse with output/parser models if needed
                 parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
                 parse_response_with_parser_model(
                     team, model_response, run_messages, run_context=run_context, run_response=run_response
@@ -8128,6 +8131,8 @@ def _continue_run_stream(
                     tools=tools,
                     stream_events=stream_events,
                 )
+
+                # Calculate prior tool count for HITL resume (issue #7962)
 
                 # Stream model response
                 if team.output_model is None:
@@ -9300,6 +9305,8 @@ async def _acontinue_run(
                     run_response.status = RunStatus.running
                     run_response.content = None
 
+                    # Calculate prior tool count for HITL resume (issue #7962)
+
                     # Handle model response using shared helper
                     paused_result = await _ahandle_model_response_for_continue(
                         team,
@@ -9345,6 +9352,8 @@ async def _acontinue_run(
                     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
 
                     log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
+
+                    # Calculate prior tool count for HITL resume (issue #7962)
 
                     # Handle model response using shared helper
                     paused_result = await _ahandle_model_response_for_continue(
@@ -9794,6 +9803,8 @@ async def _acontinue_run_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
+                    # Calculate prior tool count for HITL resume (issue #7962)
+
                     # Stream model response
                     if team.output_model is None:
                         async for event in _ahandle_model_response_stream(
@@ -9903,6 +9914,8 @@ async def _acontinue_run_stream(
                     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
 
                     log_debug(f"Team Continue Run Stream (Member HITL): {run_response.run_id}", center=True)
+
+                    # Calculate prior tool count for HITL resume (issue #7962)
 
                     # Yield RunContinued event
                     if stream_events:

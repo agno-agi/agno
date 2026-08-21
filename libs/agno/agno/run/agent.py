@@ -676,6 +676,9 @@ class RunOutput:
     # parentage).
     forked_from_run_id: Optional[str] = None
     forked_from_message_index: Optional[int] = None
+    # Snapshot of executed tools at fork time. Subtracted from total in executed_tool_count
+    # so forked runs start with a fresh tool_call_limit budget.
+    tool_count_at_fork: int = 0
 
     # Branching lineage: the source session_id this run was originally created in
     # (set when a session is forked; preserved across nested forks).
@@ -715,6 +718,13 @@ class RunOutput:
     @property
     def tools_awaiting_external_execution(self):
         return [t for t in self.tools if t.external_execution_required] if self.tools else []
+
+    @property
+    def executed_tool_count(self) -> int:
+        if not self.tools:
+            return 0
+        total = sum(1 for t in self.tools if t.result is not None)
+        return max(0, total - self.tool_count_at_fork)
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
