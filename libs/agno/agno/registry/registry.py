@@ -103,6 +103,13 @@ class Registry:
     # every mirror, or one OS's component-private knowledge would look
     # user-registered to another.
     _mirrored_knowledge: List[Any] = field(default_factory=list, init=False, repr=False)
+    # LearningMachines a deployer declared for stored components to share.
+    # Resolved by name, like knowledge: a component config carries
+    # {"name": ...} and the registry supplies the live machine on load.
+    learning: List[Any] = field(default_factory=list)
+    # Names claimed by two distinct machines: lenient resolution keeps the
+    # first, strict resolution refuses the ambiguity.
+    _ambiguous_learning_names: Set[str] = field(default_factory=set, init=False, repr=False)
     memory_managers: List[Any] = field(default_factory=list)
     session_summary_managers: List[Any] = field(default_factory=list)
     # Code-defined agents and teams (for workflow rehydration)
@@ -615,6 +622,28 @@ class Registry:
         """Whether ``knowledge`` is in the registry only because a sync mirrored it."""
         return any(knowledge is kb for kb in self._mirrored_knowledge)
 
+    def add_learning(self, machine: Any) -> None:
+        """Add a LearningMachine unless one with the same name is already present.
+
+        A machine resolves by name at rehydration, so only named machines are
+        registrable. The first machine under a name wins; a distinct
+        same-named machine is reported, since it would be shadowed.
+        """
+        name = getattr(machine, "name", None)
+        if machine is None or not name:
+            return
+        existing = self.get_learning(name)
+        if existing is not None:
+            if existing is not machine:
+                self._ambiguous_learning_names.add(name)
+                log_warning(
+                    f"Registry: multiple distinct learning machines share name '{name}'; "
+                    "keeping the first for lenient loads. Strict loads refuse the ambiguity: "
+                    "give the machines distinct names."
+                )
+            return
+        self.learning.append(machine)
+
     def add_schema(self, schema: Any) -> None:
         """Add an input/output schema class unless one with the same name is already present.
 
@@ -726,6 +755,30 @@ class Registry:
         """Get the set of all knowledge names in this registry."""
         if self.knowledge:
             return {kn for k in self.knowledge if (kn := getattr(k, "name", None)) is not None}
+        return set()
+
+    def learning_name_is_ambiguous(self, name: str) -> bool:
+        """Whether two distinct learning machines claim ``name``.
+
+        Covers both construction paths: machines handed to the constructor
+        (scanned here) and machines add_learning refused to append (recorded
+        in the ambiguity set).
+        """
+        if name in self._ambiguous_learning_names:
+            return True
+        matches = [m for m in self.learning if getattr(m, "name", None) == name]
+        return len(matches) > 1 and any(match is not matches[0] for match in matches)
+
+    def get_learning(self, name: str) -> Optional[Any]:
+        """Get a learning machine by name from the registry."""
+        if self.learning:
+            return next((m for m in self.learning if getattr(m, "name", None) == name), None)
+        return None
+
+    def get_learning_names(self) -> Set[str]:
+        """Get the set of all learning machine names in this registry."""
+        if self.learning:
+            return {mn for m in self.learning if (mn := getattr(m, "name", None))}
         return set()
 
     def get_memory_manager(self, manager_id: str) -> Optional[Any]:
