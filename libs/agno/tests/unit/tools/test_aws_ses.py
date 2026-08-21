@@ -3,7 +3,6 @@
 import json
 from unittest.mock import Mock, patch
 
-import pytest
 from botocore.exceptions import ClientError
 
 from agno.tools.aws_ses import AWSSESTool
