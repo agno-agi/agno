@@ -12,7 +12,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.fs import FileSystem
 from agno.models.openai import OpenAIResponses
-from agno.tools.code_mode import CodeMode
+from agno.tools.code import CodeMode
 
 # ---------------------------------------------------------------------------
 # Create Agent

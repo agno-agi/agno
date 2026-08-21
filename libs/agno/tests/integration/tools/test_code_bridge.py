@@ -16,7 +16,7 @@ import pytest
 from agno.approval import approval
 from agno.run import RunContext
 from agno.tools import Function, Toolkit, tool
-from agno.tools.code_mode import CodeMode
+from agno.tools.code import CodeMode
 
 pytestmark = pytest.mark.integration
 

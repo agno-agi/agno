@@ -18,11 +18,11 @@ from sqlalchemy import create_engine, text
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.run import RunContext
-from agno.tools.code_mode import CodeMode
-from agno.tools.code_mode.bridge import ToolBridge
-from agno.tools.code_mode.code_mode import OWNER_REFUSAL
-from agno.tools.code_mode.kernel import KernelSession
-from agno.tools.code_mode.snapshot import SnapshotManager
+from agno.tools.code import CodeMode
+from agno.tools.code.bridge import ToolBridge
+from agno.tools.code.code_mode import OWNER_REFUSAL
+from agno.tools.code.kernel import KernelSession
+from agno.tools.code.snapshot import SnapshotManager
 from agno.tools.toolkit import Toolkit
 
 pytestmark = pytest.mark.integration

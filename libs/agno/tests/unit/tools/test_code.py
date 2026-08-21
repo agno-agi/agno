@@ -1,6 +1,6 @@
 """Unit tests for CodeMode that need no kernel.
 
-Kernel-backed behavior lives in tests/integration/tools/test_code_mode_kernel.py.
+Kernel-backed behavior lives in tests/integration/tools/test_code_kernel.py.
 """
 
 from types import SimpleNamespace
@@ -8,14 +8,14 @@ from types import SimpleNamespace
 import pytest
 
 from agno.tools import Function, Toolkit
-from agno.tools.code_mode import CellResult, CodeMode, CodeModeError, KernelBusyError, ResultTooLarge
-from agno.tools.code_mode.code_mode import (
+from agno.tools.code import CellResult, CodeMode, CodeModeError, KernelBusyError, ResultTooLarge
+from agno.tools.code.code_mode import (
     _MAX_EVICTED_IDS,
     build_instructions,
     derive_handle_name,
     handle_names_for,
 )
-from agno.tools.code_mode.kernel import KernelSession, OutputAccumulator
+from agno.tools.code.kernel import KernelSession, OutputAccumulator
 
 # ------------------------------------------------------------------
 # Handle-name derivation
@@ -297,12 +297,12 @@ def test_import_error_message_names_the_extra(monkeypatch):
             raise ImportError(f"No module named '{name}'")
         return real_import(name, *args, **kwargs)
 
-    saved = {k: v for k, v in sys.modules.items() if k.startswith("agno.tools.code_mode")}
+    saved = {k: v for k, v in sys.modules.items() if k.startswith("agno.tools.code")}
     for k in saved:
         monkeypatch.delitem(sys.modules, k)
     monkeypatch.setattr(builtins, "__import__", fake_import)
-    with pytest.raises(ImportError, match="agno\\[code-mode\\]"):
-        importlib.import_module("agno.tools.code_mode")
+    with pytest.raises(ImportError, match="agno\\[code\\]"):
+        importlib.import_module("agno.tools.code")
     monkeypatch.setattr(builtins, "__import__", real_import)
     sys.modules.update(saved)
 
@@ -313,7 +313,7 @@ def test_import_error_message_names_the_extra(monkeypatch):
 
 
 def test_failed_binding_stub_raises_runtime_error_never_name_error():
-    from agno.tools.code_mode.bridge import FAILED_BINDING_CLASS
+    from agno.tools.code.bridge import FAILED_BINDING_CLASS
 
     namespace = {}
     exec(FAILED_BINDING_CLASS, namespace)
@@ -329,7 +329,7 @@ def test_failed_binding_stub_raises_runtime_error_never_name_error():
 
 
 def test_failed_binding_stub_every_attribute_returns_a_callable():
-    from agno.tools.code_mode.bridge import FAILED_BINDING_CLASS
+    from agno.tools.code.bridge import FAILED_BINDING_CLASS
 
     namespace = {}
     exec(FAILED_BINDING_CLASS, namespace)
@@ -381,7 +381,7 @@ def _bridge_call(bridge, session, method, **kwargs):
 
 
 async def test_bridge_reply_reaches_the_kernel_that_asked():
-    from agno.tools.code_mode.bridge import ToolBridge
+    from agno.tools.code.bridge import ToolBridge
 
     def double(x: int) -> int:
         """Double x.
@@ -399,7 +399,7 @@ async def test_bridge_reply_reaches_the_kernel_that_asked():
 
 
 async def test_bridge_reply_from_a_replaced_kernel_is_dropped():
-    from agno.tools.code_mode.bridge import ToolBridge
+    from agno.tools.code.bridge import ToolBridge
 
     session = _FakeSession()
 
@@ -422,7 +422,7 @@ async def test_bridge_reply_from_a_replaced_kernel_is_dropped():
 async def test_a_call_id_reused_by_the_next_kernel_gets_its_own_entry():
     import asyncio
 
-    from agno.tools.code_mode.bridge import ToolBridge
+    from agno.tools.code.bridge import ToolBridge
 
     released = asyncio.Event()
 
@@ -468,7 +468,7 @@ async def test_a_call_id_reused_by_the_next_kernel_gets_its_own_entry():
 
 
 def test_budget_keeps_small_variables_and_cuts_the_oversized_one():
-    from agno.tools.code_mode.snapshot import apply_snapshot_budget
+    from agno.tools.code.snapshot import apply_snapshot_budget
 
     entries = [
         {"name": "huge_df", "bytes": 40_000_000, "data": "..."},
@@ -483,7 +483,7 @@ def test_budget_keeps_small_variables_and_cuts_the_oversized_one():
 
 
 def test_budget_exact_fit_is_kept():
-    from agno.tools.code_mode.snapshot import apply_snapshot_budget
+    from agno.tools.code.snapshot import apply_snapshot_budget
 
     entries = [{"name": "a", "bytes": 600, "data": ""}, {"name": "b", "bytes": 400, "data": ""}]
     kept, cut = apply_snapshot_budget(entries, max_snapshot_bytes=1_000)
@@ -492,7 +492,7 @@ def test_budget_exact_fit_is_kept():
 
 
 def test_budget_orders_smallest_first_so_largest_is_cut():
-    from agno.tools.code_mode.snapshot import apply_snapshot_budget
+    from agno.tools.code.snapshot import apply_snapshot_budget
 
     entries = [{"name": "big", "bytes": 900, "data": ""}, {"name": "small", "bytes": 200, "data": ""}]
     kept, cut = apply_snapshot_budget(entries, max_snapshot_bytes=1_000)
@@ -506,7 +506,7 @@ def test_budget_orders_smallest_first_so_largest_is_cut():
 
 
 def test_restored_notice_full_shape():
-    from agno.tools.code_mode.snapshot import build_restored_notice
+    from agno.tools.code.snapshot import build_restored_notice
 
     notice = build_restored_notice(
         ["frames", "world_model"],
@@ -526,7 +526,7 @@ def test_restored_notice_full_shape():
 
 
 def test_restored_notice_never_calls_a_size_refusal_unpicklable():
-    from agno.tools.code_mode.snapshot import build_restored_notice
+    from agno.tools.code.snapshot import build_restored_notice
 
     notice = build_restored_notice([], [("scores", "too large to store: 1066680 bytes, over the 1000000-byte limit")])
     assert "unpicklable" not in notice
@@ -534,7 +534,7 @@ def test_restored_notice_never_calls_a_size_refusal_unpicklable():
 
 
 def test_restored_notice_omits_unpicklable_line_when_empty():
-    from agno.tools.code_mode.snapshot import build_restored_notice
+    from agno.tools.code.snapshot import build_restored_notice
 
     notice = build_restored_notice(["x"], [])
     assert "Not restored" not in notice
@@ -542,7 +542,7 @@ def test_restored_notice_omits_unpicklable_line_when_empty():
 
 
 def test_restored_notice_none_when_nothing_happened():
-    from agno.tools.code_mode.snapshot import build_restored_notice
+    from agno.tools.code.snapshot import build_restored_notice
 
     assert build_restored_notice([], []) is None
 
@@ -553,7 +553,7 @@ def test_restored_notice_none_when_nothing_happened():
 
 
 def test_caps_are_lowered_to_the_store_limits():
-    from agno.tools.code_mode.snapshot import reconcile_caps
+    from agno.tools.code.snapshot import reconcile_caps
 
     variable_bytes, snapshot_bytes, notes = reconcile_caps(2_000_000, 64_000_000, 1_000_000, 20_000_000)
     assert (variable_bytes, snapshot_bytes) == (1_000_000, 20_000_000)
@@ -563,13 +563,13 @@ def test_caps_are_lowered_to_the_store_limits():
 
 
 def test_caps_below_the_store_limits_are_left_alone():
-    from agno.tools.code_mode.snapshot import reconcile_caps
+    from agno.tools.code.snapshot import reconcile_caps
 
     assert reconcile_caps(10_000, 50_000, 4_000_000, 128_000_000) == (10_000, 50_000, [])
 
 
 def test_caps_survive_a_store_that_publishes_no_limits():
-    from agno.tools.code_mode.snapshot import reconcile_caps
+    from agno.tools.code.snapshot import reconcile_caps
 
     assert reconcile_caps(2_000_000, 64_000_000, None, None) == (2_000_000, 64_000_000, [])
 
@@ -577,7 +577,7 @@ def test_caps_survive_a_store_that_publishes_no_limits():
 def test_snapshot_manager_binds_the_store_limits_and_warns_once(tmp_path, monkeypatch):
     from agno.fs import FileSystem
     from agno.fs.local import LocalFileSystem
-    from agno.tools.code_mode import snapshot as snapshot_module
+    from agno.tools.code import snapshot as snapshot_module
 
     warnings = []
     monkeypatch.setattr(snapshot_module, "log_warning", lambda message: warnings.append(message))
@@ -598,7 +598,7 @@ def test_snapshot_manager_binds_the_store_limits_and_warns_once(tmp_path, monkey
 def test_snapshot_manager_is_quiet_when_the_store_fits_the_caps(tmp_path, monkeypatch):
     from agno.fs import FileSystem
     from agno.fs.local import LocalFileSystem
-    from agno.tools.code_mode import snapshot as snapshot_module
+    from agno.tools.code import snapshot as snapshot_module
 
     warnings = []
     monkeypatch.setattr(snapshot_module, "log_warning", lambda message: warnings.append(message))
@@ -620,14 +620,14 @@ def test_snapshot_manager_is_quiet_when_the_store_fits_the_caps(tmp_path, monkey
 
 
 def test_safe_param_name_keeps_a_usable_name():
-    from agno.tools.code_mode.naming import safe_param_name
+    from agno.tools.code.naming import safe_param_name
 
     assert safe_param_name("query") == "query"
     assert safe_param_name("_private") == "_private"
 
 
 def test_safe_param_name_escapes_keywords_and_non_identifiers():
-    from agno.tools.code_mode.naming import safe_param_name
+    from agno.tools.code.naming import safe_param_name
 
     assert safe_param_name("from") == "from_"
     assert safe_param_name("class") == "class_"
@@ -637,7 +637,7 @@ def test_safe_param_name_escapes_keywords_and_non_identifiers():
 
 
 def test_safe_param_name_disambiguates_a_collision():
-    from agno.tools.code_mode.naming import safe_param_name
+    from agno.tools.code.naming import safe_param_name
 
     assert safe_param_name("start-date", taken={"start_date"}) == "start_date_2"
     assert safe_param_name("start.date", taken={"start_date", "start_date_2"}) == "start_date_3"
@@ -659,7 +659,7 @@ def _raw_schema_function(name, properties, required):
 
 
 def test_params_from_schema_puts_required_parameters_first():
-    from agno.tools.code_mode.bridge import _params_from_schema
+    from agno.tools.code.bridge import _params_from_schema
 
     function = _raw_schema_function("search", {"limit": {"type": "integer"}, "query": {"type": "string"}}, ["query"])
     params = _params_from_schema(function)
@@ -668,7 +668,7 @@ def test_params_from_schema_puts_required_parameters_first():
 
 
 def test_params_from_schema_maps_unusable_names_and_keeps_the_wire_name():
-    from agno.tools.code_mode.bridge import _params_from_schema
+    from agno.tools.code.bridge import _params_from_schema
 
     function = _raw_schema_function("fetch", {"from": {"type": "string"}, "start-date": {"type": "string"}}, ["from"])
     params = _params_from_schema(function)
@@ -679,7 +679,7 @@ def test_params_from_schema_maps_unusable_names_and_keeps_the_wire_name():
 
 
 def test_stub_doc_records_the_renamed_parameters():
-    from agno.tools.code_mode.bridge import _params_from_schema, _stub_doc
+    from agno.tools.code.bridge import _params_from_schema, _stub_doc
 
     function = _raw_schema_function("fetch", {"from": {"type": "string"}}, ["from"])
     doc = _stub_doc(function, _params_from_schema(function))
@@ -694,7 +694,7 @@ def test_stub_doc_records_the_renamed_parameters():
 
 def test_approval_sentinel_on_a_bare_callable_reaches_the_bridged_function():
     from agno.approval import approval
-    from agno.tools.code_mode.bridge import ToolBridge
+    from agno.tools.code.bridge import ToolBridge
 
     @approval(type="required")
     def wire_money(amount: int) -> str:

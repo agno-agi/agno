@@ -11,13 +11,13 @@ Start with [`_01_basics/basic.py`](_01_basics/basic.py).
 CodeMode needs an optional extra:
 
 ```bash
-pip install 'agno[code-mode]'
+pip install 'agno[code]'
 ```
 
 ## Layout
 
 ````
-cookbook/code_mode/
+cookbook/code/
 ├── README.md
 ├── _01_basics/                 # one tool, a live kernel
 ├── _02_tools_in_code/          # toolkits as awaitable handles

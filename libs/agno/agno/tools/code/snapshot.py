@@ -27,7 +27,7 @@ import time
 from typing import Any, Dict, List, Optional, Sequence, Tuple
 
 from agno.fs import FileSystem
-from agno.tools.code_mode.kernel import KernelSession, parse_marker_line
+from agno.tools.code.kernel import KernelSession, parse_marker_line
 from agno.utils.log import log_debug, log_warning
 from agno.utils.string import hash_string_sha256
 

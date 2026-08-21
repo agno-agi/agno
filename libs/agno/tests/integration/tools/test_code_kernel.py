@@ -13,9 +13,9 @@ import pytest
 
 from agno.run import RunContext
 from agno.tools import Toolkit
-from agno.tools.code_mode import CodeMode, KernelBusyError, KernelDiedError
-from agno.tools.code_mode.code_mode import OWNER_REFUSAL
-from agno.tools.code_mode.kernel import RESET_NOTICE
+from agno.tools.code import CodeMode, KernelBusyError, KernelDiedError
+from agno.tools.code.code_mode import OWNER_REFUSAL
+from agno.tools.code.kernel import RESET_NOTICE
 
 pytestmark = pytest.mark.integration
 

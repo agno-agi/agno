@@ -15,7 +15,7 @@ the transcript. The model keeps exactly one tool: `execute`.
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools import Toolkit
-from agno.tools.code_mode import CodeMode
+from agno.tools.code import CodeMode
 
 
 # ---------------------------------------------------------------------------

@@ -20,15 +20,15 @@ from queue import Empty
 from typing import Any, Callable, Coroutine, List, Literal, Optional
 
 from agno.media import Image
-from agno.tools.code_mode.errors import KernelBusyError, KernelDiedError
-from agno.tools.code_mode.types import CellResult
+from agno.tools.code.errors import KernelBusyError, KernelDiedError
+from agno.tools.code.types import CellResult
 from agno.utils.log import log_debug, log_warning
 
 try:
     from jupyter_client.manager import AsyncKernelManager
 except ImportError:
     raise ImportError(
-        "`jupyter_client` and `ipykernel` are not installed. Please install them using `pip install 'agno[code-mode]'`"
+        "`jupyter_client` and `ipykernel` are not installed. Please install them using `pip install 'agno[code]'`"
     )
 
 # The in-band notice prefixed to the next execute result after the kernel was

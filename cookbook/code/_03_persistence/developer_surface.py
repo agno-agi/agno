@@ -10,7 +10,7 @@ method has an `a`-prefixed async twin.
 This runs without a model, so it is the cheapest way to see the kernel work.
 """
 
-from agno.tools.code_mode import CodeMode
+from agno.tools.code import CodeMode
 
 SESSION_ID = "developer-surface"
 

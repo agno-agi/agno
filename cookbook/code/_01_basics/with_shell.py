@@ -13,7 +13,7 @@ a footgun reducer, not a security boundary: CodeMode is not a sandbox.
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.code_mode import CodeMode
+from agno.tools.code import CodeMode
 
 # ---------------------------------------------------------------------------
 # Create Agent

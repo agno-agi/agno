@@ -3,7 +3,7 @@
 The model gets two tools: ``execute`` runs a cell in an IPython kernel that
 lives as long as the session, and ``restart`` (optional) tears it down for a
 fresh one. Variables, imports, helper functions, and parsed tool results
-survive across turns. See ``agno.tools.code_mode`` for the full surface.
+survive across turns. See ``agno.tools.code`` for the full surface.
 
 CodeMode executes arbitrary Python and shell with the permissions of the
 process running the agent. It is not a sandbox and does not pretend to be one:
@@ -24,12 +24,12 @@ from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Uni
 
 from agno.fs import FileSystem
 from agno.run import RunContext
-from agno.tools.code_mode.bridge import ToolBridge
-from agno.tools.code_mode.errors import KernelBusyError, KernelDiedError
-from agno.tools.code_mode.kernel import RESET_NOTICE, KernelSession, LoopRunner, parse_marker_line
-from agno.tools.code_mode.naming import derive_handle_name, handle_names_for  # noqa: F401  (re-exported)
-from agno.tools.code_mode.snapshot import SnapshotManager
-from agno.tools.code_mode.types import CellResult
+from agno.tools.code.bridge import ToolBridge
+from agno.tools.code.errors import KernelBusyError, KernelDiedError
+from agno.tools.code.kernel import RESET_NOTICE, KernelSession, LoopRunner, parse_marker_line
+from agno.tools.code.naming import derive_handle_name, handle_names_for  # noqa: F401  (re-exported)
+from agno.tools.code.snapshot import SnapshotManager
+from agno.tools.code.types import CellResult
 from agno.tools.function import Function, ToolResult
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_warning

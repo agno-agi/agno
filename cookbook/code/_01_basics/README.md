@@ -8,5 +8,5 @@ The smallest working CodeMode agent, and shell cells.
 Run:
 
 ```bash
-python cookbook/code_mode/_01_basics/basic.py
+python cookbook/code/_01_basics/basic.py
 ```

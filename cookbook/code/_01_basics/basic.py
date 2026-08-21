@@ -14,7 +14,7 @@ the conclusion is printed.
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
-from agno.tools.code_mode import CodeMode
+from agno.tools.code import CodeMode
 
 # ---------------------------------------------------------------------------
 # Create Agent

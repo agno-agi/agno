@@ -35,8 +35,8 @@ from inspect import isasyncgenfunction, iscoroutine, iscoroutinefunction
 from typing import Any, Callable, Coroutine, Dict, List, Optional, Sequence, Set, Tuple, Union
 
 from agno.run import RunContext
-from agno.tools.code_mode.kernel import KernelSession
-from agno.tools.code_mode.naming import derive_handle_name, safe_param_name
+from agno.tools.code.kernel import KernelSession
+from agno.tools.code.naming import derive_handle_name, safe_param_name
 from agno.tools.function import Function, FunctionCall, ToolResult
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import log_debug, log_warning

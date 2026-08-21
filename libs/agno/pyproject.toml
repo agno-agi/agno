@@ -116,7 +116,7 @@ arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-code-mode = ["ipykernel>=7.3.0", "jupyter_client>=8.9.1", "dill>=0.4.1"]
+code = ["ipykernel>=7.3.0", "jupyter_client>=8.9.1", "dill>=0.4.1"]
 # Pinned below 5.0: that release split Confluence into Cloud and Server classes and left the
 # base ``Confluence`` with no space or page methods, so ConfluenceTools raises AttributeError.
 # Lift once the tools are ported to the split classes.
@@ -271,7 +271,7 @@ tools = [
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
   "agno[browserbase]",
   "agno[cartesia]",
-  "agno[code-mode]",
+  "agno[code]",
   "agno[confluence]",
   # "agno[crawl4ai]",  # Excluded: depends on litellm, which was compromised on PyPI (March 24, 2026)
   "agno[daytona]",

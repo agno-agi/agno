@@ -8,13 +8,12 @@ try:
     import jupyter_client  # noqa: F401
 except ImportError:
     raise ImportError(
-        "CodeMode needs `ipykernel`, `jupyter_client` and `dill`. "
-        "Please install them using `pip install 'agno[code-mode]'`"
+        "CodeMode needs `ipykernel`, `jupyter_client` and `dill`. Please install them using `pip install 'agno[code]'`"
     )
 
-from agno.tools.code_mode.code_mode import CodeMode
-from agno.tools.code_mode.errors import CodeModeError, KernelBusyError, KernelDiedError, ResultTooLarge
-from agno.tools.code_mode.types import CellResult
+from agno.tools.code.code_mode import CodeMode
+from agno.tools.code.errors import CodeModeError, KernelBusyError, KernelDiedError, ResultTooLarge
+from agno.tools.code.types import CellResult
 
 __all__ = [
     "CellResult",
