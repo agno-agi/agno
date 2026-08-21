@@ -394,14 +394,15 @@ class Gemini(Model):
                 parallel_tool_config["custom_configs"] = self.parallel_config
             builtin_tools.append(Tool(parallel_ai_search=ToolParallelAiSearch(**parallel_tool_config)))
 
-        # Set tools in config
-        if builtin_tools:
-            if tools:
-                log_info("Built-in tools enabled. External tools will be disabled.")
-            config["tools"] = builtin_tools
-        elif tools:
-            config["tools"] = [format_function_definitions(tools)]
+        # Combine built-in tools and custom tools
+        all_tools = list(builtin_tools) if builtin_tools else []
+        if tools:
+            formatted_user_tools = format_function_definitions(tools)
+            if formatted_user_tools:
+                all_tools.append(formatted_user_tools)
 
+        if all_tools:
+            config["tools"] = all_tools
         if tool_choice is not None:
             if isinstance(tool_choice, str) and tool_choice.lower() == "auto":
                 config["tool_config"] = {"function_calling_config": {"mode": FunctionCallingConfigMode.AUTO}}
@@ -415,6 +416,14 @@ class Gemini(Model):
                 config["tool_config"] = {"function_calling_config": {"mode": tool_choice}}
 
         config = {k: v for k, v in config.items() if v is not None}
+        # Enable server-side tool invocations flag if mixing built-in tools and custom functions
+        if builtin_tools and tools:
+            tool_config = config.get("tool_config", {})
+            if isinstance(tool_config, dict):
+                tool_config["include_server_side_tool_invocations"] = True
+            else:
+                tool_config = {"include_server_side_tool_invocations": True}
+            config["tool_config"] = tool_config
 
         if config:
             request_params["config"] = GenerateContentConfig(**config)
