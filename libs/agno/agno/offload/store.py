@@ -176,44 +176,31 @@ def _scan_for_matches(content: str, pattern: str, context_lines: int) -> List[Re
     return _render_matches(lines, positions, more, context_lines)
 
 
-# The scan child is a bare interpreter: python -I imports nothing of the
-# caller, so a user script with no __main__ guard is never re-executed the
-# way a spawned multiprocessing worker would re-execute it. It reads one JSON
-# document from stdin and prints match positions; the reply text is rendered
-# by the parent, with the same code the in-process lane uses.
-_SCAN_CHILD_SOURCE = (
-    "import json, re, sys\n"
-    "data = json.loads(sys.stdin.buffer.read().decode('utf-8'))\n"
-    "compiled = re.compile(data['pattern'])\n"
-    "positions = []\n"
-    "more = False\n"
-    "for index, line in enumerate(data['content'].split('\\n')):\n"
-    "    found = compiled.search(line)\n"
-    "    if found is None:\n"
-    "        continue\n"
-    "    if len(positions) >= data['limit']:\n"
-    "        more = True\n"
-    "        break\n"
-    "    positions.append([index + 1, found.start(), found.end() - found.start()])\n"
-    "print(json.dumps({'positions': positions, 'more': more}))\n"
-)
-
-
 def _scan_in_subprocess(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
-    """Run the match scan in a fresh interpreter killed at ``SEARCH_TIMEOUT_SECONDS``.
+    """Run the match scan in a separate interpreter, killed at ``SEARCH_TIMEOUT_SECONDS``.
 
-    A thread stuck inside the regex engine cannot be interrupted, so a
-    pattern that can backtrack runs where a deadline can actually kill it.
-    ``communicate`` owns the pipes, so the deadline covers the whole exchange
-    - including a payload larger than one pipe buffer - and a dead child
-    surfaces as its stderr, not as a hang or an empty error.
+    A thread stuck inside the regex engine cannot be interrupted, so a pattern
+    that can backtrack runs where a deadline can actually kill it. The child is
+    ``agno/offload/_scan.py`` run in isolated mode: it imports the standard
+    library only, so nothing of the caller is re-executed and nothing of the
+    caller's environment is visible. The pattern and the payload travel as one
+    JSON document on stdin. ``communicate`` owns the pipes, so the deadline
+    covers the whole exchange, including a payload larger than one pipe buffer.
     """
     import subprocess
     import sys
+    from pathlib import Path
+
+    scan_script = Path(__file__).with_name("_scan.py")
+    if not scan_script.is_file():
+        # An installation this file cannot read from disk (a zipapp, say)
+        # keeps working, without the deadline.
+        log_warning(f"Result search: {scan_script} is missing; the scan runs in-process without a time limit")
+        return _scan_for_matches(content, pattern, context_lines)
 
     payload = json.dumps({"pattern": pattern, "content": content, "limit": SEARCH_MAX_MATCHES})
     process = subprocess.Popen(
-        [sys.executable, "-I", "-c", _SCAN_CHILD_SOURCE],
+        [sys.executable, "-I", str(scan_script)],
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
