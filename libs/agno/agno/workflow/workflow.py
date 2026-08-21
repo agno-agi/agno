@@ -23,11 +23,17 @@ from typing import (
 )
 from uuid import uuid4
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from fastapi import WebSocket
+
     from agno.os.managers import WebSocketHandler
+else:
+    # fastapi only ships with the "os" extra. Binding WebSocket loosely keeps
+    # the websocket annotations resolvable by get_type_hints() -- and with
+    # them Function.from_callable() on run methods -- without importing it.
+    WebSocket = Any
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
