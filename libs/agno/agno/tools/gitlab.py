@@ -28,6 +28,7 @@ class GitlabTools(Toolkit):
         list_merge_requests: bool = True,
         get_merge_request: bool = True,
         list_issues: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
@@ -39,19 +40,19 @@ class GitlabTools(Toolkit):
         tools: List[Any] = []
         async_tools: List[tuple[Any, str]] = []
 
-        if list_projects:
+        if all or list_projects:
             tools.append(self.list_projects)
             async_tools.append((self.alist_projects, "list_projects"))
-        if get_projects:
+        if all or get_projects:
             tools.append(self.get_project)
             async_tools.append((self.aget_project, "get_project"))
-        if list_merge_requests:
+        if all or list_merge_requests:
             tools.append(self.list_merge_requests)
             async_tools.append((self.alist_merge_requests, "list_merge_requests"))
-        if get_merge_request:
+        if all or get_merge_request:
             tools.append(self.get_merge_request)
             async_tools.append((self.aget_merge_request, "get_merge_request"))
-        if list_issues:
+        if all or list_issues:
             tools.append(self.list_issues)
             async_tools.append((self.alist_issues, "list_issues"))
 

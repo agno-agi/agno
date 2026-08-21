@@ -13,6 +13,47 @@ except ImportError:
 
 
 class GithubTools(Toolkit):
+    # Tool name constants for include_tools/exclude_tools
+    SEARCH_REPOSITORIES = "search_repositories"
+    LIST_REPOSITORIES = "list_repositories"
+    GET_REPOSITORY = "get_repository"
+    GET_PULL_REQUEST = "get_pull_request"
+    GET_PULL_REQUEST_CHANGES = "get_pull_request_changes"
+    CREATE_ISSUE = "create_issue"
+    CREATE_REPOSITORY = "create_repository"
+    DELETE_REPOSITORY = "delete_repository"
+    LIST_BRANCHES = "list_branches"
+    GET_REPOSITORY_LANGUAGES = "get_repository_languages"
+    GET_PULL_REQUEST_COUNT = "get_pull_request_count"
+    GET_REPOSITORY_STARS = "get_repository_stars"
+    GET_PULL_REQUESTS = "get_pull_requests"
+    GET_PULL_REQUEST_COMMENTS = "get_pull_request_comments"
+    CREATE_PULL_REQUEST_COMMENT = "create_pull_request_comment"
+    EDIT_PULL_REQUEST_COMMENT = "edit_pull_request_comment"
+    GET_PULL_REQUEST_WITH_DETAILS = "get_pull_request_with_details"
+    GET_REPOSITORY_WITH_STATS = "get_repository_with_stats"
+    LIST_ISSUES = "list_issues"
+    GET_ISSUE = "get_issue"
+    COMMENT_ON_ISSUE = "comment_on_issue"
+    CLOSE_ISSUE = "close_issue"
+    REOPEN_ISSUE = "reopen_issue"
+    ASSIGN_ISSUE = "assign_issue"
+    LABEL_ISSUE = "label_issue"
+    LIST_ISSUE_COMMENTS = "list_issue_comments"
+    EDIT_ISSUE = "edit_issue"
+    CREATE_PULL_REQUEST = "create_pull_request"
+    CREATE_FILE = "create_file"
+    GET_FILE_CONTENT = "get_file_content"
+    UPDATE_FILE = "update_file"
+    DELETE_FILE = "delete_file"
+    GET_DIRECTORY_CONTENT = "get_directory_content"
+    GET_BRANCH_CONTENT = "get_branch_content"
+    CREATE_BRANCH = "create_branch"
+    SET_DEFAULT_BRANCH = "set_default_branch"
+    SEARCH_CODE = "search_code"
+    SEARCH_ISSUES_AND_PRS = "search_issues_and_prs"
+    CREATE_REVIEW_REQUEST = "create_review_request"
+
     def __init__(
         self,
         access_token: Optional[str] = None,

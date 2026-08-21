@@ -46,6 +46,7 @@ class WebSearchTools(Toolkit):
         verify_ssl: bool = True,
         timelimit: Optional[Literal["d", "w", "m", "y"]] = None,
         region: Optional[str] = None,
+        all: bool = False,
         **kwargs,
     ):
         # Validate timelimit parameter
@@ -64,9 +65,9 @@ class WebSearchTools(Toolkit):
         self.region: Optional[str] = region
 
         tools: List[Any] = []
-        if search:
+        if all or search:
             tools.append(self.web_search)
-        if news:
+        if all or news:
             tools.append(self.search_news)
 
         super().__init__(name="websearch", tools=tools, **kwargs)

@@ -294,6 +294,7 @@ class GoogleDriveTools(GoogleToolkit):
         # Injected into agent system prompt with Drive query syntax
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         if oauth_port is None:
@@ -314,14 +315,14 @@ class GoogleDriveTools(GoogleToolkit):
         self.drive_id = drive_id
         self.quota_project_id = quota_project_id or getenv("GOOGLE_CLOUD_QUOTA_PROJECT_ID")
 
-        read_tools_enabled = any([list_files, search_files, read_file, download_file])
+        read_tools_enabled = all or any([list_files, search_files, read_file, download_file])
 
         # Auto-infer minimal scopes from enabled tools
         if scopes is None:
             resolved_scopes: List[str] = []
             if read_tools_enabled:
                 resolved_scopes.append(self.DEFAULT_SCOPES["read"])
-            if upload_file:
+            if all or upload_file:
                 resolved_scopes.append(self.DEFAULT_SCOPES["write"])
             if not resolved_scopes:
                 resolved_scopes.append(self.DEFAULT_SCOPES["read"])
@@ -342,20 +343,20 @@ class GoogleDriveTools(GoogleToolkit):
         async_tools: List[Tuple[Any, str]] = []
 
         # Reading
-        if list_files:
+        if all or list_files:
             tools.append(self.list_files)
             async_tools.append((self.alist_files, "list_files"))
-        if search_files:
+        if all or search_files:
             tools.append(self.search_files)
             async_tools.append((self.asearch_files, "search_files"))
-        if read_file:
+        if all or read_file:
             tools.append(self.read_file)
             async_tools.append((self.aread_file, "read_file"))
         # Writing
-        if upload_file:
+        if all or upload_file:
             tools.append(self.upload_file)
             async_tools.append((self.aupload_file, "upload_file"))
-        if download_file:
+        if all or download_file:
             tools.append(self.download_file)
             async_tools.append((self.adownload_file, "download_file"))
 
