@@ -4622,7 +4622,11 @@ class StudioTools(Toolkit):
     def _preserve_unresolved_keys(
         self, component_id: Optional[str], config: Dict[str, Any], replaced_keys: Set[str]
     ) -> None:
-        """Copy stored reference keys the lenient load dropped back into ``config``."""
+        """Copy stored keys the lenient load dropped back into ``config``.
+
+        Reference keys the rebuild could not resolve, and the marker that says
+        which version owns the catalog row's metadata column.
+        """
         if self.db is None or component_id is None:
             return
         base = self._runner_tools._load_config_from_db(component_id, version=self._edit_base_version(component_id))
@@ -4647,6 +4651,18 @@ class StudioTools(Toolkit):
             if key in base and base.get(key) is not None and config.get(key) is None:
                 config[key] = base[key]
                 log_debug(f"StudioTools: preserving stored '{key}' the lenient load could not resolve.")
+        # metadata_authored records that a version owns the catalog row's
+        # metadata column, and it does not survive the rehydrate-and-
+        # reserialize this edit round-trips through: it is a marker on the
+        # config, not a field on the component. An edit that leaves metadata
+        # alone carries the same metadata forward, so it inherits the base
+        # version's authorship too - without this, a version that authored an
+        # empty metadata (a deliberate clear, whose only remaining content is
+        # the provenance stamp) stops owning the column as soon as any later
+        # edit touches a different field, and publishing that version restores
+        # the metadata the clear removed.
+        if "metadata" not in replaced_keys and base.get("metadata_authored"):
+            config["metadata_authored"] = True
 
     def _base_links(self, component_id: Optional[str]) -> Optional[List[Dict[str, Any]]]:
         """The base version's links, carried forward verbatim on an edit that

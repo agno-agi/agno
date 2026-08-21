@@ -630,6 +630,37 @@ class TestListingsExcludeWhatTheyRender:
 
         assert [row["component_id"] for row in listed] == ["research"]
 
+    def test_the_untyped_listing_still_hides_a_cross_type_collision(self, tmp_path):
+        """Documents a known gap, so a fix changes a red test rather than a silent one.
+
+        Without a type filter the exclusion is one flat set of ids, so it
+        cannot tell same-type shadowing (intended: the code object is what
+        /agents|/teams|/workflows renders, so the stored row is dead weight)
+        from a cross-type collision (not intended: the typed listing above
+        returns this row). The agent/team axis behaves this way already and
+        always has; adding workflows to the registry extends it to a third
+        type. Closing it needs type-aware exclusion pushed through
+        list_components -- an adapter change -- and doing it by dropping
+        workflow ids from this set instead would break the same-type dedup
+        that TestListingDedup pins.
+        """
+        db, ComponentType = self._db(tmp_path)
+        db.create_component_with_config(
+            component_id="research",
+            component_type=ComponentType.AGENT,
+            name="Research",
+            config={"id": "research", "name": "Research"},
+            stage="published",
+        )
+        workflow = Workflow(id="research", name="Research WF", steps=[Step(name="s", executor=lambda si: None)])
+        agent_os = AgentOS(agents=[Agent(id="a", name="A", model=_model())], workflows=[workflow], db=db)
+        client = TestClient(agent_os.get_app())
+
+        untyped = client.get("/components").json()
+
+        assert [row["component_id"] for row in untyped["data"]] == []
+        assert untyped["meta"]["total_count"] == 0
+
     def test_a_registry_only_workflow_does_not_hide_a_stored_workflow(self, tmp_path):
         db, ComponentType = self._db(tmp_path)
         db.create_component_with_config(

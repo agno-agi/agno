@@ -274,17 +274,22 @@ def _operator_patch(db, component_id: str) -> None:
     )
 
 
-def _create_bare(studio, component_type: str, name: str) -> str:
-    """A published component whose configs never carry description/metadata."""
+def _create_bare(studio, component_type: str, name: str, ctx=None) -> str:
+    """A published component whose configs never carry description/metadata.
+
+    With ``ctx`` the component is owned by that caller, which is what a scoped
+    actor needs before it may edit the component at all.
+    """
+    scope = {"_agno_run_context": ctx} if ctx is not None else {}
     if component_type == "agent":
-        out = studio.create_agent(name=name, instructions="i", publish=True)
+        out = studio.create_agent(name=name, instructions="i", publish=True, **scope)
     elif component_type == "team":
-        studio.create_agent(name=f"{name}-member", instructions="i", publish=True)
-        out = studio.create_team(name=name, instructions="i", member_ids=[f"{name}-member"], publish=True)
+        studio.create_agent(name=f"{name}-member", instructions="i", publish=True, **scope)
+        out = studio.create_team(name=name, instructions="i", member_ids=[f"{name}-member"], publish=True, **scope)
     else:
-        studio.create_agent(name=f"{name}-step", instructions="i", publish=True)
+        studio.create_agent(name=f"{name}-step", instructions="i", publish=True, **scope)
         out = studio.create_workflow(
-            name=name, steps=[{"type": "step", "name": "s1", "agent_id": f"{name}-step"}], publish=True
+            name=name, steps=[{"type": "step", "name": "s1", "agent_id": f"{name}-step"}], publish=True, **scope
         )
     return _data(out)["id"]
 
@@ -395,6 +400,29 @@ class TestScopedFlowsAndTheProvenanceStamp:
         _data(studio.edit_agent(component_id, description="", _agno_run_context=ctx, publish=True))
 
         assert not db.get_component(component_id)["description"]
+
+    @pytest.mark.parametrize("component_type", ["agent", "team", "workflow"])
+    def test_a_later_edit_does_not_revive_metadata_an_earlier_edit_cleared(self, studio, db, component_type):
+        """The clear and the publish need not be the same call.
+
+        An authored clear leaves the config carrying nothing but the
+        provenance stamp, so only the marker distinguishes it from a version
+        that never touched metadata. The marker lives on the config, not on
+        the component, so it does not survive the rehydrate-and-reserialize an
+        edit round-trips through -- and an edit of an unrelated field would
+        otherwise hand the column back to the row and undo the clear.
+        """
+        ctx = self._ctx()
+        component_id = _create_bare(studio, component_type, f"Clear {component_type}", ctx=ctx)
+        _operator_patch(db, component_id)
+        editor = TestRowOnlyFieldsSurviveTheToolkit._EDITORS[component_type]
+
+        _data(getattr(studio, editor)(component_id, metadata={}, _agno_run_context=ctx))
+        _data(getattr(studio, editor)(component_id, description="unrelated change", _agno_run_context=ctx))
+        _data(studio.publish_component(component_id, _agno_run_context=ctx))
+
+        metadata = db.get_component(component_id)["metadata"] or {}
+        assert "team" not in metadata, "an edit after the clear handed the metadata column back to the row"
 
     def test_a_scoped_rollback_onto_an_authored_clear_re_clears(self, studio, db):
         component_id = self._scoped_fixture(studio, db)
