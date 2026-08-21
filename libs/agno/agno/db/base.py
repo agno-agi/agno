@@ -277,8 +277,6 @@ class BaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
-        # Result offloading index. The name is fixed; adapters that support
-        # offloading create the table lazily on first use.
         self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
@@ -2059,8 +2057,6 @@ class AsyncBaseDb(ABC):
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
-        # Result offloading index. The name is fixed; adapters that support
-        # offloading create the table lazily on first use.
         self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
