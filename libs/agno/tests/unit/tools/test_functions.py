@@ -1744,6 +1744,113 @@ def test_strict_processing_does_not_require_an_injected_parameter():
     assert func.parameters["required"] == ["query"]
 
 
+def test_strict_processing_excludes_framework_typed_renamed_parameter():
+    """A param the framework claims by annotation (renamed from the reserved names)
+    must not be forced into strict-mode `required`. Issue #9454."""
+
+    def probe(query: str, ctx: RunContext = None) -> str:
+        return query
+
+    func = Function(
+        name="probe",
+        entrypoint=probe,
+        parameters={
+            "type": "object",
+            "properties": {"query": {"type": "string"}, "ctx": {"type": "object"}},
+            "required": ["query"],
+        },
+    )
+    func.process_entrypoint(strict=True)
+    assert func._framework_params == {"ctx"}
+    assert func.parameters["required"] == ["query"]
+
+
+def test_strict_processing_completes_required_at_every_level():
+    """make_nested_strict must finish pydantic's `required` list at every object
+    level, so defaulted or Optional fields are not omitted from strict `required`.
+    `format` keys are not a violation and must be preserved. Issue #9413."""
+    from datetime import datetime
+
+    class Inner(BaseModel):
+        label: str
+        weight: float = 1.0
+
+    class Payload(BaseModel):
+        name: str
+        created_at: datetime
+        inner: Inner
+        note: Optional[str] = None
+
+    func = Function(name="payload", parameters=Payload.model_json_schema())
+    func.process_schema_for_strict()
+
+    params = func.parameters
+    assert sorted(params["required"]) == ["created_at", "inner", "name", "note"]
+    assert params["additionalProperties"] is False
+    inner_def = params["$defs"]["Inner"]
+    assert sorted(inner_def["required"]) == ["label", "weight"]
+    assert inner_def["additionalProperties"] is False
+    # format keys survive strict processing (OpenAI preserves them verbatim)
+    assert params["properties"]["created_at"].get("format") == "date-time"
+
+
+def test_strict_processing_visits_anyof_branches():
+    """Object schemas reached through an anyOf list get additionalProperties: false
+    and a completed required, like every other object level. Issue #9413."""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "mode": {
+                "anyOf": [
+                    {
+                        "type": "object",
+                        "properties": {"level": {"type": "integer"}, "flag": {"type": "boolean"}},
+                        "required": ["level"],
+                    },
+                    {"type": "string"},
+                ]
+            }
+        },
+        "required": ["mode"],
+    }
+    func = Function(name="f", parameters=schema)
+    func.process_schema_for_strict()
+
+    inline = func.parameters["properties"]["mode"]["anyOf"][0]
+    assert sorted(inline["required"]) == ["flag", "level"]
+    assert inline["additionalProperties"] is False
+
+
+def test_strict_processing_leaves_literal_values_untouched():
+    """enum/examples/default hold instance values, not schemas: strict processing
+    must not rewrite them even when a literal happens to look like a schema."""
+
+    schema = {
+        "type": "object",
+        "properties": {
+            "preset": {
+                "type": "object",
+                "enum": [
+                    {"type": "object", "properties": {"a": {"type": "string"}}},
+                    {"type": "object", "properties": {"b": {"type": "string"}}},
+                ],
+                "default": {"type": "object", "properties": {"c": {"type": "string"}}},
+            }
+        },
+        "required": ["preset"],
+    }
+    func = Function(name="f", parameters=schema)
+    func.process_schema_for_strict()
+
+    preset = func.parameters["properties"]["preset"]
+    assert preset["enum"] == [
+        {"type": "object", "properties": {"a": {"type": "string"}}},
+        {"type": "object", "properties": {"b": {"type": "string"}}},
+    ]
+    assert preset["default"] == {"type": "object", "properties": {"c": {"type": "string"}}}
+
+
 # ----------------------------------------------------------------------
 # Regression: the guard must also engage on the from_callable path
 # (Agent(tools=[fn]) registers plain callables without process_entrypoint)
