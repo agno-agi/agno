@@ -1,4 +1,4 @@
-from agno.compression._context import (
+from agno.compression.context import (
     SUMMARY_PREFIX,
     CompactionResult,
     CompactionState,
