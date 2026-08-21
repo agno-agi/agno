@@ -242,3 +242,58 @@ def test_team_session_detail_chat_history_includes_member_messages():
     sdk_contents = [message.content for message in session.get_chat_history()]
     assert "Delegating to the weather agent." in sdk_contents
     assert "It is sunny in Tokyo." not in sdk_contents
+
+
+def test_team_session_detail_chat_history_uses_member_first_persistence_order():
+    """On the default team path, delegate_task_to_member upserts the member run
+    before _cleanup_and_store upserts the parent team run, so session.runs is
+    stored member-first. get_messages() walks stored run order, so the REST
+    chat_history lists the member messages before the leader's turn. This test
+    pins that storage-order behavior; conversational reordering is a separate
+    change."""
+    from agno.models.message import Message
+    from agno.os.schema import TeamSessionDetailSchema
+    from agno.run.agent import RunOutput, RunStatus
+    from agno.run.team import TeamRunOutput
+    from agno.session.team import TeamSession
+
+    member_run = RunOutput(
+        run_id="member-run-1",
+        agent_id="weather-agent",
+        parent_run_id="team-run-1",
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="Get the weather in Tokyo."),
+            Message(role="assistant", content="It is sunny in Tokyo."),
+        ],
+    )
+    team_run = TeamRunOutput(
+        run_id="team-run-1",
+        team_id="t1",
+        parent_run_id=None,
+        status=RunStatus.completed,
+        messages=[
+            Message(role="user", content="What is the weather in Tokyo?"),
+            Message(role="assistant", content="Delegating to the weather agent."),
+        ],
+    )
+    session = TeamSession(
+        session_id="team-session-1",
+        team_id="t1",
+        session_data={"session_name": "Weather session"},
+        runs=[member_run, team_run],
+        created_at=1719859200,
+        updated_at=1719859200,
+    )
+
+    schema = TeamSessionDetailSchema.from_session(session)
+
+    contents = [message["content"] for message in schema.chat_history or []]
+    assert "It is sunny in Tokyo." in contents
+    assert "Delegating to the weather agent." in contents
+    # Storage order is preserved: the member's messages come before the leader's
+    assert contents.index("It is sunny in Tokyo.") < contents.index("Delegating to the weather agent.")
+
+    # The SDK helper is for model context and must keep excluding member messages
+    sdk_contents = [message.content for message in session.get_chat_history()]
+    assert "It is sunny in Tokyo." not in sdk_contents

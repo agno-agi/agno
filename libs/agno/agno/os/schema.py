@@ -499,7 +499,11 @@ class TeamSessionDetailSchema(BaseModel):
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
-            # Include member-agent messages so the REST payload matches the runs endpoint
+            # Include member-agent messages so the REST payload matches the runs endpoint.
+            # Messages follow stored run order: on the default checkpoint path member runs
+            # are upserted before the parent team run, so member messages may appear before
+            # the leader's preceding turn. Conversational reordering is intentionally not
+            # done here — this endpoint mirrors GET /sessions/{id}/runs storage order.
             chat_history=[
                 message.to_dict()
                 for message in session.get_messages(
