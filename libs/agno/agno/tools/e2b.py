@@ -202,8 +202,7 @@ class E2BTools(Toolkit):
             with fdopen(fd, "wb") as tmp:
                 tmp.write(png_data)
 
-            # A local path belongs in filepath, not in a file:// url: url is fetched over
-            # http(s), and media storage reads filepath directly when it offloads.
+            # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
             image_id = str(uuid4())
             image_artifact = Image(
                 id=image_id, filepath=temp_path, original_prompt=f"Generated from code execution result {result_index}"
@@ -287,8 +286,7 @@ class E2BTools(Toolkit):
                 with os.fdopen(fd, "wb") as tmp:
                     tmp.write(png_data)
 
-                # A local path belongs in filepath, not in a file:// url: url is fetched over
-                # http(s), and media storage reads filepath directly when it offloads.
+                # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
                 image_id = str(uuid4())
                 image_artifact = Image(
                     id=image_id,

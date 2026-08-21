@@ -263,7 +263,7 @@ def reconstruct_image_from_dict(img_data):
     """
     try:
         if isinstance(img_data, dict):
-            # Check for media_reference FIRST (before content check)
+            # Media reference takes precedence over inline content
             if "media_reference" in img_data and isinstance(img_data["media_reference"], dict):
                 ref_data = img_data["media_reference"]
                 if "storage_key" in ref_data:
@@ -271,7 +271,6 @@ def reconstruct_image_from_dict(img_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return Image(
-                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=img_data.get("url") or ref.url,
                         filepath=img_data.get("filepath"),
                         id=img_data.get("id"),
@@ -314,7 +313,7 @@ def reconstruct_video_from_dict(vid_data):
     """
     try:
         if isinstance(vid_data, dict):
-            # Check for media_reference FIRST
+            # Media reference takes precedence over inline content
             if "media_reference" in vid_data and isinstance(vid_data["media_reference"], dict):
                 ref_data = vid_data["media_reference"]
                 if "storage_key" in ref_data:
@@ -322,7 +321,6 @@ def reconstruct_video_from_dict(vid_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return Video(
-                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=vid_data.get("url") or ref.url,
                         filepath=vid_data.get("filepath"),
                         id=vid_data.get("id"),
@@ -364,7 +362,7 @@ def reconstruct_audio_from_dict(aud_data):
     """
     try:
         if isinstance(aud_data, dict):
-            # Check for media_reference FIRST
+            # Media reference takes precedence over inline content
             if "media_reference" in aud_data and isinstance(aud_data["media_reference"], dict):
                 ref_data = aud_data["media_reference"]
                 if "storage_key" in ref_data:
@@ -372,7 +370,6 @@ def reconstruct_audio_from_dict(aud_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return Audio(
-                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=aud_data.get("url") or ref.url,
                         filepath=aud_data.get("filepath"),
                         id=aud_data.get("id"),
@@ -415,7 +412,7 @@ def reconstruct_file_from_dict(file_data):
     """
     try:
         if isinstance(file_data, dict):
-            # Check for media_reference FIRST
+            # Media reference takes precedence over inline content
             if "media_reference" in file_data and isinstance(file_data["media_reference"], dict):
                 ref_data = file_data["media_reference"]
                 if "storage_key" in ref_data:
@@ -423,7 +420,6 @@ def reconstruct_file_from_dict(file_data):
 
                     ref = MediaReference.from_dict(ref_data)
                     return File(
-                        # The media's own url is the fuller value: offload only falls back to the reference's.
                         url=file_data.get("url") or ref.url,
                         filepath=file_data.get("filepath"),
                         id=file_data.get("id"),

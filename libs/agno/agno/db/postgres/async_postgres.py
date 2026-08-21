@@ -244,6 +244,7 @@ class AsyncPostgresDb(AsyncBaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
             (self.service_accounts_table_name, "service_accounts"),
+            (self.tool_results_table_name, "tool_results"),
         ]
 
         for table_name, table_type in tables_to_create:
@@ -517,6 +518,14 @@ class AsyncPostgresDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.job_table
+
+        if table_type == "tool_results":
+            self.tool_results_table = await self._get_or_create_table(
+                table_name=self.tool_results_table_name,
+                table_type="tool_results",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.tool_results_table
 
         if table_type == "approvals":
             self.approvals_table = await self._get_or_create_table(
@@ -1048,7 +1057,10 @@ class AsyncPostgresDb(AsyncBaseDb):
                     await sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
 
                 log_debug(f"Successfully deleted session with session_id: {session_id} in table {table.name}")
-                return True
+
+            # Cascade offloaded tool results after the session delete commits.
+            await self._cascade_tool_results([session_id])
+            return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -1072,9 +1084,21 @@ class AsyncPostgresDb(AsyncBaseDb):
             runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                # The ids a user_id-scoped delete is allowed to touch. The
+                # cascade below removes stored payloads, which no filter on the
+                # sessions table would stop it from doing for another user's
+                # session id.
+                select_stmt = select(table.c.session_id).where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
-                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    select_stmt = select_stmt.where(table.c.user_id == user_id)
+                deletable_ids = [row[0] for row in await sess.execute(select_stmt)]
+                # Stored payloads are cascaded only for sessions this delete
+                # was allowed to remove. An unscoped delete has no other user
+                # to protect, so it also cleans up after a session whose row
+                # is already gone.
+                cascade_ids = session_ids if user_id is None else deletable_ids
+
+                delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = await sess.execute(delete_stmt)
 
                 # Also delete the runs belonging to the sessions
@@ -1086,8 +1110,141 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
+            # Cascade offloaded tool results after the session delete commits.
+            await self._cascade_tool_results(cascade_ids)
+
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
+
+    async def _cascade_tool_results(self, session_ids: List[str]) -> None:
+        """Cascade result offloading on session delete: read the index rows,
+        delete their payloads, then the index rows.
+
+        Best-effort and outside the session delete, so a cascade failure can
+        never poison or roll back the delete itself. Payloads are removed by
+        the exact (namespace, path) of each index row, through the
+        filesystems result stores registered on this db, or from the AgentFS
+        table at its defaults when no store registered.
+        """
+        try:
+            table = await self._get_table(table_type="tool_results")
+            if table is None:
+                return
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                        table.c.session_id.in_(session_ids)
+                    )
+                )
+                rows = result.fetchall()
+            if not rows:
+                return
+            # Payloads are removed through every filesystem a store on this db
+            # registered, and from the default payload table as well: a fresh
+            # process has no registrations, and the exact (namespace, path)
+            # delete cannot touch anything but these rows. A row whose payload
+            # was found nowhere is reported; its bytes live in a filesystem
+            # this process cannot reach.
+            removed = set()
+            filesystems = list(getattr(self, "tool_result_filesystems", []) or [])
+            if filesystems:
+                from agno.fs import FileSystem
+
+                for _, namespace, path in rows:
+                    for fs in filesystems:
+                        try:
+                            if await FileSystem(backend=fs.backend, namespace=str(namespace)).adelete(str(path)):
+                                removed.add((str(namespace), str(path)))
+                        except Exception as e:
+                            log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
+            async with self.async_session_factory() as sess, sess.begin():
+                if await self._adefault_payload_table_exists(sess):
+                    for _, namespace, path in rows:
+                        if (str(namespace), str(path)) in removed:
+                            continue
+                        result = await sess.execute(
+                            text(f"DELETE FROM {self._default_payload_table()} WHERE namespace = :ns AND path = :p"),
+                            {"ns": str(namespace), "p": str(path)},
+                        )
+                        if getattr(result, "rowcount", 0):
+                            removed.add((str(namespace), str(path)))
+            missing = [
+                f"{namespace}/{path}" for _, namespace, path in rows if (str(namespace), str(path)) not in removed
+            ]
+            if missing:
+                log_warning(
+                    f"Tool-result cascade removed {len(rows) - len(missing)} of {len(rows)} payloads; "
+                    f"{len(missing)} live in a filesystem this process has no store for: {missing[:3]}"
+                )
+            result_ids = [str(row[0]) for row in rows]
+            for start in range(0, len(result_ids), 500):
+                async with self.async_session_factory() as sess, sess.begin():
+                    await sess.execute(table.delete().where(table.c.result_id.in_(result_ids[start : start + 500])))
+        except Exception as e:
+            log_warning(f"Tool-result cascade on session delete failed: {e}")
+
+    @staticmethod
+    def _default_payload_table() -> str:
+        return '"fs".agno_fs'
+
+    @staticmethod
+    async def _adefault_payload_table_exists(sess: Any) -> bool:
+        return (await sess.execute(text("SELECT to_regclass('fs.agno_fs')"))).scalar() is not None
+
+    # -- Tool Results (result offloading index) --
+
+    async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type="tool_results", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.tool_results_table_name}")
+        from sqlalchemy.dialects.postgresql import insert as pg_insert
+
+        stmt = pg_insert(table).values(**row)
+        update_columns = {key: stmt.excluded[key] for key in row.keys() if key != "result_id"}
+        stmt = stmt.on_conflict_do_update(index_elements=["result_id"], set_=update_columns)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(stmt)
+
+    async def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(select(table).where(table.c.result_id == result_id))
+            row = result.fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    async def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = (
+            select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc(), table.c.result_id)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    async def delete_tool_results(self, result_ids: List[str]) -> int:
+        if not result_ids:
+            return 0
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return 0
+        async with self.async_session_factory() as sess, sess.begin():
+            result = await sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
+        return result.rowcount or 0  # type: ignore
+
+    async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
 
     async def get_session(
         self,

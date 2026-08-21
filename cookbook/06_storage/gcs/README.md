@@ -12,9 +12,9 @@ uv pip install google-cloud-storage
 
 ```python
 from agno.agent import Agent
-from agno.storage.gcs_json import GCSJsonDb
+from agno.db.gcs_json import GcsJsonDb
 
-db = GCSJsonDb(
+db = GcsJsonDb(
     bucket_name="your-bucket-name",
 )
 

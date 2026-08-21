@@ -131,12 +131,12 @@ class TestGCSMediaStorage:
         assert url == "https://signed.example.com"
         blob.generate_signed_url.assert_called_once()
 
-    def test_get_url_signing_failure_falls_back_to_empty(self):
-        """User/ADC credentials can't sign; get_url must degrade to '' so offload doesn't break."""
+    def test_get_url_signing_failure_falls_back_to_none(self):
+        """User/ADC credentials can't sign; get_url must degrade to None so offload doesn't break."""
         storage, bucket, blob = _storage_with_mock_blob()
         blob.generate_signed_url.side_effect = AttributeError("you need a private key to sign")
 
-        assert storage.get_url("some/key.png") == ""
+        assert storage.get_url("some/key.png") is None
 
     def test_get_url_non_signing_credential_is_not_warned_about(self, monkeypatch):
         """The ADC case is expected, so it stays at debug; a warning would fire on every run."""
@@ -144,7 +144,7 @@ class TestGCSMediaStorage:
         blob.generate_signed_url.side_effect = AttributeError("you need a private key to sign")
         warnings = _capture_warnings(monkeypatch)
 
-        assert storage.get_url("some/key.png") == ""
+        assert storage.get_url("some/key.png") is None
         assert warnings == []
 
     def test_get_url_misconfiguration_is_warned_about(self, monkeypatch):
@@ -154,7 +154,7 @@ class TestGCSMediaStorage:
         blob.generate_signed_url.side_effect = ValueError("Max allowed expiration interval is seven days")
         warnings = _capture_warnings(monkeypatch)
 
-        assert storage.get_url("some/key.png", expires_in=604801) == ""
+        assert storage.get_url("some/key.png", expires_in=604801) is None
         assert any("Could not sign GCS URL" in m for m in warnings)
         assert not any("non-signing credentials" in m for m in warnings)
 

@@ -192,9 +192,9 @@ def test_offload_refuses_a_backend_without_a_name(storage_class):
     """A backend the reference cannot name is skipped before the upload, not after.
 
     Every MediaReference records backend_name, so a backend that never sets one — or whose
-    property answers "" — used to fail while the reference was being built, after the upload
-    had already written an object nothing could point at. Others persisted "unknown". Skipping
-    leaves the media alone: it keeps its content and the row keeps its base64.
+    property answers "" — has nothing to record and no reference can be built for it. Skipping
+    leaves the media alone: it keeps its content, the row keeps its base64, and no object is
+    written that nothing could point at.
     """
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = storage_class(base_path=tmpdir)
@@ -257,3 +257,17 @@ def test_every_backend_defaults_expires_in_to_none():
     for cls in classes:
         default = inspect.signature(cls.get_url).parameters["expires_in"].default
         assert default is None, f"{cls.__name__}.get_url defaults expires_in to {default}"
+
+
+def test_every_name_the_package_advertises_is_importable():
+    """``agno.media.storage`` resolves its backends through a hand-written ``__getattr__``.
+
+    Every test imports from the concrete submodule instead, so a typo in one of those branches
+    would break only the public path — the one users are told to use — and ship silently.
+    """
+    import agno.media.storage as storage_package
+
+    unresolvable = [name for name in storage_package.__all__ if not hasattr(storage_package, name)]
+    assert unresolvable == []
+    with pytest.raises(AttributeError):
+        storage_package.NotABackend

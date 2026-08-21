@@ -11,7 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import ComponentRehydrationError
+from agno.exceptions import AgnoError, ComponentRehydrationError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -33,6 +33,23 @@ from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
+
+
+class AgnoHTTPException(HTTPException):
+    """HTTPException raised from an ``AgnoError`` that keeps the error's identity.
+
+    Routers that wrap database and model calls in a blanket ``except Exception`` use this
+    to re-raise an ``AgnoError`` with its own status code. The owned-app exception handler
+    copies ``error_id`` and ``error_type`` into the JSON body so clients can branch on them
+    (``migration_required_error``, ``model_provider_error``, ...) instead of parsing
+    ``detail``. On a caller-supplied app FastAPI's default handler still answers with the
+    right status code and ``detail``.
+    """
+
+    def __init__(self, error: AgnoError, detail: Optional[str] = None):
+        super().__init__(status_code=error.status_code, detail=detail if detail is not None else str(error))
+        self.error_id: Optional[str] = getattr(error, "error_id", None)
+        self.error_type: Optional[str] = getattr(error, "type", None)
 
 
 def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> Optional[datetime]:
@@ -61,16 +78,14 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
     return datetime.fromtimestamp(value, tz=timezone.utc)
 
 
-# Per-file metadata is persisted twice, on the media object and on its MediaReference, and
-# nothing capped the database. Matched to the most generous object-store budget.
+# Matched to the most generous object-store metadata budget.
 MAX_FILES_METADATA_BYTES = 8000
 
 
 def parse_files_metadata(files_metadata: Optional[str]) -> List[Optional[Dict[str, Any]]]:
     """Parse the per-file metadata array, refusing one too large to persist.
 
-    Rejected rather than truncated: a caller who sends metadata expects to read it back, and
-    silently keeping a prefix of it is worse than being told it did not fit.
+    Rejected rather than truncated: a caller who sends metadata expects to read it back.
     """
     if not files_metadata:
         return []
@@ -86,20 +101,16 @@ def parse_files_metadata(files_metadata: Optional[str]) -> List[Optional[Dict[st
         return []
     if not isinstance(parsed, list):
         return []
-    # Coerce non-object entries to None so the matching file is still processed (just without
-    # metadata) instead of being dropped.
+    # Coerce non-object entries to None so the matching file is still processed without metadata.
     return [m if isinstance(m, dict) else None for m in parsed]
 
 
 def drop_media_references(media_dicts: Any) -> Any:
     """Drop ``media_reference`` from inbound media dicts.
 
-    A reference is a pointer into the configured storage bucket, minted by the offload engine
-    and trusted downstream: the media route serves any key it finds on a session the caller
-    owns. Honouring one from a request body would let a caller name any key the AgentOS
-    credentials can reach, have it persisted onto their own session, and read it back.
-    Request media carries its own content, url, or filepath; the reference is attached on the
-    way out, never on the way in.
+    A reference is a pointer into the configured storage bucket, minted by the offload engine and
+    trusted downstream. Honouring one from a request body would let a caller name any key the
+    AgentOS credentials can reach, persist it onto their own session, and read it back.
     """
     if isinstance(media_dicts, list):
         for item in media_dicts:

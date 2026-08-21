@@ -6,11 +6,10 @@ from agno.media.storage.gcs.gcs import GCSMediaStorage
 
 
 class AsyncGCSMediaStorage(AsyncMediaStorage):
-    """Async Google Cloud Storage media storage.
+    """Async Google Cloud Storage media storage backend.
 
     google-cloud-storage has no native async API, so each call runs the synchronous
-    GCSMediaStorage in a worker thread and the event loop stays free -- an upload of a
-    large object would otherwise stall every other request the server is serving.
+    GCSMediaStorage in a worker thread and a large upload does not block the event loop.
 
     ``public`` and the signing rules are the sync backend's: see GCSMediaStorage.
     """
@@ -62,7 +61,7 @@ class AsyncGCSMediaStorage(AsyncMediaStorage):
     async def download(self, storage_key: str) -> bytes:
         return await asyncio.to_thread(self._sync.download, storage_key)
 
-    async def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> str:
+    async def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> Optional[str]:
         return await asyncio.to_thread(self._sync.get_url, storage_key, expires_in=expires_in)
 
     async def delete(self, storage_key: str) -> bool:

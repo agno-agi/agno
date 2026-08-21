@@ -17,10 +17,8 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
     """Async S3-compatible media storage backend (aioboto3).
 
     Supports AWS S3, MinIO, and other S3-compatible services via the ``endpoint_url``
-    parameter. Such a server configured with its own site region needs ``region`` set to
-    match it: uploads are retried against the right region automatically, but a presigned
-    URL carries the region in its signature and is rejected, so media saves cleanly and
-    then fails to load.
+    parameter. Such a server needs ``region`` set to match its own site region: a presigned
+    URL carries the region in its signature and is rejected when the two disagree.
     """
 
     backend_name = "s3"
@@ -52,7 +50,7 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
         try:
             import aioboto3
         except ImportError:
-            raise ImportError("aioboto3 is required for AsyncS3MediaStorage. Install it with: pip install 'agno[s3]'")
+            raise ImportError("`aioboto3` not installed. Please install using `pip install 'agno[s3]'`")
         return aioboto3.Session(
             aws_access_key_id=self.aws_access_key_id,
             aws_secret_access_key=self.aws_secret_access_key,
@@ -62,10 +60,8 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
     def _client_kwargs(self) -> Dict[str, Any]:
         from botocore.config import Config
 
-        # Pin SigV4. Unpinned, botocore downgrades presigning to SigV2 in the regions that
-        # predate 2014 (us-east-1, us-west-2, eu-west-1 and six more) and whenever region is
-        # unset, and a bucket with SSE-KMS default encryption rejects every SigV2 URL with
-        # InvalidArgument. Pinning costs the SigV4 seven-day ceiling, which get_url caps anyway.
+        # Pin SigV4: unpinned, botocore presigns with SigV2 in pre-2014 regions and whenever
+        # region is unset, and a bucket with SSE-KMS default encryption rejects every SigV2 URL.
         kwargs: Dict[str, Any] = {"config": Config(signature_version="s3v4")}
         if self.endpoint_url:
             kwargs["endpoint_url"] = self.endpoint_url
@@ -89,10 +85,8 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
         if self.acl:
             put_kwargs["ACL"] = self.acl
 
-        # Entries the sanitizer drops stay on the MediaReference.
         s3_metadata: Dict[str, str] = {"content-sha256": hashlib.sha256(content).hexdigest()}
-        # original-filename first: the sanitizer stops at the size budget, so a large caller
-        # value would otherwise push it out. A caller key of the same name still wins.
+        # original-filename first: the sanitizer stops at the size budget; a caller key of the same name wins.
         extra: Dict[str, Any] = {"original-filename": filename} if filename else {}
         extra.update(dict(metadata) if metadata else {})
         s3_metadata.update(sanitize_s3_metadata(extra))
@@ -121,7 +115,7 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
                 raise FileNotFoundError(storage_key) from e
             raise
 
-    async def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> str:
+    async def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> Optional[str]:
         if expires_in is None:
             expires_in = self.presigned_url_expiry
 
@@ -141,7 +135,7 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
                 f"presigned_url_expiry {expires_in}s exceeds the SigV4 maximum of "
                 f"{S3_MAX_PRESIGNED_EXPIRY}s, falling back to streaming"
             )
-            return ""
+            return None
 
         session = self._get_session()
         async with session.client("s3", **self._client_kwargs()) as client:
@@ -153,7 +147,7 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
 
     async def delete(self, storage_key: str) -> bool:
         try:
-            # Session construction inside the guard, matching the sync backend.
+            # Session construction inside the guard: an unusable credential is a failed delete.
             session = self._get_session()
             async with session.client("s3", **self._client_kwargs()) as client:
                 await client.delete_object(Bucket=self.bucket, Key=storage_key)
@@ -177,23 +171,25 @@ class AsyncS3MediaStorage(AsyncMediaStorage):
             session = self._get_session()
             async with session.client("s3", **self._client_kwargs()) as client:
                 for batch in batches:
-                    try:
-                        response = await client.delete_objects(
-                            Bucket=self.bucket,
-                            Delete={"Objects": [{"Key": key} for key in batch], "Quiet": True},
-                        )
-                    except Exception as e:
-                        log_warning(f"Failed to delete {len(batch)} objects: {e}")
-                        continue
-                    # Quiet mode reports only failures, and a key that was never there is not one.
-                    deleted += len(batch) - len(response.get("Errors") or [])
+                    deleted += await self._delete_batch(client, batch)
         except Exception as e:
             log_warning(f"Failed to delete objects: {e}")
         return deleted
 
+    async def _delete_batch(self, client: Any, keys: List[str]) -> int:
+        try:
+            response = await client.delete_objects(
+                Bucket=self.bucket,
+                Delete={"Objects": [{"Key": key} for key in keys], "Quiet": True},
+            )
+        except Exception as e:
+            log_warning(f"Failed to delete {len(keys)} objects: {e}")
+            return 0
+        # Quiet mode reports only failures, and a key that was never there is not one.
+        return len(keys) - len(response.get("Errors") or [])
+
     async def exists(self, storage_key: str) -> bool:
         try:
-            # Inside the guard for the same reason as delete().
             session = self._get_session()
             async with session.client("s3", **self._client_kwargs()) as client:
                 await client.head_object(Bucket=self.bucket, Key=storage_key)

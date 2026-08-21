@@ -13,11 +13,10 @@ S3_MAX_PRESIGNED_EXPIRY = 7 * 24 * 60 * 60
 def sanitize_s3_metadata(items: Dict[str, Any], *, max_bytes: int = 1800) -> Dict[str, str]:
     """Coerce metadata to ASCII-only string values that S3 accepts.
 
-    S3 user metadata travels as HTTP headers, so it must be ASCII, free of control
-    characters, and small (~2KB total) — a value carrying a newline fails the whole
-    upload. Entries that can't be encoded, carry a control character, or would exceed
-    the size budget are dropped; the full metadata is preserved on the MediaReference,
-    so nothing is permanently lost.
+    S3 user metadata travels as HTTP headers, so it must be ASCII, free of control characters,
+    and small (~2KB total) — one value carrying a newline fails the whole upload. Entries that
+    cannot be encoded, carry a control character, or would exceed the size budget are dropped;
+    the full metadata is preserved on the MediaReference.
     """
     safe: Dict[str, str] = {}
     total = 0
@@ -40,8 +39,8 @@ def sanitize_s3_metadata(items: Dict[str, Any], *, max_bytes: int = 1800) -> Dic
 def raise_if_acl_unsupported(error: Exception, bucket: Optional[str]) -> None:
     """Re-raise S3's ACL rejection as an actionable configuration error.
 
-    The offload layer turns an upload failure into a warning and keeps the bytes inline,
-    so this message is the only thing the user ever sees.
+    The offload layer downgrades an upload failure to a warning, so this message is all the
+    user ever sees.
     """
     from botocore.exceptions import ClientError
 

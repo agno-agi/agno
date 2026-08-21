@@ -2,7 +2,8 @@
 
 import asyncio
 import hashlib
-from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Union
+import mimetypes
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Optional, Sequence, Set, Union
 from urllib.parse import parse_qs, urlsplit
 
 from agno.media import Audio, File, Image, Video
@@ -16,8 +17,7 @@ if TYPE_CHECKING:
     from agno.run.team import TeamRunOutput
 
 
-# Query parameters that mark a URL as signed and short-lived, across SigV4, GCS V2 and V4,
-# Azure SAS and Supabase. Erring towards "expiring" only costs one re-sign on read.
+# Query parameters that mark a URL as signed and short-lived (SigV4, GCS, Azure SAS, Supabase).
 _EXPIRING_URL_PARAMS = frozenset(
     {
         "x-amz-signature",
@@ -32,9 +32,8 @@ _EXPIRING_URL_PARAMS = frozenset(
     }
 )
 
-# How much of the session id a storage key carries. A filesystem caps a name at 255 bytes and
-# the media id, content hash and extension spend ~70 more, so a longer session id made the
-# upload raise and the row keep its base64 — and the session id is caller-supplied.
+# How much of the caller-supplied session id a storage key carries, leaving room for the media
+# id, content hash and extension under the 255-byte filename cap.
 _MAX_SESSION_KEY_CHARS = 120
 
 
@@ -67,6 +66,31 @@ def offload_cache_for(run_response: Any) -> Dict[str, MediaReference]:
         cache = {}
         run_response._offload_cache = cache
     return cache
+
+
+def opted_out_media_ids_for(run_response: Any) -> Set[str]:
+    """Per-run set of media ids a member refused to persist, kept on the live run.
+
+    Scoping the ids to the run keeps two concurrent runs on one Team independent. Not a field,
+    so ``to_dict`` never sees it.
+    """
+    ids: Optional[Set[str]] = getattr(run_response, "_opted_out_media_ids", None)
+    if ids is None:
+        ids = set()
+        run_response._opted_out_media_ids = ids
+    return ids
+
+
+def collect_opted_out_media_ids(run_response: Any) -> Set[str]:
+    """Ids opted out on this run and on every member run nested below it.
+
+    A leaf's opt-out is recorded on whichever team ran the delegation, so a root team that
+    read only its own ledger would upload media a sub-team's member had refused.
+    """
+    ids = set(getattr(run_response, "_opted_out_media_ids", None) or [])
+    for member_response in getattr(run_response, "member_responses", None) or []:
+        ids.update(collect_opted_out_media_ids(member_response))
+    return ids
 
 
 def _cache_key(media_type: str, mime_type: Optional[str], filename: Optional[str], storage_media_id: str) -> str:
@@ -102,10 +126,8 @@ def reference_matches_storage(ref: Optional[MediaReference], storage: Union[Medi
 def _attach_reference(media: Union[Image, Audio, Video, File], ref: MediaReference) -> None:
     """Point ``media`` at a stored object and drop its inline bytes."""
     media.media_reference = ref  # type: ignore[attr-defined]
-    # Surface the URL for frontend access, keeping a caller-supplied one when it survives
-    # _persistable_url. Readers of a dropped URL go through the backend instead.
+    # Surface a URL for frontend access; a dropped one is re-derived from the reference on read.
     media.url = _persistable_url(media.url) or ref.url
-    # Clear content bytes to save memory / DB space
     media.content = None  # type: ignore[assignment]
 
 
@@ -118,6 +140,36 @@ def _drop_history_message_urls(message: Message) -> None:
     for media in _iter_message_media(message):
         if getattr(media, "media_reference", None) is not None:
             media.url = _persistable_url(media.url)
+
+
+def _download_media_from_url(media: Union[Image, Audio, Video, File]) -> Optional[bytes]:
+    """Fetch URL-only media, taking its mime type from the server's declared Content-Type.
+
+    Without a mime type the stored object has no extension and no Content-Type. The url path is
+    the fallback for a server that declares only ``application/octet-stream``.
+    """
+    from agno.media.media import bytes_and_mime_from_url
+
+    content_bytes, declared = bytes_and_mime_from_url(media.url or "")
+    if not media.mime_type:
+        if declared and declared != "application/octet-stream":
+            media.mime_type = declared
+        else:
+            media.mime_type = mimetypes.guess_type(urlsplit(media.url or "").path)[0] or declared
+    return content_bytes
+
+
+async def _adownload_media_from_url(media: Union[Image, Audio, Video, File]) -> Optional[bytes]:
+    """Async variant of :func:`_download_media_from_url`."""
+    from agno.media.media import abytes_and_mime_from_url
+
+    content_bytes, declared = await abytes_and_mime_from_url(media.url or "")
+    if not media.mime_type:
+        if declared and declared != "application/octet-stream":
+            media.mime_type = declared
+        else:
+            media.mime_type = mimetypes.guess_type(urlsplit(media.url or "").path)[0] or declared
+    return content_bytes
 
 
 def _offload_single_media(
@@ -133,8 +185,7 @@ def _offload_single_media(
             # Already this session's object; drop the URL this turn's model call signed for it.
             media.url = _persistable_url(media.url)
             return
-        # Inherited from another session, which only a fork does. Copy the object so the two
-        # sessions can be deleted independently, as copied bytes were before offload existed.
+        # Inherited from another session (a fork): copy it so both can be deleted independently.
         if not reference_matches_storage(media.media_reference, storage):
             return
         try:
@@ -143,6 +194,8 @@ def _offload_single_media(
             log_warning(f"Failed to copy inherited media {getattr(media, 'id', '?')}: {e}")
             return
         media.media_reference = None
+        # Cleared with it: the url names the source's object, and the copy gets its own.
+        media.url = None
 
     # Skip File objects with external (managed by provider, e.g. GeminiFile)
     if isinstance(media, File) and media.external is not None:
@@ -165,7 +218,7 @@ def _offload_single_media(
 
     # If no content yet and storage wants to persist remote URLs, try downloading
     if content_bytes is None and getattr(storage, "persist_remote_urls", False):
-        content_bytes = media.get_content_bytes()
+        content_bytes = _download_media_from_url(media) if media.url else media.get_content_bytes()
 
     if content_bytes is None:
         # No content to upload (URL-only media or empty)
@@ -187,15 +240,13 @@ def _offload_single_media(
         filename = Path(str(media.filepath)).name
 
     content_hash = hashlib.sha256(content_bytes).hexdigest()
-    # Scoped to the session and content-addressed, so a reused id never collides and deleting
-    # one session's media never reaches another session that sent the same bytes. Only the
-    # scope is truncated, never the media id or the hash that identify the object.
+    # Scoped to the session and content-addressed, so a reused id never collides and deleting one
+    # session's media never reaches another session that sent the same bytes.
     storage_media_id = f"{session_id[:_MAX_SESSION_KEY_CHARS]}-{media_id}-{content_hash[:16]}"
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
-        # Same object as an earlier persist of this run. The media_reference skip cannot catch
-        # it because every persist offloads a fresh deep copy.
+        # Same object as an earlier persist of this run, which offloads a fresh deep copy each time.
         _attach_reference(media, cache[cache_key])
         return
 
@@ -262,8 +313,7 @@ def _offload_message_media(
 ) -> None:
     """Offload all media from a single Message."""
     if message.from_history:
-        # Nothing to upload, but the refresh that fed this turn's model call wrote a signed
-        # URL onto this media, and that must not be written to the row alongside the reference.
+        # Already stored; only the signed URL the refresh put on it needs dropping.
         _drop_history_message_urls(message)
         return
     _offload_media_list(message.images, storage, session_id, "image", cache=cache)
@@ -284,11 +334,9 @@ def offload_run_media(
     session_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
-    """Upload all media content to external storage, replace with MediaReference.
+    """Upload all media content to external storage, replacing it with a MediaReference.
 
-    This function traverses the full RunOutput/TeamRunOutput and offloads all media
-    that has content bytes. Media already offloaded (has media_reference) or with no
-    content is skipped.
+    Media that is already offloaded or carries no content is skipped.
     """
     # 1. Input media
     if run_response.input is not None:
@@ -357,6 +405,8 @@ async def _aoffload_single_media(
             log_warning(f"Failed to copy inherited media {getattr(media, 'id', '?')}: {e}")
             return
         media.media_reference = None
+        # Cleared with it, as in the sync variant.
+        media.url = None
 
     if isinstance(media, File) and media.external is not None:
         return
@@ -377,7 +427,7 @@ async def _aoffload_single_media(
 
     # If no content yet and storage wants to persist remote URLs, try downloading
     if content_bytes is None and getattr(storage, "persist_remote_urls", False):
-        content_bytes = await media.aget_content_bytes()
+        content_bytes = await _adownload_media_from_url(media) if media.url else await media.aget_content_bytes()
 
     if content_bytes is None:
         return
@@ -398,15 +448,13 @@ async def _aoffload_single_media(
         filename = Path(str(media.filepath)).name
 
     content_hash = hashlib.sha256(content_bytes).hexdigest()
-    # Scoped to the session and content-addressed, so a reused id never collides and deleting
-    # one session's media never reaches another session that sent the same bytes. Only the
-    # scope is truncated, never the media id or the hash that identify the object.
+    # Scoped to the session and content-addressed, so a reused id never collides and deleting one
+    # session's media never reaches another session that sent the same bytes.
     storage_media_id = f"{session_id[:_MAX_SESSION_KEY_CHARS]}-{media_id}-{content_hash[:16]}"
 
     cache_key = _cache_key(media_type, mime_type, filename, storage_media_id)
     if cache is not None and cache_key in cache:
-        # Same object as an earlier persist of this run. The media_reference skip cannot catch
-        # it because every persist offloads a fresh deep copy.
+        # Same object as an earlier persist of this run, which offloads a fresh deep copy each time.
         _attach_reference(media, cache[cache_key])
         return
 
@@ -455,6 +503,7 @@ async def _aoffload_media_list(
     media_type: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
+    """Async variant of :func:`_offload_media_list`."""
     if not media_list:
         return
     for media in media_list:
@@ -470,6 +519,7 @@ async def _aoffload_message_media(
     session_id: str,
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
+    """Async variant of :func:`_offload_message_media`."""
     if message.from_history:
         _drop_history_message_urls(message)
         return
@@ -540,9 +590,8 @@ async def aoffload_run_media(
 def iter_step_outputs(run_response: Any) -> Iterator[Any]:
     """Yield every media-bearing step object on a workflow run.
 
-    Media hangs off ``step_results``, off ``StepOutput.steps`` for the children Loop,
-    Condition, Router, Steps and Parallel ran, and off ``step_requirements`` while a HITL
-    run is paused. A traversal that reaches only the first leaves the rest inline.
+    Media hangs off ``step_results``, off ``StepOutput.steps`` for the children a container
+    step ran, and off ``step_requirements`` while a HITL run is paused.
     """
 
     def _walk(step_output: Any) -> Iterator[Any]:
@@ -572,7 +621,8 @@ def offload_workflow_media(
     cache: Optional[Dict[str, MediaReference]] = None,
 ) -> None:
     """Offload all media in a WorkflowRunOutput: top-level media, step outputs, and the
-    agent/team/nested-workflow runs captured during execution. Already-offloaded media is skipped."""
+    agent/team/nested-workflow runs captured during execution. Already-offloaded media is skipped.
+    """
     from agno.run.workflow import WorkflowRunOutput
 
     _offload_media_list(getattr(run_response, "images", None), storage, session_id, "image", cache=cache)
@@ -691,7 +741,7 @@ async def arefresh_message_media_urls(message: Message, storage: AsyncMediaStora
             log_warning(f"Failed to refresh URL for {getattr(media, 'id', '?')}: {e}")
 
 
-def iter_run_media(run: Any):
+def iter_run_media(run: Any) -> Iterator[Any]:
     """Yield every media object hanging off a run, across agent/team/workflow shapes."""
     run_input = getattr(run, "input", None)
     for attr in ("images", "videos", "audios", "files"):
@@ -740,13 +790,13 @@ def session_media_keys(
     session_ids: Sequence[str],
     storage: Union[MediaStorage, AsyncMediaStorage],
 ) -> List[str]:
-    """Storage keys these sessions own, read before the rows that name them are gone.
+    """Storage keys these sessions own, read before the rows that name them are deleted.
 
-    The reference is the only record of which object belongs to which session, so a caller
-    that deletes first can never find the objects again. A run that merely inherited a
-    reference names the session that uploaded the object, and is left be.
+    The reference is the only record of which object belongs to which session. A run that
+    merely inherited a reference names the session that uploaded the object, and is left be.
     """
     keys: List[str] = []
+    skipped = 0
     for run in getattr(session, "runs", None) or []:
         for media in iter_run_media(run):
             ref = getattr(media, "media_reference", None)
@@ -754,11 +804,14 @@ def session_media_keys(
                 continue
             if ref.session_id not in session_ids:
                 continue
-            # A key only resolves against the backend that wrote it, matching the guard the
-            # fetch route applies before serving one.
+            # A key only resolves against the backend that wrote it.
             if not reference_matches_storage(ref, storage):
+                skipped += 1
                 continue
             keys.append(ref.storage_key)
+    if skipped:
+        # Counted rather than reported per reference, so a large session yields one line.
+        log_warning(f"{skipped} media objects were stored on another backend, skipping deletion")
     return keys
 
 
@@ -797,7 +850,6 @@ async def arefresh_messages_media(messages: Sequence[Message], storage: Union[Me
         for message in messages:
             await arefresh_message_media_urls(message, storage)
     else:
-        # A sync backend re-signs (and on a non-signing one, downloads) per message, so it
-        # runs in a worker thread rather than on the loop the model call is waiting on.
+        # A sync backend does blocking I/O per message, so keep it off the event loop.
         for message in messages:
             await asyncio.to_thread(refresh_message_media_urls, message, storage)

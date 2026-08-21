@@ -54,6 +54,13 @@ class CountingLocalStorage(LocalMediaStorage):
         return key
 
 
+class DurableUrlLocalStorage(LocalMediaStorage):
+    """LocalMediaStorage that addresses a key with a durable link, as a public bucket or a CDN does."""
+
+    def get_url(self, storage_key: str, *, expires_in=None) -> str:
+        return f"https://cdn.example.com/media/{storage_key}"
+
+
 class UnportedSqliteDb(SqliteDb):
     """SQLite adapter as it looks before the runs-table port: no upsert_run of its own.
 
@@ -629,7 +636,7 @@ def test_nested_workflow_reads_the_parents_offloaded_media():
 
 
 def test_a_function_step_reads_offloaded_media():
-    """Rehydration used to be gated on the executor kind, so a function step saw content=None."""
+    """A function step receives offloaded media with its bytes read back, not content=None."""
     from agno.utils.media_offload import _offload_single_media
 
     seen: dict = {}
@@ -657,3 +664,35 @@ def test_a_function_step_reads_offloaded_media():
 
         assert seen["image"].content == b"FN-IMAGE"
         assert seen["file"].content == b"FN-FILE"
+
+
+@pytest.mark.parametrize("nested", [False, True], ids=["top_level", "nested_workflow"])
+def test_a_function_step_reads_offloaded_media_behind_a_durable_url(nested):
+    """A backend whose get_url is a durable link leaves that link on the offloaded media, and the
+    function step still receives the bytes."""
+    from agno.utils.media_offload import _offload_single_media
+
+    seen: dict = {}
+
+    def probe(step_input: StepInput) -> StepOutput:
+        seen["image"] = (step_input.images or [None])[0]
+        return StepOutput(content="ok")
+
+    with tempfile.TemporaryDirectory() as tmp:
+        storage = DurableUrlLocalStorage(base_path=f"{tmp}/media")
+        img = Image(content=b"URL-BACKED", id="i", mime_type="image/png")
+        _offload_single_media(img, storage, "s1", "image")
+        assert img.url and img.content is None
+
+        leaf = Step(name="probe", executor=probe)
+        steps = [Workflow(name="inner", id="inner", steps=[leaf])] if nested else [leaf]
+        wf = Workflow(
+            name="w",
+            id="w",
+            db=SqliteDb(db_file=f"{tmp}/w.db", session_table="w_sessions"),
+            steps=steps,
+            media_storage=storage,
+        )
+        wf.run(input="hi", images=[img], session_id="s1")
+
+        assert seen["image"].content == b"URL-BACKED"

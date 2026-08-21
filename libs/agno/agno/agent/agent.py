@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -46,6 +47,9 @@ from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
+
+if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -214,8 +218,7 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
-    # If set, media is uploaded here before DB persistence when store_media is True, and only
-    # references are stored. With store_media False, media is not offloaded.
+    # If set (and store_media is True), media is uploaded here and only references are stored
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
@@ -309,7 +312,7 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
+    # Instead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -350,6 +353,14 @@ class Agent:
     compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional[CompressionManager] = None
+
+    # --- Result Offloading ---
+    # Store tool results longer than a threshold as files and leave a short
+    # envelope with a result id in the message. True uses the defaults
+    # (16000 characters, one read_result page); a ResultStore sets the
+    # threshold, preview, lifetime and payload location. Unset, an agent
+    # inherits a team's store as a member; False keeps offloading off there too.
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -400,6 +411,7 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
+        offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -527,6 +539,14 @@ class Agent:
         # Context compression settings
         self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
+
+        # Result offloading settings
+        self.offload_tool_results = offload_tool_results
+        self._result_store: Optional["ResultStore"] = None
+        # The store a team handed down, so a later team can replace or clear it
+        self._inherited_result_store: Optional["ResultStore"] = None
+        # The setting the store was built from, so a changed setting rebuilds it
+        self._result_store_setting: Union[bool, "ResultStore", None] = None
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
@@ -691,6 +711,15 @@ class Agent:
     @property
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
+
+    @property
+    def result_store(self) -> Optional["ResultStore"]:
+        """The store offloaded tool results go to, or None when offloading is off."""
+        if self._result_store is None and self.offload_tool_results:
+            from agno.agent import _init
+
+            _init.set_result_store(self)
+        return self._result_store
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:

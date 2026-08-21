@@ -7,6 +7,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Reques
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
+from agno.exceptions import AgnoError
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import (
@@ -37,8 +38,10 @@ from agno.os.schema import (
 from agno.os.services.sessions import SessionNotFoundError, get_sessions_page
 from agno.os.services.sessions import get_session_runs as get_session_runs_from_service
 from agno.os.settings import AgnoAPISettings
+from agno.os.utils import AgnoHTTPException
 from agno.remote.base import RemoteDb
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
+from agno.utils.log import log_debug
 from agno.utils.media_offload import adelete_media_keys, session_media_keys
 
 logger = logging.getLogger(__name__)
@@ -84,7 +87,8 @@ def attach_routes(
             except Exception as e:
                 logger.warning(f"Could not read session {session_id} for media deletion: {e}")
                 continue
-            keys.extend(session_media_keys(session, session_ids, media_storage))
+            # Scoped to the session it was read from: another session's reference is not ours to delete.
+            keys.extend(session_media_keys(session, [session_id], media_storage))
         return keys
 
     async def _delete_media_keys(keys: List[str]) -> None:
@@ -309,7 +313,10 @@ def attach_routes(
                     )
                 return db.get_session(session_id=session_id, session_type=session_type, user_id=uid, deserialize=False)
 
-            owned_session = await _get(scoped_user_id)
+            try:
+                owned_session = await _get(scoped_user_id)
+            except AgnoError as e:
+                raise AgnoHTTPException(e)
             if owned_session is not None:
                 # The caller owns (or, as admin/unscoped, can see) the colliding session:
                 # safe to point them at PATCH, since this reveals nothing they can't read.
@@ -318,7 +325,11 @@ def attach_routes(
                     detail=f"Session with id '{session_id}' already exists. "
                     f"Use PATCH /sessions/{session_id} to update it.",
                 )
-            if scoped_user_id is not None and await _get(None) is not None:
+            try:
+                id_taken = scoped_user_id is not None and await _get(None) is not None
+            except AgnoError as e:
+                raise AgnoHTTPException(e)
+            if id_taken:
                 # The id is taken by another owner. session_id is a global primary key, so
                 # the collision itself is unavoidable (as with any client-chosen unique id),
                 # but the response must not confirm that the session belongs to someone else
@@ -395,6 +406,8 @@ def attach_routes(
                 return TeamSessionDetailSchema.from_session(created_session)  # type: ignore
             else:
                 return WorkflowSessionDetailSchema.from_session(created_session)  # type: ignore
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             logger.exception("Error creating session")
             raise HTTPException(status_code=500, detail=f"Failed to create session: {str(e)}")
@@ -858,6 +871,9 @@ def attach_routes(
         # for admins / unscoped callers it falls back to the query param.
         local_kwargs: Dict[str, Any] = {"session_id": session_id, "user_id": effective_user_id}
 
+        if not delete_media and media_storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
         media_keys = await _collect_media_keys(db, [session_id], effective_user_id) if delete_media else []
 
         if isinstance(db, AsyncBaseDb):
@@ -926,6 +942,9 @@ def attach_routes(
             "session_ids": request.session_ids,
             "user_id": effective_user_id,
         }
+
+        if not delete_media and media_storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
 
         media_keys = await _collect_media_keys(db, request.session_ids, effective_user_id) if delete_media else []
 

@@ -22,6 +22,9 @@ from agno.team.team import Team
 from agno.tools import tool
 
 
+# ---------------------------------------------------------------------------
+# Tools
+# ---------------------------------------------------------------------------
 @tool(requires_confirmation=True)
 def group_del_stock(
     group_id: str, stock_list: list, run_context: RunContext
@@ -43,6 +46,9 @@ def group_del_stock(
     }
 
 
+# ---------------------------------------------------------------------------
+# Create Members
+# ---------------------------------------------------------------------------
 stock_agent = Agent(
     name="Stock Agent",
     role="Manages user stock watch groups. Uses group_del_stock to remove stocks.",
@@ -50,6 +56,10 @@ stock_agent = Agent(
     tools=[group_del_stock],
 )
 
+
+# ---------------------------------------------------------------------------
+# Create Team
+# ---------------------------------------------------------------------------
 stock_team = Team(
     name="Stock Team",
     members=[stock_agent],
@@ -60,6 +70,9 @@ stock_team = Team(
 )
 
 
+# ---------------------------------------------------------------------------
+# Run Team
+# ---------------------------------------------------------------------------
 async def main() -> None:
     # The caller threads their auth token through `dependencies`.
     dependencies = {"user_token": "Bearer demo-token-123"}

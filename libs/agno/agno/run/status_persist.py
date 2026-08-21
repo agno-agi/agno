@@ -149,8 +149,8 @@ async def apersist_run_transition(
             return
 
     # Fallback: fresh-read + whole-session save (narrows, does not close, the
-    # concurrent-write window - see module docstring). The atomic path above patches named
-    # fields only; this one writes the whole run, so its media is offloaded first.
+    # concurrent-write window - see module docstring). This path writes the whole run, so its
+    # media is offloaded first.
     if component_type == "agent":
         from agno.agent._session import asave_run, asave_session
         from agno.agent._storage import aread_or_create_session
@@ -191,8 +191,7 @@ async def apersist_run_transition(
         if getattr(component, "media_storage", None) is not None and getattr(component, "store_media", False):
             storage_run = await component._aoffload_run_media_copy(run_response, session_id)
         workflow_session.upsert_run(run=storage_run)
-        # asave_run/asave_session already absorb a sync DB. Branching would also pick the sync
-        # media path, which raises on an async backend instead of awaiting it.
+        # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
         await component.asave_run(run=storage_run, session_id=session_id, user_id=user_id)
         await component.asave_session(session=workflow_session)
 

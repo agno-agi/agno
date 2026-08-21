@@ -84,6 +84,21 @@ def test_a_key_from_another_backend_is_left_be():
         assert session_media_keys(session, ["s1"], LocalMediaStorage(base_path=other)) == []
 
 
+def test_a_key_from_another_backend_is_warned_about(monkeypatch):
+    """The sweep cannot reach it, so the operator gets told rather than a clean delete."""
+    from agno.utils import media_offload
+
+    warnings: list = []
+    monkeypatch.setattr(media_offload, "log_warning", lambda msg, *a, **kw: warnings.append(str(msg)))
+
+    with tempfile.TemporaryDirectory() as tmpdir, tempfile.TemporaryDirectory() as other:
+        session = _offloaded_session(LocalMediaStorage(base_path=tmpdir))
+
+        assert session_media_keys(session, ["s1"], LocalMediaStorage(base_path=other)) == []
+
+    assert any("stored on another backend" in message for message in warnings)
+
+
 def test_media_that_was_never_offloaded_yields_no_keys():
     with tempfile.TemporaryDirectory() as tmpdir:
         run = RunOutput(run_id="r1", images=[Image(id="i1", content=b"BYTES", mime_type="image/png")])
@@ -241,6 +256,32 @@ def test_workflow_delete_session_sweeps_the_media():
         wf.delete_session(session_id="s1", delete_media=True)
 
         assert [f for f in os.listdir(media) if not f.endswith(".meta.json")] == []
+
+
+def test_a_delete_without_the_flag_hints_at_delete_media(monkeypatch):
+    """The objects outlive the row by default, so the operator is told the flag that sweeps them exists."""
+    from agno.agent import _session as agent_session
+
+    messages: list = []
+    monkeypatch.setattr(agent_session, "log_debug", lambda msg, *a, **kw: messages.append(str(msg)))
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        media = os.path.join(tmpdir, "media")
+        storage = LocalMediaStorage(base_path=media)
+        agent = _agent(tmpdir, storage)
+        run = _offloaded_run(storage)
+        _persist(agent, AgentSession(session_id="s1", agent_id="a", runs=[run]), run)
+
+        agent.delete_session(session_id="s1")
+
+        assert any("pass delete_media=True" in message for message in messages)
+
+        messages.clear()
+        _persist(agent, AgentSession(session_id="s2", agent_id="a", runs=[_offloaded_run(storage, "s2")]), run)
+
+        agent.delete_session(session_id="s2", delete_media=True)
+
+        assert not any("pass delete_media=True" in message for message in messages)
 
 
 def test_asyncio_is_importable_without_the_agentos_layer():

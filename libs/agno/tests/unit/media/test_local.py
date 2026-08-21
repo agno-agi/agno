@@ -31,22 +31,13 @@ def test_upload_with_filename():
         assert storage.exists(key)
 
 
-def test_get_url_file_uri():
+def test_get_url_is_empty():
+    """A local file is not addressable off this machine, so callers are told to stream the bytes."""
     with tempfile.TemporaryDirectory() as tmpdir:
         storage = LocalMediaStorage(base_path=tmpdir)
         content = b"data"
         key = storage.upload("test-2", content)
-        url = storage.get_url(key)
-        assert url.startswith("file://")
-
-
-def test_get_url_with_base_url():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        storage = LocalMediaStorage(base_path=tmpdir, base_url="http://localhost:8080/media")
-        content = b"data"
-        key = storage.upload("test-3", content)
-        url = storage.get_url(key)
-        assert url.startswith("http://localhost:8080/media/")
+        assert storage.get_url(key) is None
 
 
 def test_delete():
@@ -117,7 +108,6 @@ def test_multi_segment_key_still_resolves():
         (nested / "img.png").write_bytes(b"NESTED")
         assert storage.exists("sub/dir/img.png")
         assert storage.download("sub/dir/img.png") == b"NESTED"
-        assert storage.get_url("sub/dir/img.png").endswith("sub/dir/img.png")
 
 
 def test_local_read_path_allows_keys_inside_root():
@@ -128,14 +118,13 @@ def test_local_read_path_allows_keys_inside_root():
 
         assert storage.exists(key) is True
         assert storage.download(key) == b"payload"
-        assert storage.get_url(key).startswith("file://")
 
 
 # Keys the hand-rolled containment check waved through: they resolved to the storage root
 # or a Windows device handle, and only failed later as an IsADirectoryError.
 _REJECTED_KEYS = [
     "../secret",
-    "../../etc/passwd",
+    "../../etc/passwd",  # never reaches a syscall: the join rejects it first
     "a/../../secret",
     "/etc/passwd",
     "C:\\Windows\\x",
@@ -164,21 +153,20 @@ def test_reads_refuse_keys_that_escape_or_name_a_device(bad_key):
         # download raises: the caller asked for bytes and cannot have them.
         with pytest.raises(PathSecurityError):
             storage.download(bad_key)
-        # exists/get_url/delete report absence instead, because that is what S3 and GCS report
-        # and get_url's contract on the ABC is "" for a key the backend cannot address.
+        # exists/get_url report absence instead, because that is what S3 and GCS report and
+        # get_url's contract on the ABC is None for a key the backend cannot address.
         assert storage.exists(bad_key) is False
-        assert storage.get_url(bad_key) == ""
-        assert storage.delete(bad_key) is False
+        assert storage.get_url(bad_key) is None
+        # delete is deliberately not asserted here: these keys name real host paths, and delete
+        # joins inside its try, so a regressed containment check would unlink one of them. The
+        # sibling delete tests cover the same refusal against a canary under tmpdir.
 
         assert canary.read_bytes() == b"CANARY"
 
 
 def test_delete_refuses_an_escaping_key_without_raising():
-    """``delete`` reports failure the way S3 and GCS do rather than raising.
-
-    The containment check used to sit outside the try, so a key read back from the DB that
-    no longer resolves inside the root threw out of ``delete`` instead of returning False.
-    """
+    """``delete`` reports failure the way S3 and GCS do rather than raising: a key read back from
+    the DB that does not resolve inside the root returns False."""
     with tempfile.TemporaryDirectory() as tmpdir:
         root = Path(tmpdir)
         outside = root / "outside"
@@ -187,8 +175,12 @@ def test_delete_refuses_an_escaping_key_without_raising():
         canary.write_bytes(b"CANARY")
         storage = LocalMediaStorage(base_path=str(root / "base"))
 
+        # The absolute key names the canary rather than a real host path: delete() joins inside
+        # its try, so a regressed containment check would unlink whatever the key points at —
+        # and on a non-root runner the resulting PermissionError is swallowed into the False
+        # this asserts, letting the test pass through the very regression it exists to catch.
         assert storage.delete("../outside/secret") is False
-        assert storage.delete("/etc/passwd") is False
+        assert storage.delete(str(canary)) is False
         assert storage.delete("NUL.png") is False
         assert storage.delete("") is False
 
@@ -206,7 +198,8 @@ def test_delete_many_finishes_the_batch_when_a_key_is_hostile():
         storage = LocalMediaStorage(base_path=str(base))
 
         good = [storage.upload(f"k{i}", b"payload", mime_type="text/plain") for i in range(3)]
-        batch = [good[0], "../outside/secret", "/etc/passwd", "NUL.png", "", good[1], good[2]]
+        # Absolute key points at the canary, not a host path — see the sibling delete test.
+        batch = [good[0], "../outside/secret", str(outside / "secret"), "NUL.png", "", good[1], good[2]]
 
         assert storage.delete_many(batch) == 3
         assert [p.name for p in base.iterdir()] == []
@@ -221,23 +214,8 @@ def test_delete_stays_idempotent_for_a_real_key():
         assert storage.delete(key) is True
 
 
-def test_get_url_normalizes_base_url():
-    with tempfile.TemporaryDirectory() as tmpdir:
-        for base_url in ("https://cdn.example.com/media", "https://cdn.example.com/media/"):
-            storage = LocalMediaStorage(base_path=tmpdir, base_url=base_url)
-            key = storage.upload("k", b"payload", mime_type="text/plain")
-            assert storage.get_url(key) == f"https://cdn.example.com/media/{key}"
-        # An empty base_url is not a base_url; fall back to the file:// URI.
-        storage = LocalMediaStorage(base_path=tmpdir, base_url="")
-        assert storage.get_url("k.txt").startswith("file://")
-
-
 def test_async_local_runs_off_the_event_loop():
-    """Every AsyncLocalMediaStorage call has to leave the loop thread.
-
-    It used to call the synchronous backend inline, so a large write blocked the loop for
-    the whole duration of the file I/O.
-    """
+    """Every AsyncLocalMediaStorage call has to leave the loop thread, so file I/O never blocks it."""
 
     loop_thread: dict = {}
     ran_on: dict = {}
@@ -272,7 +250,7 @@ def test_async_local_runs_off_the_event_loop():
             key = await storage.upload("k", b"payload", mime_type="text/plain")
             assert await storage.download(key) == b"payload"
             assert await storage.exists(key)
-            assert (await storage.get_url(key)).startswith("file://")
+            assert await storage.get_url(key) is None
             assert await storage.delete(key) is True
 
         asyncio.run(exercise())

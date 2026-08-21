@@ -9,6 +9,7 @@ from agno.metrics import MessageMetrics
 from agno.models.message import Message
 from agno.models.openai.open_responses import OpenResponses
 from agno.models.response import ModelResponse
+from agno.run.agent import RunOutput
 from agno.tools.function import Function
 from agno.utils.log import log_warning
 
@@ -54,8 +55,8 @@ class RampRouter(OpenResponses):
     Router rejects unknown request parameters rather than ignoring them, and the accepted set
     varies by the model that serves the request: `temperature`/`top_p` are rejected by reasoning
     models, and `reasoning.effort` is rejected by non-reasoning ones. Effort vocabularies are
-    per-model and wider than OpenAI's, so values outside "minimal"/"low"/"medium"/"high" go
-    through `reasoning` rather than `reasoning_effort`: `RampRouter(reasoning={"effort": "xhigh"})`.
+    per-model and wider than OpenAI's, and `reasoning_effort` takes any of them:
+    `RampRouter(reasoning_effort="xhigh")`.
 
     `background=True` is not supported. Router accepts the request and queues the generation, but
     serves no endpoint to read it back, so it can never be collected.
@@ -178,6 +179,7 @@ class RampRouter(OpenResponses):
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests, including the Router-only request fields.
@@ -190,6 +192,7 @@ class RampRouter(OpenResponses):
             response_format=response_format,
             tools=tools,
             tool_choice=tool_choice,
+            run_response=run_response,
         )
 
         # The OpenAI SDK's create() has a closed signature, so Router-only body fields ride in

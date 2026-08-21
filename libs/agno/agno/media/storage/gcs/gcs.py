@@ -15,11 +15,9 @@ _GCS_METADATA_MAX_BYTES = 8000
 def _sanitize_gcs_metadata(items: Dict[str, Any], *, max_bytes: int = _GCS_METADATA_MAX_BYTES) -> Dict[str, str]:
     """Coerce metadata to the string values GCS accepts, within its size budget.
 
-    GCS metadata travels in a JSON body, so unlike S3 it takes newlines and non-ASCII
-    verbatim and only the size needs bounding — an oversized dict fails the whole upload,
-    leaving the bytes inline for the database to store as base64. Entries that would exceed
-    the budget are dropped; the full metadata is preserved on the MediaReference, so
-    nothing is permanently lost.
+    GCS metadata travels in a JSON body, so unlike S3 it takes newlines and non-ASCII verbatim
+    and only the size needs bounding — an oversized dict fails the whole upload. Entries that
+    would exceed the budget are dropped; the full metadata is preserved on the MediaReference.
     """
     safe: Dict[str, str] = {}
     total = 0
@@ -35,16 +33,13 @@ def _sanitize_gcs_metadata(items: Dict[str, Any], *, max_bytes: int = _GCS_METAD
 class GCSMediaStorage(MediaStorage):
     """Google Cloud Storage media storage backend (google-cloud-storage).
 
-    ``public=True`` only changes which URL ``get_url`` returns — it does not grant
-    anyone access. GCS has no per-object equivalent of S3's ``acl="public-read"``
-    once uniform bucket-level access is on (the default for new buckets), so the
-    bucket must already grant ``roles/storage.objectViewer`` to ``allUsers`` or the
-    returned URL answers 403.
+    ``public=True`` only changes which URL ``get_url`` returns, it grants nobody access: under
+    uniform bucket-level access (the default for new buckets) the bucket must already grant
+    ``roles/storage.objectViewer`` to ``allUsers`` or the returned URL answers 403.
 
-    Signing needs a private key, which the ambient application-default credentials used
-    when ``credentials_path`` is unset do not carry. With those, ``get_url`` returns ``""``
-    and readers fall back to streaming through ``download`` — pass ``credentials_path`` to
-    a service-account JSON to get signed URLs.
+    Signing needs a private key, which application-default credentials do not carry. Without
+    ``credentials_path`` pointing at a service-account JSON, ``get_url`` returns ``None`` and
+    readers fall back to streaming through ``download``.
     """
 
     backend_name = "gcs"
@@ -76,7 +71,7 @@ class GCSMediaStorage(MediaStorage):
                 from google.cloud import storage  # type: ignore
             except ImportError:
                 raise ImportError(
-                    "google-cloud-storage is required for GCSMediaStorage. Install it with: pip install 'agno[gcs]'"
+                    "`google-cloud-storage` not installed. Please install using `pip install 'agno[gcs]'`"
                 )
             if self.credentials_path:
                 if not Path(self.credentials_path).is_file():
@@ -106,8 +101,7 @@ class GCSMediaStorage(MediaStorage):
         blob = self._get_bucket().blob(key)
 
         gcs_metadata: Dict[str, str] = {"content-sha256": hashlib.sha256(content).hexdigest()}
-        # original-filename first: the sanitizer stops at the size budget, so a large caller
-        # value would otherwise push it out. A caller key of the same name still wins.
+        # original-filename first: the sanitizer stops at the size budget; a caller key of the same name wins.
         extra: Dict[str, Any] = {"original-filename": filename} if filename else {}
         extra.update(dict(metadata) if metadata else {})
         gcs_metadata.update(_sanitize_gcs_metadata(extra))
@@ -124,14 +118,13 @@ class GCSMediaStorage(MediaStorage):
             # Normalize a missing object to FileNotFoundError so the media router returns 404.
             from google.api_core.exceptions import NotFound  # type: ignore
 
-            # GCS answers NotFound for a missing bucket too, and NotFound carries no code to
-            # discriminate on. Match the object case positively — ruling the bucket out by name
-            # turned every missing object in a bucket like "prod-bucket-eu" into a 502.
+            # GCS answers NotFound for a missing bucket too and carries no code to discriminate
+            # on, so the object case is matched positively on the message.
             if isinstance(e, NotFound) and "no such object" in str(e).lower():
                 raise FileNotFoundError(storage_key) from e
             raise
 
-    def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> str:
+    def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> Optional[str]:
         if expires_in is None:
             expires_in = self.presigned_url_expiry
 
@@ -152,11 +145,11 @@ class GCSMediaStorage(MediaStorage):
             log_debug(
                 f"Could not sign GCS URL for {storage_key} (non-signing credentials), falling back to streaming: {e}"
             )
-            return ""
+            return None
         except Exception as e:
             # Anything else is a misconfiguration, e.g. an expiry above the V4 seven-day ceiling.
             log_warning(f"Could not sign GCS URL for {storage_key}, falling back to streaming: {e}")
-            return ""
+            return None
 
     def delete(self, storage_key: str) -> bool:
         try:
@@ -166,7 +159,7 @@ class GCSMediaStorage(MediaStorage):
             # An object already gone counts as deleted, per delete()'s idempotency contract.
             from google.api_core.exceptions import NotFound  # type: ignore
 
-            # Same discriminator download() uses: a typo'd bucket also answers NotFound.
+            # Same discriminator download() uses: a missing bucket also answers NotFound.
             if isinstance(e, NotFound) and "no such object" in str(e).lower():
                 return True
             log_warning(f"Failed to delete {storage_key}: {e}")

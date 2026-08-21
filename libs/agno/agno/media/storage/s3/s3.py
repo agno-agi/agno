@@ -17,10 +17,8 @@ class S3MediaStorage(MediaStorage):
     """S3-compatible media storage backend (boto3).
 
     Supports AWS S3, MinIO, and other S3-compatible services via the ``endpoint_url``
-    parameter. Such a server configured with its own site region needs ``region`` set to
-    match it: uploads are retried against the right region automatically, but a presigned
-    URL carries the region in its signature and is rejected, so media saves cleanly and
-    then fails to load.
+    parameter. Such a server needs ``region`` set to match its own site region: a presigned
+    URL carries the region in its signature and is rejected when the two disagree.
     """
 
     backend_name = "s3"
@@ -54,13 +52,11 @@ class S3MediaStorage(MediaStorage):
             try:
                 import boto3
             except ImportError:
-                raise ImportError("boto3 is required for S3MediaStorage. Install it with: pip install 'agno[s3]'")
+                raise ImportError("`boto3` not installed. Please install using `pip install 'agno[s3]'`")
             from botocore.config import Config
 
-            # Pin SigV4. Unpinned, botocore downgrades presigning to SigV2 in the regions that
-            # predate 2014 (us-east-1, us-west-2, eu-west-1 and six more) and whenever region is
-            # unset, and a bucket with SSE-KMS default encryption rejects every SigV2 URL with
-            # InvalidArgument. Pinning costs the SigV4 seven-day ceiling, which get_url caps anyway.
+            # Pin SigV4: unpinned, botocore presigns with SigV2 in pre-2014 regions and whenever
+            # region is unset, and a bucket with SSE-KMS default encryption rejects every SigV2 URL.
             kwargs: Dict[str, Any] = {"config": Config(signature_version="s3v4")}
             if self.region:
                 kwargs["region_name"] = self.region
@@ -91,10 +87,8 @@ class S3MediaStorage(MediaStorage):
         if self.acl:
             put_kwargs["ACL"] = self.acl
 
-        # Entries the sanitizer drops stay on the MediaReference.
         s3_metadata: Dict[str, str] = {"content-sha256": hashlib.sha256(content).hexdigest()}
-        # original-filename first: the sanitizer stops at the size budget, so a large caller
-        # value would otherwise push it out. A caller key of the same name still wins.
+        # original-filename first: the sanitizer stops at the size budget; a caller key of the same name wins.
         extra: Dict[str, Any] = {"original-filename": filename} if filename else {}
         extra.update(dict(metadata) if metadata else {})
         s3_metadata.update(sanitize_s3_metadata(extra))
@@ -121,7 +115,7 @@ class S3MediaStorage(MediaStorage):
                 raise FileNotFoundError(storage_key) from e
             raise
 
-    def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> str:
+    def get_url(self, storage_key: str, *, expires_in: Optional[int] = None) -> Optional[str]:
         if expires_in is None:
             expires_in = self.presigned_url_expiry
 
@@ -141,7 +135,7 @@ class S3MediaStorage(MediaStorage):
                 f"presigned_url_expiry {expires_in}s exceeds the SigV4 maximum of "
                 f"{S3_MAX_PRESIGNED_EXPIRY}s, falling back to streaming"
             )
-            return ""
+            return None
 
         client = self._get_client()
         return client.generate_presigned_url(
@@ -192,7 +186,6 @@ class S3MediaStorage(MediaStorage):
 
     def exists(self, storage_key: str) -> bool:
         try:
-            # Inside the guard as in delete(): a client that cannot be built is False.
             client = self._get_client()
             client.head_object(Bucket=self.bucket, Key=storage_key)
             return True

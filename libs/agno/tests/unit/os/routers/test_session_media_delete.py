@@ -240,3 +240,51 @@ def test_a_session_still_deletes_the_media_it_owns(storage_dir):
     assert client.delete("/sessions/source?delete_media=true").status_code == 204
 
     assert _objects(storage_dir) == set()
+
+
+def test_a_delete_without_the_flag_hints_at_delete_media(storage_dir, monkeypatch):
+    """The objects outlive the row by default, so the operator is told the flag that sweeps them exists."""
+    from agno.os.routers.session import session as session_router
+
+    messages: list = []
+    monkeypatch.setattr(session_router, "log_debug", lambda msg, *a, **kw: messages.append(str(msg)))
+
+    storage = LocalMediaStorage(base_path=storage_dir)
+    db = InMemoryDb()
+    _seed(db, storage, "s-1")
+    _seed(db, storage, "s-2", content=IMAGE_BYTES + b"second")
+    client = _build_client(db, storage)
+
+    assert client.delete("/sessions/s-1?user_id=u-1").status_code == 204
+    assert [m for m in messages if "pass delete_media=True" in m] == [
+        "delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too"
+    ]
+
+    messages.clear()
+    assert client.delete("/sessions/s-2?delete_media=true&user_id=u-1").status_code == 204
+    assert [m for m in messages if "pass delete_media=True" in m] == []
+
+
+def test_a_bulk_delete_without_the_flag_hints_once(storage_dir, monkeypatch):
+    """One request, one hint: repeating it per session id would drown the log on a bulk delete."""
+    from agno.os.routers.session import session as session_router
+
+    messages: list = []
+    monkeypatch.setattr(session_router, "log_debug", lambda msg, *a, **kw: messages.append(str(msg)))
+
+    storage = LocalMediaStorage(base_path=storage_dir)
+    db = InMemoryDb()
+    _seed(db, storage, "s-1")
+    _seed(db, storage, "s-2", content=IMAGE_BYTES + b"second")
+    client = _build_client(db, storage)
+
+    response = client.request(
+        "DELETE",
+        "/sessions?user_id=u-1",
+        json={"session_ids": ["s-1", "s-2"], "session_types": ["agent", "agent"]},
+    )
+
+    assert response.status_code == 204
+    assert [m for m in messages if "pass delete_media=True" in m] == [
+        "delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too"
+    ]

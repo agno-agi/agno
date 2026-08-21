@@ -7,6 +7,7 @@ bytes into the database inline, which is the whole thing offloading exists to av
 """
 
 import asyncio
+import base64
 import copy
 import os
 import tempfile
@@ -729,8 +730,8 @@ def test_offload_cache_uploads_once_across_persists():
 
 
 def test_cache_does_not_hand_one_media_kind_another_kinds_object():
-    """The cache keyed on the content-addressed id alone, so a File sharing an id and bytes with
-    an Image got the Image's reference and its own object was never uploaded."""
+    """The cache is keyed by media kind as well as content-addressed id, so a File sharing an id
+    and bytes with an Image gets its own upload rather than the Image's reference."""
     from agno.media import File
     from agno.utils.media_offload import offload_cache_for
 
@@ -753,9 +754,9 @@ def test_cache_does_not_hand_one_media_kind_another_kinds_object():
 
 @pytest.mark.asyncio
 async def test_pre_terminal_writes_upload_once_under_a_sync_backend_on_arun():
-    """The sync-backend branch hands offload_run_media to to_thread by reference, so the cache
-    had to travel as a positional argument and did not. Every pre-terminal write — the PENDING
-    row, the RUNNING row, each checkpoint — re-uploaded the whole run."""
+    """The sync-backend branch hands offload_run_media to to_thread by reference, and the cache
+    travels with it, so the pre-terminal writes — the PENDING row, the RUNNING row, each
+    checkpoint — upload the run's media once between them."""
     from agno.utils.agent import abuild_offloaded_storage_copy
 
     class CountingStorage(LocalMediaStorage):
@@ -895,7 +896,7 @@ def test_scrub_survives_a_remote_member():
 
 
 def test_a_fork_gets_its_own_copy_of_inherited_media():
-    """Before offload a fork deep-copied the bytes, so the two sessions were independent."""
+    """A fork's inherited media is stored under the fork's own session, leaving the source object intact."""
     from agno.media.storage.local import LocalMediaStorage
 
     with tempfile.TemporaryDirectory() as tmpdir:
@@ -933,17 +934,17 @@ def test_a_member_that_stores_no_media_keeps_it_off_the_team_row():
 
         secret = Image(content=b"SECRET", id="secret", mime_type="image/png")
         member_run = RunOutput(run_id="mr", agent_id="private", images=[secret])
-        _record_opted_out_media(team, member_run)
-
         # the tool result already promoted it onto the team's own output
         team_run = TeamRunOutput(run_id="tr", team_id="team", images=[secret], member_responses=[member_run])
+        _record_opted_out_media(team_run, member_run)
+
         drop_opted_out_member_media(team, team_run)
 
         assert team_run.images is None
 
 
 def test_a_member_that_stores_no_media_keeps_its_files_off_the_team_row():
-    """Files travel the same promotion path as images and were missed by the first fix."""
+    """Files travel the same promotion path as images, so the filter covers them too."""
     from agno.agent.agent import Agent
     from agno.models.openai import OpenAIResponses
     from agno.run.team import TeamRunOutput
@@ -962,9 +963,163 @@ def test_a_member_that_stores_no_media_keeps_its_files_off_the_team_row():
 
         report = File(content=b"col_a,col_b\n1,2\n", id="report", mime_type="text/csv", filename="r.csv")
         member_run = RunOutput(run_id="mr", agent_id="private", files=[report])
-        _record_opted_out_media(team, member_run)
-
         team_run = TeamRunOutput(run_id="tr", team_id="team", files=[report], member_responses=[member_run])
+        _record_opted_out_media(team_run, member_run)
+
         drop_opted_out_member_media(team, team_run)
 
         assert team_run.files is None
+
+
+def test_a_nested_leafs_opt_out_reaches_the_root_teams_filter():
+    """The opt-out is recorded on whichever team delegated, and the root team's filter reads
+    the nested ledgers too, so a sub-team member's media never reaches the root bucket."""
+    from agno.agent.agent import Agent
+    from agno.models.openai import OpenAIResponses
+    from agno.run.team import TeamRunOutput
+    from agno.team._run import _record_opted_out_media
+    from agno.team.team import Team
+    from agno.utils.agent import build_offloaded_storage_copy
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        leaf = Agent(name="leaf", id="leaf", model=OpenAIResponses(id="gpt-5.5"), store_media=False)
+        sub = Team(name="sub", id="sub", members=[leaf], model=OpenAIResponses(id="gpt-5.5"))
+        storage = LocalMediaStorage(base_path=tmpdir)
+        root = Team(name="root", id="root", members=[sub], model=OpenAIResponses(id="gpt-5.5"), media_storage=storage)
+
+        secret = Image(content=b"SECRET", id="secret", mime_type="image/png")
+        leaf_run = RunOutput(run_id="lr", agent_id="leaf", images=[secret])
+        sub_run = TeamRunOutput(run_id="sr", team_id="sub", images=[secret], member_responses=[leaf_run])
+        # the sub-team ran the delegation, so the id lands on the sub-team's run
+        _record_opted_out_media(sub_run, leaf_run)
+        root_run = TeamRunOutput(run_id="rr", team_id="root", images=[secret], member_responses=[sub_run])
+
+        # Driven through the persist path rather than by calling the filter directly: the call
+        # site is the thing that has to stay wired, and a hand-rolled call cannot prove it.
+        storage_copy = build_offloaded_storage_copy(root, root_run, "s1")
+
+        assert storage_copy is not None
+        assert storage_copy.images is None
+        # and nothing reached the bucket, which a scrub running after the upload would not catch
+        assert os.listdir(tmpdir) == []
+
+
+def test_an_opt_out_does_not_outlive_the_run_that_recorded_it():
+    """The opt-out ledger lives on the run, so an id one run opted out is still offloaded for a
+    later run — another session, another user, another member."""
+    from agno.agent.agent import Agent
+    from agno.run.team import TeamRunOutput
+    from agno.team._run import _record_opted_out_media
+    from agno.team.team import Team
+    from agno.utils.agent import build_offloaded_storage_copy
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        private = Agent(name="private", id="private", model=None, store_media=False)
+        public = Agent(name="public", id="public", model=None, store_media=True)
+        team = Team(
+            name="t",
+            id="t",
+            members=[private, public],
+            model=None,
+            media_storage=LocalMediaStorage(base_path=tmpdir),
+        )
+
+        private_run = RunOutput(
+            run_id="r1", agent_id="private", images=[Image(content=b"A", id="chart", mime_type="image/png")]
+        )
+        first = TeamRunOutput(
+            run_id="tr1", team_id="t", images=list(private_run.images or []), member_responses=[private_run]
+        )
+        _record_opted_out_media(first, private_run)
+        assert build_offloaded_storage_copy(team, first, "s-alice").images is None
+        assert os.listdir(tmpdir) == []
+
+        # a later run, same Team object, same media id, from a member that does store media
+        kept = Image(content=b"B", id="chart", mime_type="image/png")
+        public_run = RunOutput(run_id="r2", agent_id="public", images=[kept])
+        second = TeamRunOutput(run_id="tr2", team_id="t", images=[kept], member_responses=[public_run])
+        stored = build_offloaded_storage_copy(team, second, "s-bob")
+
+        assert stored.images is not None and stored.images[0].media_reference is not None
+        assert len(os.listdir(tmpdir)) > 0
+
+
+def test_a_backend_that_fails_keeps_the_media_inline_instead_of_failing_the_run():
+    """An unreachable bucket must degrade to inline storage, not take the run down.
+
+    The upload failure never reaches the helper's own guard: ``_offload_media_list`` catches
+    it per media object, so what comes back is a copy that simply kept its bytes.
+    """
+    from agno.agent.agent import Agent
+    from agno.utils.agent import build_offloaded_storage_copy
+
+    class BrokenStorage(LocalMediaStorage):
+        def upload(self, *args, **kwargs):
+            raise RuntimeError("bucket is unreachable")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        agent = Agent(name="a", id="a", model=None, media_storage=BrokenStorage(base_path=tmpdir))
+        run = RunOutput(run_id="r", agent_id="a", images=[Image(content=b"BYTES", id="i", mime_type="image/png")])
+
+        storage_copy = build_offloaded_storage_copy(agent, run, "s1")
+
+        # the row keeps the bytes rather than a pointer to an object that was never written
+        assert storage_copy is not None
+        assert storage_copy.images[0].content == b"BYTES"
+        assert storage_copy.images[0].media_reference is None
+        # and the caller's own run is untouched
+        assert run.images[0].content == b"BYTES"
+
+
+def test_a_run_that_cannot_be_copied_falls_back_to_inline_too():
+    """The other half of the fallback: the guard the helper owns.
+
+    A backend failure is caught per media object, so it never reaches the helper. What does
+    is a failure before any media is touched — here the deep copy itself — and that is the
+    case the None return exists for.
+    """
+    from agno.agent.agent import Agent
+    from agno.utils.agent import build_offloaded_storage_copy
+
+    class Uncopyable:
+        def __deepcopy__(self, memo):
+            raise RuntimeError("cannot deepcopy")
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        agent = Agent(name="a", id="a", model=None, media_storage=LocalMediaStorage(base_path=tmpdir))
+        run = RunOutput(run_id="r", agent_id="a", images=[Image(content=b"BYTES", id="i", mime_type="image/png")])
+        run.metadata = {"bad": Uncopyable()}
+
+        assert build_offloaded_storage_copy(agent, run, "s1") is None
+        assert os.listdir(tmpdir) == []
+
+
+@pytest.mark.parametrize("entity_kind", ["agent", "team"])
+@pytest.mark.asyncio
+async def test_store_media_off_is_honoured_on_the_full_run_error_path(entity_kind):
+    """``store_media=False`` keeps media out of the full-run copy, for an agent and a team alike.
+
+    ``full_run`` writes the fields the atomic primitive is handed verbatim, so the copy is
+    scrubbed before it goes in; the run the caller holds keeps its own bytes.
+    """
+    from agno.agent.agent import Agent
+    from agno.run.team import TeamRunOutput
+    from agno.team.team import Team
+    from agno.utils.agent import abuild_full_run_storage_copy
+
+    image = Image(id="i", content=b"RAW-SECRET-BYTES", mime_type="image/png")
+    if entity_kind == "agent":
+        entity = Agent(name="a", id="a", model=None, store_media=False)
+        run = RunOutput(run_id="r", agent_id="a", images=[image])
+    else:
+        entity = Team(name="t", id="t", model=None, members=[], store_media=False)
+        run = TeamRunOutput(run_id="r", team_id="t", images=[image])
+
+    view = await abuild_full_run_storage_copy(entity, run, "s1")
+
+    assert not view.images
+    # to_dict base64-encodes content, so the raw bytes never appear verbatim — search for the
+    # encoded form, or the assertion passes on an unscrubbed run.
+    assert base64.b64encode(b"RAW-SECRET-BYTES").decode() not in str(view.to_dict())
+    # the caller keeps its own media, as every other storage-copy path guarantees
+    assert run.images[0].content == b"RAW-SECRET-BYTES"

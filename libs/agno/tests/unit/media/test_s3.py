@@ -289,7 +289,7 @@ class TestPresignedExpiryCeiling:
     def test_no_url_past_the_ceiling(self):
         from agno.media.storage.s3.utils import S3_MAX_PRESIGNED_EXPIRY
 
-        assert self._storage(S3_MAX_PRESIGNED_EXPIRY + 1).get_url("agno/k.png") == ""
+        assert self._storage(S3_MAX_PRESIGNED_EXPIRY + 1).get_url("agno/k.png") is None
 
     @pytest.mark.asyncio
     async def test_async_no_url_past_the_ceiling(self):
@@ -297,7 +297,7 @@ class TestPresignedExpiryCeiling:
         from agno.media.storage.s3.utils import S3_MAX_PRESIGNED_EXPIRY
 
         storage = AsyncS3MediaStorage(bucket="test-bucket", presigned_url_expiry=S3_MAX_PRESIGNED_EXPIRY + 1)
-        assert await storage.get_url("agno/k.png") == ""
+        assert await storage.get_url("agno/k.png") is None
 
 
 class TestSignatureVersion:

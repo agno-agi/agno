@@ -637,7 +637,6 @@ def get_team_router(
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
-        # Parse per-file metadata (JSON array matching files[] by position)
         files_metadata_list = parse_files_metadata(files_metadata)
 
         # Scoped non-admin callers always get their JWT sub as user_id.
@@ -755,8 +754,6 @@ def get_team_router(
         # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when this team
         # is used as a remote member) with media from uploaded files.
         # Popped from kwargs since they are passed explicitly to the run methods below.
-        # These arrive as JSON arrays from AgnoClient. A multipart *file* part of the same
-        # name would otherwise reach .extend() as an UploadFile and 500 — files belong in `files`.
         for field, target in (
             ("images", base64_images),
             ("audio", base64_audios),
@@ -764,7 +761,8 @@ def get_team_router(
             ("files", document_files),
         ):
             value = kwargs.pop(field, None)
-            if value is None:
+            # Falsy means "not sent": a FormData builder emits an empty part for an unset field.
+            if not value:
                 continue
             if not isinstance(value, (list, tuple)):
                 raise HTTPException(

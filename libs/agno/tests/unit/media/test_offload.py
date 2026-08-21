@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import agno.media.media as media_module
 from agno.media import File, Image
 from agno.models.message import Message
 from agno.run.workflow import WorkflowRunOutput
@@ -61,7 +62,7 @@ class TestOffloadSingleMedia:
         storage = _mock_storage(persist_remote_urls=True)
         img = Image(url="https://example.com/img.png", id="img-url-1", mime_type="image/png")
 
-        with patch.object(Image, "get_content_bytes", return_value=b"downloaded-bytes"):
+        with patch.object(media_module, "bytes_and_mime_from_url", return_value=(b"downloaded-bytes", "image/png")):
             _offload_single_media(img, storage, "session-1", "image")
 
         storage.upload.assert_called_once()
@@ -365,8 +366,32 @@ class TestStorageKeyScoping:
         storage.get_url.return_value = ""
         img = Image(url="https://example.com/logo.png", id="img", mime_type="image/png")
 
-        with patch.object(Image, "get_content_bytes", return_value=b"IMG"):
+        with patch.object(media_module, "bytes_and_mime_from_url", return_value=(b"IMG", "image/png")):
             _offload_single_media(img, storage, "session-1", "image")
 
         assert img.url == "https://example.com/logo.png"
         assert img.media_reference is not None
+
+
+def test_a_downloaded_url_gets_a_mime_type_from_its_path():
+    """persist_remote_urls exists for URL-only media, which rarely carries a mime type.
+
+    Without one the key has no extension, the object has no Content-Type, and the local
+    backend writes no sidecar — so nothing records what the bytes are.
+    """
+    import tempfile
+    from pathlib import Path
+
+    from agno.media.storage.local import LocalMediaStorage
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        storage = LocalMediaStorage(base_path=tmpdir, persist_remote_urls=True)
+        image = Image(id="i", url="https://example.com/pics/photo.jpg")
+        # Stubbed at the fetch so the test makes no network call
+        with patch.object(media_module, "bytes_and_mime_from_url", return_value=(b"DOWNLOADED", None)):
+            _offload_single_media(image, storage, "s1", "image")
+
+        assert image.media_reference is not None
+        assert image.media_reference.mime_type == "image/jpeg"
+        assert image.media_reference.storage_key.endswith(".jpg")
+        assert (Path(tmpdir) / f"{image.media_reference.storage_key}.meta.json").exists()

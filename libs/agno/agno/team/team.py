@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -37,6 +38,9 @@ from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 from agno.models.response import ModelResponse
+
+if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
@@ -244,8 +248,7 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
-    # If set, media is uploaded here before DB persistence when store_media is True, and only
-    # references are stored. With store_media False, media is not offloaded.
+    # If set (and store_media is True), media is uploaded here and only references are stored
     media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
@@ -296,7 +299,7 @@ class Team:
     output_model: Optional[Model] = None
     # Provide a prompt for the output model
     output_model_prompt: Optional[str] = None
-    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
+    # Instead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # If True, parse the response
     parse_response: bool = True
@@ -332,6 +335,14 @@ class Team:
     compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
+
+    # --- Result Offloading ---
+    # Store tool results and member answers longer than a threshold as files
+    # and leave a short envelope with a result id in the message. True uses
+    # the defaults (16000 characters, one read_result page); a ResultStore
+    # sets the threshold, preview, lifetime and payload location. Unset, a
+    # sub-team inherits the parent's store; False keeps offloading off there too.
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
@@ -417,8 +428,6 @@ class Team:
     _tool_instructions: Optional[List[str]] = None
     # Member response model
     _member_response_model: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None
-    # Ids of media lifted from a member whose store_media is off, dropped before persistence
-    _opted_out_media_ids: Optional[Set[str]] = None
     # Safe formatter for template resolution
     _formatter: Optional[Any] = None
     # Hooks normalised flag
@@ -427,6 +436,12 @@ class Team:
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
+    # Store for offloaded results, shared with the members
+    _result_store: Optional["ResultStore"] = None
+    # The store a parent team handed down, so a later team can replace or clear it
+    _inherited_result_store: Optional["ResultStore"] = None
+    # The setting the store was built from, so a changed setting rebuilds it
+    _result_store_setting: Union[bool, "ResultStore", None] = None
     # Internal resolved LearningMachine instance
     _learning: Optional[LearningMachine] = None
     # Whether learning init has been attempted (prevents repeated attempts when db is None)
@@ -533,6 +548,7 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
+        offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -651,6 +667,7 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
+            offload_tool_results=offload_tool_results,
             metadata=metadata,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,
@@ -705,6 +722,15 @@ class Team:
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
         return _init.initialize_team(self, debug_mode=debug_mode)
+
+    @property
+    def result_store(self) -> Optional["ResultStore"]:
+        """The store offloaded tool results go to, or None when offloading is off."""
+        if self._result_store is None and self.offload_tool_results:
+            from agno.team import _init
+
+            _init._ensure_result_store(self)
+        return self._result_store
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
@@ -1318,10 +1344,7 @@ class Team:
     def scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
         return _run.scrub_run_output_for_storage(self, run_response=run_response)
 
-    def _scrub_member_responses(
-        self,
-        member_responses: List[Union[TeamRunOutput, RunOutput]],
-    ) -> None:
+    def _scrub_member_responses(self, member_responses: List[Union[TeamRunOutput, RunOutput]]) -> None:
         return _run._scrub_member_responses(self, member_responses=member_responses)
 
     def cli_app(
