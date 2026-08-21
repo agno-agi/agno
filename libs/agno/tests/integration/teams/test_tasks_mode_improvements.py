@@ -1,15 +1,14 @@
 """Integration tests for tasks mode improvements.
 
 Tests:
-- Fix 1: Dependent task results passed to members
-- Fix 2: Fresh task list per run
+- Dependent task results are passed to members
+- A completed plan can be extended in a later run
 """
 
 import pytest
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
-from agno.run.team import ToolCallCompletedEvent, ToolCallStartedEvent
 from agno.team.mode import TeamMode
 from agno.team.team import Team
 
@@ -46,6 +45,7 @@ def dependency_team():
             "4. Call mark_all_complete with the final summary.",
         ],
         max_iterations=5,
+        cache_session=True,
         telemetry=False,
     )
 
@@ -64,20 +64,14 @@ def test_dependency_results_passed_to_member(dependency_team):
     assert "execute_task" in called_tools, f"Expected execute_task, got: {called_tools}"
 
 
-def test_fresh_task_list_per_run(dependency_team):
-    """Second run should start with a clean task list, not carry over old tasks."""
-    # First run: complex request that creates tasks
+def test_follow_up_after_completed_plan_can_execute_new_tasks(dependency_team):
+    """A follow-up can add and execute work after the prior plan completed."""
     response1 = dependency_team.run("Research the benefits of sleep and summarize.")
     assert response1.content is not None
 
-    # Second run: simple greeting should not see old tasks
-    response2 = dependency_team.run("hi")
+    response2 = dependency_team.run("Now research two evidence-based ways to improve sleep and summarize them.")
     assert response2.content is not None
-
-    # The greeting should NOT trigger task tools
-    if response2.tools:
-        task_tool_names = {"mark_all_complete", "create_task", "execute_task"}
-        called_tools = {t.tool_name for t in response2.tools if t.tool_name}
-        assert not called_tools.intersection(task_tool_names), (
-            f"Expected no task tools for greeting after complex run, but got: {called_tools.intersection(task_tool_names)}"
-        )
+    assert response2.tools is not None
+    called_tools = {tool.tool_name for tool in response2.tools if tool.tool_name}
+    assert "create_task" in called_tools, f"Expected a new task in the follow-up, got: {called_tools}"
+    assert "execute_task" in called_tools, f"Expected follow-up execution, got: {called_tools}"

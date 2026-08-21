@@ -60,7 +60,7 @@ from agno.team._default_tools import (
     _acascading_cancel_run,
     _cascading_cancel_run,
 )
-from agno.team.task import TaskList, TaskStatus, save_task_list
+from agno.team.task import Task, TaskList, TaskStatus, save_task_list
 from agno.tools.function import Function
 from agno.utils.events import (
     create_team_task_created_event,
@@ -252,8 +252,11 @@ def _get_task_management_tools(
         except ValueError:
             yield f"Invalid status '{status}'. Must be one of: pending, in_progress, completed, failed."
             return
-        if new_status == TaskStatus.blocked:
-            yield "Cannot manually set status to 'blocked'. Blocked status is managed automatically based on task dependencies."
+        if new_status in (TaskStatus.blocked, TaskStatus.cancelled):
+            yield (
+                f"Cannot manually set status to '{new_status.value}'. "
+                "Use cancel_task for cancellation; blocked status is managed automatically."
+            )
             return
 
         # Get the task to capture previous status
@@ -388,7 +391,7 @@ def _get_task_management_tools(
         task_id: str,
         reason: str = "",
     ) -> Iterator[Union[TaskUpdatedEvent, str]]:
-        """Cancel a pending or blocked task. Sets its status to failed.
+        """Cancel a pending or blocked task.
 
         Only tasks with status 'pending' or 'blocked' can be cancelled.
 
@@ -408,7 +411,7 @@ def _get_task_management_tools(
             return
 
         previous_status = task.status.value
-        task.status = TaskStatus.failed
+        task.status = TaskStatus.cancelled
         task.result = f"Cancelled: {reason}" if reason else "Cancelled by leader."
 
         task_list._update_blocked_statuses()

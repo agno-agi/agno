@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import time
 from collections import deque
+from copy import deepcopy
 from time import time as unix_time
 from typing import (
     TYPE_CHECKING,
@@ -363,6 +364,7 @@ def _run_tasks(
         accumulated_messages = run_messages.messages
 
         model_response: Optional[ModelResponse] = None
+        task_activity_seen = False
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
@@ -386,6 +388,8 @@ def _run_tasks(
                         "Otherwise, respond directly.",
                     )
                 accumulated_messages.append(state_message)
+
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
 
             # Get model response
             model_response = call_model_with_fallback(
@@ -424,14 +428,21 @@ def _run_tasks(
                     team, run_response=run_response, session=session, run_context=run_context
                 )
 
-            # Early exit: if the model responded with content and no tool calls,
-            # it chose to respond directly without creating tasks.
-            if not model_response.tool_calls:
-                log_debug("Model responded directly without tool calls, exiting task loop.")
+            task_list = load_task_list(run_context.session_state)
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+
+            # A content response without task-state activity is a direct
+            # response. This also supports leader-owned tools and persisted
+            # task plans from prior messages.
+            if (
+                not task_activity_seen
+                and (not task_list.tasks or task_list.all_terminal())
+                and model_response.content not in (None, "")
+            ):
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
                 break
 
             # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
             if task_list.goal_complete:
                 log_debug("Task goal marked complete, finishing task loop.")
                 break
@@ -723,6 +734,7 @@ def _run_tasks_stream(
 
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
+        task_activity_seen = False
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
@@ -760,8 +772,10 @@ def _run_tasks_stream(
                     )
                 accumulated_messages.append(state_message)
 
-            # Track tool count before model response to detect direct responses
-            tools_before = len(run_response.tools) if run_response.tools else 0
+            # Snapshot content and task state so direct responses can be
+            # distinguished from task-plan activity during this iteration.
+            content_before = deepcopy(run_response.content)
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
@@ -830,16 +844,20 @@ def _run_tasks_stream(
                     yield run_response
                 return
 
-            # Early exit: if no tool calls were made during this iteration,
-            # the model responded directly without creating tasks.
-            tools_after = len(run_response.tools) if run_response.tools else 0
-            if tools_after == tools_before:
-                log_debug("Model responded directly without tool calls, exiting task loop.")
-                break
+            task_list = load_task_list(run_context.session_state)
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+
+            # A new content response without task-state activity is direct.
+            direct_response = (
+                not task_activity_seen
+                and (not task_list.tasks or task_list.all_terminal())
+                and run_response.content not in (None, "")
+                and run_response.content != content_before
+            )
+            if direct_response:
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
 
             # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
-
             # Yield task state updated event
             if stream_events:
                 # Convert task list to TaskData for frontend
@@ -881,6 +899,9 @@ def _run_tasks_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+            if direct_response:
+                break
 
             if task_list.goal_complete:
                 log_debug("Task goal marked complete, finishing task loop.")
@@ -2252,6 +2273,7 @@ async def _arun_tasks(
         accumulated_messages = run_messages.messages
 
         model_response: Optional[ModelResponse] = None
+        task_activity_seen = False
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
@@ -2275,6 +2297,8 @@ async def _arun_tasks(
                         "Otherwise, respond directly.",
                     )
                 accumulated_messages.append(state_message)
+
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
 
             # Get model response
             model_response = await acall_model_with_fallback(
@@ -2313,14 +2337,21 @@ async def _arun_tasks(
                     team, run_response=run_response, session=team_session, run_context=run_context
                 )
 
-            # Early exit: if the model responded with content and no tool calls,
-            # it chose to respond directly without creating tasks.
-            if not model_response.tool_calls:
-                log_debug("Model responded directly without tool calls, exiting task loop.")
+            task_list = load_task_list(run_context.session_state)
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+
+            # A content response without task-state activity is a direct
+            # response. This also supports leader-owned tools and persisted
+            # task plans from prior messages.
+            if (
+                not task_activity_seen
+                and (not task_list.tasks or task_list.all_terminal())
+                and model_response.content not in (None, "")
+            ):
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
                 break
 
             # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
             if task_list.goal_complete:
                 log_debug("Task goal marked complete, finishing task loop.")
                 break
@@ -2647,6 +2678,7 @@ async def _arun_tasks_stream(
 
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
+        task_activity_seen = False
 
         # === Iterative task loop ===
         for iteration in range(team.max_iterations):
@@ -2684,8 +2716,10 @@ async def _arun_tasks_stream(
                     )
                 accumulated_messages.append(state_message)
 
-            # Track tool count before model response to detect direct responses
-            tools_before = len(run_response.tools) if run_response.tools else 0
+            # Snapshot content and task state so direct responses can be
+            # distinguished from task-plan activity during this iteration.
+            content_before = deepcopy(run_response.content)
+            task_state_before = deepcopy(load_task_list(run_context.session_state).to_dict())
 
             # Get model response with streaming
             # Update run_messages with accumulated messages for streaming
@@ -2755,16 +2789,20 @@ async def _arun_tasks_stream(
                     yield run_response
                 return
 
-            # Early exit: if no tool calls were made during this iteration,
-            # the model responded directly without creating tasks.
-            tools_after = len(run_response.tools) if run_response.tools else 0
-            if tools_after == tools_before:
-                log_debug("Model responded directly without tool calls, exiting task loop.")
-                break
+            task_list = load_task_list(run_context.session_state)
+            task_activity_seen = task_activity_seen or task_list.to_dict() != task_state_before
+
+            # A new content response without task-state activity is direct.
+            direct_response = (
+                not task_activity_seen
+                and (not task_list.tasks or task_list.all_terminal())
+                and run_response.content not in (None, "")
+                and run_response.content != content_before
+            )
+            if direct_response:
+                log_debug("Model responded directly without creating tasks, exiting task loop.")
 
             # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
-
             # Yield task state updated event
             if stream_events:
                 # Convert task list to TaskData for creating detailed events
@@ -2806,6 +2844,9 @@ async def _arun_tasks_stream(
                     events_to_skip=team.events_to_skip,
                     store_events=team.store_events,
                 )
+
+            if direct_response:
+                break
 
             if task_list.goal_complete:
                 log_debug("Task goal marked complete, finishing task loop.")

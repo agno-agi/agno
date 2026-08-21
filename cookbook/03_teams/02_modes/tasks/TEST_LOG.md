@@ -93,10 +93,30 @@
 
 ### 10_multi_run_session.py
 
-**Status:** FAIL
+**Status:** PASS
 
-**Description:** Validation issue: style
+**Description:** Imported the cookbook offline and exercised its cached, same-session two-run lifecycle with a deterministic model.
 
-**Result:** Style: missing_docstring_underline | Run: completed
+**Result:** Import and deterministic persistence checks passed. A live OpenAI run was not attempted because the demo environment and API credentials were unavailable.
+
+---
+
+### 12_direct_response.py
+
+**Status:** PASS
+
+**Description:** Imported the cookbook offline and exercised direct responses across sync, async, streaming, empty-turn, task-tool, and leader-tool paths.
+
+**Result:** Import and deterministic behavior checks passed. A live OpenAI run was not attempted because the demo environment and API credentials were unavailable.
+
+---
+
+### 13_task_improvements.py
+
+**Status:** PASS
+
+**Description:** Imported the cookbook offline and exercised dependency forwarding, configurable summaries, editing, cancellation, and persistence through real task-tool entrypoints.
+
+**Result:** Import and deterministic behavior checks passed. A live OpenAI run was not attempted because the demo environment and API credentials were unavailable.
 
 ---

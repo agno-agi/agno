@@ -2,11 +2,10 @@
 Tasks Mode: Improvements Demo
 ==============================
 
-Demonstrates four improvements to tasks mode:
+Demonstrates three improvements to tasks mode:
 1. Dependency context: dependent tasks receive results from their dependencies
-2. Fresh task state: each run starts clean (no stale tasks from prior messages)
-3. Configurable truncation: task_result_summary_limit controls result preview length
-4. Task editing: edit_task and cancel_task tools for replanning
+2. Configurable truncation: task_result_summary_limit controls result preview length
+3. Task editing: edit_task and cancel_task tools for replanning
 
 Run: .venvs/demo/bin/python cookbook/03_teams/02_modes/tasks/13_task_improvements.py
 """
@@ -31,7 +30,7 @@ from agno.team.team import Team
 researcher = Agent(
     name="Researcher",
     role="Researches topics and gathers detailed information",
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a research specialist.",
         "Provide detailed, factual information on the given topic.",
@@ -41,7 +40,7 @@ researcher = Agent(
 writer = Agent(
     name="Writer",
     role="Writes polished content based on research and outlines",
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a skilled writer.",
         "Use the provided research and context to write clear, engaging content.",
@@ -56,7 +55,7 @@ writer = Agent(
 team = Team(
     name="Content Pipeline",
     mode=TeamMode.tasks,
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[researcher, writer],
     instructions=[
         "You lead a content pipeline with a Researcher and a Writer.",
@@ -118,14 +117,9 @@ if __name__ == "__main__":
         "Research the top 3 benefits of meditation, then write a short paragraph about them."
     )
 
-    # Scenario 2: Fresh task state per run
-    # This second message should start with a clean task list
-    print("\n[SCENARIO 2: Fresh task state - no stale tasks from previous run]")
-    run_with_events("What is 2+2?")
-
-    # Scenario 3: Configurable result limit
+    # Scenario 2: Configurable result limit
     # With task_result_summary_limit=1000, longer results are shown in task summaries
-    print("\n[SCENARIO 3: Longer result summaries with task_result_summary_limit=1000]")
+    print("\n[SCENARIO 2: Longer result summaries with task_result_summary_limit=1000]")
     run_with_events(
         "Research 5 key differences between Python and JavaScript, "
         "then write a comparison paragraph."

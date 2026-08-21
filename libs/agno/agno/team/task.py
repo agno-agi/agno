@@ -16,6 +16,7 @@ class TaskStatus(str, Enum):
     in_progress = "in_progress"
     completed = "completed"
     failed = "failed"
+    cancelled = "cancelled"
     blocked = "blocked"
 
 
@@ -71,7 +72,7 @@ class Task:
         )
 
 
-TERMINAL_STATUSES = {TaskStatus.completed, TaskStatus.failed}
+TERMINAL_STATUSES = {TaskStatus.completed, TaskStatus.failed, TaskStatus.cancelled}
 DEPENDENCY_SATISFIED_STATUSES = {TaskStatus.completed}
 
 
@@ -97,6 +98,10 @@ class TaskList:
         parent_id: Optional[str] = None,
         dependencies: Optional[List[str]] = None,
     ) -> Task:
+        # A newly-created task starts a new unit of work, so a completion
+        # marker inherited from an earlier run is no longer valid.
+        self.goal_complete = False
+        self.completion_summary = None
         task = Task(
             title=title,
             description=description,
@@ -142,7 +147,7 @@ class TaskList:
         return available
 
     def all_terminal(self) -> bool:
-        """Return True when every task is in a terminal state (completed or failed)."""
+        """Return True when every task is completed, failed, or cancelled."""
         if not self.tasks:
             return False
         return all(t.status in TERMINAL_STATUSES for t in self.tasks)
@@ -206,23 +211,47 @@ class TaskList:
                 return True
         return False
 
+    def _has_cancelled_dependency(self, task: "Task") -> bool:
+        """Return True if any dependency of *task* was cancelled."""
+        if not task.dependencies:
+            return False
+        for dep_id in task.dependencies:
+            dep = self.get_task(dep_id)
+            if dep is not None and dep.status == TaskStatus.cancelled:
+                return True
+        return False
+
     def _update_blocked_statuses(self) -> None:
         """Recompute blocked status for all pending/blocked tasks.
 
-        If a dependency has failed the dependent task is also marked failed
-        so that ``all_terminal()`` can detect completion and the loop does
-        not deadlock.
+        Failed dependencies fail their dependents; cancelled dependencies
+        cancel theirs. This lets ``all_terminal()`` detect completion without
+        treating intentional replanning as an execution failure.
         """
-        for task in self.tasks:
-            if task.status == TaskStatus.blocked:
+        changed = True
+        while changed:
+            changed = False
+            for task in self.tasks:
+                if task.status not in (TaskStatus.pending, TaskStatus.blocked):
+                    continue
+
+                new_status: TaskStatus = task.status
+                new_result = task.result
                 if self._has_failed_dependency(task):
-                    task.status = TaskStatus.failed
-                    task.result = "Automatically failed: a dependency failed."
-                elif not self._is_blocked(task):
-                    task.status = TaskStatus.pending
-            elif task.status == TaskStatus.pending:
-                if self._is_blocked(task):
-                    task.status = TaskStatus.blocked
+                    new_status = TaskStatus.failed
+                    new_result = "Automatically failed: a dependency failed."
+                elif self._has_cancelled_dependency(task):
+                    new_status = TaskStatus.cancelled
+                    new_result = "Automatically cancelled: a dependency was cancelled."
+                elif self._is_blocked(task):
+                    new_status = TaskStatus.blocked
+                else:
+                    new_status = TaskStatus.pending
+
+                if task.status != new_status or task.result != new_result:
+                    task.status = new_status
+                    task.result = new_result
+                    changed = True
 
     # --- Serialization ---
 

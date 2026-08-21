@@ -212,6 +212,19 @@ class TestTeamToDict:
         assert "debug_mode" not in config  # defaults to False
         assert "retries" not in config  # defaults to 0
         assert "respond_directly" not in config  # defaults to False
+        assert "task_result_summary_limit" not in config  # defaults to 500
+
+    def test_task_result_summary_limit_round_trip(self):
+        """Custom task summary limits survive config serialization."""
+        team = Team(id="tasks-team", members=[], task_result_summary_limit=1000)
+
+        config = team.to_dict()
+        restored = Team.from_dict(config)
+        copied = team.deep_copy()
+
+        assert config["task_result_summary_limit"] == 1000
+        assert restored.task_result_summary_limit == 1000
+        assert copied.task_result_summary_limit == 1000
 
     def test_store_history_messages_default_is_false(self):
         """Test store_history_messages defaults to False and is omitted from config."""

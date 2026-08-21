@@ -28,7 +28,7 @@ from agno.team.team import Team
 planner = Agent(
     name="Planner",
     role="Creates outlines, plans, and structures for content",
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a planning specialist.",
         "Create clear, logical outlines and structures.",
@@ -38,7 +38,7 @@ planner = Agent(
 writer = Agent(
     name="Writer",
     role="Writes polished content based on outlines or instructions",
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5-mini"),
     instructions=[
         "You are a skilled writer.",
         "Write clear, engaging content based on the provided plan.",
@@ -52,7 +52,7 @@ writer = Agent(
 team = Team(
     name="Content Team",
     mode=TeamMode.tasks,
-    model=OpenAIResponses(id="gpt-4o-mini"),
+    model=OpenAIResponses(id="gpt-5.2"),
     members=[planner, writer],
     instructions=[
         "You are a content team leader with a Planner and a Writer.",

@@ -16,6 +16,7 @@ class TestTaskStatus:
         assert TaskStatus.in_progress == "in_progress"
         assert TaskStatus.completed == "completed"
         assert TaskStatus.failed == "failed"
+        assert TaskStatus.cancelled == "cancelled"
         assert TaskStatus.blocked == "blocked"
 
     def test_from_string(self):
@@ -88,6 +89,14 @@ class TestTaskList:
         assert task.title == "Do thing"
         assert task.status == TaskStatus.pending
 
+    def test_create_task_invalidates_prior_goal_completion(self):
+        tl = TaskList(goal_complete=True, completion_summary="Previous goal complete")
+
+        tl.create_task("Follow-up task")
+
+        assert tl.goal_complete is False
+        assert tl.completion_summary is None
+
     def test_get_task(self):
         tl = TaskList()
         t = tl.create_task("Task A")
@@ -150,6 +159,13 @@ class TestTaskList:
         tl.update_task(t2.id, status="failed")
         assert tl.all_terminal() is True
 
+    def test_all_terminal_with_cancelled(self):
+        tl = TaskList()
+        task = tl.create_task("Task 1")
+        tl.update_task(task.id, status="cancelled")
+
+        assert tl.all_terminal() is True
+
     def test_all_terminal_not_done(self):
         tl = TaskList()
         t1 = tl.create_task("Task 1")
@@ -183,6 +199,19 @@ class TestTaskListDependencies:
         assert t3.status == TaskStatus.blocked  # t2 still pending
         tl.update_task(t2.id, status="completed")
         assert t3.status == TaskStatus.pending
+
+    def test_cancelled_dependency_cancels_descendants(self):
+        tl = TaskList()
+        parent = tl.create_task("Parent")
+        child = tl.create_task("Child", dependencies=[parent.id])
+        grandchild = tl.create_task("Grandchild", dependencies=[child.id])
+
+        tl.update_task(parent.id, status="cancelled", result="No longer needed")
+
+        assert child.status == TaskStatus.cancelled
+        assert grandchild.status == TaskStatus.cancelled
+        assert "dependency was cancelled" in child.result
+        assert "dependency was cancelled" in grandchild.result
 
 
 class TestTaskListSummary:

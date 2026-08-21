@@ -168,7 +168,7 @@ def _get_mode_instructions(team: "Team") -> str:
             "- Review each result before proceeding. If a task fails, decide whether to retry with the same member, "
             "reassign to a different member, or adjust the plan.\n"
             "- Use `edit_task` to update a task's title, description, or assignee if the plan needs adjustment. "
-            "Use `cancel_task` to remove tasks that are no longer needed.\n\n"
+            "Use `cancel_task` to cancel pending work that is no longer needed; dependent tasks are cancelled too.\n\n"
             "Completion:\n"
             "- When all tasks are done and results are satisfactory, call `mark_all_complete` with a summary of the outcome.\n"
             "- Only call `mark_all_complete` when you actually created and executed tasks. "

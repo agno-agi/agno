@@ -10,9 +10,7 @@ import pytest
 from agno.agent import Agent
 from agno.models.openai import OpenAIChat
 from agno.run.team import (
-    TaskIterationCompletedEvent,
     TaskIterationStartedEvent,
-    ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
 from agno.team.mode import TeamMode
