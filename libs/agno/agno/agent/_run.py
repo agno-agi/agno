@@ -81,6 +81,7 @@ from agno.utils.agent import (
     await_for_thread_tasks_stream,
     collect_background_metrics,
     isolate_media_scrub_targets,
+    isolate_tool_scrub_targets,
     scrub_history_messages_from_run_output,
     scrub_media_from_run_output,
     scrub_tool_results_from_run_output,
@@ -5750,6 +5751,8 @@ def _scrub_and_propagate_session_state(
     storage_copy = copy.copy(run_response)
     if isolate_inflight and not agent.store_media:
         isolate_media_scrub_targets(storage_copy)
+    if isolate_inflight and not agent.store_tool_messages:
+        isolate_tool_scrub_targets(storage_copy)
     scrub_run_output_for_storage(agent, storage_copy)
 
     if run_context is not None and run_context.session_state is not None:
