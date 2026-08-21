@@ -1833,6 +1833,33 @@ class TestLearningSurface:
         assert "bound to db 'other-learning-db'" in out["warnings"][0]
         assert f"this component uses '{db.id}'" in out["warnings"][0]
 
+    def test_different_files_with_omitted_ids_are_disclosed(self, tmp_path):
+        """Neither db declares an id: the generated ids must still tell two
+        physical databases apart, or this disclosure is silently suppressed
+        (the ids used to collide because the seed expression ignored db_file
+        whenever no engine was passed)."""
+        from agno.learn import LearningMachine
+
+        component_db = SqliteDb(db_file=str(tmp_path / "components.db"))
+        machine_db = SqliteDb(db_file=str(tmp_path / "learning.db"))
+        assert component_db.id != machine_db.id
+
+        registry = Registry(
+            models=[OpenAIResponses(id="gpt-5.4")],
+            dbs=[component_db],
+            learning=[
+                LearningMachine(name="elsewhere", db=machine_db, model=OpenAIResponses(id="gpt-5.5"), user_memory=True)
+            ],
+        )
+        studio = StudioTools(registry=registry, db=component_db)
+        out = _loads(
+            studio.create_agent(name="learner", instructions="i", model_id="gpt-5.4", learning_name="elsewhere")
+        )
+        assert out["ok"] is True
+        assert len(out["warnings"]) == 1
+        assert f"bound to db '{machine_db.id}'" in out["warnings"][0]
+        assert f"this component uses '{component_db.id}'" in out["warnings"][0]
+
     # -- zero-config: the default machine ---------------------------------
 
     def test_enable_learning_stores_the_default_machine_and_rehydrates(self, studio_learning, db, registry):

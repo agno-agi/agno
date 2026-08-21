@@ -154,7 +154,11 @@ class SqliteDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         if id is None:
-            seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite:///agno.db"
+            # Parenthesized on purpose: without them the conditional binds the
+            # whole or-chain, db_url/db_file become dead code whenever no engine
+            # is passed, and every instance seeds from the literal default -
+            # giving physically different databases the same generated id.
+            seed = db_url or db_file or (str(db_engine.url) if db_engine else "sqlite:///agno.db")
             id = generate_id(seed)
 
         super().__init__(

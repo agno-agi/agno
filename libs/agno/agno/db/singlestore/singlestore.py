@@ -100,7 +100,9 @@ class SingleStoreDb(BaseDb):
             ValueError: If none of the tables are provided.
         """
         if id is None:
-            base_seed = db_url or str(db_engine.url) if db_engine else "singlestore"  # type: ignore
+            # Parenthesized on purpose; see SqliteDb: unparenthesized, db_url is
+            # dead without an engine and every instance shares one id.
+            base_seed = db_url or (str(db_engine.url) if db_engine else "singlestore")  # type: ignore
             schema_suffix = db_schema if db_schema is not None else "ai"
             seed = f"{base_seed}#{schema_suffix}"
             id = generate_id(seed)
