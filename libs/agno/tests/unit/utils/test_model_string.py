@@ -13,6 +13,7 @@ from agno.models.anthropic import Claude
 from agno.models.cloudflare import Cloudflare
 from agno.models.google import Gemini
 from agno.models.groq import Groq
+from agno.models.kenari import Kenari
 from agno.models.minimax import MiniMax
 from agno.models.n1n import N1N
 from agno.models.openai import OpenAIChat, OpenAIResponses
@@ -88,6 +89,13 @@ def test_get_model_parses_tokenlab_string():
     model = get_model("tokenlab:gpt-5.4-mini")
     assert isinstance(model, TokenLab)
     assert model.id == "gpt-5.4-mini"
+
+
+def test_get_model_parses_kenari_string():
+    """Test get_model() parses Kenari model string."""
+    model = get_model("kenari:claude-sonnet-5")
+    assert isinstance(model, Kenari)
+    assert model.id == "claude-sonnet-5"
 
 
 def test_get_model_strips_whitespace():
