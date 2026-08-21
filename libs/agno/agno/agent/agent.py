@@ -58,7 +58,7 @@ from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.tools import Toolkit
 from agno.tools.function import Function
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.utils.safe_formatter import SafeFormatter
 
 
@@ -396,6 +396,9 @@ class Agent:
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compact_tool_results: bool = False,
         compaction_manager: Optional[CompactionManager] = None,
+        # Deprecated aliases (use compact_tool_results and compaction_manager)
+        compress_tool_results: Optional[bool] = None,
+        compression_manager: Optional[CompactionManager] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -519,9 +522,18 @@ class Agent:
 
         self.add_session_summary_to_context = add_session_summary_to_context
 
-        # Context compaction settings
-        self.compact_tool_results = compact_tool_results
-        self.compaction_manager = compaction_manager
+        # Context compaction settings (with backward compat for old names)
+        if compress_tool_results is not None:
+            log_debug("compress_tool_results is deprecated, use compact_tool_results")
+            self.compact_tool_results = compress_tool_results
+        else:
+            self.compact_tool_results = compact_tool_results
+
+        if compression_manager is not None:
+            log_debug("compression_manager is deprecated, use compaction_manager")
+            self.compaction_manager = compression_manager
+        else:
+            self.compaction_manager = compaction_manager
 
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs

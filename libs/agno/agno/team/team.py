@@ -526,6 +526,9 @@ class Team:
         add_learnings_to_context: bool = True,
         compact_tool_results: bool = False,
         compaction_manager: Optional["CompactionManager"] = None,
+        # Deprecated aliases (use compact_tool_results and compaction_manager)
+        compress_tool_results: Optional[bool] = None,
+        compression_manager: Optional["CompactionManager"] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -643,6 +646,8 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compact_tool_results=compact_tool_results,
             compaction_manager=compaction_manager,
+            compress_tool_results=compress_tool_results,
+            compression_manager=compression_manager,
             metadata=metadata,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,

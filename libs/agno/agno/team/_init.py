@@ -154,6 +154,9 @@ def __init__(
     add_learnings_to_context: bool = True,
     compact_tool_results: bool = False,
     compaction_manager: Optional["CompactionManager"] = None,
+    # Deprecated aliases (use compact_tool_results and compaction_manager)
+    compress_tool_results: Optional[bool] = None,
+    compression_manager: Optional["CompactionManager"] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -330,9 +333,18 @@ def __init__(
     team.learning = learning
     team.add_learnings_to_context = add_learnings_to_context
 
-    # Context compaction settings
-    team.compact_tool_results = compact_tool_results
-    team.compaction_manager = compaction_manager
+    # Context compaction settings (with backward compat for old names)
+    if compress_tool_results is not None:
+        log_debug("compress_tool_results is deprecated, use compact_tool_results")
+        team.compact_tool_results = compress_tool_results
+    else:
+        team.compact_tool_results = compact_tool_results
+
+    if compression_manager is not None:
+        log_debug("compression_manager is deprecated, use compaction_manager")
+        team.compaction_manager = compression_manager
+    else:
+        team.compaction_manager = compaction_manager
 
     team.metadata = metadata
 

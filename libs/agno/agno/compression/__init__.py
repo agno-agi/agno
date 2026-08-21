@@ -7,8 +7,12 @@ from agno.compression.context import (
 )
 from agno.compression.manager import CompactionManager
 
+# Backward compatibility alias (deprecated, use CompactionManager)
+CompressionManager = CompactionManager
+
 __all__ = [
     "CompactionManager",
+    "CompressionManager",  # Deprecated alias
     "ContextCompactionManager",
     "CompactionState",
     "CompactionResult",
