@@ -409,6 +409,8 @@ class Team:
     videos: Optional[List[Video]] = None
     # Cached session
     _cached_session: Optional[TeamSession] = None
+    # The db the cached session was loaded from; the cache is only valid for that db
+    _cached_session_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     # Tool instructions
     _tool_instructions: Optional[List[str]] = None
     # Member response model
@@ -679,6 +681,27 @@ class Team:
     @property
     def cached_session(self) -> Optional[TeamSession]:
         return _init.cached_session(self)
+
+    def _get_cached_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
+        """Return the cached session if it matches session_id/user_id and the current db."""
+        cached = getattr(self, "_cached_session", None)
+        if cached is None:
+            return None
+        if getattr(self, "_cached_session_db", None) is not self.db:
+            # The cached session was loaded from a previously assigned db; serving it
+            # would leak that db's runs into the current one, so drop it.
+            self._cached_session = None
+            self._cached_session_db = None
+            return None
+        if cached.session_id != session_id:
+            return None
+        if user_id is not None and cached.user_id != user_id:
+            return None
+        return cached
+
+    def _set_cached_session(self, session: TeamSession) -> None:
+        self._cached_session = session
+        self._cached_session_db = self.db
 
     def set_id(self) -> None:
         return _init.set_id(self)

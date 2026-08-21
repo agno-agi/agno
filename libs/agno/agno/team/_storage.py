@@ -296,12 +296,9 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
-    if (
-        team._cached_session is not None
-        and team._cached_session.session_id == session_id
-        and (user_id is None or team._cached_session.user_id == user_id)
-    ):
-        return team._cached_session
+    cached_session = team._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     team_session = None
@@ -351,7 +348,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
-        team._cached_session = team_session
+        team._set_cached_session(team_session)
 
     return team_session
 
@@ -369,12 +366,9 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
-    if (
-        team._cached_session is not None
-        and team._cached_session.session_id == session_id
-        and (user_id is None or team._cached_session.user_id == user_id)
-    ):
-        return team._cached_session
+    cached_session = team._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     team_session = None
@@ -432,7 +426,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
-        team._cached_session = team_session
+        team._set_cached_session(team_session)
 
     return team_session
 

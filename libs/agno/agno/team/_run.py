@@ -8668,7 +8668,7 @@ async def _acontinue_run_background_stream(
                                 await apersist_run_transition(team, "team", session_id, fresh_run, user_id=user_id)
                                 persist_run.status = cast(RunStatus, restore_status)
                                 if team.cache_session:
-                                    team._cached_session = fresh_session
+                                    team._set_cached_session(fresh_session)
                 except Exception:
                     log_error(
                         f"Failed to restore the pre-continue state for background continue-run stream {_run_id}",
@@ -8703,7 +8703,7 @@ async def _acontinue_run_background_stream(
                                 await apersist_run_transition(team, "team", session_id, fresh_run, user_id=user_id)
                                 persist_run.status = RunStatus.error
                                 if team.cache_session:
-                                    team._cached_session = fresh_session
+                                    team._set_cached_session(fresh_session)
                 except Exception:
                     log_error(
                         f"Failed to persist error state for background continue-run stream {_run_id}",

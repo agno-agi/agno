@@ -67,11 +67,10 @@ def get_session(
     session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
-    if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load and (
-            user_id is None or team._cached_session.user_id == user_id
-        ):
-            return team._cached_session
+    if team.cache_session:
+        cached_session = team._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     if _has_async_db(team):
         raise ValueError("Cannot use sync get_session() with an async database. Use aget_session() instead.")
@@ -96,7 +95,7 @@ def get_session(
 
         # Cache the session if relevant
         if loaded_session is not None and team.cache_session:
-            team._cached_session = loaded_session
+            team._set_cached_session(loaded_session)
 
         return loaded_session  # type: ignore[return-value]
 
@@ -127,11 +126,10 @@ async def aget_session(
     session_id_to_load: str = session_id or team.session_id  # type: ignore[assignment]
 
     # If there is a cached session, return it
-    if team.cache_session and hasattr(team, "_cached_session") and team._cached_session is not None:
-        if team._cached_session.session_id == session_id_to_load and (
-            user_id is None or team._cached_session.user_id == user_id
-        ):
-            return team._cached_session
+    if team.cache_session:
+        cached_session = team._get_cached_session(session_id_to_load, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
     # Load and return the session from the database
     if team.db is not None:
@@ -169,7 +167,7 @@ async def aget_session(
 
         # Cache the session if relevant
         if loaded_session is not None and team.cache_session:
-            team._cached_session = loaded_session
+            team._set_cached_session(loaded_session)
 
         return loaded_session  # type: ignore[return-value]
 
