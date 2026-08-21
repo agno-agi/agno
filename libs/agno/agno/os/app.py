@@ -148,10 +148,19 @@ async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
 
 @asynccontextmanager
 async def db_lifespan(app: FastAPI, agent_os: "AgentOS"):
-    """Initializes databases in the event loop and closes them on shutdown."""
+    """Migrates (opt-in), provisions, and closes databases around the server's life.
+
+    Migrations run before provisioning so a pre-existing table at an old schema is
+    brought forward rather than rejected by schema validation. Without opt-in the
+    pending list is only reported, never applied.
+    """
+    if agent_os.auto_migrate_dbs:
+        await agent_os._migrate_databases()
     if agent_os.auto_provision_dbs:
         agent_os._initialize_sync_databases()
         await agent_os._initialize_async_databases()
+    if not agent_os.auto_migrate_dbs:
+        await agent_os._warn_pending_migrations()
 
     yield
 
@@ -268,6 +277,7 @@ class AgentOS:
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
         tracing: bool = False,
         auto_provision_dbs: bool = True,
+        auto_migrate_dbs: bool = False,
         run_hooks_in_background: bool = False,
         queue: Optional[QueueConfig] = None,
         event_stream: Optional[BaseEventStream] = None,
@@ -318,6 +328,11 @@ class AgentOS:
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
             auto_provision_dbs: Whether to automatically provision databases
+            auto_migrate_dbs: Whether to apply pending schema migrations to every local database at
+                startup, before tables are provisioned. Off by default: migrations can move data and
+                take time, so production deployments should run them as an explicit step
+                (`agno db migrate`, `POST /databases/all/migrate`, or `MigrationManager(db).up()`).
+                When off, AgentOS still logs a warning at startup listing any pending migrations.
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
@@ -358,6 +373,7 @@ class AgentOS:
         self.knowledge = knowledge
         self.settings: AgnoAPISettings = settings or AgnoAPISettings()
         self.auto_provision_dbs = auto_provision_dbs
+        self.auto_migrate_dbs = auto_migrate_dbs
         self._app_set = False
 
         if base_app:
@@ -1664,11 +1680,13 @@ class AgentOS:
         if self.auto_provision_dbs:
             self._pending_async_db_init = True
 
-    def _initialize_sync_databases(self) -> None:
-        """Initialize sync databases."""
+    def _unique_dbs(self) -> List[Union[BaseDb, AsyncBaseDb, RemoteDb]]:
+        """Every configured database (agent/team/workflow and knowledge), deduplicated by identity."""
         from itertools import chain
 
-        unique_dbs = list(
+        if not hasattr(self, "dbs") or not hasattr(self, "knowledge_dbs"):
+            return []
+        return list(
             {
                 id(db): db
                 for db in chain(
@@ -1676,6 +1694,54 @@ class AgentOS:
                 )
             }.values()
         )
+
+    def _local_dbs(self) -> List[Union[BaseDb, AsyncBaseDb]]:
+        """Configured databases this process can migrate (remote databases are owned elsewhere)."""
+        return [db for db in self._unique_dbs() if isinstance(db, (BaseDb, AsyncBaseDb))]
+
+    async def _migrate_databases(self) -> None:
+        """Apply pending schema migrations to every local database (auto_migrate_dbs)."""
+        from agno.db.migrations.manager import MigrationManager
+
+        for db in self._local_dbs():
+            try:
+                await MigrationManager(db).up()
+            except Exception as e:
+                log_error(
+                    f"Failed to migrate {db.__class__.__name__} (id: {db.id}): {str(e)}. "
+                    "The server will start, but features backed by unmigrated tables will error until it is fixed."
+                )
+
+    async def _warn_pending_migrations(self) -> None:
+        """Log one warning listing every table with a pending schema migration.
+
+        Read-only. A database that cannot be inspected is skipped quietly: this is a
+        courtesy check at startup, not a health check.
+        """
+        from agno.db.migrations.manager import MIGRATION_HINT, MigrationManager
+
+        lines: List[str] = []
+        for db in self._local_dbs():
+            try:
+                pending = await MigrationManager(db).pending()
+            except Exception as e:
+                log_debug(f"Could not check pending migrations for {db.__class__.__name__} (id: {db.id}): {str(e)}")
+                continue
+            for item in pending:
+                lines.append(
+                    f"  - {db.__class__.__name__} (id: {db.id}) table {item.table_name} [{item.table_type}]: "
+                    f"{item.current_version} -> {item.target_version}"
+                )
+        if lines:
+            log_warning(
+                "Pending database migrations found. Features backed by these tables will fail until "
+                "they are applied:\n" + "\n".join(lines) + f"\n{MIGRATION_HINT} "
+                "Or set AgentOS(auto_migrate_dbs=True) to apply them at startup."
+            )
+
+    def _initialize_sync_databases(self) -> None:
+        """Initialize sync databases."""
+        unique_dbs = self._unique_dbs()
 
         for db in unique_dbs:
             if isinstance(db, AsyncBaseDb):
@@ -1690,16 +1756,7 @@ class AgentOS:
     async def _initialize_async_databases(self) -> None:
         """Initialize async databases."""
 
-        from itertools import chain
-
-        unique_dbs = list(
-            {
-                id(db): db
-                for db in chain(
-                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
-                )
-            }.values()
-        )
+        unique_dbs = self._unique_dbs()
 
         for db in unique_dbs:
             if not isinstance(db, AsyncBaseDb):
@@ -1713,19 +1770,7 @@ class AgentOS:
 
     async def _close_databases(self) -> None:
         """Close all database connections and release connection pools."""
-        from itertools import chain
-
-        if not hasattr(self, "dbs") or not hasattr(self, "knowledge_dbs"):
-            return
-
-        unique_dbs = list(
-            {
-                id(db): db
-                for db in chain(
-                    chain.from_iterable(self.dbs.values()), chain.from_iterable(self.knowledge_dbs.values())
-                )
-            }.values()
-        )
+        unique_dbs = self._unique_dbs()
 
         for db in unique_dbs:
             try:

@@ -9,7 +9,7 @@ from fastapi.responses import JSONResponse
 from packaging import version
 
 from agno.db.base import AsyncBaseDb
-from agno.db.migrations.manager import MigrationManager
+from agno.db.migrations.manager import MigrationManager, PendingMigration
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
@@ -64,6 +64,83 @@ def get_database_router(
         else:
             # If the target version is not provided, migrate to the latest version
             await MigrationManager(db).up()  # type: ignore
+
+    async def _pending_for_db(db) -> dict:
+        """Pending-migration report for one database; remote databases are reported, not inspected."""
+        if isinstance(db, RemoteDb):
+            return {"db_id": db.id, "remote": True, "pending": []}
+        pending: list[PendingMigration] = await MigrationManager(db).pending()  # type: ignore[arg-type]
+        return {"db_id": db.id, "remote": False, "pending": [item.to_dict() for item in pending]}
+
+    @router.get(
+        "/databases/migrations/pending",
+        tags=["Database"],
+        operation_id="get_pending_migrations",
+        summary="List Pending Migrations",
+        description=(
+            "List, for every database, the tables whose schema version is behind the latest available "
+            "migration. Read-only: nothing is created, altered, or stamped. Use it as a dry run before "
+            "calling the migrate endpoints."
+        ),
+        responses={
+            200: {
+                "description": "Pending migrations per database",
+                "content": {
+                    "application/json": {
+                        "example": {
+                            "total_pending": 1,
+                            "databases": [
+                                {
+                                    "db_id": "my-db",
+                                    "remote": False,
+                                    "pending": [
+                                        {
+                                            "table_type": "metrics",
+                                            "table_name": "agno_metrics",
+                                            "current_version": "2.0.0",
+                                            "target_version": "3.0.0",
+                                        }
+                                    ],
+                                }
+                            ],
+                        },
+                    }
+                },
+            },
+        },
+    )
+    async def get_pending_migrations():
+        all_dbs = {db.id: db for db_id, dbs in os.dbs.items() for db in dbs}
+        reports = []
+        for db in all_dbs.values():
+            try:
+                reports.append(await _pending_for_db(db))
+            except Exception as e:
+                reports.append({"db_id": db.id, "remote": False, "pending": [], "error": str(e)})
+        total = sum(len(report["pending"]) for report in reports)
+        return JSONResponse(content={"total_pending": total, "databases": reports}, status_code=200)
+
+    @router.get(
+        "/databases/{db_id}/migrations/pending",
+        tags=["Database"],
+        operation_id="get_database_pending_migrations",
+        summary="List Pending Migrations For Database",
+        description="List the tables of the given database whose schema version is behind the latest migration.",
+        responses={
+            404: {"description": "Database not found", "model": NotFoundResponse},
+        },
+    )
+    async def get_database_pending_migrations(db_id: str):
+        db = await get_db(os.dbs, db_id)
+        if not db:
+            raise HTTPException(status_code=404, detail="Database not found")
+        try:
+            report = await _pending_for_db(db)
+        except HTTPException:
+            raise
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Failed to check pending migrations: {str(e)}")
+        return JSONResponse(content=report, status_code=200)
 
     @router.post(
         "/databases/all/migrate",

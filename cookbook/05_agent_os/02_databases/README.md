@@ -10,6 +10,7 @@ other supported storage adapters without repeating the same AgentOS example.
 | File | Description |
 |---|---|
 | `basic.py` | Demonstrates default-database inheritance and automatic table provisioning with SQLite. |
+| `migrations.py` | Applies pending schema migrations at startup with `auto_migrate_dbs=True`, and shows the dry-run and apply endpoints/CLI. |
 | `postgres.py` | Selects a synchronous or asynchronous Postgres adapter for production persistence. |
 | `surreal.py` | Shows SurrealDB's client, credentials, namespace, and database constructor shape. |
 
@@ -20,6 +21,16 @@ own `db` is unset. A component-level database always takes precedence.
 `auto_provision_dbs=True` is the default and creates the required tables during
 server startup; disable it only when an external migration process owns the
 schema.
+
+## Schema migrations
+
+Upgrading Agno with an existing database can leave some tables at an older
+schema version. AgentOS never migrates behind your back: by default it logs a
+warning at startup listing every pending migration. Preview with
+`GET /databases/migrations/pending` or `agno db migrate --dry-run`, apply with
+`POST /databases/all/migrate` or `agno db migrate`. `auto_migrate_dbs=True`
+opts in to applying pending migrations at startup (see `migrations.py`); keep
+it off in production and run the migrate step explicitly in your deploy.
 
 ## Backend reference
 
