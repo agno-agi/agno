@@ -142,7 +142,8 @@ def _resolve_provider_key(model_provider: Optional[str], model_name: Optional[st
 
 
 # Guard against a subclass ever declaring a credential in _extra_serialized_fields: these
-# names are dropped from reconstruction even if allowlisted.
+# names are dropped from reconstruction even if allowlisted. The broader "no secrets in the
+# allowlist" rule is enforced by a test over every registered provider class.
 _CREDENTIAL_FIELDS = {"api_key"}
 
 
@@ -159,13 +160,16 @@ def _get_model_class(model_id: str, model_provider: str, config: Optional[Dict[s
     module = importlib.import_module(module_path)
     model_class = getattr(module, class_name)
 
-    # Restore only the class's declared serialization allowlist. The dict may come from
-    # outside the process (e.g. the components table), so unlisted constructor fields such
-    # as base_url or client_params must never rehydrate: they could redirect requests to an
-    # attacker-controlled host or inject credentials.
+    # Restore only the class's declared serialization allowlist. Constructor fields the class
+    # did not declare are ignored, so a serialized config cannot inject arbitrary kwargs, and
+    # secrets are never declared, so they cannot rehydrate from a stored dict.
+    # Provider packages swap in a stub class (not a Model subclass) when their optional SDK is
+    # missing; the getattr default lets construction proceed to the stub's ImportError, which
+    # names the package to install, instead of failing here on a missing attribute.
     kwargs: Dict[str, Any] = {}
     if config:
-        allowed = ({"name", "provider", *model_class._extra_serialized_fields}) - _CREDENTIAL_FIELDS
+        declared = getattr(model_class, "_extra_serialized_fields", ())
+        allowed = {"name", "provider", *declared} - _CREDENTIAL_FIELDS
         kwargs = {k: v for k, v in config.items() if k in allowed}
     kwargs["id"] = model_id
     return model_class(**kwargs)
@@ -215,8 +219,8 @@ def get_model_from_dict(model_data: Dict[str, Any]) -> Optional[Model]:
     Uses both the serialized ``provider`` and ``name`` to resolve the exact provider class,
     which is required for providers that share a display ``provider`` string (e.g. Azure).
     Beyond ``id``/``name``/``provider``, only fields the class declares in
-    ``_extra_serialized_fields`` are restored; everything else in the dict — including
-    credentials and connection settings like ``base_url`` — is deliberately ignored.
+    ``_extra_serialized_fields`` are restored; everything else in the dict is ignored.
+    Credentials are never part of that allowlist, so they cannot rehydrate from a dict.
     """
     if not isinstance(model_data, dict):
         raise ValueError("Model data must be a dictionary")
@@ -233,8 +237,8 @@ def resolve_model(model_data: Any, registry: Optional["Registry"] = None) -> Any
     """Reconstruct a model from its serialized config, preferring a registered live instance.
 
     Rebuilding from a serialized dict only round-trips ``id``/``name``/``provider`` plus the
-    fields a class declares in ``_extra_serialized_fields``, so connection params like
-    ``azure_endpoint``/``base_url`` and any credentials are lost. When the model is present in
+    fields a class declares in ``_extra_serialized_fields``; credentials are never serialized,
+    and any connection params a class does not declare are lost. When the model is present in
     the registry, its live, fully-configured instance is reused; otherwise we fall back to
     rebuilding from the dict (or a ``provider:id`` string). Values that are neither a model
     dict nor a string are returned unchanged.

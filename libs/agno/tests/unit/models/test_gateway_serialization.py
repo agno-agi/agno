@@ -66,10 +66,10 @@ def test_credentials_in_dict_are_never_restored():
 
 
 def test_undeclared_constructor_fields_are_not_restored():
-    """Reconstruction is allowlist-only: constructor fields outside _extra_serialized_fields
-    must not rehydrate from a dict, even though the constructor would accept them. A dict from
-    outside the process could otherwise redirect requests (base_url) or inject credentials
-    (client_params, default_headers)."""
+    """Reconstruction is allowlist-only: constructor fields a class does not declare in
+    _extra_serialized_fields must not rehydrate from a dict, even though the constructor would
+    accept them. RampRouter declares none of these, so a serialized config cannot inject them;
+    classes that do declare connection config (e.g. base_url) opt in explicitly."""
     default_base_url = RampRouter().base_url
     data = RampRouter(models=["openai:gpt-5-nano"]).to_dict()
     data["base_url"] = "https://attacker.example.com/v1"

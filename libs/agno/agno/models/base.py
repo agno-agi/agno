@@ -140,10 +140,11 @@ class Model(ABC):
     model_type: ModelType = ModelType.MODEL
 
     # Config fields (beyond id/name/provider) that both to_dict serializes and
-    # get_model_from_dict restores. Reconstruction restores nothing outside this
-    # allowlist, so never declare credentials or connection settings (api_key,
-    # base_url, headers) here — a rehydrated dict must not be able to redirect
-    # requests or inject credentials.
+    # get_model_from_dict restores. One declaration drives both directions, so a
+    # class's serialization and reconstruction can never drift apart. Connection
+    # config (base_url, endpoints, deployments, routing candidates) belongs here;
+    # secrets and secret-carrying fields (api_key, tokens, default_headers,
+    # client_params) never do — to_dict would write them into the database.
     _extra_serialized_fields: ClassVar[Tuple[str, ...]] = ()
 
     # -*- Do not set the following attributes directly -*-
