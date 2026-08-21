@@ -1,5 +1,15 @@
 # Test Log
 
+### agent_guild_tools.py
+
+**Status:** PASS
+
+**Description:** Added a read-only-by-default Agent Guild example for capability-based trust checks, supply and demand discovery, and signed Agent Passport verification. The example also documents the explicit opt-in required for free registration and trial provisioning.
+
+**Result:** The cookbook module imports successfully without making a network request. The focused toolkit suite passes all 15 tests, covering sync and async endpoint contracts, authentication, 402 no-auto-spend behavior, passport path encoding and verification, opt-in registration, free-trial key reuse, and structured HTTP/network failures. The live agent prompt was not run because model credentials are not available in this environment.
+
+---
+
 ### smallest_tools.py (switch to Gemini for audio-input support)
 
 **Status:** PASS
