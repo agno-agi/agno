@@ -6141,6 +6141,7 @@ class Workflow:
                         step=step,
                         step_req=executor_step_req,
                         workflow_run_response=workflow_run_response,
+                        run_context=run_context,
                     )
 
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -6590,6 +6591,7 @@ class Workflow:
         step: Any,
         step_req: Any,
         workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
     ) -> "StepOutput":
         """Route resolved requirements back to a paused executor (agent/team) within a step.
 
@@ -6633,6 +6635,7 @@ class Workflow:
         # Call executor's continue_run with the stored run_response
         continued_response = executor.continue_run(
             run_response=paused_run_response,
+            run_context=run_context,
         )
 
         # Store executor response for potential chained HITL
@@ -6651,6 +6654,7 @@ class Workflow:
         step: Any,
         step_req: Any,
         workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
         stream_executor_events: bool = True,
         step_index: Optional[int] = None,
     ) -> Iterator[Union["WorkflowRunOutputEvent", "StepOutput"]]:
@@ -6692,6 +6696,7 @@ class Workflow:
         # Call executor's continue_run with the stored run_response (streaming).
         response_stream = executor.continue_run(
             run_response=paused_run_response,
+            run_context=run_context,
             stream=True,
             stream_events=True,
             yield_run_output=True,
@@ -6739,6 +6744,7 @@ class Workflow:
         step: Any,
         step_req: Any,
         workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
         stream_executor_events: bool = True,
         step_index: Optional[int] = None,
     ) -> AsyncIterator[Union["WorkflowRunOutputEvent", "StepOutput"]]:
@@ -6781,6 +6787,7 @@ class Workflow:
         # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
         response_stream = executor.acontinue_run(
             run_response=paused_run_response,
+            run_context=run_context,
             stream=True,
             stream_events=True,
             yield_run_output=True,
@@ -6827,6 +6834,7 @@ class Workflow:
         step: Any,
         step_req: Any,
         workflow_run_response: WorkflowRunOutput,
+        run_context: RunContext,
     ) -> "StepOutput":
         """Async variant: Route resolved requirements back to a paused executor."""
         from agno.run.requirement import RunRequirement
@@ -6864,6 +6872,7 @@ class Workflow:
         # Call executor's acontinue_run with the stored run_response
         continued_response = await executor.acontinue_run(
             run_response=paused_run_response,
+            run_context=run_context,
         )
 
         # Store executor response for potential chained HITL
@@ -6977,6 +6986,7 @@ class Workflow:
                         step=step,
                         step_req=executor_step_req,
                         workflow_run_response=workflow_run_response,
+                        run_context=run_context,
                         stream_executor_events=self.stream_executor_events,
                         step_index=i,
                     ):
@@ -8175,6 +8185,7 @@ class Workflow:
                         step=step,
                         step_req=executor_step_req,
                         workflow_run_response=workflow_run_response,
+                        run_context=run_context,
                     )
 
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
@@ -8713,6 +8724,7 @@ class Workflow:
                         step=step,
                         step_req=executor_step_req,
                         workflow_run_response=workflow_run_response,
+                        run_context=run_context,
                         stream_executor_events=self.stream_executor_events,
                         step_index=i,
                     ):
