@@ -41,13 +41,13 @@ class XTools(Toolkit):
             access_token_secret: Access token secret for X API. Falls back to X_ACCESS_TOKEN_SECRET env var.
             include_post_metrics: Include engagement metrics in search results. Defaults to False.
             wait_on_rate_limit: Wait when rate limited instead of raising error. Defaults to False.
-            create_post: Enable x_create_post tool. Defaults to False (externally visible).
-            reply_to_post: Enable x_reply_to_post tool. Defaults to False (externally visible).
-            send_dm: Enable x_send_dm tool. Defaults to False (externally visible).
-            get_my_info: Enable x_get_my_info tool. Defaults to True.
-            get_user_info: Enable x_get_user_info tool. Defaults to True.
-            get_home_timeline: Enable x_get_home_timeline tool. Defaults to False (token heavy).
-            search_posts: Enable x_search_posts tool. Defaults to True.
+            create_post: Enable create_x_post tool. Defaults to False (externally visible).
+            reply_to_post: Enable reply_to_x_post tool. Defaults to False (externally visible).
+            send_dm: Enable send_x_dm tool. Defaults to False (externally visible).
+            get_my_info: Enable get_x_my_info tool. Defaults to True.
+            get_user_info: Enable get_x_user_info tool. Defaults to True.
+            get_home_timeline: Enable get_x_home_timeline tool. Defaults to False (token heavy).
+            search_posts: Enable search_x_posts tool. Defaults to True.
             all: Enable all tools. Defaults to False.
         """
         self.bearer_token = bearer_token or getenv("X_BEARER_TOKEN")
@@ -68,23 +68,23 @@ class XTools(Toolkit):
 
         tools: List[Any] = []
         if all or create_post:
-            tools.append(self.x_create_post)
+            tools.append(self.create_x_post)
         if all or reply_to_post:
-            tools.append(self.x_reply_to_post)
+            tools.append(self.reply_to_x_post)
         if all or send_dm:
-            tools.append(self.x_send_dm)
+            tools.append(self.send_x_dm)
         if all or get_my_info:
-            tools.append(self.x_get_my_info)
+            tools.append(self.get_x_my_info)
         if all or get_user_info:
-            tools.append(self.x_get_user_info)
+            tools.append(self.get_x_user_info)
         if all or get_home_timeline:
-            tools.append(self.x_get_home_timeline)
+            tools.append(self.get_x_home_timeline)
         if all or search_posts:
-            tools.append(self.x_search_posts)
+            tools.append(self.search_x_posts)
 
         super().__init__(name="x", tools=tools, **kwargs)
 
-    def x_create_post(self, text: str) -> str:
+    def create_x_post(self, text: str) -> str:
         """
         Create a new X post.
 
@@ -108,7 +108,7 @@ class XTools(Toolkit):
             logger.exception("Error creating post")
             return json.dumps({"error": str(e)})
 
-    def x_reply_to_post(self, post_id: str, text: str) -> str:
+    def reply_to_x_post(self, post_id: str, text: str) -> str:
         """
         Reply to an existing post.
 
@@ -132,7 +132,7 @@ class XTools(Toolkit):
             logger.exception("Error replying to post")
             return json.dumps({"error": str(e)})
 
-    def x_send_dm(self, recipient: str, text: str) -> str:
+    def send_x_dm(self, recipient: str, text: str) -> str:
         """
         Send a direct message to a user.
 
@@ -178,7 +178,7 @@ class XTools(Toolkit):
             logger.exception("Unexpected error sending DM")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
-    def x_get_my_info(self) -> str:
+    def get_x_my_info(self) -> str:
         """
         Retrieve information about the authenticated user.
 
@@ -205,7 +205,7 @@ class XTools(Toolkit):
             logger.exception("Error fetching user info")
             return json.dumps({"error": str(e)})
 
-    def x_get_user_info(self, username: str) -> str:
+    def get_x_user_info(self, username: str) -> str:
         """
         Retrieve information about a specific user.
 
@@ -235,7 +235,7 @@ class XTools(Toolkit):
             logger.exception("Error fetching user info")
             return json.dumps({"error": str(e)})
 
-    def x_get_home_timeline(self, max_results: int = 10) -> str:
+    def get_x_home_timeline(self, max_results: int = 10) -> str:
         """
         Retrieve the authenticated user's home timeline.
 
@@ -269,7 +269,7 @@ class XTools(Toolkit):
             logger.exception("Error fetching home timeline")
             return json.dumps({"error": str(e)})
 
-    def x_search_posts(self, query: str, max_results: int = 10) -> str:
+    def search_x_posts(self, query: str, max_results: int = 10) -> str:
         """
         Search for tweets based on a search query.
 
