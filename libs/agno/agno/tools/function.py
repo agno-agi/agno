@@ -2332,7 +2332,7 @@ class FunctionCall(BaseModel):
         with the same treatment of cached_result and raw_results.
         """
         from functools import reduce
-        from inspect import isasyncgenfunction, iscoroutinefunction
+        from inspect import isasyncgenfunction, isawaitable, iscoroutinefunction
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
@@ -2384,9 +2384,15 @@ class FunctionCall(BaseModel):
                 hook_args = self._build_hook_args(hook, name, next_func, args)
 
                 if iscoroutinefunction(hook):
-                    return await self._safe_hook_call_async(hook, hook_args)
+                    result = await self._safe_hook_call_async(hook, hook_args)
                 else:
-                    return self._safe_hook_call(hook, hook_args)
+                    result = self._safe_hook_call(hook, hook_args)
+                # Sync middleware commonly returns ``next_func(...)``
+                # directly. In an async execution chain that value is a
+                # coroutine and remains this wrapper's responsibility.
+                if isawaitable(result):
+                    result = await result
+                return result
 
             return wrapper
 
