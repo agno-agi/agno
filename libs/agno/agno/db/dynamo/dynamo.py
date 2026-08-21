@@ -157,11 +157,8 @@ class DynamoDb(BaseDb):
             ("knowledge", self.knowledge_table_name),
         ]
 
-        for table_type, table_name in tables_to_create:
-            if not self.table_exists(table_name):
-                schema = get_table_schema_definition(table_type)
-                schema["TableName"] = table_name
-                create_table_if_not_exists(self.client, table_name, schema)
+        for table_type, _ in tables_to_create:
+            self._get_table(table_type, create_table_if_not_found=True)
 
     def _get_table(self, table_type: str, create_table_if_not_found: Optional[bool] = True) -> Optional[str]:
         """
@@ -199,11 +196,18 @@ class DynamoDb(BaseDb):
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
-        # Check if table exists, create if it doesn't
-        if not self.table_exists(table_name) and create_table_if_not_found:
-            schema = get_table_schema_definition(table_type)
-            schema["TableName"] = table_name
-            create_table_if_not_exists(self.client, table_name, schema)
+        with self._resolve_lock:
+            if self.table_exists(table_name):
+                self._validate_schema_version(table_name, table_type)
+            elif create_table_if_not_found:
+                schema = get_table_schema_definition(table_type)
+                schema["TableName"] = table_name
+                created = create_table_if_not_exists(self.client, table_name, schema)
+                if created:
+                    self._stamp_schema_version(table_name, table_type)
+                else:
+                    # A peer won the create race; only that peer may stamp.
+                    self._validate_schema_version(table_name, table_type)
 
         return table_name
 
@@ -221,11 +225,15 @@ class DynamoDb(BaseDb):
         Defaults to "2.0.0" when nothing is stamped so the MigrationManager
         runs migrations instead of skipping the table.
         """
-        self._ensure_schema_versions_table()
-        response = self.client.get_item(
-            TableName=self.versions_table_name,
-            Key={"table_name": {"S": table_name}},
-        )
+        if not self.table_exists(self.versions_table_name):
+            return "2.0.0"
+        try:
+            response = self.client.get_item(
+                TableName=self.versions_table_name,
+                Key={"table_name": {"S": table_name}},
+            )
+        except self.client.exceptions.ResourceNotFoundException:
+            return "2.0.0"
         item = response.get("Item")
         if not item:
             return "2.0.0"
@@ -242,6 +250,7 @@ class DynamoDb(BaseDb):
                 "updated_at": {"N": str(int(time.time()))},
             },
         )
+        self._invalidate_schema_version_check(table_name)
 
     # --- Runs ---
 

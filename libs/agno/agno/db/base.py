@@ -1,10 +1,14 @@
 import asyncio
 import threading
 from abc import ABC, abstractmethod
+from contextlib import contextmanager
+from contextvars import ContextVar
 from datetime import date, datetime
 from enum import Enum
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Set, Tuple, Union
+from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, Set, Tuple, Union
 from uuid import uuid4
+
+from packaging import version as packaging_version
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
@@ -12,12 +16,25 @@ if TYPE_CHECKING:
 from agno.db.schemas import UserMemory
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.db.utils import MIGRATABLE_TABLE_TYPES, table_schema_mismatch_error
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
 from agno.utils.log import log_debug
+
+_schema_version_checks_suspended: ContextVar[bool] = ContextVar("schema_version_checks_suspended", default=False)
+
+
+@contextmanager
+def suspend_schema_version_checks() -> Iterator[None]:
+    """Let migrations use stale tables while they bring them up to date."""
+    token = _schema_version_checks_suspended.set(True)
+    try:
+        yield
+    finally:
+        _schema_version_checks_suspended.reset(token)
 
 
 class SessionType(str, Enum):
@@ -335,6 +352,7 @@ class BaseDb(ABC):
         # Avoids re-running the existence check and schema validation on
         # every query; see TableResolutionCache.
         self._table_cache = TableResolutionCache()
+        self._schema_versions_checked: Set[Tuple[str, str]] = set()
         # Serializes table resolution: concurrent reflection into the shared
         # metadata can expose a half-built Table to other threads. Reentrant
         # because resolving a table may resolve its FK parents.
@@ -377,7 +395,52 @@ class BaseDb(ABC):
     def _store_resolved_table(self, table_type: str, table_name: str, table: Any) -> None:
         self._table_cache.store(table_type, table_name, table, getattr(self, "metadata", None))
 
+    def _validate_schema_version(self, table_name: str, table_type: str) -> None:
+        """Fail closed when a migratable table is behind this Agno release.
+
+        Successful checks are cached per logical/physical table pair. Stale and
+        failed checks are deliberately not cached so a migration performed by
+        this or another process can make a later access succeed.
+        """
+        if _schema_version_checks_suspended.get() or table_type not in MIGRATABLE_TABLE_TYPES:
+            return
+
+        cache_key = (table_type, table_name)
+        if cache_key in self._schema_versions_checked:
+            return
+
+        with self._resolve_lock:
+            if cache_key in self._schema_versions_checked:
+                return
+
+            from agno.db.migrations.manager import MigrationManager
+
+            current_version = packaging_version.parse(
+                self.get_latest_schema_version(table_name) or self.default_schema_version
+            )
+            latest_version = MigrationManager(self).latest_schema_version
+            if current_version < latest_version:
+                raise table_schema_mismatch_error(table_name, table_type)
+            self._schema_versions_checked.add(cache_key)
+
+    def _stamp_schema_version(self, table_name: str, table_type: str) -> None:
+        """Stamp a newly created migratable table and cache only on success."""
+        if table_type not in MIGRATABLE_TABLE_TYPES:
+            return
+
+        from agno.db.migrations.manager import MigrationManager
+
+        cache_key = (table_type, table_name)
+        with self._resolve_lock:
+            self.upsert_schema_version(table_name, MigrationManager(self).latest_schema_version.public)
+            self._schema_versions_checked.add(cache_key)
+
+    def _invalidate_schema_version_check(self, table_name: str) -> None:
+        stale_keys = {cache_key for cache_key in self._schema_versions_checked if cache_key[1] == table_name}
+        self._schema_versions_checked.difference_update(stale_keys)
+
     def _invalidate_table_cache(self, table_name: str) -> None:
+        self._invalidate_schema_version_check(table_name)
         self._table_cache.invalidate(table_name, getattr(self, "metadata", None))
 
     def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
@@ -2113,6 +2176,7 @@ class AsyncBaseDb(ABC):
 
         # See BaseDb._table_cache: same contract for async adapters.
         self._table_cache = TableResolutionCache()
+        self._schema_versions_checked: Set[Tuple[str, str]] = set()
         # See BaseDb._resolve_lock: task-reentrant, because resolving a table
         # may resolve FK parents and stamp the versions table.
         self._resolve_lock_async = _ReentrantAsyncLock()
@@ -2151,7 +2215,47 @@ class AsyncBaseDb(ABC):
     def _store_resolved_table(self, table_type: str, table_name: str, table: Any) -> None:
         self._table_cache.store(table_type, table_name, table, getattr(self, "metadata", None))
 
+    async def _validate_schema_version(self, table_name: str, table_type: str) -> None:
+        """Async twin of ``BaseDb._validate_schema_version``."""
+        if _schema_version_checks_suspended.get() or table_type not in MIGRATABLE_TABLE_TYPES:
+            return
+
+        cache_key = (table_type, table_name)
+        if cache_key in self._schema_versions_checked:
+            return
+
+        async with self._resolve_lock_async:
+            if cache_key in self._schema_versions_checked:
+                return
+
+            from agno.db.migrations.manager import MigrationManager
+
+            current_version = packaging_version.parse(
+                await self.get_latest_schema_version(table_name) or BaseDb.default_schema_version
+            )
+            latest_version = MigrationManager(self).latest_schema_version
+            if current_version < latest_version:
+                raise table_schema_mismatch_error(table_name, table_type)
+            self._schema_versions_checked.add(cache_key)
+
+    async def _stamp_schema_version(self, table_name: str, table_type: str) -> None:
+        """Async twin of ``BaseDb._stamp_schema_version``."""
+        if table_type not in MIGRATABLE_TABLE_TYPES:
+            return
+
+        from agno.db.migrations.manager import MigrationManager
+
+        cache_key = (table_type, table_name)
+        async with self._resolve_lock_async:
+            await self.upsert_schema_version(table_name, MigrationManager(self).latest_schema_version.public)
+            self._schema_versions_checked.add(cache_key)
+
+    def _invalidate_schema_version_check(self, table_name: str) -> None:
+        stale_keys = {cache_key for cache_key in self._schema_versions_checked if cache_key[1] == table_name}
+        self._schema_versions_checked.difference_update(stale_keys)
+
     def _invalidate_table_cache(self, table_name: str) -> None:
+        self._invalidate_schema_version_check(table_name)
         self._table_cache.invalidate(table_name, getattr(self, "metadata", None))
 
     def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:

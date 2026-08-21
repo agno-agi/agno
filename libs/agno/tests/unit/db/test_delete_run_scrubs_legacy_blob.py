@@ -15,6 +15,7 @@ to every doc adapter.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -23,7 +24,7 @@ import pytest
 
 from agno.db.in_memory.in_memory_db import InMemoryDb
 from agno.db.json.json_db import JsonDb
-from agno.db.migrations.versions.v3_0_0 import _migrate_jsondb
+from agno.db.migrations.manager import MigrationManager
 
 
 @pytest.fixture
@@ -49,7 +50,7 @@ def json_db_partially_migrated():
     sessions_file = os.path.join(tmp, "agno_sessions.json")
     with open(sessions_file, "w") as f:
         json.dump([session_row], f)
-    _migrate_jsondb(db, "sessions", "agno_sessions")
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
     return db, tmp, sessions_file
 
 

@@ -21,6 +21,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    MIGRATABLE_TABLE_TYPES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
@@ -45,6 +46,13 @@ except ImportError:
     raise ImportError(
         "`google-cloud-firestore` not installed. Please install it using `pip install google-cloud-firestore`"
     )
+
+try:
+    from google.api_core.exceptions import AlreadyExists  # type: ignore[import-untyped]
+except ImportError:
+
+    class AlreadyExists(Exception):  # type: ignore[no-redef]
+        pass
 
 
 # Firestore batched writes have a hard 500-operation limit per commit.
@@ -121,7 +129,13 @@ class FirestoreDb(BaseDb):
         Returns:
             bool: True if the collection exists in the database, False otherwise
         """
-        return table_name in self.db_client.list_collections()
+        # google-cloud-firestore exposes ``collections()``. Keep the
+        # ``list_collections()`` fallback for older mocks and compatible
+        # third-party clients.
+        list_collections = getattr(self.db_client, "collections", None)
+        if not callable(list_collections):
+            list_collections = getattr(self.db_client, "list_collections")
+        return any(getattr(collection, "id", None) == table_name for collection in list_collections())
 
     def _get_collection(self, table_type: str, create_collection_if_not_found: Optional[bool] = True):
         """Get or create a collection based on table type.
@@ -231,14 +245,60 @@ class FirestoreDb(BaseDb):
         Returns:
             Optional[CollectionReference]: The collection reference.
         """
+        initialized_attr = f"_{collection_name}_initialized"
         try:
             collection_ref = self.db_client.collection(collection_name)
+            with self._resolve_lock:
+                cache_key = (collection_type, collection_name)
+                if collection_type not in MIGRATABLE_TABLE_TYPES:
+                    if not create_collection_if_not_found and next(iter(collection_ref.stream()), None) is None:
+                        return None
+                    if create_collection_if_not_found and not hasattr(self, initialized_attr):
+                        create_collection_indexes(self.db_client, collection_name, collection_type)
+                        setattr(self, initialized_attr, True)
+                    return collection_ref
 
-            if not hasattr(self, f"_{collection_name}_initialized"):
-                if not create_collection_if_not_found:
-                    return None
-                create_collection_indexes(self.db_client, collection_name, collection_type)
-                setattr(self, f"_{collection_name}_initialized", True)
+                if cache_key in self._schema_versions_checked:
+                    if create_collection_if_not_found and not hasattr(self, initialized_attr):
+                        create_collection_indexes(self.db_client, collection_name, collection_type)
+                        setattr(self, initialized_attr, True)
+                    return collection_ref
+
+                version_ref = self.db_client.collection(self.versions_table_name).document(collection_name)
+                version_snapshot = version_ref.get()
+
+                if version_snapshot.exists:
+                    self._validate_schema_version(collection_name, collection_type)
+                else:
+                    first_document = next(iter(collection_ref.stream()), None)
+                    if first_document is not None:
+                        # An unstamped collection containing documents is a
+                        # legacy store. MigrationManager bypasses this check;
+                        # normal requests fail closed.
+                        self._validate_schema_version(collection_name, collection_type)
+                    elif not create_collection_if_not_found:
+                        return None
+                    else:
+                        from agno.db.migrations.manager import MigrationManager
+
+                        latest_version = MigrationManager(self).latest_schema_version.public
+                        version_data = {
+                            "table_name": collection_name,
+                            "version": latest_version,
+                            "updated_at": int(time.time()),
+                        }
+                        try:
+                            # A version document is the atomic ownership claim
+                            # for an otherwise empty Firestore namespace.
+                            version_ref.create(version_data)
+                        except AlreadyExists:
+                            self._validate_schema_version(collection_name, collection_type)
+                        else:
+                            self._validate_schema_version(collection_name, collection_type)
+
+                if create_collection_if_not_found and not hasattr(self, initialized_attr):
+                    create_collection_indexes(self.db_client, collection_name, collection_type)
+                    setattr(self, initialized_attr, True)
 
             return collection_ref
 
@@ -621,6 +681,7 @@ class FirestoreDb(BaseDb):
         self.db_client.collection(self.versions_table_name).document(table_name).set(
             {"table_name": table_name, "version": version, "updated_at": int(time.time())}
         )
+        self._invalidate_schema_version_check(table_name)
 
     def delete_sessions(self, session_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple sessions from the database.

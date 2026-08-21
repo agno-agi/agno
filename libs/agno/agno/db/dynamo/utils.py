@@ -183,26 +183,33 @@ def deserialize_eval_record(item: Dict[str, Any]) -> EvalRunRecord:
 
 
 def create_table_if_not_exists(dynamodb_client, table_name: str, schema: Dict[str, Any]) -> bool:
-    """Create DynamoDB table if it doesn't exist."""
+    """Create a table and report whether this caller created it.
+
+    A concurrent creator is treated as an existing table. Other creation
+    failures propagate; callers must never continue with a half-created table.
+    """
     try:
         dynamodb_client.describe_table(TableName=table_name)
-        return True
+        return False
 
     except dynamodb_client.exceptions.ResourceNotFoundException:
         log_info(f"Creating table {table_name}")
         try:
             dynamodb_client.create_table(**schema)
-            # Wait for table to be created
-            waiter = dynamodb_client.get_waiter("table_exists")
-            waiter.wait(TableName=table_name)
-
-            log_debug(f"Table {table_name} created successfully")
-
-            return True
-
         except Exception as e:
-            log_error(f"Failed to create table {table_name}: {str(e)}")
-            return False
+            error_code = getattr(e, "response", {}).get("Error", {}).get("Code")
+            if error_code != "ResourceInUseException":
+                log_error(f"Failed to create table {table_name}: {str(e)}")
+                raise
+            created = False
+        else:
+            created = True
+
+        waiter = dynamodb_client.get_waiter("table_exists")
+        waiter.wait(TableName=table_name)
+        if created:
+            log_debug(f"Table {table_name} created successfully")
+        return created
 
 
 def apply_pagination(

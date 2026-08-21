@@ -4,7 +4,7 @@ from typing import Optional, Union
 from packaging import version as packaging_version
 from packaging.version import Version
 
-from agno.db.base import AsyncBaseDb, BaseDb
+from agno.db.base import AsyncBaseDb, BaseDb, suspend_schema_version_checks
 from agno.utils.log import log_error, log_info, log_warning
 
 
@@ -32,6 +32,10 @@ class MigrationManager:
             invalidate(table_name)
 
     async def up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
+        with suspend_schema_version_checks():
+            await self._up(target_version=target_version, table_type=table_type, force=force)
+
+    async def _up(self, target_version: Optional[str] = None, table_type: Optional[str] = None, force: bool = False):
         """Handle executing an up migration.
 
         Args:
@@ -151,6 +155,10 @@ class MigrationManager:
             raise
 
     async def down(self, target_version: str, table_type: Optional[str] = None, force: bool = False):
+        with suspend_schema_version_checks():
+            await self._down(target_version=target_version, table_type=table_type, force=force)
+
+    async def _down(self, target_version: str, table_type: Optional[str] = None, force: bool = False):
         """Handle executing a down migration.
 
         Args:

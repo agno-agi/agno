@@ -6,6 +6,7 @@ account is needed.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 from typing import Any, Dict, List, Optional
@@ -13,6 +14,8 @@ from typing import Any, Dict, List, Optional
 import pytest
 
 from agno.db.base import SessionType
+from agno.db.migrations.manager import MigrationManager
+from agno.exceptions import MigrationRequiredError
 from agno.models.message import Message
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
@@ -274,6 +277,11 @@ def _insert_legacy_session(db, session_id: str, runs: List[Dict[str, Any]]) -> N
     db.client._tables[db.session_table_name][session_id] = item
 
 
+def _mark_table_unstamped(db, table_name: str) -> None:
+    db.client._tables[db.versions_table_name].pop(table_name, None)
+    db._invalidate_schema_version_check(table_name)
+
+
 def test_fresh_schema_round_trip():
     db = _new_db()
     session = AgentSession(session_id="s1", agent_id="agent-1", user_id="u1")
@@ -296,9 +304,10 @@ def test_fresh_schema_round_trip():
     loaded = db.get_session("s1", SessionType.AGENT)
     assert [r.run_id for r in loaded.runs] == ["r1", "r2"]
     assert loaded.runs[0].messages[0].content == "q-one"
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
-def test_legacy_blob_fallback_on_read():
+def test_migrated_legacy_blob_fallback_on_read():
     db = _new_db()
     runs = [_make_run(f"r{i}", "s2", f"c{i}").to_dict() for i in range(3)]
     _insert_legacy_session(db, "s2", runs)
@@ -311,10 +320,11 @@ def test_v3_migration_is_non_destructive():
     db = _new_db()
     legacy = [_make_run(f"r{i}", "s6", f"c{i}").to_dict() for i in range(2)]
     _insert_legacy_session(db, "s6", legacy)
+    _mark_table_unstamped(db, db.session_table_name)
+    with pytest.raises(MigrationRequiredError):
+        db.get_session("s6", SessionType.AGENT)
 
-    from agno.db.migrations.versions.v3_0_0 import up as v3_up
-
-    v3_up(db, table_type="sessions", table_name=db.session_table_name)
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
 
     # Runs table now has 2 entries
     assert len(db.client._tables[db.runs_table_name]) == 2
@@ -322,6 +332,7 @@ def test_v3_migration_is_non_destructive():
     # Legacy `runs` attribute is preserved on the session item
     sess_item = db.client._tables[db.session_table_name]["s6"]
     assert sess_item.get("runs") is not None
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
 def test_cleanup_refuses_when_legacy_runs_still_present():

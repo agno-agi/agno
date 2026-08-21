@@ -27,6 +27,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    MIGRATABLE_TABLE_TYPES,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
@@ -158,6 +159,47 @@ class RedisDb(BaseDb):
         else:
             raise ValueError(f"Unknown table type: {table_type}")
 
+    def _ensure_schema_version(self, table_type: str) -> None:
+        """Validate or initialize the version stamp for a Redis namespace."""
+        if table_type not in MIGRATABLE_TABLE_TYPES:
+            return
+
+        table_name = self._get_table_name(table_type)
+        cache_key = (table_type, table_name)
+        if cache_key in self._schema_versions_checked:
+            return
+
+        with self._resolve_lock:
+            if cache_key in self._schema_versions_checked:
+                return
+
+            version_key = self._schema_version_key(table_name)
+            if self.redis_client.get(version_key) is not None:
+                self._validate_schema_version(table_name, table_type)
+                return
+
+            # Redis has no physical table creation. Any record or index key
+            # proves this is an existing namespace and therefore must not be
+            # blessed as fresh merely because its version stamp is missing.
+            namespace_pattern = f"{self.db_prefix}:{table_type}:*"
+            if next(self.redis_client.scan_iter(match=namespace_pattern), None) is not None:
+                self._validate_schema_version(table_name, table_type)
+                return
+
+            from agno.db.migrations.manager import MigrationManager
+
+            latest_version = MigrationManager(self).latest_schema_version.public
+            created = self.redis_client.set(version_key, latest_version, nx=True)
+            if created:
+                # Reuse the common validator so cache population follows the
+                # same parse/compare path as an existing stamp.
+                self._validate_schema_version(table_name, table_type)
+                return
+
+            # A peer initialized the namespace between our empty scan and
+            # conditional SET. It owns the stamp; validate what it wrote.
+            self._validate_schema_version(table_name, table_type)
+
     def _store_record(
         self, table_type: str, record_id: str, data: Dict[str, Any], index_fields: Optional[List[str]] = None
     ) -> bool:
@@ -172,6 +214,7 @@ class RedisDb(BaseDb):
         Returns:
             bool: True if the record was stored successfully, False otherwise.
         """
+        self._ensure_schema_version(table_type)
         try:
             key = generate_redis_key(prefix=self.db_prefix, table_type=table_type, key_id=record_id)
             serialized_data = serialize_data(data)
@@ -204,6 +247,7 @@ class RedisDb(BaseDb):
         Returns:
             Optional[Dict[str, Any]]: The record data if found, None otherwise.
         """
+        self._ensure_schema_version(table_type)
         try:
             key = generate_redis_key(prefix=self.db_prefix, table_type=table_type, key_id=record_id)
 
@@ -231,6 +275,7 @@ class RedisDb(BaseDb):
         Raises:
             Exception: If any error occurs while deleting the record.
         """
+        self._ensure_schema_version(table_type)
         try:
             # Handle index deletion first
             if index_fields:
@@ -268,6 +313,7 @@ class RedisDb(BaseDb):
         Raises:
             Exception: If any error occurs while getting the records.
         """
+        self._ensure_schema_version(table_type)
         try:
             keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type=table_type)
 
@@ -303,7 +349,9 @@ class RedisDb(BaseDb):
 
         No TTL: the stamp must outlive ``self.expire``.
         """
-        self.redis_client.set(self._schema_version_key(table_name), version)
+        if not self.redis_client.set(self._schema_version_key(table_name), version):
+            raise RuntimeError(f"Failed to store schema version for {table_name}")
+        self._invalidate_schema_version_check(table_name)
 
     # -- Run methods --
 
@@ -1342,6 +1390,7 @@ class RedisDb(BaseDb):
         Raises:
             Exception: If an error occurs during deletion.
         """
+        self._ensure_schema_version("memories")
         try:
             # Get all keys for memories table
             keys = get_all_keys_for_table(redis_client=self.redis_client, prefix=self.db_prefix, table_type="memories")

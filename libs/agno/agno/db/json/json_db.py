@@ -87,8 +87,25 @@ class JsonDb(BaseDb):
         self.db_path = Path(db_path or os.path.join(os.getcwd(), "agno_json_db"))
 
     def table_exists(self, table_name: str) -> bool:
-        """JSON implementation, always returns True."""
-        return True
+        """Return whether the JSON file backing ``table_name`` exists."""
+        return (self.db_path / f"{table_name}.json").is_file()
+
+    def _table_type_for_filename(self, filename: str) -> Optional[str]:
+        """Map a configured JSON filename back to its logical table type."""
+        table_names = (
+            ("sessions", self.session_table_name),
+            ("runs", self.runs_table_name),
+            ("memories", self.memory_table_name),
+            ("metrics", self.metrics_table_name),
+            ("evals", self.eval_table_name),
+            ("knowledge", self.knowledge_table_name),
+            ("traces", self.trace_table_name),
+            ("spans", self.span_table_name),
+        )
+        for table_type, table_name in table_names:
+            if filename == table_name:
+                return table_type
+        return None
 
     def _read_json_file(self, filename: str, create_table_if_not_found: Optional[bool] = True) -> List[Dict[str, Any]]:
         """Read data from a JSON file, creating it if it doesn't exist.
@@ -104,22 +121,38 @@ class JsonDb(BaseDb):
         """
         file_path = self.db_path / f"{filename}.json"
 
-        # Create directory if it doesn't exist
-        self.db_path.mkdir(parents=True, exist_ok=True)
+        # The versions file is metadata, not a guarded user table. In
+        # particular, reading a missing stamp must remain side-effect-free.
+        table_type = None if filename == self.versions_table_name else self._table_type_for_filename(filename)
 
-        try:
-            with open(file_path, "r", encoding="utf-8") as f:
-                return json.load(f)
+        with self._resolve_lock:
+            if file_path.is_file():
+                if table_type is not None:
+                    self._validate_schema_version(filename, table_type)
+            elif not create_table_if_not_found:
+                return []
+            else:
+                self.db_path.mkdir(parents=True, exist_ok=True)
+                try:
+                    # Exclusive creation proves this caller owns the fresh
+                    # file. A peer that wins the race is treated as existing
+                    # and must carry a current version stamp.
+                    with open(file_path, "x", encoding="utf-8") as f:
+                        json.dump([], f)
+                except FileExistsError:
+                    if table_type is not None:
+                        self._validate_schema_version(filename, table_type)
+                else:
+                    if table_type is not None:
+                        self._stamp_schema_version(filename, table_type)
 
-        except FileNotFoundError:
-            if create_table_if_not_found:
-                with open(file_path, "w", encoding="utf-8") as f:
-                    json.dump([], f)
-            return []
+            try:
+                with open(file_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
 
-        except json.JSONDecodeError as e:
-            log_error(f"Error reading the {file_path} JSON file: {str(e)}")
-            raise e
+            except json.JSONDecodeError as e:
+                log_error(f"Error reading the {file_path} JSON file: {str(e)}")
+                raise e
 
     def _write_json_file(self, filename: str, data: List[Dict[str, Any]]) -> None:
         """Write data to a JSON file.
@@ -133,16 +166,31 @@ class JsonDb(BaseDb):
         """
         file_path = self.db_path / f"{filename}.json"
 
-        # Create directory if it doesn't exist
-        self.db_path.mkdir(parents=True, exist_ok=True)
+        table_type = None if filename == self.versions_table_name else self._table_type_for_filename(filename)
 
-        try:
-            with open(file_path, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2, default=str)
+        with self._resolve_lock:
+            if file_path.is_file():
+                if table_type is not None:
+                    self._validate_schema_version(filename, table_type)
+            else:
+                self.db_path.mkdir(parents=True, exist_ok=True)
+                try:
+                    with open(file_path, "x", encoding="utf-8") as f:
+                        json.dump([], f)
+                except FileExistsError:
+                    if table_type is not None:
+                        self._validate_schema_version(filename, table_type)
+                else:
+                    if table_type is not None:
+                        self._stamp_schema_version(filename, table_type)
 
-        except Exception as e:
-            log_error(f"Error writing to the {file_path} JSON file: {str(e)}")
-            raise e
+            try:
+                with open(file_path, "w", encoding="utf-8") as f:
+                    json.dump(data, f, indent=2, default=str)
+
+            except Exception as e:
+                log_error(f"Error writing to the {file_path} JSON file: {str(e)}")
+                raise e
 
     def get_latest_schema_version(self, table_name: str = "") -> Optional[str]:
         """Get the schema version stamped for the given table.
@@ -150,7 +198,7 @@ class JsonDb(BaseDb):
         Defaults to "2.0.0" when nothing is stamped so the MigrationManager
         runs migrations instead of skipping the table.
         """
-        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=False)
         for row in rows:
             if row.get("table_name") == table_name:
                 return row.get("version") or "2.0.0"
@@ -158,11 +206,13 @@ class JsonDb(BaseDb):
 
     def upsert_schema_version(self, table_name: str = "", version: str = "") -> None:
         """Record the schema version stamp for the given table."""
-        rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
-        entry = {"table_name": table_name, "version": version, "updated_at": int(time.time())}
-        rows = [row for row in rows if row.get("table_name") != table_name]
-        rows.append(entry)
-        self._write_json_file(self.versions_table_name, rows)
+        with self._resolve_lock:
+            rows = self._read_json_file(self.versions_table_name, create_table_if_not_found=True)
+            entry = {"table_name": table_name, "version": version, "updated_at": int(time.time())}
+            rows = [row for row in rows if row.get("table_name") != table_name]
+            rows.append(entry)
+            self._write_json_file(self.versions_table_name, rows)
+            self._invalidate_schema_version_check(table_name)
 
     # -- Run methods --
 

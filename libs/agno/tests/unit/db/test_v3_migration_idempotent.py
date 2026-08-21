@@ -11,6 +11,7 @@ JsonDb — the reviewer's exact scenario.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import tempfile
@@ -18,6 +19,7 @@ import tempfile
 import pytest
 
 from agno.db.json.json_db import JsonDb
+from agno.db.migrations.manager import MigrationManager
 from agno.db.migrations.versions.v3_0_0 import _migrate_jsondb
 
 
@@ -39,7 +41,7 @@ def partially_migrated_json_db():
     }
     with open(os.path.join(tmp, "agno_sessions.json"), "w") as f:
         json.dump([session_row], f)
-    _migrate_jsondb(db, "sessions", "agno_sessions")
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
     return db
 
 

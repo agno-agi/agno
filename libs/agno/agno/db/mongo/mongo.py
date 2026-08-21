@@ -50,7 +50,7 @@ try:
     from pymongo.collection import Collection
     from pymongo.database import Database
     from pymongo.driver_info import DriverInfo
-    from pymongo.errors import OperationFailure
+    from pymongo.errors import CollectionInvalid, OperationFailure
 except ImportError:
     raise ImportError("`pymongo` not installed. Please install it using `pip install pymongo`")
 
@@ -178,7 +178,7 @@ class MongoDb(BaseDb):
         ]
 
         for collection_type, collection_name in collections_to_create:
-            if collection_name and not self.table_exists(collection_name):
+            if collection_name:
                 self._get_collection(collection_type, create_collection_if_not_found=True)
 
     def _get_collection(
@@ -192,8 +192,25 @@ class MongoDb(BaseDb):
         Returns:
             Collection: The collection object.
         """
+        collection_bindings = {
+            "sessions": (self.session_table_name, "session_collection"),
+            "runs": (self.runs_table_name, "runs_collection"),
+            "memories": (self.memory_table_name, "memory_collection"),
+            "metrics": (self.metrics_table_name, "metrics_collection"),
+            "evals": (self.eval_table_name, "eval_collection"),
+            "knowledge": (self.knowledge_table_name, "knowledge_collection"),
+            "traces": (self.trace_table_name, "traces_collection"),
+            "spans": (self.span_table_name, "spans_collection"),
+            "learnings": (self.learnings_table_name, "learnings_collection"),
+            "schedules": (self.schedules_table_name, "schedules_collection"),
+            "schedule_runs": (self.schedule_runs_table_name, "schedule_runs_collection"),
+        }
+        binding = collection_bindings.get(table_type)
+        if binding is not None and binding[0] is not None and getattr(self, binding[1], None) is not None:
+            self._validate_schema_version(binding[0], table_type)
+
         if table_type == "sessions":
-            if not hasattr(self, "session_collection"):
+            if getattr(self, "session_collection", None) is None:
                 if self.session_table_name is None:
                     raise ValueError("Session collection was not provided on initialization")
                 self.session_collection = self._get_or_create_collection(
@@ -216,7 +233,7 @@ class MongoDb(BaseDb):
             return self.runs_collection
 
         if table_type == "memories":
-            if not hasattr(self, "memory_collection"):
+            if getattr(self, "memory_collection", None) is None:
                 if self.memory_table_name is None:
                     raise ValueError("Memory collection was not provided on initialization")
                 self.memory_collection = self._get_or_create_collection(
@@ -227,7 +244,7 @@ class MongoDb(BaseDb):
             return self.memory_collection
 
         if table_type == "metrics":
-            if not hasattr(self, "metrics_collection"):
+            if getattr(self, "metrics_collection", None) is None:
                 if self.metrics_table_name is None:
                     raise ValueError("Metrics collection was not provided on initialization")
                 self.metrics_collection = self._get_or_create_collection(
@@ -238,7 +255,7 @@ class MongoDb(BaseDb):
             return self.metrics_collection
 
         if table_type == "evals":
-            if not hasattr(self, "eval_collection"):
+            if getattr(self, "eval_collection", None) is None:
                 if self.eval_table_name is None:
                     raise ValueError("Eval collection was not provided on initialization")
                 self.eval_collection = self._get_or_create_collection(
@@ -249,7 +266,7 @@ class MongoDb(BaseDb):
             return self.eval_collection
 
         if table_type == "knowledge":
-            if not hasattr(self, "knowledge_collection"):
+            if getattr(self, "knowledge_collection", None) is None:
                 if self.knowledge_table_name is None:
                     raise ValueError("Knowledge collection was not provided on initialization")
                 self.knowledge_collection = self._get_or_create_collection(
@@ -260,7 +277,7 @@ class MongoDb(BaseDb):
             return self.knowledge_collection
 
         if table_type == "traces":
-            if not hasattr(self, "traces_collection"):
+            if getattr(self, "traces_collection", None) is None:
                 if self.trace_table_name is None:
                     raise ValueError("Traces collection was not provided on initialization")
                 self.traces_collection = self._get_or_create_collection(
@@ -271,7 +288,7 @@ class MongoDb(BaseDb):
             return self.traces_collection
 
         if table_type == "spans":
-            if not hasattr(self, "spans_collection"):
+            if getattr(self, "spans_collection", None) is None:
                 if self.span_table_name is None:
                     raise ValueError("Spans collection was not provided on initialization")
                 self.spans_collection = self._get_or_create_collection(
@@ -295,7 +312,7 @@ class MongoDb(BaseDb):
             return self.learnings_collection
 
         if table_type == "schedules":
-            if not hasattr(self, "schedules_collection"):
+            if getattr(self, "schedules_collection", None) is None:
                 if self.schedules_table_name is None:
                     raise ValueError("Schedules collection was not provided on initialization")
                 self.schedules_collection = self._get_or_create_collection(
@@ -306,7 +323,7 @@ class MongoDb(BaseDb):
             return self.schedules_collection
 
         if table_type == "schedule_runs":
-            if not hasattr(self, "schedule_runs_collection"):
+            if getattr(self, "schedule_runs_collection", None) is None:
                 if self.schedule_runs_table_name is None:
                     raise ValueError("Schedule runs collection was not provided on initialization")
                 self.schedule_runs_collection = self._get_or_create_collection(
@@ -331,19 +348,41 @@ class MongoDb(BaseDb):
         Returns:
             Optional[Collection]: The collection object.
         """
+        initialized_attr = f"_{collection_name}_initialized"
         try:
-            collection = self.database[collection_name]
-
-            if not hasattr(self, f"_{collection_name}_initialized"):
-                if not create_collection_if_not_found:
+            with self._resolve_lock:
+                created = False
+                if self.table_exists(collection_name):
+                    self._validate_schema_version(collection_name, collection_type)
+                    collection = self.database[collection_name]
+                elif not create_collection_if_not_found:
                     return None
-                create_collection_indexes(collection, collection_type)
-                setattr(self, f"_{collection_name}_initialized", True)
-                log_debug(f"Initialized collection '{collection_name}'")
-            else:
-                log_debug(f"Collection '{collection_name}' already initialized")
+                else:
+                    try:
+                        collection = self.database.create_collection(collection_name)
+                    except (CollectionInvalid, OperationFailure):
+                        # A peer may have won the create race. Confirm the
+                        # collection now exists before treating it as legacy.
+                        if not self.table_exists(collection_name):
+                            raise
+                        collection = self.database[collection_name]
+                        self._validate_schema_version(collection_name, collection_type)
+                    else:
+                        created = True
 
-            return collection
+                if create_collection_if_not_found and not hasattr(self, initialized_attr):
+                    create_collection_indexes(collection, collection_type)
+                    setattr(self, initialized_attr, True)
+                    log_debug(f"Initialized collection '{collection_name}'")
+                else:
+                    log_debug(f"Collection '{collection_name}' already initialized")
+
+                if created:
+                    # Stamp only after collection and index creation both
+                    # succeed. A partial failure remains fail-closed.
+                    self._stamp_schema_version(collection_name, collection_type)
+
+                return collection
 
         except Exception as e:
             log_error(f"Error getting collection {collection_name}: {str(e)}")
@@ -367,6 +406,7 @@ class MongoDb(BaseDb):
             {"$set": {"table_name": table_name, "version": version, "updated_at": int(time.time())}},
             upsert=True,
         )
+        self._invalidate_schema_version_check(table_name)
 
     def cleanup_legacy_runs_field(self, force: bool = False) -> bool:
         """Unset the legacy ``runs`` field from session documents.

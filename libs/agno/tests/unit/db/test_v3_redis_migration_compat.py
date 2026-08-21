@@ -5,6 +5,7 @@ Uses ``fakeredis`` so no real Redis instance is needed.
 
 from __future__ import annotations
 
+import asyncio
 import time
 from typing import Any, Dict, List
 
@@ -13,8 +14,10 @@ import pytest
 fakeredis = pytest.importorskip("fakeredis")
 
 from agno.db.base import SessionType  # noqa: E402
+from agno.db.migrations.manager import MigrationManager  # noqa: E402
 from agno.db.redis.redis import RedisDb  # noqa: E402
 from agno.db.redis.utils import generate_redis_key, serialize_data  # noqa: E402
+from agno.exceptions import MigrationRequiredError  # noqa: E402
 from agno.models.message import Message  # noqa: E402
 from agno.run.agent import RunOutput  # noqa: E402
 from agno.run.base import RunStatus  # noqa: E402
@@ -39,7 +42,9 @@ def _new_db() -> RedisDb:
     return RedisDb(redis_client=fakeredis.FakeRedis(decode_responses=True), db_prefix="agno")
 
 
-def _insert_legacy_session(db: RedisDb, session_id: str, runs: List[Dict[str, Any]]) -> None:
+def _insert_legacy_session(
+    db: RedisDb, session_id: str, runs: List[Dict[str, Any]], *, stamp_current: bool = True
+) -> None:
     """Write a v2.x-shaped session record directly (with inline `runs` field)."""
     data = {
         "session_id": session_id,
@@ -53,6 +58,8 @@ def _insert_legacy_session(db: RedisDb, session_id: str, runs: List[Dict[str, An
     }
     key = generate_redis_key(prefix=db.db_prefix, table_type="sessions", key_id=session_id)
     db.redis_client.set(key, serialize_data(data))
+    if stamp_current:
+        db.upsert_schema_version(db.session_table_name, "3.0.0")
 
 
 def test_fresh_schema_round_trip():
@@ -78,9 +85,10 @@ def test_fresh_schema_round_trip():
     loaded = db.get_session("s1", SessionType.AGENT)
     assert [r.run_id for r in loaded.runs] == ["r1", "r2"]
     assert loaded.runs[0].messages[0].content == "q-one"
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
-def test_legacy_blob_fallback_on_read():
+def test_migrated_legacy_blob_fallback_on_read():
     db = _new_db()
     runs = [_make_run(f"r{i}", "s2", f"c{i}").to_dict() for i in range(3)]
     _insert_legacy_session(db, "s2", runs)
@@ -117,11 +125,12 @@ def test_partial_state_merges_collection_and_blob():
 def test_v3_migration_is_non_destructive():
     db = _new_db()
     legacy = [_make_run(f"r{i}", "s6", f"c{i}").to_dict() for i in range(2)]
-    _insert_legacy_session(db, "s6", legacy)
+    _insert_legacy_session(db, "s6", legacy, stamp_current=False)
 
-    from agno.db.migrations.versions.v3_0_0 import up as v3_up
+    with pytest.raises(MigrationRequiredError):
+        db.get_session("s6", SessionType.AGENT)
 
-    v3_up(db, table_type="sessions", table_name="agno_sessions")
+    asyncio.run(MigrationManager(db).up(table_type="sessions"))
 
     # Runs are in the runs keys
     rows, total = db.get_runs(session_id="s6", deserialize=False)
@@ -130,6 +139,7 @@ def test_v3_migration_is_non_destructive():
     # Legacy field is preserved on the session record
     raw = db._get_record("sessions", "s6")
     assert raw is not None and raw.get("runs") is not None
+    assert db.get_latest_schema_version(db.session_table_name) == "3.0.0"
 
 
 def test_cleanup_refuses_when_legacy_runs_still_present():
@@ -196,9 +206,9 @@ def test_ids_containing_the_index_marker_stay_visible():
         assert db.get_session(sid, SessionType.AGENT) is not None
 
 
-def test_upgrade_without_migration_preserves_runs_on_write():
-    """Option A regression: continuing a legacy session WITHOUT running the migration
-    must not drop the pre-existing runs. RedisDb replaces the whole session record on
+def test_current_store_preserves_migrated_legacy_backup_on_write():
+    """A current store may retain the migrated legacy backup. RedisDb replaces the
+    whole session record on
     write, so it carries the legacy blob forward as a frozen backup."""
     db = _new_db()
     legacy = [_make_run(f"r{i}", "s9", f"c{i}").to_dict() for i in range(3)]
