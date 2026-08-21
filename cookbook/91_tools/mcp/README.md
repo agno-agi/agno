@@ -42,7 +42,7 @@ This example connects to the hosted DeepWiki MCP server (public, no API key) to 
 
 10. emem Agent (`emem.py`)
 
-This example connects to the hosted emem MCP server (public, no API key) for shared, signed memory of the physical world. It shows how to ground a place, recall a signed fact, and hand another agent a token it can verify offline.
+This example connects to the hosted emem MCP server (public, no API key) for shared, signed memory of the physical world. It shows an agent answering a plain-language question about a place by calling emem's MCP tools directly.
 
 
 ## Getting Started
