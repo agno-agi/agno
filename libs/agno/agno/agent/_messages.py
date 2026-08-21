@@ -1174,19 +1174,17 @@ def get_run_messages(
 
         # Find applicable compaction state from previous runs
         log_debug("[MESSAGES] Looking for compaction state from previous runs...")
-        compaction_state = session.get_compaction_state()
+        compaction = session.get_latest_compaction()
 
         # Inject compaction summary before history (replaces compacted messages)
-        if compaction_state:
+        if compaction:
             log_debug(
-                f"[MESSAGES] Found compaction: total={compaction_state.total_compactions}, ids={len(compaction_state.compacted_message_ids)}"
+                f"[MESSAGES] Found compaction: total={compaction.total_compactions}, ids={len(compaction.compacted_message_ids)}"
             )
-            log_debug(
-                f"[MESSAGES] Injecting summary: {compaction_state.summary[:100] if compaction_state.summary else 'None'}..."
-            )
-            run_messages.messages.append(compaction_state.get_summary_message())
+            log_debug(f"[MESSAGES] Injecting summary: {compaction.summary[:100] if compaction.summary else 'None'}...")
+            run_messages.messages.append(compaction.get_summary_message())
             # Seed run_response.compaction_state for mid-loop compaction to build on
-            run_response.compaction_state = deepcopy(compaction_state)
+            run_response.compaction_state = deepcopy(compaction)
         else:
             log_debug("[MESSAGES] No prior compaction found")
 
@@ -1202,7 +1200,8 @@ def get_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
-            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
+            skip_compacted_messages=True,
+            compacted_message_ids=compaction.compacted_message_ids if compaction else None,
         )
 
         if len(history) > 0:
@@ -1399,19 +1398,17 @@ async def aget_run_messages(
 
         # Find applicable compaction state from previous runs
         log_debug("[MESSAGES] Looking for compaction state from previous runs...")
-        compaction_state = session.get_compaction_state()
+        compaction = session.get_latest_compaction()
 
         # Inject compaction summary before history (replaces compacted messages)
-        if compaction_state:
+        if compaction:
             log_debug(
-                f"[MESSAGES] Found compaction: total={compaction_state.total_compactions}, ids={len(compaction_state.compacted_message_ids)}"
+                f"[MESSAGES] Found compaction: total={compaction.total_compactions}, ids={len(compaction.compacted_message_ids)}"
             )
-            log_debug(
-                f"[MESSAGES] Injecting summary: {compaction_state.summary[:100] if compaction_state.summary else 'None'}..."
-            )
-            run_messages.messages.append(compaction_state.get_summary_message())
+            log_debug(f"[MESSAGES] Injecting summary: {compaction.summary[:100] if compaction.summary else 'None'}...")
+            run_messages.messages.append(compaction.get_summary_message())
             # Seed run_response.compaction_state for mid-loop compaction to build on
-            run_response.compaction_state = deepcopy(compaction_state)
+            run_response.compaction_state = deepcopy(compaction)
         else:
             log_debug("[MESSAGES] No prior compaction found")
 
@@ -1427,7 +1424,8 @@ async def aget_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
-            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
+            skip_compacted_messages=True,
+            compacted_message_ids=compaction.compacted_message_ids if compaction else None,
         )
 
         if len(history) > 0:
@@ -1590,19 +1588,16 @@ def get_continue_run_messages(
         from copy import deepcopy
 
         # Get compaction state for point-in-time filtering (time-travel for continue_run)
-        compaction_state = None
+        compaction = None
         if run_response is not None and session is not None:
-            compaction_state = run_response.compaction_state
-            if compaction_state is None:
+            compaction = run_response.compaction_state
+            if compaction is None:
                 lookup_id = run_response.forked_from_run_id or run_response.run_id
-                compaction_state = session.get_compaction_state(run_id=lookup_id)
-                # Seed run_response so mid-loop compaction can merge with prior state
-                if compaction_state is not None:
-                    run_response.compaction_state = deepcopy(compaction_state)
+                compaction = session.get_compaction_for_run_id(lookup_id)
 
         # Inject compaction summary before history (replaces compacted messages)
-        if compaction_state is not None:
-            run_messages.messages.append(compaction_state.get_summary_message())
+        if compaction is not None:
+            run_messages.messages.append(compaction.get_summary_message())
 
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
@@ -1616,7 +1611,8 @@ def get_continue_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
-            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
+            skip_compacted_messages=True,
+            compacted_message_ids=compaction.compacted_message_ids if compaction else None,
         )
 
         if len(history) > 0:

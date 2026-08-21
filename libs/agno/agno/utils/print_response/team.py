@@ -284,6 +284,9 @@ def print_response(
                         orig = stats.get("original_size", 1)
                         if stats.get("tool_results_compressed", 0) > 0:
                             tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        # Add history compaction stats if available
+                        if stats.get("history_messages_compacted", 0) > 0:
+                            tool_calls_text += f"\n\ncompacted: {stats.get('history_messages_compacted', 0)} msgs | Saved: {stats.get('history_tokens_saved', 0):,} tokens"
                         team.compaction_manager.stats.clear()
 
                     team_tool_calls_panel = create_panel(
@@ -664,6 +667,9 @@ def print_response_stream(
                         orig = stats.get("original_size", 1)
                         if stats.get("tool_results_compressed", 0) > 0:
                             tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        # Add history compaction stats if available
+                        if stats.get("history_messages_compacted", 0) > 0:
+                            tool_calls_text += f"\n\ncompacted: {stats.get('history_messages_compacted', 0)} msgs | Saved: {stats.get('history_tokens_saved', 0):,} tokens"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -900,6 +906,9 @@ def print_response_stream(
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    # Add history compaction stats if available
+                    if stats.get("history_messages_compacted", 0) > 0:
+                        tool_calls_text += f"\n\ncompacted: {stats.get('history_messages_compacted', 0)} msgs | Saved: {stats.get('history_tokens_saved', 0):,} tokens"
                     team.compaction_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(
@@ -1217,6 +1226,9 @@ async def aprint_response(
                         orig = stats.get("original_size", 1)
                         if stats.get("tool_results_compressed", 0) > 0:
                             tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        # Add history compaction stats if available
+                        if stats.get("history_messages_compacted", 0) > 0:
+                            tool_calls_text += f"\n\ncompacted: {stats.get('history_messages_compacted', 0)} msgs | Saved: {stats.get('history_tokens_saved', 0):,} tokens"
                         team.compaction_manager.stats.clear()
 
                     team_tool_calls_panel = create_panel(
@@ -1595,6 +1607,9 @@ async def aprint_response_stream(
                         orig = stats.get("original_size", 1)
                         if stats.get("tool_results_compressed", 0) > 0:
                             tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                        # Add history compaction stats if available
+                        if stats.get("history_messages_compacted", 0) > 0:
+                            tool_calls_text += f"\n\ncompacted: {stats.get('history_messages_compacted', 0)} msgs | Saved: {stats.get('history_tokens_saved', 0):,} tokens"
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -1849,6 +1864,9 @@ async def aprint_response_stream(
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    # Add history compaction stats if available
+                    if stats.get("history_messages_compacted", 0) > 0:
+                        tool_calls_text += f"\n\ncompacted: {stats.get('history_messages_compacted', 0)} msgs | Saved: {stats.get('history_tokens_saved', 0):,} tokens"
                     team.compaction_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(

@@ -130,31 +130,29 @@ class AgentSession:
                 return run
         return None
 
-    def get_compaction_state(self, run_id: Optional[str] = None) -> Optional["CompactionState"]:
-        """Get compaction state, optionally at a specific run's point in time.
+    def get_latest_compaction(self) -> Optional["CompactionState"]:
+        """Scan runs backward for most recent compaction state.
 
-        Args:
-            run_id: If provided, get compaction as of this run. If None, get latest.
+        Used by fresh runs to find applicable compaction.
+        """
+        for run in reversed(self.runs or []):
+            if getattr(run, "compaction", None) is not None:
+                return run.compaction_state
+        return None
 
-        Returns:
-            CompactionState if found, None otherwise.
+    def get_compaction_for_run_id(self, run_id: str) -> Optional["CompactionState"]:
+        """Find compaction state that was active for the given run.
+
+        Used by continue_run to get point-in-time compaction.
+        Scans backward from the run's position.
         """
         runs = self.runs or []
-        if not runs:
+        target_idx = next((i for i, r in enumerate(runs) if r.run_id == run_id), None)
+        if target_idx is None:
             return None
-
-        if run_id:
-            target_idx = next((i for i, r in enumerate(runs) if r.run_id == run_id), None)
-            if target_idx is None:
-                return None
-            start_idx = target_idx
-        else:
-            start_idx = len(runs) - 1
-
-        for i in range(start_idx, -1, -1):
-            compaction_state = getattr(runs[i], "compaction_state", None)
-            if compaction_state is not None:
-                return compaction_state
+        for i in range(target_idx, -1, -1):
+            if getattr(runs[i], "compaction", None) is not None:
+                return runs[i].compaction_state
         return None
 
     def get_messages(
@@ -166,6 +164,7 @@ class AgentSession:
         skip_roles: Optional[List[str]] = None,
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
+        skip_compacted_messages: bool = False,
         compacted_message_ids: Optional[set] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
@@ -178,13 +177,16 @@ class AgentSession:
             skip_roles: Skip messages with these roles.
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
-            compacted_message_ids: Set of message IDs to skip (already in compaction summary).
+            skip_compacted_messages: Skip messages that were compacted into a summary (for model context).
+            compacted_message_ids: Set of message IDs to skip (used for filtering compacted messages).
 
         Returns:
             A list of Messages belonging to the session.
         """
-        # Use compacted IDs directly if provided
-        compacted_ids: set = compacted_message_ids or set()
+        # Build compacted IDs set if filtering is enabled
+        compacted_ids: set = set()
+        if skip_compacted_messages and compacted_message_ids:
+            compacted_ids = compacted_message_ids
 
         def _should_skip_message(
             message: Message,

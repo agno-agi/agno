@@ -225,6 +225,8 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_cancelled.value: _on_run_error,
     RunEvent.memory_update_started.value: _status_handler("Updating memory", started=True),
     RunEvent.memory_update_completed.value: _status_handler("Updating memory", started=False),
+    RunEvent.compaction_started.value: _status_handler("Compacting context", started=True),
+    RunEvent.compaction_completed.value: _status_handler("Compacting context", started=False),
     WorkflowRunEvent.workflow_started.value: _on_workflow_started,
     WorkflowRunEvent.workflow_completed.value: _on_workflow_completed,
     WorkflowRunEvent.workflow_error.value: _on_workflow_error,

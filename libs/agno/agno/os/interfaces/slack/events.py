@@ -264,6 +264,18 @@ async def _on_memory_update_completed(chunk: BaseRunOutputEvent, state: StreamSt
     return False
 
 
+async def _on_compaction_started(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    state.track_task("compaction", "Compacting context")
+    await _emit_task(stream, "compaction", "Compacting context", "in_progress")
+    return False
+
+
+async def _on_compaction_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
+    state.complete_task("compaction")
+    await _emit_task(stream, "compaction", "Compacting context", "complete")
+    return False
+
+
 async def _on_run_completed(chunk: BaseRunOutputEvent, state: StreamState, stream: AsyncChatStream) -> bool:
     return False  # Finalization handled by caller after stream ends
 
@@ -415,6 +427,8 @@ HANDLERS: Dict[str, _EventHandler] = {
     RunEvent.run_intermediate_content.value: _on_run_intermediate_content,
     RunEvent.memory_update_started.value: _on_memory_update_started,
     RunEvent.memory_update_completed.value: _on_memory_update_completed,
+    RunEvent.compaction_started.value: _on_compaction_started,
+    RunEvent.compaction_completed.value: _on_compaction_completed,
     RunEvent.run_completed.value: _on_run_completed,
     RunEvent.run_error.value: _on_run_error,
     RunEvent.run_cancelled.value: _on_run_error,  # Treat cancellation as terminal error

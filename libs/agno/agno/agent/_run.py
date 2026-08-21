@@ -97,6 +97,8 @@ from agno.utils.agent import (
 )
 from agno.utils.events import (
     add_error_event,
+    create_compaction_completed_event,
+    create_compaction_started_event,
     create_run_cancelled_event,
     create_run_completed_event,
     create_run_content_completed_event,
@@ -966,7 +968,7 @@ def _run_stream(
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Process model response
+                # 10. Process model response
                 if agent.output_model is None:
                     for event in handle_model_response_stream(
                         agent,
@@ -2454,7 +2456,47 @@ async def _arun_stream(
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Generate a response from the Model
+                # 9. Pre-loop compaction: compress history BEFORE first model call
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
+                    messages_before = len(run_messages.messages)
+                    compaction_result = await agent.compaction_manager.acompact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_compaction_started_event(
+                                    from_run_response=run_response,
+                                    messages_before=messages_before,
+                                    messages_to_compact=messages_before - len(compaction_result.compacted_messages),
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_compaction_completed_event(
+                                    from_run_response=run_response,
+                                    messages_after=len(compaction_result.compacted_messages),
+                                    messages_compacted=messages_before - len(compaction_result.compacted_messages),
+                                    tokens_saved=tokens_saved,
+                                    summary_preview=compaction_result.summary[:200]
+                                    if compaction_result.summary
+                                    else None,
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+
+                # 10. Generate a response from the Model
                 if agent.output_model is None:
                     async for event in ahandle_model_response_stream(
                         agent,
@@ -3973,7 +4015,50 @@ def _continue_run_stream(
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-                # 3. Process model response
+                # Check for cancellation before model processing
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 3. Pre-loop compaction: compress history BEFORE model call
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
+                    messages_before = len(run_messages.messages)
+                    compaction_result = agent.compaction_manager.compact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_compaction_started_event(
+                                    from_run_response=run_response,
+                                    messages_before=messages_before,
+                                    messages_to_compact=messages_before - len(compaction_result.compacted_messages),
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_compaction_completed_event(
+                                    from_run_response=run_response,
+                                    messages_after=len(compaction_result.compacted_messages),
+                                    messages_compacted=messages_before - len(compaction_result.compacted_messages),
+                                    tokens_saved=tokens_saved,
+                                    summary_preview=compaction_result.summary[:200]
+                                    if compaction_result.summary
+                                    else None,
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+
+                # 4. Process model response
                 for event in handle_model_response_stream(
                     agent,
                     session=session,
@@ -5441,7 +5526,50 @@ async def _acontinue_run_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
 
-                # 8. Process model response
+                # Check for cancellation before model processing
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # 8. Pre-loop compaction: compress history BEFORE model call
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_history:
+                    messages_before = len(run_messages.messages)
+                    compaction_result = await agent.compaction_manager.acompact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_compaction_started_event(
+                                    from_run_response=run_response,
+                                    messages_before=messages_before,
+                                    messages_to_compact=messages_before - len(compaction_result.compacted_messages),
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        tokens_saved = (
+                            run_response.compaction_state.total_tokens_saved if run_response.compaction_state else 0
+                        )
+                        if stream_events:
+                            yield handle_event(  # type: ignore
+                                create_compaction_completed_event(
+                                    from_run_response=run_response,
+                                    messages_after=len(compaction_result.compacted_messages),
+                                    messages_compacted=messages_before - len(compaction_result.compacted_messages),
+                                    tokens_saved=tokens_saved,
+                                    summary_preview=compaction_result.summary[:200]
+                                    if compaction_result.summary
+                                    else None,
+                                ),
+                                run_response,
+                                events_to_skip=agent.events_to_skip,  # type: ignore
+                                store_events=agent.store_events,
+                            )
+
+                # 9. Process model response
                 if agent.output_model is None:
                     async for event in ahandle_model_response_stream(
                         agent,

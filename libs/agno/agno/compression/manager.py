@@ -5,18 +5,18 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
 
-from agno.compression._context import (
+from agno.compression.tool import (
+    acompact_tools,
+    ashould_compact_tools,
+    compact_tools,
+    should_compact_tools,
+)
+from agno.compression.context import (
     CompactionResult,
     acompact_context,
     ashould_compact_context,
     compact_context,
     should_compact_context,
-)
-from agno.compression._tool import (
-    acompact_tools,
-    ashould_compact_tools,
-    compact_tools,
-    should_compact_tools,
 )
 from agno.models.base import Model
 from agno.models.message import Message
@@ -121,7 +121,7 @@ class CompactionManager:
     def compact_history(self) -> bool:
         return self.compact_context
 
-    # --- Tool compaction (delegates to _tool.py) ---
+    # --- Tool compaction (delegates to tool.py) ---
 
     def should_compact_tools(
         self,
@@ -189,7 +189,7 @@ class CompactionManager:
         )
         self._merge_stats(stats)
 
-    # --- Context compaction (delegates to _context.py) ---
+    # --- Context compaction (delegates to context.py) ---
 
     def should_compact(self, messages: List[Message]) -> bool:
         """Check if context should be compacted."""
