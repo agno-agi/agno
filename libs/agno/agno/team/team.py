@@ -332,11 +332,14 @@ class Team:
 
     # --- Result Offloading ---
     # Store large tool results as files and leave a short envelope with a
-    # result id in the message. True uses the defaults (results of 16000
-    # characters or more), for the leader's own tool results and for every
+    # result id in the message. True uses the defaults (results longer than
+    # 16000 characters), for the leader's own tool results and for every
     # member answer. A ResultStore sets the threshold, the preview, the
-    # lifetime, and where payloads live. Unset, a sub-team inherits the parent
-    # team's store; False keeps offloading off inside a parent team too.
+    # lifetime, and where payloads live; it is a settings object, bound to
+    # this db as a copy (the live store is the .result_store property), and
+    # a member store's own db or fs is not used - payloads go where the whole
+    # team can read them. Unset, a sub-team inherits the parent team's store;
+    # False keeps offloading off inside a parent team too.
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Team History ---
@@ -435,6 +438,8 @@ class Team:
     _result_store: Optional["ResultStore"] = None
     # The store a parent team handed down, so a later team can replace or clear it
     _inherited_result_store: Optional["ResultStore"] = None
+    # The setting the store was built from, so a changed setting rebuilds it
+    _result_store_setting: Union[bool, "ResultStore", None] = None
     # Internal resolved LearningMachine instance
     _learning: Optional[LearningMachine] = None
     # Whether learning init has been attempted (prevents repeated attempts when db is None)
@@ -720,7 +725,7 @@ class Team:
         if self._result_store is None and self.offload_tool_results:
             from agno.team import _init
 
-            _init._set_result_store(self)
+            _init._ensure_result_store(self)
         return self._result_store
 
     @property

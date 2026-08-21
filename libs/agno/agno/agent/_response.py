@@ -26,6 +26,7 @@ if TYPE_CHECKING:
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
+from agno.offload.setup import result_store_kwargs
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -1067,7 +1068,7 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-        result_store=agent._result_store,
+        **result_store_kwargs(agent),
         after_tool_results=build_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1228,7 +1229,7 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-        result_store=agent._result_store,
+        **result_store_kwargs(agent),
         after_tool_results=abuild_after_tool_results_callback(
             agent,
             run_response=run_response,

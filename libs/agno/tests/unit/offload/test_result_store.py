@@ -325,7 +325,17 @@ def test_index_write_failure_does_not_leave_an_orphan_payload(store, monkeypatch
 # ------------------------------------------------------------------
 
 
-def test_live_ids_are_newest_first_and_capped(store):
+def test_live_ids_are_newest_first_and_capped(store, monkeypatch):
+    # created_at has one-second resolution, so distinct timestamps are forced:
+    # on equal values a reverse-sorted assertion could not catch an
+    # oldest-first regression.
+    from agno.offload import store as store_module
+
+    import itertools
+
+    base = 1_700_000_000
+    tick = itertools.count()
+    monkeypatch.setattr(store_module.time, "time", lambda: base + next(tick))
     for i in range(25):
         store.offload(
             session_id="S1",
@@ -335,11 +345,11 @@ def test_live_ids_are_newest_first_and_capped(store):
             tool_args={},
             output="x" * 500,
         )
-        time.sleep(0.001)
     refs = store.live_ids("S1")
     assert len(refs) == 20
     created = [ref.created_at for ref in refs]
-    assert created == sorted(created, reverse=True)
+    assert all(earlier > later for earlier, later in zip(created, created[1:]))
+    assert [ref.tool_name for ref in refs] == [f"tool{i}" for i in range(24, 4, -1)]
 
 
 def test_live_ids_scope_to_one_session(store):
@@ -618,3 +628,51 @@ def test_clip_window_keeps_a_long_match_whole_when_it_fits():
     window = _clip_around(line, 1000, len(match))
     assert match in window
     assert len(window) <= 500
+
+
+# ------------------------------------------------------------------
+# The scan deadline: a pattern that backtracks cannot hang the run
+# ------------------------------------------------------------------
+
+
+def test_catastrophic_pattern_is_killed_at_the_deadline(store, monkeypatch):
+    from agno.offload import store as store_module
+
+    monkeypatch.setattr(store_module, "SEARCH_TIMEOUT_SECONDS", 1.5)
+    ref = _offload(store, "a" * 40_000 + "b")
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="did not finish"):
+        store.search(ref.result_id, r"(a+)+$")
+    assert time.monotonic() - started < 30
+
+
+@pytest.mark.asyncio
+async def test_catastrophic_pattern_is_killed_on_the_async_path(store, monkeypatch):
+    from agno.offload import store as store_module
+
+    monkeypatch.setattr(store_module, "SEARCH_TIMEOUT_SECONDS", 1.5)
+    ref = _offload(store, "a" * 40_000 + "b")
+    with pytest.raises(TimeoutError, match="did not finish"):
+        await store.asearch(ref.result_id, r"(a+)+$")
+
+
+def test_a_repeating_pattern_that_finishes_still_matches(store):
+    # The subprocess path returns real matches, not only timeouts.
+    ref = _offload(store, "x" * 200 + "\n" + "needle-42" + "\n" + "x" * 200)
+    matches = store.search(ref.result_id, r"needle-\d+")
+    assert [m.line_number for m in matches] == [2]
+    assert "needle-42" in matches[0].line
+
+
+def test_a_plain_pattern_stays_in_process(store, monkeypatch):
+    # A pattern with no repetition cannot backtrack and must not pay for a
+    # subprocess: with the spawn path stubbed out, the scan still answers.
+    from agno.offload import store as store_module
+
+    def _boom(*args, **kwargs):
+        raise AssertionError("plain patterns must not use the subprocess scan")
+
+    monkeypatch.setattr(store_module, "_scan_in_subprocess", _boom)
+    ref = _offload(store, "alpha\nbeta needle gamma\n" + "x" * 200)
+    matches = store.search(ref.result_id, "needle")
+    assert [m.line_number for m in matches] == [2]

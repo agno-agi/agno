@@ -48,6 +48,13 @@ SEARCH_MAX_MATCHES = 20
 SEARCH_MAX_CONTEXT_LINES = 20
 SEARCH_LINE_CLIP = 500
 _MATCH_HEADER_CHARS = 48
+# The pattern is model-supplied and Python's re has no timeout, so a pattern
+# that backtracks catastrophically would otherwise hang the run for good. A
+# pattern that can backtrack runs in a subprocess killed at this deadline.
+SEARCH_TIMEOUT_SECONDS = 10.0
+# A pattern with none of these cannot blow up: backtracking needs repetition
+# (or a group a repetition can apply to), so everything else scans in-process.
+_BACKTRACKING_CHARS = frozenset("*+?{(")
 
 _TAIL_LINES = 5
 
@@ -101,6 +108,94 @@ def _clip_around(line: str, char_offset: int, match_len: int = 1) -> str:
     head = "..." if start > 0 else ""
     tail = "..." if start + width < len(line) else ""
     return f"{head}{line[start : start + width]}{tail}"
+
+
+def _scan_for_matches(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
+    """The search scan itself: at most 20 matches, one read_result page in total."""
+    compiled = re.compile(pattern)
+    lines = content.split("\n")
+    context_lines = max(0, min(int(context_lines or 0), SEARCH_MAX_CONTEXT_LINES))
+    matches: List[ResultMatch] = []
+    # The whole reply stays within one read_result page, whatever the
+    # context asked for, so a search can never put back what offloading
+    # took out.
+    budget = SEARCH_MAX_CHARS
+    for index, line in enumerate(lines):
+        found = compiled.search(line)
+        if found is None:
+            continue
+        if len(matches) >= SEARCH_MAX_MATCHES or budget <= _MATCH_HEADER_CHARS:
+            # Another match exists past the cap or the budget.
+            matches[-1].more = True
+            break
+        char_offset = found.start()
+        match_len = found.end() - found.start()
+        if context_lines > 0:
+            start = max(0, index - context_lines)
+            end = min(len(lines), index + context_lines + 1)
+            # Each row carries its own line number, so the block reads the
+            # same way a read_result page does and the match line is clear.
+            text = "\n".join(
+                f"{start + offset + 1}: {_clip_around(context_line, char_offset if start + offset == index else 0, match_len)}"
+                for offset, context_line in enumerate(lines[start:end])
+            )
+        else:
+            text = _clip_around(line, char_offset, match_len)
+        # Each match is rendered with a short header line; reserve room
+        # for it so the reply the model sees stays within one page.
+        budget -= _MATCH_HEADER_CHARS
+        if len(text) > budget:
+            text = text[:budget]
+        budget -= len(text) + 1
+        matches.append(ResultMatch(line_number=index + 1, line=text, char_offset=char_offset))
+    return matches
+
+
+def _scan_entry(conn: Any, content: str, pattern: str, context_lines: int) -> None:
+    """Subprocess entry for the guarded scan. Sends ("ok", rows) or ("error", text)."""
+    try:
+        matches = _scan_for_matches(content, pattern, context_lines)
+        conn.send(("ok", [(m.line_number, m.line, m.char_offset, m.more) for m in matches]))
+    except BaseException as e:  # noqa: BLE001 - the parent needs the reason, whatever it is
+        try:
+            conn.send(("error", f"{type(e).__name__}: {e}"))
+        except Exception:
+            pass
+    finally:
+        conn.close()
+
+
+def _scan_in_subprocess(content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
+    """Run the scan in a subprocess killed at ``SEARCH_TIMEOUT_SECONDS``.
+
+    ``spawn`` rather than ``fork``: the caller may be any worker thread of a
+    threaded server, where forking is unsafe.
+    """
+    import multiprocessing
+
+    ctx = multiprocessing.get_context("spawn")
+    parent_conn, child_conn = ctx.Pipe(duplex=False)
+    process = ctx.Process(target=_scan_entry, args=(child_conn, content, pattern, context_lines), daemon=True)
+    process.start()
+    child_conn.close()
+    try:
+        if not parent_conn.poll(SEARCH_TIMEOUT_SECONDS):
+            raise TimeoutError(
+                f"the search did not finish within {int(SEARCH_TIMEOUT_SECONDS)}s; the pattern "
+                "backtracks too much on this result - simplify it or search with a plainer pattern"
+            )
+        kind, payload = parent_conn.recv()
+    finally:
+        if process.is_alive():
+            process.terminate()
+        process.join(1.0)
+        parent_conn.close()
+    if kind == "error":
+        raise RuntimeError(payload)
+    return [
+        ResultMatch(line_number=line_number, line=line, char_offset=char_offset, more=more)
+        for line_number, line, char_offset, more in payload
+    ]
 
 
 def _head_preview(output: str, preview_lines: int, preview_chars: int) -> str:
@@ -215,7 +310,7 @@ class ResultStore:
             raise ValueError("ResultStore threshold_chars must be at least 1")
         self._fs = fs
         self.db = db
-        # Results at or over this many characters are stored. The default
+        # Results longer than this many characters are stored. The default
         # matches what one read_result call returns, so a stored result is
         # never cheaper to read back in one piece than it was to leave inline.
         self.threshold_chars = threshold_chars
@@ -687,43 +782,15 @@ class ResultStore:
         return await asyncio.to_thread(self._page_from_content, content, start_line, end_line, start_char)
 
     def _matches_from_content(self, content: str, pattern: str, context_lines: int) -> List[ResultMatch]:
-        compiled = re.compile(pattern)
-        lines = content.split("\n")
-        context_lines = max(0, min(int(context_lines or 0), SEARCH_MAX_CONTEXT_LINES))
-        matches: List[ResultMatch] = []
-        # The whole reply stays within one read_result page, whatever the
-        # context asked for, so a search can never put back what offloading
-        # took out.
-        budget = SEARCH_MAX_CHARS
-        for index, line in enumerate(lines):
-            found = compiled.search(line)
-            if found is None:
-                continue
-            if len(matches) >= SEARCH_MAX_MATCHES or budget <= _MATCH_HEADER_CHARS:
-                # Another match exists past the cap or the budget.
-                matches[-1].more = True
-                break
-            char_offset = found.start()
-            match_len = found.end() - found.start()
-            if context_lines > 0:
-                start = max(0, index - context_lines)
-                end = min(len(lines), index + context_lines + 1)
-                # Each row carries its own line number, so the block reads the
-                # same way a read_result page does and the match line is clear.
-                text = "\n".join(
-                    f"{start + offset + 1}: {_clip_around(context_line, char_offset if start + offset == index else 0, match_len)}"
-                    for offset, context_line in enumerate(lines[start:end])
-                )
-            else:
-                text = _clip_around(line, char_offset, match_len)
-            # Each match is rendered with a short header line; reserve room
-            # for it so the reply the model sees stays within one page.
-            budget -= _MATCH_HEADER_CHARS
-            if len(text) > budget:
-                text = text[:budget]
-            budget -= len(text) + 1
-            matches.append(ResultMatch(line_number=index + 1, line=text, char_offset=char_offset))
-        return matches
+        # Compiled here first so an invalid pattern raises re.error in the
+        # caller, where the tool layer names it, never out of the subprocess.
+        re.compile(pattern)
+        if _BACKTRACKING_CHARS.isdisjoint(pattern):
+            return _scan_for_matches(content, pattern, context_lines)
+        # The pattern can repeat, so it can backtrack without bound. It runs
+        # in a subprocess a deadline can actually kill: a thread stuck inside
+        # the regex engine cannot be interrupted.
+        return _scan_in_subprocess(content, pattern, context_lines)
 
     def search(self, result_id: str, pattern: str, context_lines: int = 0) -> List[ResultMatch]:
         """Regex search over a stored result; at most 20 matches, lines clipped, one page in total."""

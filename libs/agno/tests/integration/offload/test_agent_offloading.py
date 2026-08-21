@@ -137,6 +137,11 @@ def pg_engine():
     yield engine
     with engine.begin() as conn:
         conn.execute(text(f'DROP SCHEMA IF EXISTS "{PG_SCHEMA}" CASCADE'))
+        # Payloads live in the shared fs schema, which other lanes use too.
+        # Remove this module's rows by namespace rather than the table, and
+        # only when a test in this session created the table at all.
+        if conn.execute(text("SELECT to_regclass('fs.agno_fs')")).scalar() is not None:
+            conn.execute(text("DELETE FROM fs.agno_fs WHERE namespace LIKE 'tool-results/offload-agent-%'"))
     engine.dispose()
 
 
@@ -153,11 +158,10 @@ def db(request, tmp_path):
         with pg_db.db_engine.begin() as conn:
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{PG_SCHEMA}" CASCADE'))
             conn.execute(text(f'CREATE SCHEMA "{PG_SCHEMA}"'))
-            conn.execute(text('DROP TABLE IF EXISTS "fs".agno_fs'))
 
 
 def _sid() -> str:
-    return f"offload-{uuid.uuid4().hex[:10]}"
+    return f"offload-agent-{uuid.uuid4().hex[:10]}"
 
 
 def _tool_messages(run_output) -> List[Any]:

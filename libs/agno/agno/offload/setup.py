@@ -7,22 +7,48 @@ from typing import Any, Optional, Set, Tuple, Union
 from agno.offload.store import ResultStore
 from agno.utils.log import log_warning
 
-# Payloads go to AgentFS, whose database backend is sync, and the index table
-# agno_tool_results is implemented by SqliteDb and PostgresDb. Anywhere else
-# the setting is honoured as off, with one warning: a run must never believe
-# its payloads are recoverable when they are not.
-_OFFLOAD_SUPPORTED_DBS = ("SqliteDb", "PostgresDb")
-
 # Warnings already emitted, keyed by owner and reason. AgentOS runs a fresh
-# copy of an agent per request, so the key outlives any one instance.
+# copy of an agent per request, so the key outlives any one instance. Bounded:
+# a nameless owner gets a fresh random id per construction, and an unbounded
+# set would grow for the life of the process on that path.
 _WARNED: Set[Tuple[Any, str]] = set()
+_MAX_WARNED_KEYS = 1024
 
 
 def _warn_once(owner: Any, reason: str) -> None:
     key = (getattr(owner, "id", None) or getattr(owner, "name", None) or id(owner), reason)
-    if key not in _WARNED:
+    if key in _WARNED:
+        return
+    if len(_WARNED) < _MAX_WARNED_KEYS:
         _WARNED.add(key)
-        log_warning(reason)
+    log_warning(reason)
+
+
+def _db_supports_offloading(db: Any) -> bool:
+    """Whether this db can back a ResultStore.
+
+    Payloads go to AgentFS, whose database backend is sync, and the index
+    table agno_tool_results is implemented by SqliteDb and PostgresDb, so
+    those classes and their subclasses qualify. Anywhere else the setting is
+    honoured as off, with one warning: a run must never believe its payloads
+    are recoverable when they are not.
+    """
+    supported: Tuple[type, ...] = ()
+    # An instance of either class proves its module imports; a failed import
+    # only rules that class out for this process.
+    try:
+        from agno.db.sqlite.sqlite import SqliteDb
+
+        supported += (SqliteDb,)
+    except ImportError:
+        pass
+    try:
+        from agno.db.postgres.postgres import PostgresDb
+
+        supported += (PostgresDb,)
+    except ImportError:
+        pass
+    return isinstance(db, supported)
 
 
 def build_result_store(
@@ -56,12 +82,12 @@ def build_result_store(
         _warn_once(owner, f"offload_tool_results needs a db; offloading is off for this {owner_kind}.")
         return None
 
-    backend_name = type(store.db).__name__
-    if backend_name not in _OFFLOAD_SUPPORTED_DBS:
+    if not _db_supports_offloading(store.db):
         _warn_once(
             owner,
-            f"Result offloading is not available on {backend_name}; offloading is off for this {owner_kind}. "
-            "It needs SqliteDb or PostgresDb, because stored payloads go through the sync filesystem backend.",
+            f"Result offloading is not available on {type(store.db).__name__}; offloading is off for this "
+            f"{owner_kind}. It needs SqliteDb or PostgresDb (or a subclass), because stored payloads go "
+            "through the sync filesystem backend.",
         )
         return None
 
@@ -104,4 +130,15 @@ def _storage_key(backend: Any) -> Tuple[Any, ...]:
     )
 
 
-__all__ = ["build_result_store"]
+def result_store_kwargs(owner: Any) -> dict:
+    """The ``result_store=`` kwarg for a model call, or nothing at all.
+
+    With offloading off the kwarg is omitted entirely, so a Model subclass
+    that overrides ``response`` with an older parameter list keeps working
+    until its owner actually opts into offloading.
+    """
+    store = getattr(owner, "_result_store", None)
+    return {"result_store": store} if store is not None else {}
+
+
+__all__ = ["build_result_store", "result_store_kwargs"]

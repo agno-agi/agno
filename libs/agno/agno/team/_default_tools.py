@@ -913,7 +913,9 @@ def _get_delegate_task_function(
                     await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             use_team_logger()
-            _process_delegate_task_to_member(
+            # The member-run storage step may offload a large payload; the write must not run on the event loop.
+            await asyncio.to_thread(
+                _process_delegate_task_to_member,
                 member_agent_run_response,
                 member_agent,
                 task,  # type: ignore
@@ -925,7 +927,9 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
             _propagate_member_pause(run_response, member_agent, member_agent_run_response)
             use_team_logger()
-            _process_delegate_task_to_member(
+            # The member-run storage step may offload a large payload; the write must not run on the event loop.
+            await asyncio.to_thread(
+                _process_delegate_task_to_member,
                 member_agent_run_response,
                 member_agent,
                 task,  # type: ignore
@@ -962,7 +966,9 @@ def _get_delegate_task_function(
         # Afterward, switch back to the team logger
         use_team_logger()
 
-        _process_delegate_task_to_member(
+        # The member-run storage step may offload a large payload; the write must not run on the event loop.
+        await asyncio.to_thread(
+            _process_delegate_task_to_member,
             member_agent_run_response,
             member_agent,
             task,  # type: ignore
@@ -1236,7 +1242,9 @@ def _get_delegate_task_function(
                         # Check if the member run is paused (HITL)
                         if member_agent_run_response is not None and member_agent_run_response.is_paused:
                             _propagate_member_pause(run_response, agent, member_agent_run_response)
-                            _process_delegate_task_to_member(
+                            # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                            await asyncio.to_thread(
+                                _process_delegate_task_to_member,
                                 member_agent_run_response,
                                 agent,
                                 task,  # type: ignore
@@ -1244,7 +1252,9 @@ def _get_delegate_task_function(
                             )
                             await queue.put(f"Agent {agent.name}: Requires human input before continuing.")
                         else:
-                            _process_delegate_task_to_member(
+                            # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                            await asyncio.to_thread(
+                                _process_delegate_task_to_member,
                                 member_agent_run_response,
                                 agent,
                                 task,  # type: ignore
@@ -1330,7 +1340,9 @@ def _get_delegate_task_function(
                         if run_response.run_id is not None:
                             await araise_if_cancelled(run_response.run_id)
                     except RunCancelledException:
-                        _process_delegate_task_to_member(
+                        # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                        await asyncio.to_thread(
+                            _process_delegate_task_to_member,
                             member_agent_run_response,
                             member_agent,
                             task,  # type: ignore
@@ -1342,7 +1354,9 @@ def _get_delegate_task_function(
 
                     # Check if the member run is paused (HITL) before processing
                     if member_agent_run_response is not None and member_agent_run_response.is_paused:
-                        _process_delegate_task_to_member(
+                        # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                        await asyncio.to_thread(
+                            _process_delegate_task_to_member,
                             member_agent_run_response,
                             member_agent,
                             task,  # type: ignore
@@ -1354,7 +1368,9 @@ def _get_delegate_task_function(
                             member_agent_run_response,
                         )
 
-                    _process_delegate_task_to_member(
+                    # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                    await asyncio.to_thread(
+                        _process_delegate_task_to_member,
                         member_agent_run_response,
                         member_agent,
                         task,  # type: ignore

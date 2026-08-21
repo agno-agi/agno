@@ -938,3 +938,32 @@ def test_an_opted_out_members_history_is_never_rewritten(db):
     for run in member_runs:
         for message in run.messages or []:
             assert not str(message.content or "").startswith('<result id="res_')
+
+
+def test_a_factory_member_that_opted_out_keeps_its_history_whole(db):
+    # A callable member factory cannot be resolved from the storage seam, so
+    # an unresolvable member is stored whole: an envelope a member cannot
+    # read is never safe, plain text always is.
+    member = Agent(name="researcher", id="researcher", model=MemberModel(), offload_tool_results=False)
+
+    def factory(**kwargs):
+        return [member]
+
+    team = Team(
+        name="platform",
+        id="platform",
+        members=factory,
+        model=LeaderModel(),
+        db=db,
+        offload_tool_results=True,
+    )
+    session_id = _sid()
+    output = team.run("go", session_id=session_id)
+    # The leader still reads an envelope for the member's answer.
+    assert _tool_messages(output)[0].content.startswith('<result id="res_')
+    stored = db.get_session(session_id=session_id, session_type=SessionType.TEAM)
+    member_runs = [r for r in (stored.runs or []) if getattr(r, "agent_id", None) == "researcher"]
+    assert member_runs
+    for run in member_runs:
+        for message in run.messages or []:
+            assert not str(message.content or "").startswith('<result id="res_')

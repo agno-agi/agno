@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from typing import (
     TYPE_CHECKING,
@@ -1091,16 +1092,25 @@ async def ahandle_tool_call_updates(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_external_execution_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_get_user_input_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_ask_user_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 4: Handle user input required tools
@@ -1144,16 +1154,25 @@ async def ahandle_tool_call_updates_stream(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_external_execution_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_get_user_input_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_ask_user_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 4: Handle user input required tools

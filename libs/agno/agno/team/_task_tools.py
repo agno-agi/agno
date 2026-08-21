@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -714,8 +715,13 @@ def _get_task_management_tools(
                     await araise_if_cancelled(run_response.run_id)
         except RunCancelledException:
             use_team_logger()
-            _post_process_member_run(
-                member_run_response, member_agent, member_task_description, member_session_state_copy
+            # The member-run storage step may offload a large payload; the write must not run on the event loop.
+            await asyncio.to_thread(
+                _post_process_member_run,
+                member_run_response,
+                member_agent,
+                member_task_description,
+                member_session_state_copy,
             )
             # Preserve any partial member content as task.result before re-raising
             if member_run_response is not None and member_run_response.content:
@@ -735,14 +741,26 @@ def _get_task_management_tools(
             task.status = TaskStatus.pending
             save_task_list(run_context.session_state, task_list)
             use_team_logger()
-            _post_process_member_run(
-                member_run_response, member_agent, member_task_description, member_session_state_copy
+            # The member-run storage step may offload a large payload; the write must not run on the event loop.
+            await asyncio.to_thread(
+                _post_process_member_run,
+                member_run_response,
+                member_agent,
+                member_task_description,
+                member_session_state_copy,
             )
             yield f"Member '{member_agent.name}' requires human input before continuing. Task [{task.id}] paused."
             return
 
         use_team_logger()
-        _post_process_member_run(member_run_response, member_agent, member_task_description, member_session_state_copy)
+        # The member-run storage step may offload a large payload; the write must not run on the event loop.
+        await asyncio.to_thread(
+            _post_process_member_run,
+            member_run_response,
+            member_agent,
+            member_task_description,
+            member_session_state_copy,
+        )
 
         if member_run_response is not None and member_run_response.status == RunStatus.error:
             task.status = TaskStatus.failed
@@ -1105,7 +1123,9 @@ def _get_task_management_tools(
             if member_run is not None and member_run.is_paused:
                 _propagate_member_pause(run_response, member_agent, member_run)
                 task_obj.status = TaskStatus.pending
-                _post_process_member_run(
+                # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                await asyncio.to_thread(
+                    _post_process_member_run,
                     member_run,
                     member_agent,
                     member_task,
@@ -1117,7 +1137,9 @@ def _get_task_management_tools(
             elif member_run is not None and member_run.status == RunStatus.error:
                 task_obj.status = TaskStatus.failed
                 task_obj.result = str(member_run.content) if member_run.content else "Task failed"
-                _post_process_member_run(
+                # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                await asyncio.to_thread(
+                    _post_process_member_run,
                     member_run,
                     member_agent,
                     member_task,
@@ -1132,7 +1154,9 @@ def _get_task_management_tools(
                 content = str(member_run.content)
                 task_obj.status = TaskStatus.completed
                 task_obj.result = content
-                _post_process_member_run(
+                # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                await asyncio.to_thread(
+                    _post_process_member_run,
                     member_run,
                     member_agent,
                     member_task,
@@ -1146,7 +1170,9 @@ def _get_task_management_tools(
             else:
                 task_obj.status = TaskStatus.completed
                 task_obj.result = "No content returned"
-                _post_process_member_run(
+                # The member-run storage step may offload a large payload; the write must not run on the event loop.
+                await asyncio.to_thread(
+                    _post_process_member_run,
                     member_run,
                     member_agent,
                     member_task,

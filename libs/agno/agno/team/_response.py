@@ -23,6 +23,7 @@ from pydantic import BaseModel
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
+from agno.offload.setup import result_store_kwargs
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
@@ -1026,7 +1027,7 @@ def _handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
-        result_store=team._result_store,
+        **result_store_kwargs(team),
         after_tool_results=build_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),
@@ -1187,7 +1188,7 @@ async def _ahandle_model_response_stream(
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
-        result_store=team._result_store,
+        **result_store_kwargs(team),
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
         ),
