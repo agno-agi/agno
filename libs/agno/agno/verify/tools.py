@@ -72,7 +72,7 @@ def _apply(compare: Callable[[Any, str], Union[bool, Verdict]], result: Any, exp
     if outcome is True:
         return result
     if isinstance(outcome, Verdict):
-        if outcome.passed:
+        if outcome.passed is True:
             return result
         context = outcome.report
     elif outcome is False:
@@ -81,6 +81,27 @@ def _apply(compare: Callable[[Any, str], Union[bool, Verdict]], result: Any, exp
         context = f"compare returned {type(outcome).__name__}; return True, False, or a Verdict"
     block = divergence_report(expect, cap_text(text, REPORT_CAP_BYTES // 2), context)
     return _with_prefix(result, block)
+
+
+_PROVABLY_WRONG_RETURNS = (dict, list, tuple, set, frozenset, int, float, bool, bytes)
+
+
+def _check_return_annotation(fn: Callable) -> None:
+    try:
+        import typing
+
+        hints = typing.get_type_hints(fn)
+    except Exception:
+        return
+    annotation = hints.get("return")
+    if annotation is None:
+        return
+    origin = getattr(annotation, "__origin__", annotation)
+    if isinstance(origin, type) and origin is not str and issubclass(origin, _PROVABLY_WRONG_RETURNS):
+        raise TypeError(
+            f"verified_tool requires the tool to return str or ToolResult; "
+            f"{getattr(fn, '__name__', fn)!r} is annotated to return {annotation!r}"
+        )
 
 
 def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: str = "expect") -> Callable:
@@ -98,6 +119,13 @@ def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: st
     `show_result` tool used as the final answer, which hand the tool output to the user. With
     `cache_results=True` a cached call is not re-compared, so a divergence recorded once is
     replayed for the same arguments and prediction; leave caching off for stateful tools.
+
+    Hooks outrank the check. `tool_hooks` wrap the decorated function, so a hook that
+    rewrites an argument in place changes the prediction the comparison uses, a hook that
+    rewrites the result replaces what the model sees after the comparison ran, and a hook
+    that answers without calling the wrapped function skips the comparison entirely; the
+    same holds for a `pre_hook` rewriting `fc.arguments`. Keep argument- and
+    result-transforming hooks off a verified tool.
     """
 
     def decorate(fn: Callable) -> Callable:
@@ -113,6 +141,11 @@ def verified_tool(compare: Callable[[Any, str], Union[bool, Verdict]], param: st
         sig = inspect.signature(fn)
         if param not in sig.parameters:
             raise TypeError(f"verified_tool: {getattr(fn, '__name__', fn)!r} has no parameter named {param!r}")
+
+        # Best-effort early failure for a return type the runtime rule will reject: a tool
+        # annotated to return a dict/list/tuple/set/number decorates fine but would surface
+        # a TypeError as a tool error mid-run the first time the model sends a prediction.
+        _check_return_annotation(fn)
 
         def prediction(args: tuple, kwargs: dict) -> Any:
             try:

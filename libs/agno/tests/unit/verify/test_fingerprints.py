@@ -213,3 +213,27 @@ def test_symlink_target_is_part_of_digest(repo):
     os.unlink(repo / "link")
     os.symlink("missing.txt", repo / "link")
     assert fp.capture() != first
+
+
+def test_chmod_on_untracked_file_changes_digest(repo):
+    fp = GitWorktreeFingerprint(str(repo))
+    script = repo / "run.sh"
+    script.write_text("#!/bin/sh\necho hi\n")
+    os.chmod(script, 0o644)
+    before = fp.capture()
+    os.chmod(script, 0o755)
+    assert fp.capture() != before
+    os.chmod(script, 0o644)
+    assert fp.capture() == before
+
+
+def test_chmod_changes_listing_fallback_digest(tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    script = plain / "run.sh"
+    script.write_text("#!/bin/sh\n")
+    os.chmod(script, 0o644)
+    fp = GitWorktreeFingerprint(str(plain))
+    before = fp.capture()
+    os.chmod(script, 0o755)
+    assert fp.capture() != before

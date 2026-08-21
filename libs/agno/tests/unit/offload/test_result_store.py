@@ -14,9 +14,9 @@ from agno.offload import ResultStore, result_id_for
 from agno.offload.store import (
     NEVER_OFFLOADED_TOOLS,
     READ_MAX_CHARS,
+    SWEEP_INTERVAL_SECONDS,
     render_refused_envelope,
     render_stored_envelope,
-    SWEEP_INTERVAL_SECONDS,
 )
 
 
@@ -329,9 +329,9 @@ def test_live_ids_are_newest_first_and_capped(store, monkeypatch):
     # created_at has one-second resolution, so distinct timestamps are forced:
     # on equal values a reverse-sorted assertion could not catch an
     # oldest-first regression.
-    from agno.offload import store as store_module
-
     import itertools
+
+    from agno.offload import store as store_module
 
     base = 1_700_000_000
     tick = itertools.count()

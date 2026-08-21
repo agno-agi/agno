@@ -34,7 +34,10 @@ from agno.verify.verifiers import Verifier, coerce_verifier
 # Keys of run_kwargs that the runner refuses: it needs a completed RunOutput, parsed the
 # same way on every attempt.
 _REJECTED_TRUTHY = ("stream", "stream_events", "yield_run_output", "background")
-_REJECTED_PRESENT = ("output_schema",)
+_REJECTED_PRESENT = ("output_schema", "run_context")
+
+# Verifier names are identifiers in the report block, not evidence; the body carries detail.
+NAME_CAP_BYTES = 120
 
 # What continue_run accepts and honours. session_id is inherited from the RunOutput and a
 # passed value is ignored; media, session_state and add_*_to_context are attempt-0-only
@@ -79,8 +82,27 @@ def _check_entry(
             raise ValueError(f"run_verified needs a completed RunOutput; {key}={run_kwargs[key]!r} is not supported")
     for key in _REJECTED_PRESENT:
         if key in run_kwargs:
+            if key == "run_context":
+                raise ValueError(
+                    "run_verified builds a context per attempt; pass session_state, dependencies and "
+                    "metadata as top-level kwargs instead of a run_context"
+                )
             raise ValueError(f"set {key} on the Agent, not in run_kwargs: continuations cannot carry it")
     return coerced, fp
+
+
+def _warn_flat_history(agent: Any) -> None:
+    # Documented limitation: each continuation is a forked sibling run whose messages nest
+    # the prior transcript, and flat session history has no fork-aware dedupe, so a db agent
+    # with history enabled shows every attempt's exchange more than once. Warn loudly.
+    if getattr(agent, "db", None) is not None and getattr(agent, "add_history_to_context", False):
+        from agno.utils.log import log_warning
+
+        log_warning(
+            "run_verified on an agent with a db and add_history_to_context=True repeats each "
+            "attempt's transcript in flat session history; use a dedicated session per "
+            "run_verified call"
+        )
 
 
 def _has_async_db(agent: Any) -> bool:
@@ -100,9 +122,22 @@ def _attempt0_kwargs(run_kwargs: Dict[str, Any]) -> Dict[str, Any]:
     return kwargs
 
 
-def _continuation_kwargs(run_kwargs: Dict[str, Any]) -> Dict[str, Any]:
+def _continuation_kwargs(run_kwargs: Dict[str, Any], agent: Any, output: Any) -> Dict[str, Any]:
     kwargs = {k: run_kwargs[k] for k in CONTINUATION_KWARGS if k in run_kwargs}
     kwargs["stream"] = False
+    # Without a db nothing persists session_state between attempts, so a continuation would
+    # start with empty state; carry the last attempt's final state forward through the one
+    # channel continue_run accepts. With a db the session row already carries it.
+    state = getattr(output, "session_state", None)
+    if state and getattr(agent, "db", None) is None:
+        from agno.run.base import RunContext
+
+        kwargs["run_context"] = RunContext(
+            run_id=str(getattr(output, "run_id", "") or ""),
+            session_id=str(getattr(output, "session_id", "") or ""),
+            user_id=run_kwargs.get("user_id"),
+            session_state=dict(state),
+        )
     return kwargs
 
 
@@ -115,6 +150,24 @@ def _status_value(output: Any) -> str:
     status = getattr(output, "status", None)
     value = getattr(status, "value", status)
     return str(value).upper() if value is not None else "COMPLETED"
+
+
+def _unstamp(output: Any) -> None:
+    """Drop a pending verification snapshot the fork inherited from the previous attempt.
+
+    The status gate returns a paused, errored or cancelled output carrying no verification
+    stamp of ours; without this, the deep-copied fork would keep claiming an in-progress
+    verification that the returned VerifiedRun says is over."""
+    metadata = getattr(output, "metadata", None)
+    if not isinstance(metadata, dict):
+        return
+    record = metadata.get("verification")
+    if isinstance(record, dict) and record.get("status") == "pending":
+        remaining = {k: v for k, v in metadata.items() if k != "verification"}
+        try:
+            output.metadata = remaining or None
+        except Exception:
+            pass
 
 
 def _stamp(output: Any, verification: Verification) -> None:
@@ -145,8 +198,11 @@ def _escape(text: str) -> str:
 
 
 def _label(name: str) -> str:
-    # A name is one line of the block; a newline in it would forge a summary or state line.
-    return _escape(" ".join(name.splitlines())) or "verifier"
+    # A name is one line of the block; a newline in it would forge a summary or state line,
+    # and an uncapped one would defeat the block cap.
+    if not isinstance(name, str):
+        name = str(name)
+    return cap_text(_escape(" ".join(name.splitlines())), NAME_CAP_BYTES) or "verifier"
 
 
 def _first_line(report: str) -> str:
@@ -194,7 +250,16 @@ def build_report(
     directive = VERIFICATION_DIRECTIVE.format(remaining_sentence=remaining_sentence)
     closing = "</verification>"
 
-    fixed_parts = [header, *summary]
+    # The summary gets its own ceiling so no verifier count or name length can push the
+    # block past its cap; header, state line, directive and closing tag are reserved first.
+    summary_text = "\n".join(summary)
+    reserved = [header] + ([state] if state else []) + ["", directive, closing]
+    reserved_bytes = sum(len(p.encode("utf-8")) + 1 for p in reserved)
+    summary_budget = max(BLOCK_CAP_BYTES - reserved_bytes - 1, 0)
+    if len(summary_text.encode("utf-8")) > summary_budget:
+        summary_text = cap_text(summary_text, summary_budget)
+
+    fixed_parts = [header, summary_text]
     if state:
         fixed_parts.append(state)
     tail_parts = ["", directive, closing]
@@ -243,6 +308,7 @@ class _Loop:
         self.attempts: List[VerificationAttempt] = []
         self.baseline: Optional[str] = None
         self.started_at = monotonic()
+        self.stamped = False
 
     def record(self) -> Verification:
         return Verification(
@@ -258,6 +324,8 @@ class _Loop:
         )
         if stamp:
             _stamp(output, verification)
+        elif self.stamped:
+            _unstamp(output)
         return VerifiedRun(output=output, verification=verification)
 
     def previous_fingerprint(self, index: int) -> Optional[str]:
@@ -317,6 +385,7 @@ def run_verified(
     coerced, fp = _check_entry(verifiers, limits, fingerprint, run_kwargs)
     if _has_async_db(agent):
         raise ValueError("run_verified cannot drive an agent with an async db; use arun_verified")
+    _warn_flat_history(agent)
     loop = _Loop(coerced, limits, fp, run_kwargs)
     if fp is not None:
         loop.baseline = safe_capture(fp)
@@ -344,12 +413,13 @@ def run_verified(
             return loop.finish(output, "unverified", stop)
 
         _stamp(output, loop.record())
+        loop.stamped = True
         report = loop.report_for(attempt)
         output = agent.continue_run(
             run_response=output,
             continue_from="end",
             input=report,
-            **_continuation_kwargs(run_kwargs),
+            **_continuation_kwargs(run_kwargs, agent, output),
         )
         index += 1
 
@@ -365,6 +435,7 @@ async def arun_verified(
     """Async twin of `run_verified`, over `agent.arun` / `agent.acontinue_run` / `averify` /
     `acapture`."""
     coerced, fp = _check_entry(verifiers, limits, fingerprint, run_kwargs)
+    _warn_flat_history(agent)
     loop = _Loop(coerced, limits, fp, run_kwargs)
     if fp is not None:
         loop.baseline = await asafe_capture(fp)
@@ -395,12 +466,13 @@ async def arun_verified(
             return loop.finish(output, "unverified", stop)
 
         _stamp(output, loop.record())
+        loop.stamped = True
         report = loop.report_for(attempt)
         output = await agent.acontinue_run(
             run_response=output,
             continue_from="end",
             input=report,
-            **_continuation_kwargs(run_kwargs),
+            **_continuation_kwargs(run_kwargs, agent, output),
         )
         index += 1
 

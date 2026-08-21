@@ -107,7 +107,10 @@ class GitWorktreeFingerprint:
         self.exclude = tuple(exclude)
 
     def _git(self, *args: str, cwd: str) -> "subprocess.CompletedProcess[bytes]":
-        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False)
+        # LC_ALL=C keeps git's messages in English so the not-a-repository detection below
+        # does not break under locale packs.
+        env = {**os.environ, "LC_ALL": "C", "LC_MESSAGES": "C"}
+        return subprocess.run(["git", *args], cwd=cwd, capture_output=True, check=False, env=env)
 
     def _toplevel(self) -> Optional[str]:
         """The repository root, or None when `path` is not inside a repository. Raises when
@@ -128,6 +131,13 @@ class GitWorktreeFingerprint:
             # `-uall` still lists a nested repository as a directory entry.
             digest.update(b"\x00dir")
         else:
+            # The executable bit is world state an agent changes on purpose (chmod +x on a
+            # script); mirror what git records for tracked files (100644 vs 100755).
+            try:
+                executable = bool(os.lstat(full).st_mode & 0o111)
+            except OSError:
+                executable = False
+            digest.update(b"\x00x" if executable else b"\x00-")
             with open(full, "rb") as handle:
                 for chunk in iter(lambda: handle.read(1 << 16), b""):
                     digest.update(chunk)
@@ -178,10 +188,17 @@ class GitWorktreeFingerprint:
                     continue
                 try:
                     stat = os.lstat(full)
-                except OSError:
+                except FileNotFoundError:
+                    # A file vanishing mid-walk is normal while an agent works; skip it.
                     continue
+                # Any other OSError (permissions, I/O) propagates: a digest that silently
+                # ignored part of the tree would report "unchanged" while blind. The runner
+                # treats the raise as unknown state, which never flags a no-op.
+                executable = "x" if stat.st_mode & 0o111 else "-"
                 digest.update(
-                    f"{rel}\x00{stat.st_size}\x00{stat.st_mtime_ns}\n".encode("utf-8", errors="surrogateescape")
+                    f"{rel}\x00{stat.st_size}\x00{stat.st_mtime_ns}\x00{executable}\n".encode(
+                        "utf-8", errors="surrogateescape"
+                    )
                 )
         return digest.hexdigest()
 

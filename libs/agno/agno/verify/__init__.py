@@ -19,7 +19,9 @@ How this relates to what already exists:
 - `agno.eval` and `agno.environments` grade runs after they are over and cannot re-enter
   them. `agno.scorer` is shared: one scorer works offline there and in-loop here.
 - `Agent.tool_hooks` wrap every tool call but cannot add the `expect` parameter to the
-  schema the model sees, which is why `verified_tool` is a decorator.
+  schema the model sees, which is why `verified_tool` is a decorator. Hooks also wrap the
+  decorated function itself, so a hook that rewrites arguments or results can bypass the
+  comparison; keep transforming hooks off a verified tool.
 - `Agent.continue_run(input=...)` resumes a completed run with a follow-up, forking a
   sibling run that carries the transcript. It is what `run_verified` is built on.
 

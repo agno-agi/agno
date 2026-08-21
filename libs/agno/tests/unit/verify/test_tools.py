@@ -159,8 +159,16 @@ def test_tool_exception_surfaces_as_tool_failure_without_decorator_frame():
     assert "verified_tool" not in str(out.error)
 
 
-def test_non_str_result_with_prediction_is_tool_failure_naming_verified_tool():
+def test_wrong_return_annotation_rejected_at_decoration():
     def gives_dict(expect: Optional[str] = None) -> dict:
+        return {"n": 1}
+
+    with pytest.raises(TypeError, match="annotated to return"):
+        verified_tool(same)(gives_dict)
+
+
+def test_unannotated_non_str_result_with_prediction_is_tool_failure_naming_verified_tool():
+    def gives_dict(expect: Optional[str] = None):
         return {"n": 1}
 
     out = execute(verified_tool(same)(gives_dict), expect="x")
@@ -168,6 +176,17 @@ def test_non_str_result_with_prediction_is_tool_failure_naming_verified_tool():
     assert "verified_tool" in str(out.error)
     # Without a prediction the dict passes through.
     assert execute(verified_tool(same)(gives_dict)).result == {"n": 1}
+
+
+def test_str_and_optional_annotations_decorate_fine():
+    def gives_str(expect: Optional[str] = None) -> str:
+        return "ok"
+
+    def gives_optional(expect: Optional[str] = None) -> Optional[str]:
+        return None
+
+    verified_tool(same)(gives_str)
+    verified_tool(same)(gives_optional)
 
 
 @pytest.mark.asyncio
@@ -261,7 +280,7 @@ def test_custom_param_name():
 
 
 def test_direct_call_with_dict_result_and_prediction_raises():
-    def gives_dict(expect: Optional[str] = None) -> dict:
+    def gives_dict(expect: Optional[str] = None):
         return {"n": 1}
 
     with pytest.raises(TypeError, match="str or ToolResult"):
@@ -290,3 +309,61 @@ def test_divergence_report_shape_and_cap():
         "</divergence>",
     ]
     assert len(divergence_report("a", "x" * 50000).encode("utf-8")) <= 6144
+
+
+# ---------------------------------------------------------------------------
+# Fail-closed compare verdicts and hook precedence
+# ---------------------------------------------------------------------------
+
+
+def test_compare_verdict_with_non_bool_passed_is_a_mismatch():
+    def sloppy(result, expect):
+        return Verdict(passed="mismatch", report="looked wrong")
+
+    out = execute(verified_tool(sloppy)(make_counter()[0]), amount=1, expect="1")
+    assert out.result.startswith("<divergence>")
+    assert "only a real bool decides" in out.result
+
+
+def _hooked(decorated, hook):
+    fn = Function.from_callable(decorated)
+    fn.tool_hooks = [hook]
+    return fn
+
+
+def test_hook_precedence_pinned_in_place_mutation_bypasses_comparison():
+    # Documented hazard: a tool_hook that rewrites an argument in place changes the
+    # prediction the comparison uses. Pinned so a future behaviour change is noticed.
+    def rewrite_expect(name, func, args):
+        args["expect"] = "5"
+        return func(**args)
+
+    fn = _hooked(verified_tool(same)(make_counter()[0]), rewrite_expect)
+    out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
+    assert not str(out.result).startswith("<divergence>")
+
+
+def test_hook_precedence_pinned_result_transform_after_comparison():
+    def strip_blocks(name, func, args):
+        result = func(**args)
+        return str(result).split("</divergence>")[-1].lstrip()
+
+    fn = _hooked(verified_tool(same)(make_counter()[0]), strip_blocks)
+    out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
+    assert "<divergence>" not in str(out.result)
+
+
+def test_hook_precedence_pinned_short_circuit_skips_comparison():
+    calls = []
+
+    def probe(expect: Optional[str] = None) -> str:
+        calls.append(1)
+        return "real"
+
+    def answer_directly(name, func, args):
+        return "hook answer"
+
+    fn = _hooked(verified_tool(same)(probe), answer_directly)
+    out = FunctionCall(function=fn, arguments={"expect": "real"}).execute()
+    assert out.result == "hook answer"
+    assert calls == []

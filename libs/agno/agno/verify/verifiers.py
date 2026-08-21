@@ -8,7 +8,8 @@ import subprocess
 import sys
 import threading
 import traceback
-from typing import Any, Awaitable, Callable, Dict, Optional, Protocol, runtime_checkable
+from collections import deque
+from typing import Any, Awaitable, Callable, Deque, Dict, Optional, Protocol, runtime_checkable
 
 from agno.verify.types import Verdict
 
@@ -50,9 +51,39 @@ async def _shield_base_exceptions(coro: Awaitable[Any]) -> tuple:
         return False, exc
 
 
+_detached = threading.local()
+
+
+def _run_on_private_loop(coro: Awaitable[Any]) -> Any:
+    # This thread is the bridge (or a thread the bridge is blocked on); submitting to the
+    # shared loop would deadlock, because the loop cannot service the submission while it
+    # waits for our result. Run the coroutine on its own short-lived loop instead, on a
+    # thread that is itself marked so deeper nesting escapes the same way.
+    box: Dict[str, Any] = {}
+
+    def target() -> None:
+        _detached.flag = True
+        try:
+            box["result"] = asyncio.run(_shield_base_exceptions(coro))
+        except BaseException as exc:  # noqa: BLE001 - carried across the thread boundary
+            box["result"] = (False, exc)
+
+    thread = threading.Thread(target=target, name="agno-verify-bridge-nested", daemon=True)
+    thread.start()
+    thread.join()
+    ok, value = box["result"]
+    if ok:
+        return value
+    raise value
+
+
 def run_sync(coro: Awaitable[Any]) -> Any:
     """Run `coro` on the bridge loop and block for its result. Safe with or without a running
-    loop in the calling thread; exceptions, including BaseException, propagate to the caller."""
+    loop in the calling thread; exceptions, including BaseException, propagate to the caller.
+    Re-entrant calls (a verifier composed inside another verifier's sync path) detect that
+    they are already on the bridge and escape to a private loop instead of deadlocking."""
+    if threading.current_thread() is _bridge_thread or getattr(_detached, "flag", False):
+        return _run_on_private_loop(coro)
     loop = _get_bridge_loop()
     ok, value = asyncio.run_coroutine_threadsafe(_shield_base_exceptions(coro), loop).result()
     if ok:
@@ -220,6 +251,38 @@ def coerce_verifier(obj: Any) -> Verifier:
 # ShellVerifier
 # ---------------------------------------------------------------------------
 
+# Head and tail kept from a shell command's output, each side. Well above REPORT_CAP_BYTES,
+# so the capped Verdict.report is byte-identical to what full buffering would produce; the
+# middle of a very large output is dropped instead of held in memory.
+_SHELL_KEEP_BYTES = 65536
+
+
+class _BoundedOutput:
+    """Bounded head-and-tail store for a stream: absorb() keeps the first and last
+    _SHELL_KEEP_BYTES and drops the middle."""
+
+    def __init__(self, keep: int = _SHELL_KEEP_BYTES) -> None:
+        self.keep = keep
+        self.head = bytearray()
+        self.tail: Deque[bytes] = deque()
+        self.tail_bytes = 0
+
+    def absorb(self, chunk: bytes) -> None:
+        if len(self.head) < self.keep:
+            take = self.keep - len(self.head)
+            self.head += chunk[:take]
+            chunk = chunk[take:]
+        if not chunk:
+            return
+        self.tail.append(chunk)
+        self.tail_bytes += len(chunk)
+        while self.tail and self.tail_bytes - len(self.tail[0]) >= self.keep:
+            self.tail_bytes -= len(self.tail.popleft())
+
+    def text(self) -> str:
+        return (bytes(self.head) + b"".join(self.tail)).decode("utf-8", errors="replace")
+
+
 _HARNESS_EXIT_CODES = {126, 127}
 
 
@@ -298,21 +361,44 @@ class ShellVerifier:
             )
         except Exception as exc:
             return exception_verdict(self.name, exc)
+        buffer = _BoundedOutput()
+
+        def drain() -> None:
+            stream = proc.stdout
+            assert stream is not None
+            while True:
+                chunk = stream.read(65536)
+                if not chunk:
+                    break
+                buffer.absorb(chunk)
+
+        reader = threading.Thread(target=drain, name="agno-verify-shell-drain", daemon=True)
+        reader.start()
         timed_out = False
+        finished = False
         try:
-            out, _ = proc.communicate(timeout=self.timeout_s)
-        except subprocess.TimeoutExpired:
-            timed_out = True
-            self._kill_group(proc.pid)
-            # Retrying communicate after a timeout does not lose the output read so far. The
-            # group is dead, so this returns at once; the bound covers a kill that was refused.
             try:
-                out, _ = proc.communicate(timeout=5)
+                proc.wait(timeout=self.timeout_s)
             except subprocess.TimeoutExpired:
-                proc.kill()
-                out, _ = proc.communicate()
-        output = (out or b"").decode("utf-8", errors="replace")
-        return self._report(proc.returncode, output, timed_out)
+                timed_out = True
+                self._kill_group(proc.pid)
+                try:
+                    proc.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            finished = True
+        finally:
+            if not finished:
+                # Ctrl-C or any other exceptional exit: the command and its whole process
+                # group must not outlive the verifier.
+                self._kill_group(proc.pid)
+                try:
+                    proc.wait(timeout=5)
+                except Exception:
+                    pass
+        reader.join(timeout=5)
+        return self._report(proc.returncode, buffer.text(), timed_out)
 
     async def averify(self, run: Any) -> Verdict:
         popen_kwargs: Dict[str, Any] = {}
@@ -332,35 +418,39 @@ class ShellVerifier:
             )
         except Exception as exc:
             return exception_verdict(self.name, exc)
-        chunks: list = []
+        buffer = _BoundedOutput()
 
-        async def pump() -> None:
+        async def pump_and_wait() -> None:
+            # Both the read and the exit are under the deadline: a child that closes its
+            # pipes and keeps running must not outlive the timeout either.
             assert proc.stdout is not None
             while True:
                 chunk = await proc.stdout.read(65536)
                 if not chunk:
                     break
-                chunks.append(chunk)
-
-        async def pump_and_wait() -> None:
-            # Both the read and the exit are under the deadline: a child that closes its
-            # pipes and keeps running must not outlive the timeout either.
-            await pump()
+                buffer.absorb(chunk)
             await proc.wait()
 
         timed_out = False
+        finished = False
         try:
-            await asyncio.wait_for(pump_and_wait(), timeout=self.timeout_s)
-        except asyncio.TimeoutError:
-            timed_out = True
-            self._kill_group(proc.pid)
             try:
-                await asyncio.wait_for(proc.wait(), timeout=5)
+                await asyncio.wait_for(pump_and_wait(), timeout=self.timeout_s)
             except asyncio.TimeoutError:
-                proc.kill()
-                await proc.wait()
-        output = b"".join(chunks).decode("utf-8", errors="replace")
-        return self._report(proc.returncode, output, timed_out)
+                timed_out = True
+                self._kill_group(proc.pid)
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=5)
+                except asyncio.TimeoutError:
+                    proc.kill()
+                    await proc.wait()
+            finished = True
+        finally:
+            if not finished:
+                # Cancellation, KeyboardInterrupt, or any other exceptional exit: kill the
+                # whole group before the exception propagates.
+                self._kill_group(proc.pid)
+        return self._report(proc.returncode, buffer.text(), timed_out)
 
 
 # ---------------------------------------------------------------------------
@@ -389,9 +479,16 @@ class ScorerVerifier:
     def _to_verdict(self, score: Any) -> Verdict:
         value = getattr(score, "value", None)
         reason = getattr(score, "reason", None) or ""
-        passed = bool(getattr(score, "passed", False))
+        raw_passed = getattr(score, "passed", False)
+        passed = raw_passed is True
         shown = f"{float(value):.2f}" if isinstance(value, (int, float)) else str(value)
         report = "" if passed else (f"score {shown}: {reason}" if reason else f"score {shown}")
+        if not isinstance(raw_passed, bool):
+            note = (
+                f"{self.name} returned Score.passed of type {type(raw_passed).__name__} "
+                f"({raw_passed!r}); only a real bool decides a run, treating it as a failure"
+            )
+            report = f"{note}\n{report}" if report else note
         return Verdict(
             passed=passed,
             report=report,

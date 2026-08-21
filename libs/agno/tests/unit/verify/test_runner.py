@@ -109,6 +109,18 @@ def test_empty_verifiers_raise():
         run_verified(StubAgent(), "task", [])
 
 
+@pytest.mark.asyncio
+async def test_entry_errors_raise_through_the_async_runner_too():
+    with pytest.raises(ValueError, match="no verifiers"):
+        await arun_verified(StubAgent(), "task", [])
+    with pytest.raises(ValueError, match="fingerprint"):
+        await arun_verified(StubAgent(), "task", [always_pass], limits=VerifierLimits(stop_on_noop=True))
+    with pytest.raises(ValueError):
+        await arun_verified(StubAgent(), "task", [always_pass], stream=True)
+    with pytest.raises(ValueError, match="output_schema"):
+        await arun_verified(StubAgent(), "task", [always_pass], output_schema=dict)
+
+
 def test_stop_on_noop_without_fingerprint_raises():
     with pytest.raises(ValueError, match="fingerprint"):
         run_verified(StubAgent(), "task", [always_pass], limits=VerifierLimits(stop_on_noop=True))

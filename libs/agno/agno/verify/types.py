@@ -44,7 +44,10 @@ def cap_text(text: str, cap: int = REPORT_CAP_BYTES) -> str:
     if len(raw) <= cap:
         return text
     marker = ELISION.encode("utf-8")
-    budget = max(cap - len(marker), 0)
+    if cap < len(marker):
+        # A cap too small for the marker degrades to a plain head cut; never exceed it.
+        return raw[: max(cap, 0)].decode("utf-8", errors="ignore")
+    budget = cap - len(marker)
     head_bytes = budget // 3
     tail_bytes = budget - head_bytes
     head = raw[:head_bytes].decode("utf-8", errors="ignore")
@@ -67,8 +70,19 @@ class Verdict:
     data: Optional[Dict[str, Any]] = None
 
     def __post_init__(self) -> None:
+        if not isinstance(self.name, str):
+            self.name = "" if self.name is None else str(self.name)
         if not isinstance(self.report, str):
             self.report = str(self.report)
+        if not isinstance(self.passed, bool):
+            # Only a real bool decides a run. bool("false") is True; len(failures) is truthy;
+            # an exit code is truthy on failure. None of those may verify a run.
+            note = (
+                f"verifier set Verdict.passed to {type(self.passed).__name__} ({self.passed!r}); "
+                "only a real bool decides a run, treating it as a failure"
+            )
+            self.report = f"{note}\n{self.report}" if self.report else note
+            self.passed = False
         self.report = cap_text(self.report)
 
     def named(self, name: str) -> "Verdict":
@@ -116,7 +130,7 @@ class VerificationAttempt:
 
     @property
     def passed(self) -> bool:
-        return bool(self.verdicts) and all(v.passed for v in self.verdicts)
+        return bool(self.verdicts) and all(v.passed is True for v in self.verdicts)
 
     def to_dict(self) -> Dict[str, Any]:
         metrics = self.metrics
