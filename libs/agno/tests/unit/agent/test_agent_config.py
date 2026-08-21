@@ -1591,6 +1591,22 @@ class TestGetAgentsPagination:
         mock_warn.assert_called_once()
         assert "10 of 50" in mock_warn.call_args[0][0]
 
+    def test_a_total_that_is_not_a_count_returns_the_page_it_read(self, mock_db):
+        """BaseDb documents an int total, but nothing enforces it and the
+        baseline discarded the value entirely, so an adapter that reports no
+        total worked. Comparing the scan against it raises instead, and the
+        caller's own error handler turns that into an EMPTY listing -- the
+        silent-truncation failure the paging was added to remove."""
+        mock_db.list_components.return_value = (
+            [{"component_id": "agent-1"}, {"component_id": "agent-2"}],
+            None,
+        )
+        mock_db.get_config.side_effect = lambda component_id: {"config": {"id": component_id, "name": component_id}}
+
+        agents = get_agents(db=mock_db)
+
+        assert [a.id for a in agents] == ["agent-1", "agent-2"]
+
     def test_paging_advances_the_offset_past_the_first_block(self, sqlite_db):
         # A loop stuck at offset=0 still terminates (len >= total after two
         # identical pages) but returns duplicates and misses the tail; unique

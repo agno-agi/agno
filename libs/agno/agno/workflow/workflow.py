@@ -11513,7 +11513,12 @@ def get_workflows(
                     continue
                 seen_component_ids.add(row_id)
                 components.append(row)
-            if not page or scanned >= total:
+            # A total that is not a count says nothing about what is left, so
+            # this page is all there is to read. BaseDb documents an int, but
+            # the baseline discarded the total entirely and an adapter that
+            # returns None was fine; comparing against it would raise here and
+            # the caller would get an empty listing instead of a short one.
+            if not page or not isinstance(total, int) or scanned >= total:
                 break
             if scanned >= _COMPONENT_LIST_CAP:
                 log_warning(
