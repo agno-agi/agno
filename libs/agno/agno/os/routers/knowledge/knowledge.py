@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
 from agno.db.base import AsyncBaseDb
+from agno.exceptions import AgnoError
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
@@ -41,7 +42,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_knowledge_instance
+from agno.os.utils import AgnoHTTPException, get_knowledge_instance
 from agno.remote.base import RemoteKnowledge
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -491,6 +492,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 updated_content_dict = await knowledge.apatch_content(content, user_id=scoped_user_id)
             else:
                 updated_content_dict = knowledge.patch_content(content, user_id=scoped_user_id)
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error updating content: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error updating content: {str(e)}")
