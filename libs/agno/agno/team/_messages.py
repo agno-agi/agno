@@ -952,7 +952,6 @@ def _get_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1088,7 +1087,6 @@ async def _aget_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
