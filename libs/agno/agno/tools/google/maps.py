@@ -25,7 +25,7 @@ except ImportError:
     print("Error importing googlemaps. Please install the package using `pip install googlemaps google-maps-places`.")
 
 
-class GoogleMapTools(Toolkit):
+class GoogleMapsTools(Toolkit):
     def __init__(
         self,
         key: Optional[str] = None,
