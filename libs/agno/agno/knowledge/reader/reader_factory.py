@@ -60,6 +60,22 @@ class ReaderFactory:
             "name": "TavilyReader",
             "description": "Extracts content from URLs using Tavily's Extract API with markdown or text output",
         },
+        "youcom_search": {
+            "name": "YouSearchReader",
+            "description": "Reads unified You.com search results into chunked documents for RAG workflows",
+        },
+        "youcom_contents": {
+            "name": "YouContentsReader",
+            "description": "Reads You.com page contents and metadata for direct URL ingestion",
+        },
+        "youcom_research": {
+            "name": "YouResearchReader",
+            "description": "Reads You.com research answers with inline citations and optional source documents",
+        },
+        "youcom_finance": {
+            "name": "YouFinanceResearchReader",
+            "description": "Reads You.com finance research answers with inline citations and optional source documents",
+        },
         "youtube": {
             "name": "YouTubeReader",
             "description": "Extracts transcripts and metadata from YouTube videos and playlists",
@@ -236,6 +252,54 @@ class ReaderFactory:
         return TavilyReader(**config)
 
     @classmethod
+    def _get_youcom_search_reader(cls, **kwargs) -> Reader:
+        """Get You.com search reader instance."""
+        from agno.knowledge.reader.youcom.search_reader import YouSearchReader
+
+        config: Dict[str, Any] = {
+            "name": "You.com Search Reader",
+            "description": "Reads unified You.com search results into chunked documents for RAG workflows",
+        }
+        config.update(kwargs)
+        return YouSearchReader(**config)
+
+    @classmethod
+    def _get_youcom_contents_reader(cls, **kwargs) -> Reader:
+        """Get You.com contents reader instance."""
+        from agno.knowledge.reader.youcom.contents_reader import YouContentsReader
+
+        config: Dict[str, Any] = {
+            "name": "You.com Contents Reader",
+            "description": "Reads You.com page contents and metadata for direct URL ingestion",
+        }
+        config.update(kwargs)
+        return YouContentsReader(**config)
+
+    @classmethod
+    def _get_youcom_research_reader(cls, **kwargs) -> Reader:
+        """Get You.com research reader instance."""
+        from agno.knowledge.reader.youcom.research_reader import YouResearchReader
+
+        config: Dict[str, Any] = {
+            "name": "You.com Research Reader",
+            "description": "Reads You.com research answers with inline citations and optional source documents",
+        }
+        config.update(kwargs)
+        return YouResearchReader(**config)
+
+    @classmethod
+    def _get_youcom_finance_reader(cls, **kwargs) -> Reader:
+        """Get You.com finance research reader instance."""
+        from agno.knowledge.reader.youcom.finance_reader import YouFinanceResearchReader
+
+        config: Dict[str, Any] = {
+            "name": "You.com Finance Research Reader",
+            "description": "Reads You.com finance research answers with inline citations and optional source documents",
+        }
+        config.update(kwargs)
+        return YouFinanceResearchReader(**config)
+
+    @classmethod
     def _get_youtube_reader(cls, **kwargs) -> Reader:
         """Get YouTube reader instance."""
         from agno.knowledge.reader.youtube_reader import YouTubeReader
@@ -346,6 +410,10 @@ class ReaderFactory:
             "website": ("agno.knowledge.reader.website_reader", "WebsiteReader"),
             "firecrawl": ("agno.knowledge.reader.firecrawl_reader", "FirecrawlReader"),
             "tavily": ("agno.knowledge.reader.tavily_reader", "TavilyReader"),
+            "youcom_search": ("agno.knowledge.reader.youcom.search_reader", "YouSearchReader"),
+            "youcom_contents": ("agno.knowledge.reader.youcom.contents_reader", "YouContentsReader"),
+            "youcom_research": ("agno.knowledge.reader.youcom.research_reader", "YouResearchReader"),
+            "youcom_finance": ("agno.knowledge.reader.youcom.finance_reader", "YouFinanceResearchReader"),
             "youtube": ("agno.knowledge.reader.youtube_reader", "YouTubeReader"),
             "arxiv": ("agno.knowledge.reader.arxiv_reader", "ArxivReader"),
             "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
