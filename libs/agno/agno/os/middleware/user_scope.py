@@ -40,6 +40,7 @@ become no-ops in that case, preserving the legacy unscoped behaviour.
 """
 
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Tuple, Union
+from urllib.parse import unquote
 
 from fastapi import HTTPException, Query, Request
 
@@ -65,6 +66,7 @@ SESSION_ID_REQUIRED = "session_id is required for this action"
 WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a workflow run"
 SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
 INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
+MISSING_USER_IDENTITY = "Authenticated request is missing a user identity"
 
 
 def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
@@ -82,8 +84,12 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     Returns None (meaning "no filtering") when:
     - User isolation is not enabled (the opt-in
       ``AuthorizationConfig(user_isolation=True)`` flag is off).
-    - No user_id in the JWT.
     - The user has admin scope (admins see all data).
+    - The caller is the scheduler executor firing an *unowned* schedule. An owned
+      schedule scopes to the owner forwarded in ``SCHEDULE_OWNER_HEADER``.
+
+    Raises 403 when isolation is on and an authenticated caller carries no
+    identity, rather than falling through to unscoped.
 
     Returns the user_id string only when a regular (non-admin) user is
     authenticated AND user isolation is enabled.
@@ -127,7 +133,68 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return None
 
     if not user_id:
+        # An agno auth middleware ran (nothing else sets ``user_isolation_enabled``)
+        # and produced no identity — fail closed instead of falling through to unscoped.
+        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
+
+    # The sentinel identifies the caller, not an owner: scope to the schedule owner the
+    # executor forwarded. An unowned (system) schedule forwards none and stays unscoped.
+    from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+
+    if user_id == INTERNAL_SCHEDULER_USER_ID:
+        return _schedule_owner_from_header(request)
+
+    return user_id
+
+
+def _schedule_owner_from_header(request: Request) -> Optional[str]:
+    """Read the owner the executor forwarded for the schedule it is firing.
+
+    The executor percent-encodes the value, so decode before use. A header carrying
+    no usable identity is refused rather than treated as unowned.
+    """
+    from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
+    from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
+
+    raw = request.headers.get(SCHEDULE_OWNER_HEADER)
+    if raw is None:
         return None
+
+    owner = unquote(raw)
+    if not owner.strip() or owner == INTERNAL_SCHEDULER_USER_ID:
+        raise HTTPException(status_code=403, detail="Schedule owner is not a usable identity")
+    return owner
+
+
+def get_scoped_user_id_for_ws(
+    user_id: Optional[str],
+    *,
+    jwt_enabled: bool,
+    is_admin: bool,
+    user_isolation_enabled: bool,
+) -> Optional[str]:
+    """WebSocket counterpart of :func:`get_scoped_user_id`, with the same precedence.
+
+    Workflow WebSocket handlers have no ``Request`` to read ``request.state`` from,
+    so the auth flags are passed explicitly.
+
+    Raises 403 (like the REST helper) when isolation is on and the authenticated
+    caller carries no identity: returning ``None`` there would read as "unscoped
+    caller" and skip the run-ownership gates, so an identity-less token could
+    stream or continue any user's runs. Handlers catch the HTTPException and
+    surface it as a WS error event.
+    """
+    if is_admin:
+        return None
+
+    if isinstance(user_id, str) and user_id.startswith(SERVICE_ACCOUNT_PRINCIPAL_PREFIX):
+        return user_id
+
+    if not (jwt_enabled and user_isolation_enabled):
+        return None
+
+    if not user_id:
+        raise HTTPException(status_code=403, detail=MISSING_USER_IDENTITY)
 
     return user_id
 

@@ -6,8 +6,8 @@ pytest.importorskip("duckduckgo_search")
 pytest.importorskip("yfinance")
 
 from agno.agent import Agent
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.models.openai import OpenAIChat
 from agno.run import RunContext
 from agno.run.team import TeamRunOutput

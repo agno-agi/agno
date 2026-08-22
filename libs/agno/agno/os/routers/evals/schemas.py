@@ -62,6 +62,7 @@ class EvalSchema(BaseModel):
     workflow_id: Optional[str] = Field(None, description="Workflow ID that was evaluated")
     name: Optional[str] = Field(None, description="Name of the evaluation run")
     evaluated_component_name: Optional[str] = Field(None, description="Name of the evaluated component")
+    user_id: Optional[str] = Field(None, description="Owner of the evaluation run")
     eval_type: EvalType = Field(..., description="Type of evaluation (accuracy, performance, or reliability)")
     eval_data: Dict[str, Any] = Field(..., description="Evaluation results and metrics")
     eval_input: Optional[Dict[str, Any]] = Field(None, description="Input parameters used for the evaluation")
@@ -79,6 +80,7 @@ class EvalSchema(BaseModel):
             team_id=eval_run.get("team_id"),
             workflow_id=eval_run.get("workflow_id"),
             evaluated_component_name=eval_run.get("evaluated_component_name"),
+            user_id=eval_run.get("user_id"),
             eval_type=eval_run["eval_type"],
             eval_data=eval_run["eval_data"],
             eval_input=eval_run.get("eval_input"),

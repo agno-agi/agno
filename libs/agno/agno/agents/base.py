@@ -436,6 +436,36 @@ class BaseExternalAgent:
         elif isinstance(self.db, BaseDb):
             self.db.upsert_session(session)
 
+    async def _apersist_run_in_session(self, session: AgentSession, run_output: RunOutput) -> None:
+        """Append the run to the session and persist both (v3 denormalized storage).
+
+        upsert_session writes only the session row — runs live in their own
+        table and must be written via upsert_run, or history is silently lost.
+        Swallows DB failures so the caller still receives the RunOutput.
+        """
+        if session.runs is None:
+            session.runs = []
+        session.runs.append(run_output)
+        try:
+            await self.aupsert_session(session)
+            if self.db is not None:
+                run_index = len(session.runs) - 1
+                user_id = run_output.user_id or session.user_id
+                try:
+                    if isinstance(self.db, AsyncBaseDb):
+                        await self.db.upsert_run(
+                            run=run_output, session_id=session.session_id, user_id=user_id, run_index=run_index
+                        )
+                    elif isinstance(self.db, BaseDb):
+                        self.db.upsert_run(
+                            run=run_output, session_id=session.session_id, user_id=user_id, run_index=run_index
+                        )
+                except NotImplementedError:
+                    # Adapter not ported to v3 storage; runs persist inline via upsert_session
+                    pass
+        except Exception as upsert_err:
+            log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+
     # Run inspection (used by AgentOS /agents/{id}/runs/{run_id} for external agents)
 
     @staticmethod
@@ -602,16 +632,9 @@ class BaseExternalAgent:
                 status=RunStatus.error,
             )
 
-        # Persist the run to the session. Swallow DB failures so the caller still
-        # receives the RunOutput — matching agent/_storage.aupsert_session semantics.
+        # Persist the session row and the run row (v3 denormalized storage)
         if session is not None:
-            if session.runs is None:
-                session.runs = []
-            session.runs.append(run_output)
-            try:
-                await self.aupsert_session(session)
-            except Exception as upsert_err:
-                log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+            await self._apersist_run_in_session(session, run_output)
 
         return run_output
 
@@ -683,13 +706,7 @@ class BaseExternalAgent:
                 status=RunStatus.error if run_error is not None else RunStatus.completed,
                 tools=accumulated_tools if accumulated_tools else None,
             )
-            if session.runs is None:
-                session.runs = []
-            session.runs.append(run_output)
-            try:
-                await self.aupsert_session(session)
-            except Exception as upsert_err:
-                log_warning(f"Failed to persist run for {self.framework} agent '{self.id}': {upsert_err}")
+            await self._apersist_run_in_session(session, run_output)
 
         if run_error is not None:
             yield RunErrorEvent(

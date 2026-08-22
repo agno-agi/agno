@@ -26,10 +26,12 @@ from agno.os.schema import (
 from agno.os.services import runs as run_service
 from agno.os.services import sessions as session_service
 from agno.os.utils import (
+    find_factory_by_id,
     get_db,
     resolve_agent,
     resolve_team,
     resolve_workflow,
+    stamped_component_version,
 )
 from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
@@ -595,6 +597,8 @@ async def _resolve_run_component(
     user_id: Optional[str],
     session_id: Optional[str],
     strict: bool = True,
+    version: Optional[int] = None,
+    published_only: bool = True,
 ) -> Any:
     """Resolve a component for a run/lifecycle tool exactly as the REST routes do.
 
@@ -609,6 +613,12 @@ async def _resolve_run_component(
     - factory ``RequestContext`` built from the in-flight HTTP request, so ``AgentFactory``
       entries resolve instead of raising.
 
+    ``version``/``published_only`` mirror the REST lifecycle routes: continue/cancel
+    resolve with ``published_only=False`` (the run may live on a draft-only preview
+    component), and an explicit ``version`` re-resolves a run at its stamped version.
+    The resolvers apply the draft-preview gate (``allow_draft_preview``) for an
+    explicit version using the in-flight HTTP request's identity, identically to REST.
+
     The resolvers raise ``HTTPException``; MCP tools surface plain exceptions, so map it.
     """
     from fastapi import HTTPException
@@ -621,10 +631,12 @@ async def _resolve_run_component(
                 os.agents,
                 os.db,
                 os.registry,
+                version=version,
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
                 strict=strict,
+                published_only=published_only,
             )
         if kind == "teams":
             return await resolve_team(
@@ -632,20 +644,24 @@ async def _resolve_run_component(
                 os.teams,
                 db=os.db,
                 registry=os.registry,
+                version=version,
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
                 strict=strict,
+                published_only=published_only,
             )
         return await resolve_workflow(
             component_id,
             os.workflows,
             db=os.db,
             registry=os.registry,
+            version=version,
             request=request,
             user_id=user_id,
             session_id=session_id,
             strict=strict,
+            published_only=published_only,
         )
     except HTTPException as e:
         # Keep the id in the not-found message (the resolvers say only "Agent not found"),
@@ -774,21 +790,36 @@ def build_mcp_server(
             from agno.workflow.workflow import get_workflows
 
             registry = os.registry
-            agent_exclude = (registry.get_agent_ids() if registry else None) or None
+            # Owner scope for the DB-backed components, matching the REST list routes.
+            scoped_user_id = _scoped_caller_user_id()
+            # Exclude the ids this OS serves - what the code half above
+            # renders - not the registry's, which is a superset carrying
+            # rehydration context this listing never shows.
+            agent_exclude = {aid for a in os.agents or [] if (aid := getattr(a, "id", None)) is not None} or None
             for a in _accessible(
-                get_agents(db=os.db, registry=registry, exclude_component_ids=agent_exclude), "agents"
+                get_agents(db=os.db, registry=registry, exclude_component_ids=agent_exclude, user_id=scoped_user_id),
+                "agents",
             ):
                 try:
                     agents_out.append(AgentSummaryResponse.from_agent(a).model_dump())
                 except Exception:
                     logger.exception("Error summarizing DB agent for get_agentos_config")
-            team_exclude = (registry.get_team_ids() if registry else None) or None
-            for t in _accessible(get_teams(db=os.db, registry=registry, exclude_component_ids=team_exclude), "teams"):
+            team_exclude = {tid for t in os.teams or [] if (tid := getattr(t, "id", None)) is not None} or None
+            for t in _accessible(
+                get_teams(db=os.db, registry=registry, exclude_component_ids=team_exclude, user_id=scoped_user_id),
+                "teams",
+            ):
                 try:
                     teams_out.append(TeamSummaryResponse.from_team(t).model_dump())
                 except Exception:
                     logger.exception("Error summarizing DB team for get_agentos_config")
-            for w in _accessible(get_workflows(db=os.db, registry=registry), "workflows"):
+            workflow_exclude = {wid for w in os.workflows or [] if (wid := getattr(w, "id", None)) is not None} or None
+            for w in _accessible(
+                get_workflows(
+                    db=os.db, registry=registry, exclude_component_ids=workflow_exclude, user_id=scoped_user_id
+                ),
+                "workflows",
+            ):
                 try:
                     workflows_out.append(WorkflowSummaryResponse.from_workflow(w, is_component=True).model_dump())
                 except Exception:
@@ -929,13 +960,38 @@ def build_mcp_server(
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
         user_id = _resolve_user_id(user_id)
+        # published_only=False, like the REST /continue routes: the run may live
+        # on a draft-only preview component that has no published version.
         component = await _resolve_run_component(
-            os, component_type, component_id, user_id=user_id, session_id=session_id
+            os, component_type, component_id, user_id=user_id, session_id=session_id, published_only=False
         )
         await _verify_run_ownership(component, component_type, component_id, session_id, run_id)
         # A run paused on an admin-required approval must be resolved by an admin, not
         # self-continued by its initiator; same gate the REST /continue route enforces.
         await _enforce_run_continuation_allowed(os.db, run_id)
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now - same rule as the
+        # REST /continue routes. The resolver re-applies the draft-preview gate
+        # for the stamped version, so a forged stamp cannot reach a draft this
+        # caller may not preview. No stamp (legacy or unpinned runs) keeps
+        # today's resolution. Factories build per-request and remote components
+        # resolve remotely, so both are exempt; the stamp lives on the run,
+        # which is only readable with its session.
+        roster = {"agents": os.agents, "teams": os.teams, "workflows": os.workflows}[component_type]
+        if session_id and not isinstance(component, BaseRemote) and find_factory_by_id(component_id, roster) is None:
+            stamped_run = await component.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
+            stamped_version = stamped_component_version(stamped_run)
+            if stamped_version is not None:
+                component = await _resolve_run_component(
+                    os,
+                    component_type,
+                    component_id,
+                    user_id=user_id,
+                    session_id=session_id,
+                    version=stamped_version,
+                    published_only=False,
+                )
         await _report_progress(ctx, 0.0, f"Continuing run {run_id}")
         try:
             # Detach from FastMCP's tool-call span so the resumed run is its own root trace.
@@ -971,9 +1027,11 @@ def build_mcp_server(
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
         # Lenient: cancel needs only a handle on the component, and a drifted
-        # registry must never make a run uncancellable. Matches the REST route.
+        # registry must never make a run uncancellable. Matches the REST route
+        # (strict=False, published_only=False - a draft-only preview run must
+        # stay cancellable even though its component has no published version).
         component = await _resolve_run_component(
-            os, component_type, component_id, user_id=None, session_id=session_id, strict=False
+            os, component_type, component_id, user_id=None, session_id=session_id, strict=False, published_only=False
         )
         await _verify_run_ownership(component, component_type, component_id, session_id, run_id)
         await run_service.cancel_component_run(component, run_id)

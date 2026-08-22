@@ -7,6 +7,28 @@ from agno.models.message import Message
 from agno.utils.log import log_debug
 
 
+def copy_history_message(msg: Message) -> Message:
+    """Copy a history message and tag the copy with from_history=True.
+
+    Messages take a shallow copy: downstream consumers (tool-call filtering,
+    compression, scrubbing, provider formatting) rebind attributes on the
+    copy rather than mutating nested state, so the session's cached messages
+    stay untouched. Deep-copying every message costs ~11us per message per
+    turn, which compounds quadratically over a conversation.
+
+    Two shapes keep the deep copy because their nested state can be written
+    in place downstream: media-carrying messages (the media-offload refresh
+    writes fresh URLs and downloaded bytes into the media objects), and
+    messages whose content is a list of provider blocks (provider request
+    builders may alias the same list).
+    """
+    if msg.images or msg.videos or msg.audio or msg.files or msg.audio_output or isinstance(msg.content, list):
+        copied = deepcopy(msg)
+        copied.from_history = True
+        return copied
+    return msg.model_copy(update={"from_history": True})
+
+
 def safe_truncation_index(messages: Sequence[Message], requested_index: int) -> int:
     """Snap a requested truncation boundary DOWN to the nearest pair-safe index.
 

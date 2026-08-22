@@ -39,6 +39,17 @@ async def cleanup_metrics_and_sessions(async_postgres_db_real: AsyncPostgresDb):
         pass  # Ignore cleanup errors
 
 
+async def _persist(db: AsyncPostgresDb, session) -> None:
+    """Store a session the way v3 does: the row, then each run in the runs table.
+
+    ``upsert_session`` stopped writing the runs column when runs were normalised out, so a
+    metrics test that only called it would count no runs at all.
+    """
+    await db.upsert_session(session)
+    for run_index, run in enumerate(session.runs or []):
+        await db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
+
+
 @pytest.mark.asyncio
 async def test_get_metrics_empty(async_postgres_db_real: AsyncPostgresDb):
     """Test getting metrics when none exist"""
@@ -95,7 +106,7 @@ async def test_calculate_metrics_with_sessions(async_postgres_db_real: AsyncPost
         updated_at=current_time,
     )
 
-    await async_postgres_db_real.upsert_session(session)
+    await _persist(async_postgres_db_real, session)
 
     # Calculate metrics
     result = await async_postgres_db_real.calculate_metrics()
@@ -249,7 +260,7 @@ async def test_get_all_sessions_for_metrics_calculation(async_postgres_db_real: 
             created_at=current_time - (3600 * i),  # Spread over time
         )
 
-        await async_postgres_db_real.upsert_session(session)
+        await _persist(async_postgres_db_real, session)
 
     # Get all sessions for metrics
     sessions = await async_postgres_db_real._get_all_sessions_for_metrics_calculation()

@@ -172,20 +172,20 @@ def test_replace_file_chunk():
         assert new_contents == "line0\nsome\nstuff\nline3\n"
 
 
-def test_check_escape():
-    """Test check_escape service function"""
+def test_check_path():
+    """Test the path-containment check used by all file operations"""
     with tempfile.TemporaryDirectory() as tempdirname:
         base_dir = Path(tempdirname)
         f = FileTools(base_dir=base_dir)
-        flag, path = f.check_escape(".")
+        flag, path = f._check_path(".", base_dir)
         assert flag
         assert path.resolve() == base_dir.resolve()
-        flag, path = f.check_escape("..")
+        flag, path = f._check_path("..", base_dir)
         assert not (flag)
-        flag, path = f.check_escape("a/b/..")
+        flag, path = f._check_path("a/b/..", base_dir)
         assert flag
         assert path.resolve() == base_dir.joinpath(Path("a")).resolve()
-        flag, path = f.check_escape("a/b/../../..")
+        flag, path = f._check_path("a/b/../../..", base_dir)
         assert not (flag)
 
 

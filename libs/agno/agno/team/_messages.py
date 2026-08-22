@@ -8,6 +8,8 @@ if TYPE_CHECKING:
     from agno.team.team import Team
 
 import json
+import re
+import string
 from collections import ChainMap
 from typing import (
     Any,
@@ -41,11 +43,12 @@ from agno.utils.agent import (
     execute_system_message,
 )
 from agno.utils.common import is_typed_dict
+from agno.utils.knowledge import get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
     log_warning,
 )
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message
 from agno.utils.team import (
     get_member_id,
 )
@@ -481,6 +484,12 @@ def get_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
+    # 1.3.5 Tell the model what a result envelope is and how to read the rest
+    if team._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
+
     # 2 Build the default system message for the Team.
     system_message_content: str = ""
 
@@ -514,9 +523,12 @@ def get_system_message(
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
         build_context_fn = getattr(team.knowledge, "build_context", None)
         if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=team.enable_agentic_knowledge_filters,
+            # Filter keys rendered into the prompt come from stored content, so scope them like retrieval
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": team.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(
+                get_user_id_kwarg(build_context_fn, run_context.user_id if run_context else team.user_id)
             )
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
@@ -541,8 +553,8 @@ def get_system_message(
                 system_message_content += f"\n- {_memory.memory}"
             system_message_content += "\n</memories_from_previous_interactions>\n\n"
             system_message_content += (
-                "Note: this information is from previous interactions and may be updated in this conversation. "
-                "You should always prefer information from this conversation over the past memories.\n"
+                "Note: this information is from previous interactions and may be outdated. "
+                "You should ALWAYS prefer information from this conversation over the past memories.\n\n"
             )
         else:
             system_message_content += (
@@ -723,6 +735,12 @@ async def aget_system_message(
     if team.name is not None and team.add_name_to_context:
         additional_information.append(f"Your name is: {team.name}.")
 
+    # 1.3.5 Tell the model what a result envelope is and how to read the rest
+    if team._result_store is not None:
+        from agno.offload.tools import OFFLOAD_INSTRUCTION
+
+        additional_information.append(OFFLOAD_INSTRUCTION)
+
     # 2 Build the default system message for the Team.
     system_message_content: str = ""
 
@@ -753,11 +771,20 @@ async def aget_system_message(
 
     # 2.4 Knowledge base instructions
     if team.knowledge is not None and team.search_knowledge and team.add_search_knowledge_instructions:
+        # Prefer async version if available for async databases
+        abuild_context_fn = getattr(team.knowledge, "abuild_context", None)
         build_context_fn = getattr(team.knowledge, "build_context", None)
-        if callable(build_context_fn):
-            knowledge_context = build_context_fn(
-                enable_agentic_filters=team.enable_agentic_knowledge_filters,
-            )
+        scope_uid = run_context.user_id if run_context else team.user_id
+        if callable(abuild_context_fn):
+            abuild_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": team.enable_agentic_knowledge_filters}
+            abuild_context_kwargs.update(get_user_id_kwarg(abuild_context_fn, scope_uid))
+            knowledge_context = await abuild_context_fn(**abuild_context_kwargs)
+            if knowledge_context:
+                system_message_content += knowledge_context + "\n"
+        elif callable(build_context_fn):
+            build_context_kwargs: Dict[str, Any] = {"enable_agentic_filters": team.enable_agentic_knowledge_filters}
+            build_context_kwargs.update(get_user_id_kwarg(build_context_fn, scope_uid))
+            knowledge_context = build_context_fn(**build_context_kwargs)
             if knowledge_context:
                 system_message_content += knowledge_context + "\n"
 
@@ -782,8 +809,8 @@ async def aget_system_message(
                 system_message_content += f"\n- {_memory.memory}"
             system_message_content += "\n</memories_from_previous_interactions>\n\n"
             system_message_content += (
-                "Note: this information is from previous interactions and may be updated in this conversation. "
-                "You should always prefer information from this conversation over the past memories.\n"
+                "Note: this information is from previous interactions and may be outdated. "
+                "You should ALWAYS prefer information from this conversation over the past memories.\n\n"
             )
         else:
             system_message_content += (
@@ -925,8 +952,6 @@ def _get_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -940,12 +965,13 @@ def _get_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
+            history_copy = [copy_history_message(msg) for msg in history]
 
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.utils.media_offload import refresh_messages_media
+
+                refresh_messages_media(history_copy, team.media_storage)
 
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
@@ -1061,8 +1087,6 @@ async def _aget_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1075,12 +1099,13 @@ async def _aget_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
+            history_copy = [copy_history_message(msg) for msg in history]
 
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            # Refresh pre-signed URLs for media loaded from history
+            if team.media_storage is not None:
+                from agno.utils.media_offload import arefresh_messages_media
+
+                await arefresh_messages_media(history_copy, team.media_storage)
 
             # Filter tool calls from history messages
             if team.max_tool_calls_from_history is not None:
@@ -1517,10 +1542,13 @@ def _format_message_with_state_variables(
     run_context: Optional[RunContext] = None,
 ) -> Any:
     """Format a message with the session state variables from run_context."""
-    import re
-    import string
-
     if not isinstance(message, str):
+        return message
+
+    # A message without "{" cannot contain a {var} placeholder, and without "$"
+    # Template.safe_substitute is an identity transform - skip the regex and
+    # template machinery entirely for the common plain-text case.
+    if "{" not in message and "$" not in message:
         return message
 
     # Extract values from run_context
