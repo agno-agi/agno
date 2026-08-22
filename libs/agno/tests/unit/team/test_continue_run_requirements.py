@@ -927,6 +927,7 @@ class TestContinueRunApprovalResolution:
                 patch("agno.team._init._disconnect_connectable_tools"),
                 patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
                 patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._aresolve_callable_resources", new=AsyncMock()),
                 patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])),
                 patch("agno.team._tools._determine_tools_for_model", return_value=[]),
                 patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
@@ -1270,3 +1271,144 @@ class TestRoutingForwardsRunContextToMembers:
         assert "dependencies" not in kwargs
         assert "metadata" not in kwargs
         assert "knowledge_filters" not in kwargs
+
+
+# ===========================================================================
+# Factory members must be resolved before member requirements are routed
+# ===========================================================================
+
+
+class TestFactoryMemberContinueRouting:
+    """Regression: continue_run resolves callable-factory members before routing
+    member requirements. A fresh resume RunContext has members=None, so without
+    pre-routing resolution _find_member_route_by_id() returns None and the member
+    requirement fails with 'member not found'."""
+
+    def _build(self):
+        from unittest.mock import MagicMock
+
+        from agno.agent.agent import Agent
+        from agno.run.agent import RunOutput
+        from agno.team.team import Team
+        from agno.utils.team import get_member_id
+
+        member = Agent(name="Researcher", id="researcher")
+        member_id = get_member_id(member)
+        team = Team(name="Lead", members=lambda: [member], db=MagicMock())
+
+        tool = _make_tool_execution(tool_call_id="t1", requires_confirmation=True)
+        req = RunRequirement(tool)
+        req.member_agent_id = member_id
+        req.confirm()
+        req._member_run_response = RunOutput(run_id="m1", session_id="s1")
+
+        run_response = TeamRunOutput(run_id="run-1", session_id="s1", requirements=[req], tools=[tool])
+        return member, team, run_response
+
+    def test_acontinue_run_routes_to_factory_member(self):
+        from agno.run.agent import RunOutput
+        from agno.run.base import RunContext
+        from agno.team._run import _acontinue_run
+
+        member, team, run_response = self._build()
+        member.acontinue_run = AsyncMock(return_value=RunOutput(run_id="m1", session_id="s1", content="done"))
+
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        run_context = RunContext(run_id="run-1", session_id="s1", user_id="u1")
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+                patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
+                patch("agno.team._run._ahandle_team_tool_call_updates", new=AsyncMock()),
+                patch("agno.team._run._ahandle_model_response_for_continue", new=AsyncMock(return_value=None)),
+            ):
+                await _acontinue_run(team, session_id="s1", run_context=run_context, run_id="run-1", requirements=None)
+
+        asyncio.run(_exercise())
+        assert member.acontinue_run.called
+
+    def test_continue_run_dispatch_routes_to_factory_member(self):
+        from agno.run.agent import RunOutput
+        from agno.team._run import continue_run_dispatch
+
+        member, team, run_response = self._build()
+        member.continue_run = MagicMock(return_value=RunOutput(run_id="m1", session_id="s1", content="done"))
+
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        opts = SimpleNamespace(
+            stream=False,
+            stream_events=False,
+            yield_run_output=False,
+            dependencies=None,
+            knowledge_filters=None,
+            metadata=None,
+        )
+
+        with (
+            patch("agno.team._init._has_async_db", return_value=False),
+            patch("agno.team._init._initialize_session", return_value=("s1", None)),
+            patch("agno.team._storage._read_or_create_session", return_value=team_session),
+            patch("agno.team._storage._update_metadata"),
+            patch("agno.team._storage._load_session_state", return_value={}),
+            patch("agno.team._run_options.resolve_run_options", return_value=opts),
+            patch("agno.team._response.get_response_format", return_value=None),
+            patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+            patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
+            patch("agno.team._run._handle_team_tool_call_updates"),
+            patch("agno.team._run._continue_run", return_value=MagicMock()),
+        ):
+            continue_run_dispatch(team, run_id="run-1", session_id="s1", stream=False)
+
+        assert member.continue_run.called
+
+    def test_acontinue_run_stream_routes_to_factory_member(self):
+        from agno.run.agent import RunOutput
+        from agno.run.base import RunContext
+        from agno.team._run import _acontinue_run_stream
+
+        member, team, run_response = self._build()
+        member_reached = {"called": False}
+
+        async def _member_stream(*args, **kwargs):
+            member_reached["called"] = True
+            yield RunOutput(run_id="m1", session_id="s1", content="done")
+
+        async def _empty_async_gen(*args, **kwargs):
+            if False:  # pragma: no cover - empty async generator
+                yield
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+
+        team_session = MagicMock()
+        team_session.runs = [run_response]
+        run_context = RunContext(run_id="run-1", session_id="s1", user_id="u1")
+
+        async def _exercise():
+            with (
+                patch("agno.team._run._asetup_session", new=AsyncMock(return_value=team_session)),
+                patch("agno.team._run.aregister_run", new=AsyncMock()),
+                patch("agno.team._run.acleanup_run", new=AsyncMock()),
+                patch("agno.team._init._disconnect_connectable_tools"),
+                patch("agno.team._init._disconnect_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()),
+                patch("agno.team._tools._determine_tools_for_model", return_value=[]),
+                patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])),
+                patch("agno.team._run._ahandle_team_tool_call_updates", new=AsyncMock()),
+                patch("agno.team._response._ahandle_model_response_stream", side_effect=_empty_async_gen),
+            ):
+                async for _ in _acontinue_run_stream(
+                    team, session_id="s1", run_context=run_context, run_id="run-1", requirements=None
+                ):
+                    pass
+
+        asyncio.run(_exercise())
+        assert member_reached["called"]

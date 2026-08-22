@@ -744,6 +744,11 @@ def reason(
 
         reasoning_model = deepcopy(team.model)
 
+    # Resolve tools from run_context to handle callable-factory tools
+    from agno.utils.callables import get_resolved_tools
+
+    resolved_tools = get_resolved_tools(team, run_context)
+
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
@@ -751,7 +756,7 @@ def reason(
             reasoning_agent=team.reasoning_agent,
             min_steps=team.reasoning_min_steps,
             max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
+            tools=resolved_tools,
             tool_call_limit=team.tool_call_limit,
             use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
@@ -789,6 +794,11 @@ async def areason(
 
         reasoning_model = deepcopy(team.model)
 
+    # Resolve tools from run_context to handle callable-factory tools
+    from agno.utils.callables import get_resolved_tools
+
+    resolved_tools = get_resolved_tools(team, run_context)
+
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
@@ -796,7 +806,7 @@ async def areason(
             reasoning_agent=team.reasoning_agent,
             min_steps=team.reasoning_min_steps,
             max_steps=team.reasoning_max_steps,
-            tools=team.tools if isinstance(team.tools, list) else None,
+            tools=resolved_tools,
             tool_call_limit=team.tool_call_limit,
             use_json_mode=team.use_json_mode,
             telemetry=team.telemetry,
