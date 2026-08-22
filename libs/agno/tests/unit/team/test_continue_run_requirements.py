@@ -1019,7 +1019,7 @@ class TestContinueRunApprovalResolution:
 class TestRespondDirectlyMemberContinuation:
     cancellation = "Tool execution cancelled by the user: operation not approved."
 
-    def _make_case(self, *, respond_directly=True):
+    def _make_case(self, *, respond_directly=True, rejected=True):
         tool = _make_tool_execution(
             tool_call_id="member-tool-1",
             requires_confirmation=True,
@@ -1028,7 +1028,10 @@ class TestRespondDirectlyMemberContinuation:
         requirement.member_agent_id = "member-id-1"
         requirement.member_agent_name = "Member 1"
         requirement.member_run_id = "member-run-1"
-        requirement.reject("Not approved")
+        if rejected:
+            requirement.reject("Not approved")
+        else:
+            requirement.confirm()
 
         delegate_tool = _make_tool_execution(
             tool_call_id="delegate-tool-1",
@@ -1177,6 +1180,32 @@ class TestRespondDirectlyMemberContinuation:
         member.continue_run.assert_called_once()
         leader_model.assert_not_called()
         assert cleanup.call_count == 2
+
+    def test_sync_respond_directly_returns_approved_member_without_leader(self):
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, member_response = self._make_case(
+            rejected=False
+        )
+        member_response.content = "Approved member result"
+
+        with (
+            self._sync_dispatch_patches(session, member, member_run_output, requirement, self._sync_opts()),
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._run.handle_event"),
+            patch("agno.team._run.call_model_with_fallback") as leader_model,
+            patch("agno.team._run._cleanup_and_store"),
+            patch("agno.team._telemetry.log_team_telemetry"),
+        ):
+            result = continue_run_dispatch(team, run_response=run_response, stream=False)
+
+        assert result is run_response
+        assert result.status == RunStatus.completed
+        assert result.content == "Approved member result"
+        member.continue_run.assert_called_once()
+        leader_model.assert_not_called()
 
     @pytest.mark.parametrize("content", [False, 0, "", [], {}])
     def test_records_falsey_direct_member_content_exactly(self, content):
