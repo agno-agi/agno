@@ -17,7 +17,7 @@ def test_list_labels():
         tools = Neo4jTools("uri", "user", "password")
         labels = tools.list_labels()
         assert labels == ["Person", "Movie"]
-        mock_run.assert_called_with("CALL db.list_labels()")
+        mock_run.assert_called_with("CALL db.labels()")
 
 
 def test_list_labels_connection_error():
