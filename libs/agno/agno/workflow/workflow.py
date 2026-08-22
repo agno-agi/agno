@@ -10772,6 +10772,9 @@ class Workflow:
                     files=files,
                     stream_events=stream_events,
                     dependencies=dependencies,
+                    metadata=metadata,
+                    add_dependencies_to_context=add_dependencies_to_context,
+                    add_session_state_to_context=add_session_state_to_context,
                     background_tasks=background_tasks,
                     **kwargs,
                 )
