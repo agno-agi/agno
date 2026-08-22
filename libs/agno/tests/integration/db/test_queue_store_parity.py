@@ -463,3 +463,125 @@ class TestSyncPostgresContinueJobStamps:
             with engine.begin() as conn:
                 conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
             engine.dispose()
+
+
+class TestSessionSerializationParity:
+    """serialize_sessions: at most one live job per session, claimed in
+    submission order. A job is claimable only while it is the HEAD of its
+    session's line - the oldest non-terminal (queued/running/paused) job by
+    (created_at, id). Store-layer default is off; the worker passes
+    QueueConfig.serialize_sessions (default on)."""
+
+    @pytest.mark.asyncio
+    async def test_second_submission_waits_for_running_head(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        head = await store.claim_job("w1", serialize_sessions=True)
+        assert head["id"] == "r1"
+        assert await store.claim_job("w2", serialize_sessions=True) is None, (
+            "r2 must wait while its session's head is running"
+        )
+        assert await store.complete_job("r1", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", serialize_sessions=True)
+        assert nxt is not None and nxt["id"] == "r2"
+
+    @pytest.mark.asyncio
+    async def test_fifo_by_created_at_not_enqueue_order(self, store):
+        await store.enqueue_job(make_job("r_late", session_id="s1", created_at=1002))
+        await store.enqueue_job(make_job("r_early", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r_mid", session_id="s1", created_at=1001))
+        order = []
+        for worker in ("w1", "w2", "w3"):
+            job = await store.claim_job(worker, serialize_sessions=True)
+            order.append(job["id"])
+            assert await store.complete_job(job["id"], worker, job["attempt"], "completed")
+        assert order == ["r_early", "r_mid", "r_late"]
+
+    @pytest.mark.asyncio
+    async def test_paused_head_blocks_line_until_released(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", serialize_sessions=True)
+        assert await store.complete_job("r1", "w1", head["attempt"], "paused")
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        assert await store.claim_job("w2", serialize_sessions=True) is None, "a HITL pause holds the session's line"
+        assert await store.cancel_job("r1")
+        nxt = await store.claim_job("w2", serialize_sessions=True)
+        assert nxt is not None and nxt["id"] == "r2"
+
+    @pytest.mark.asyncio
+    async def test_different_sessions_claim_concurrently(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r2", session_id="s2", created_at=1001))
+        first = await store.claim_job("w1", serialize_sessions=True)
+        second = await store.claim_job("w2", serialize_sessions=True)
+        assert first is not None and second is not None
+        assert {first["id"], second["id"]} == {"r1", "r2"}
+
+    @pytest.mark.asyncio
+    async def test_stale_running_head_is_reclaimed_not_bypassed(self, store):
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000, max_attempts=2))
+        await store.claim_job("w1", serialize_sessions=True)
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        # grace=0 makes the fresh claim immediately stale; FIFO must reclaim
+        # the head, never skip past it to its successor
+        reclaimed = await store.claim_job("w2", 0, serialize_sessions=True)
+        assert reclaimed is not None and reclaimed["id"] == "r1"
+
+    @pytest.mark.asyncio
+    async def test_same_second_submission_never_two_live(self, store):
+        """created_at has 1-second resolution, so same-second siblings tie and
+        the (created_at, id) tiebreak alone would elect a NEW head while an
+        earlier submission executes (a lexicographically smaller uuid wins
+        the tie). The running-sibling check must block the claim regardless
+        of head order."""
+        await store.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", serialize_sessions=True)
+        assert head["id"] == "r_z"
+        await store.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+        assert await store.claim_job("w2", serialize_sessions=True) is None, (
+            "a smaller-id same-second sibling must not run beside its running sibling"
+        )
+        assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", serialize_sessions=True)
+        assert nxt is not None and nxt["id"] == "r_a"
+
+    @pytest.mark.asyncio
+    async def test_serialize_off_claims_session_siblings_concurrently(self, store):
+        """The opt-out restores today's behavior - and doubles as the pin
+        that the store-layer default stays off (direct callers unaffected)."""
+        await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+        first = await store.claim_job("w1")
+        second = await store.claim_job("w2")
+        assert first is not None and second is not None
+        assert {first["id"], second["id"]} == {"r1", "r2"}
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestSyncPostgresSessionSerialization:
+    """The sync Postgres claim twin (the parity fixture runs the ASYNC
+    adapter, so the sync adapter's head-of-line gate needs its own pin)."""
+
+    def test_head_of_line_gate(self):
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_syncser_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
+            db.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
+            db.enqueue_job(make_job("r3", session_id="s2", created_at=1002))
+            head = db.claim_job("w1", serialize_sessions=True)
+            assert head["id"] == "r1"
+            other = db.claim_job("w2", serialize_sessions=True)
+            assert other is not None and other["id"] == "r3", "s2 must not be blocked by s1's line"
+            assert db.claim_job("w3", serialize_sessions=True) is None
+            assert db.complete_job("r1", "w1", head["attempt"], "completed")
+            released = db.claim_job("w3", serialize_sessions=True)
+            assert released is not None and released["id"] == "r2"
+        finally:
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+            engine.dispose()

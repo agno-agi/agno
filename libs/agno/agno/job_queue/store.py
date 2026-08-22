@@ -52,19 +52,49 @@ class InMemoryQueueStore:
             return {"accepted": True, "reason": None, "job": dict(job)}
 
     async def claim_job(
-        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 60,
+        deployment_id: Optional[str] = None,
+        serialize_sessions: bool = False,
     ) -> Optional[Dict[str, Any]]:
         # Affinity filters BOTH branches - fresh claims and stale reclaims -
         # because a reclaim executes too. deployment_id=None degenerates to
         # claiming only unstamped jobs (mixed fleets safe by construction).
+        # serialize_sessions restricts claims to each session's HEAD: the
+        # oldest non-terminal (queued/running/paused) job, ordered by
+        # (created_at, id). The additional running-sibling check is what makes
+        # the exclusion hard under same-second submissions: created_at ties
+        # resolve by id, and a later submission with a smaller uuid would
+        # otherwise become the head while its sibling is still executing.
         async with self._lock:
             now = int(time.time())
             stale = now - lock_grace_seconds
+            session_heads: Dict[str, str] = {}
+            session_running: Dict[str, str] = {}
+            if serialize_sessions:
+                for j in self._jobs.values():
+                    session_id = j.get("session_id")
+                    if session_id is None or j["status"] not in ("queued", "running", "paused"):
+                        continue
+                    if j["status"] == "running":
+                        session_running[session_id] = j["id"]
+                    head = session_heads.get(session_id)
+                    if head is None or (j["created_at"], j["id"]) < (self._jobs[head]["created_at"], head):
+                        session_heads[session_id] = j["id"]
             candidates = [
                 j
                 for j in self._jobs.values()
                 if j["available_at"] <= now
                 and (j.get("deployment_id") is None or j.get("deployment_id") == deployment_id)
+                and (
+                    not serialize_sessions
+                    or j.get("session_id") is None
+                    or (
+                        session_heads.get(j["session_id"]) == j["id"]
+                        and session_running.get(j["session_id"], j["id"]) == j["id"]
+                    )
+                )
                 and (
                     j["status"] == "queued"
                     or (

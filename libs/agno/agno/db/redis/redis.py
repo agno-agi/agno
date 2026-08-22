@@ -2592,6 +2592,7 @@ class RedisDb(BaseDb):
                     self._q_save_job_in_pipe(pipe, job)
                     pipe.zadd(self._q_key("queued"), {job["id"]: job["available_at"]})
                     pipe.zadd(self._q_key("all"), {job["id"]: job["created_at"]})
+                    self._q_line_op(pipe, job)
                     pipe.execute()
                     return {"accepted": True, "reason": None, "job": dict(job)}
                 except WatchError:
@@ -2599,7 +2600,11 @@ class RedisDb(BaseDb):
         raise RuntimeError("enqueue_job: idempotency-key contention did not settle after 10 attempts")
 
     def claim_job(
-        self, worker_id: str, lock_grace_seconds: int = 60, deployment_id: Optional[str] = None
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 60,
+        deployment_id: Optional[str] = None,
+        serialize_sessions: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running
         within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
@@ -2611,12 +2616,29 @@ class RedisDb(BaseDb):
         head of foreign-deployment jobs starve matching jobs sitting behind
         them indefinitely (foreign entries stay queued at the front). Each
         page is pre-filtered with one pipelined MGET; the CAS inside
-        _q_try_claim remains the only authority."""
+        _q_try_claim remains the only authority.
+
+        serialize_sessions restricts claims to each session's HEAD - the
+        oldest non-terminal (queued/running/paused) job by (created_at, id) -
+        with no OTHER line member running. Eligibility is checked twice: an
+        advisory pre-filter in the scan (cheap, per candidate, against the
+        session-line zset), then authoritatively INSIDE the claim CAS with
+        the line key under WATCH - a concurrent enqueue into the session (a
+        new line member, however backdated) aborts the EXEC, so a stale
+        head decision can never be committed. The explicit running check
+        covers same-second submissions, where created_at ties and the id
+        tiebreak alone could elect a new head while a sibling executes."""
         now = self._q_server_now()
         stale = now - lock_grace_seconds
 
         job = self._q_scan_claim(
-            self._q_key("queued"), now, worker_id, now, expect_status="queued", deployment_id=deployment_id
+            self._q_key("queued"),
+            now,
+            worker_id,
+            now,
+            expect_status="queued",
+            deployment_id=deployment_id,
+            serialize_sessions=serialize_sessions,
         )
         if job is not None:
             return job
@@ -2628,7 +2650,70 @@ class RedisDb(BaseDb):
             expect_status="running",
             stale_before=stale,
             deployment_id=deployment_id,
+            serialize_sessions=serialize_sessions,
         )
+
+    def _q_line_key(self, session_id: str) -> str:
+        return self._q_key(f"line:{session_id}")
+
+    def _q_line_op(self, pipe: Any, job: Dict[str, Any]) -> None:
+        """Maintain the session-line zset inside the caller's MULTI: a member
+        exactly while its job is non-terminal (queued/running/paused), scored
+        by created_at - the member-id lexicographic tiebreak makes zset order
+        the claim order (created_at, id). Every transition MULTI routes
+        through this, the same pattern that keeps status-zset membership
+        crash-consistent with the document."""
+        session_id = job.get("session_id")
+        if not session_id:
+            return
+        line_key = self._q_line_key(session_id)
+        if job.get("status") in ("queued", "running", "paused"):
+            pipe.zadd(line_key, {job["id"]: job.get("created_at") or 0})
+        else:
+            pipe.zrem(line_key, job["id"])
+
+    def _q_session_line_view(self, session_id: str) -> List[Tuple[int, str, str]]:
+        """(created_at, id, status) of the session line's LIVE members, in
+        claim order. Bounded by the session's own backlog, never by retained
+        history. Dead entries (doc gone) and terminal stragglers (a crash
+        between a doc write and its line op) are skipped, not trusted."""
+        entries: List[Tuple[int, str, str]] = []
+        raw_ids = self.redis_client.zrange(self._q_line_key(session_id), 0, -1)
+        if not raw_ids:
+            return entries
+        member_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+        raw_docs = self.redis_client.mget([self._q_job_key(member_id) for member_id in member_ids])
+        for member_id, raw in zip(member_ids, raw_docs):
+            if raw is None:
+                continue
+            try:
+                doc = json.loads(raw if isinstance(raw, str) else raw.decode())
+            except (ValueError, AttributeError):
+                continue
+            if doc.get("status") not in ("queued", "running", "paused"):
+                continue
+            entries.append((doc.get("created_at") or 0, member_id, doc["status"]))
+        entries.sort()
+        return entries
+
+    def _q_line_admits(self, candidate: Dict[str, Any]) -> bool:
+        """Advisory pre-filter: the session line admits claiming this
+        candidate when it is the line's head and no OTHER member is running.
+        Jobs enqueued before the line zset existed self-heal in here on
+        their first claim attempt; older pre-upgrade siblings converge on
+        their own attempts, so serialization is best-effort until the
+        pre-upgrade backlog drains (noted on the flag). The claim CAS
+        re-validates under WATCH - this filter only saves CAS round-trips."""
+        session_id = candidate.get("session_id")
+        if not session_id:
+            return True
+        line_key = self._q_line_key(session_id)
+        if self.redis_client.zscore(line_key, candidate["id"]) is None:
+            self.redis_client.zadd(line_key, {candidate["id"]: candidate.get("created_at") or 0})
+        entries = self._q_session_line_view(session_id)
+        if not entries or entries[0][1] != candidate["id"]:
+            return False
+        return not any(status == "running" and member_id != candidate["id"] for _, member_id, status in entries)
 
     def _q_scan_claim(
         self,
@@ -2639,6 +2724,7 @@ class RedisDb(BaseDb):
         expect_status: str,
         stale_before: Optional[int] = None,
         deployment_id: Optional[str] = None,
+        serialize_sessions: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Page through ready jobs oldest-first, cheaply pre-filter each page
         by deployment affinity (MGET, advisory only), and CAS-claim the first
@@ -2667,12 +2753,15 @@ class RedisDb(BaseDb):
                     continue
                 if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
                     continue
+                if serialize_sessions and not self._q_line_admits(candidate):
+                    continue
                 job = self._q_try_claim(
                     job_id,
                     worker_id,
                     now,
                     expect_status=expect_status,
                     stale_before=stale_before,
+                    serialize_sessions=serialize_sessions,
                     deployment_id=deployment_id,
                 )
                 if job is not None:
@@ -2687,6 +2776,7 @@ class RedisDb(BaseDb):
         expect_status: str,
         stale_before: Optional[int] = None,
         deployment_id: Optional[str] = None,
+        serialize_sessions: bool = False,
     ) -> Optional[Dict[str, Any]]:
         from redis.exceptions import WatchError
 
@@ -2716,6 +2806,26 @@ class RedisDb(BaseDb):
                 if not claimable:
                     pipe.unwatch()
                     return None
+                if serialize_sessions and job.get("session_id"):
+                    # Authoritative head re-check with the LINE KEY under
+                    # WATCH: the reads below happen after the watch, so a
+                    # concurrent enqueue into this session (a new member,
+                    # however backdated its created_at) modifies the line and
+                    # aborts this EXEC - the advisory pre-filter's decision
+                    # can never be committed stale. The only transition that
+                    # sets a sibling running is a claim, and a claim under
+                    # this gate can only target the same head row, which is
+                    # already arbitrated by the job-key WATCH.
+                    pipe.watch(self._q_line_key(job["session_id"]))
+                    entries = self._q_session_line_view(job["session_id"])
+                    admitted = bool(entries) and entries[0][1] == job_id
+                    if admitted:
+                        admitted = not any(
+                            status == "running" and member_id != job_id for _, member_id, status in entries
+                        )
+                    if not admitted:
+                        pipe.unwatch()
+                        return None
                 job.update(
                     status="running", locked_by=worker_id, locked_at=now, attempt=job["attempt"] + 1, updated_at=now
                 )
@@ -2723,6 +2833,7 @@ class RedisDb(BaseDb):
                 self._q_save_job_in_pipe(pipe, job)
                 pipe.zrem(self._q_key("queued"), job_id)
                 pipe.zadd(self._q_key("running"), {job_id: now})
+                self._q_line_op(pipe, job)
                 pipe.execute()
                 return job
         except WatchError:
@@ -2772,6 +2883,7 @@ class RedisDb(BaseDb):
                         pipe.zrem(self._q_key("running"), job_id)
                     if job["status"] == "queued":
                         pipe.zadd(self._q_key("queued"), {job_id: job["available_at"]})
+                    self._q_line_op(pipe, job)
                     pipe.execute()
                     return QueueWriteOutcome.APPLIED, job
             except WatchError:
@@ -2861,6 +2973,7 @@ class RedisDb(BaseDb):
                 job.update(status=status, error=error, locked_by=None, locked_at=None, completed_at=now, updated_at=now)
                 pipe.multi()
                 self._q_save_job_in_pipe(pipe, job)
+                self._q_line_op(pipe, job)
                 pipe.execute()
                 return True
         except WatchError:
@@ -2890,6 +3003,7 @@ class RedisDb(BaseDb):
                 pipe.multi()
                 self._q_save_job_in_pipe(pipe, job)
                 pipe.zrem(self._q_key("queued"), job_id)
+                self._q_line_op(pipe, job)
                 pipe.execute()
                 return True
         except WatchError:
@@ -2960,6 +3074,7 @@ class RedisDb(BaseDb):
                 # Keep running-zset membership in the same transaction with
                 # the refreshed score (the sweep scan keys on this score)
                 pipe.zadd(self._q_key("running"), {job_id: now})
+                self._q_line_op(pipe, job)
                 pipe.execute()
                 return True
         except WatchError:
@@ -2990,6 +3105,7 @@ class RedisDb(BaseDb):
                 pipe.multi()
                 self._q_save_job_in_pipe(pipe, job)
                 pipe.zrem(self._q_key("running"), job_id)
+                self._q_line_op(pipe, job)
                 pipe.execute()
                 return True
         except WatchError:
@@ -3061,6 +3177,7 @@ class RedisDb(BaseDb):
                 pipe.multi()
                 self._q_save_job_in_pipe(pipe, job)
                 pipe.zadd(self._q_key("queued"), {job_id: now})
+                self._q_line_op(pipe, job)
                 pipe.execute()
                 return True
         except WatchError:
@@ -3119,6 +3236,7 @@ class RedisDb(BaseDb):
                     pipe.multi()
                     self._q_save_job_in_pipe(pipe, job)
                     pipe.zadd(self._q_key("queued"), {job_id: now})
+                    self._q_line_op(pipe, job)
                     pipe.execute()
                     return {"outcome": "queued", "job": job}
             except WatchError:
@@ -3178,6 +3296,7 @@ class RedisDb(BaseDb):
                     pipe.zrem(self._q_key("all"), job_id)
                     pipe.zrem(self._q_key("queued"), job_id)
                     pipe.zrem(self._q_key("running"), job_id)
+                    self._q_line_op(pipe, job)
                     pipe.execute()
                     removed += 1
             except WatchError:
