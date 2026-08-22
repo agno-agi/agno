@@ -1079,8 +1079,11 @@ jobs:
         working-directory: .
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
-          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          # One resolve for both editables: the local agnoctl satisfies agno's floor
+          # requirements.txt is deliberately not installed here. It is a lockfile
+          # of published versions, and around a release it names an agnoctl that
+          # is not on PyPI yet, so the resolve fails before the editables below
+          # ever run. Those editables install agno's full dependency set anyway.
+          # One resolve for both: the local agnoctl satisfies agno's floor.
           VIRTUAL_ENV=.venv uv pip install -e ./libs/agnoctl -e ./libs/agno[dev,os,integration-tests,openai]
           # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
           VIRTUAL_ENV=.venv uv pip install "a2a-sdk>=0.3.0,<1.0"
