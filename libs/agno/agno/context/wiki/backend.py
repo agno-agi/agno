@@ -36,7 +36,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from agno.context.provider import Status
+from agno.context.types import Status
 from agno.context.wiki.git_ops import GitError, Scrubber, build_authenticated_url
 from agno.context.wiki.git_ops import run as git_run
 from agno.context.wiki.notion_ops import (

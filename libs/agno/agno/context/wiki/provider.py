@@ -27,7 +27,8 @@ from agno.agent import Agent
 from agno.context._utils import answer_from_run
 from agno.context.backend import ContextBackend
 from agno.context.mode import ContextMode
-from agno.context.provider import Answer, ContextProvider, Status
+from agno.context.provider import ContextProvider
+from agno.context.types import Answer, Status
 from agno.context.wiki.backend import CommitSummary, WikiBackend
 from agno.run import RunContext
 from agno.tools import tool
@@ -220,7 +221,7 @@ class WikiContextProvider(ContextProvider):
         Uses the same streaming gating as base: stream_sub_agent_events=True
         streams via _arun_sub_agent_stream, False runs via _arun_sub_agent.
         """
-        from agno.context.provider import serialize_answer
+        from agno.context._utils import serialize_answer
 
         provider = self
 
