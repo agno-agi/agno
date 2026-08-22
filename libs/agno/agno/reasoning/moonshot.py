@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, AsyncIterator, Iterator, List, Optional, Tuple
+from typing import TYPE_CHECKING, AsyncIterator, Dict, Iterator, List, Optional, Tuple
+
+import httpx
 
 from agno.models.base import Model
 from agno.models.message import Message
@@ -9,18 +11,70 @@ from agno.utils.log import log_warning
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
+# Fallback substrings used only when the /v1/models capability lookup fails. Kimi K3 always
+# reasons, and the "thinking" variants (e.g. kimi-k2-thinking) are dedicated reasoning models.
+_MOONSHOT_FALLBACK_SUBSTRINGS = (
+    "k3",
+    "thinking",
+)
 
-def is_ai_foundry_reasoning_model(reasoning_model: Model) -> bool:
-    return reasoning_model.__class__.__name__ == "AzureAIFoundry" and any(
-        s in reasoning_model.id.lower() for s in ("deepseek", "o1", "o3", "o4", "gpt-5", "reasoning")
-    )
+
+def _fetch_moonshot_models(reasoning_model: Model) -> Dict[str, bool]:
+    """Fetch {model_id: supports_reasoning} from the Moonshot models catalog.
+
+    Uses the OpenAI-compatible GET /v1/models endpoint, whose model objects carry a
+    ``supports_reasoning`` boolean. Returns an empty mapping on any failure so the caller
+    can fall back to substring matching.
+    """
+    base_url = getattr(reasoning_model, "base_url", None) or "https://api.moonshot.ai/v1"
+    catalog: Dict[str, bool] = {}
+    try:
+        api_key = getattr(reasoning_model, "api_key", None)
+        headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+        response = httpx.get(f"{base_url.rstrip('/')}/models", headers=headers, timeout=10.0)
+        response.raise_for_status()
+        for entry in response.json().get("data", []):
+            model_id = entry.get("id")
+            if model_id:
+                catalog[model_id] = bool(entry.get("supports_reasoning"))
+    except Exception as e:
+        log_warning(f"Could not fetch Moonshot models catalog, falling back to model id: {str(e)}")
+    return catalog
 
 
-def get_ai_foundry_reasoning(
+def _moonshot_fallback(model_id: str) -> bool:
+    model_id = model_id.lower()
+    return any(substring in model_id for substring in _MOONSHOT_FALLBACK_SUBSTRINGS)
+
+
+def is_moonshot_reasoning_model(reasoning_model: Model) -> bool:
+    """Check if a Moonshot (Kimi) model supports reasoning.
+
+    Uses the Moonshot API (GET /v1/models -> supports_reasoning) to detect reasoning
+    support, and falls back to a substring match on the model id only if the API call fails
+    or the model is not found in the catalog.
+    """
+    if reasoning_model.__class__.__name__ != "MoonShot":
+        return False
+
+    catalog = _fetch_moonshot_models(reasoning_model)
+    supports_reasoning = catalog.get(reasoning_model.id)
+    if supports_reasoning is not None:
+        return supports_reasoning
+
+    return _moonshot_fallback(reasoning_model.id)
+
+
+def get_moonshot_reasoning(
     reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
     messages: List[Message],
     run_metrics: Optional["RunMetrics"] = None,
 ) -> Optional[Message]:
+    # Update system message role to "system"
+    for message in messages:
+        if message.role == "developer":
+            message.role = "system"
+
     try:
         reasoning_agent_response = reasoning_agent.run(input=messages)
     except Exception as e:
@@ -33,28 +87,29 @@ def get_ai_foundry_reasoning(
 
         accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
+    # Kimi returns its chain of thought in the OpenAI-compatible reasoning_content field.
     reasoning_content: str = ""
-    # We use the normal content as no reasoning content is returned
-    if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
-        content = reasoning_agent_response.content
-        if "<think>" in content and "</think>" in content:
-            start_idx = content.find("<think>") + len("<think>")
-            end_idx = content.find("</think>")
-            reasoning_content = content[start_idx:end_idx].strip()
-        else:
-            reasoning_content = content
+    if reasoning_agent_response.messages is not None:
+        for msg in reasoning_agent_response.messages:
+            if msg.reasoning_content is not None:
+                reasoning_content = msg.reasoning_content
+                break
 
     return Message(
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
     )
 
 
-async def aget_ai_foundry_reasoning(
+async def aget_moonshot_reasoning(
     reasoning_agent: "Agent",  # type: ignore[name-defined]  # noqa: F821
     messages: List[Message],
     run_metrics: Optional["RunMetrics"] = None,
 ) -> Optional[Message]:
+    # Update system message role to "system"
+    for message in messages:
+        if message.role == "developer":
+            message.role = "system"
+
     try:
         reasoning_agent_response = await reasoning_agent.arun(input=messages)
     except Exception as e:
@@ -68,29 +123,23 @@ async def aget_ai_foundry_reasoning(
         accumulate_eval_metrics(reasoning_agent_response.metrics, run_metrics, prefix="reasoning")
 
     reasoning_content: str = ""
-    if reasoning_agent_response.content is not None:
-        # Extract content between <think> tags if present
-        content = reasoning_agent_response.content
-        if "<think>" in content and "</think>" in content:
-            start_idx = content.find("<think>") + len("<think>")
-            end_idx = content.find("</think>")
-            reasoning_content = content[start_idx:end_idx].strip()
-        else:
-            reasoning_content = content
+    if reasoning_agent_response.messages is not None:
+        for msg in reasoning_agent_response.messages:
+            if msg.reasoning_content is not None:
+                reasoning_content = msg.reasoning_content
+                break
 
     return Message(
         role="assistant", content=f"<thinking>\n{reasoning_content}\n</thinking>", reasoning_content=reasoning_content
     )
 
 
-def get_ai_foundry_reasoning_stream(
+def get_moonshot_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
     messages: List[Message],
 ) -> Iterator[Tuple[Optional[str], Optional[Message]]]:
     """
-    Stream reasoning content from Azure AI Foundry model.
-
-    For DeepSeek-R1 models, we use the main content output as reasoning content.
+    Stream reasoning content from a Kimi model.
 
     Yields:
         Tuple of (reasoning_content_delta, final_message)
@@ -99,20 +148,21 @@ def get_ai_foundry_reasoning_stream(
     """
     from agno.run.agent import RunEvent
 
+    # Update system message role to "system"
+    for message in messages:
+        if message.role == "developer":
+            message.role = "system"
+
     reasoning_content: str = ""
 
     try:
         for event in reasoning_agent.run(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
-                    # Check for reasoning_content attribute first (native reasoning)
+                    # Stream reasoning content as it arrives
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         reasoning_content += event.reasoning_content
                         yield (event.reasoning_content, None)
-                    # Use the main content as reasoning content
-                    elif hasattr(event, "content") and event.content:
-                        reasoning_content += event.content
-                        yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
@@ -129,14 +179,12 @@ def get_ai_foundry_reasoning_stream(
         yield (None, final_message)
 
 
-async def aget_ai_foundry_reasoning_stream(
+async def aget_moonshot_reasoning_stream(
     reasoning_agent: "Agent",  # type: ignore  # noqa: F821
     messages: List[Message],
 ) -> AsyncIterator[Tuple[Optional[str], Optional[Message]]]:
     """
-    Stream reasoning content from Azure AI Foundry model asynchronously.
-
-    For DeepSeek-R1 models, we use the main content output as reasoning content.
+    Stream reasoning content from a Kimi model asynchronously.
 
     Yields:
         Tuple of (reasoning_content_delta, final_message)
@@ -145,20 +193,21 @@ async def aget_ai_foundry_reasoning_stream(
     """
     from agno.run.agent import RunEvent
 
+    # Update system message role to "system"
+    for message in messages:
+        if message.role == "developer":
+            message.role = "system"
+
     reasoning_content: str = ""
 
     try:
         async for event in reasoning_agent.arun(input=messages, stream=True, stream_events=True):
             if hasattr(event, "event"):
                 if event.event == RunEvent.run_content:
-                    # Check for reasoning_content attribute first (native reasoning)
+                    # Stream reasoning content as it arrives
                     if hasattr(event, "reasoning_content") and event.reasoning_content:
                         reasoning_content += event.reasoning_content
                         yield (event.reasoning_content, None)
-                    # Use the main content as reasoning content
-                    elif hasattr(event, "content") and event.content:
-                        reasoning_content += event.content
-                        yield (event.content, None)
                 elif event.event == RunEvent.run_completed:
                     pass
     except Exception as e:
