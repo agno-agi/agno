@@ -46,7 +46,20 @@ class TrafilaturaTools(Toolkit):
         max_tree_size (Optional[int]): Maximum tree size for processing.
         max_crawl_urls (int): Maximum number of URLs to crawl per website.
         max_known_urls (int): Maximum number of known URLs during crawling.
+        scrape (bool): Enable scrape tool (fetch URL, extract text). Defaults to True.
+        get_metadata (bool): Enable get_metadata tool. Defaults to True.
+        convert_html (bool): Enable convert_html tool (local HTML to text). Defaults to True.
+        scrape_batch (bool): Enable scrape_batch tool. Defaults to True.
+        crawl (bool): Enable crawl tool (spider a website). Defaults to True.
     """
+
+    _legacy_param_aliases = {
+        "enable_extract_text": "scrape",
+        "enable_extract_metadata_only": "get_metadata",
+        "enable_html_to_text": "convert_html",
+        "enable_extract_batch": "scrape_batch",
+        "enable_crawl_website": "crawl",
+    }
 
     def __init__(
         self,
@@ -64,12 +77,11 @@ class TrafilaturaTools(Toolkit):
         max_tree_size: Optional[int] = None,
         max_crawl_urls: int = 10,
         max_known_urls: int = 100000,
-        # Tool enable flags for <6 functions
-        extract_text: bool = True,
-        extract_metadata_only: bool = True,
-        html_to_text: bool = True,
-        extract_batch: bool = True,
-        crawl_website: bool = True,
+        scrape: bool = True,
+        get_metadata: bool = True,
+        convert_html: bool = True,
+        scrape_batch: bool = True,
+        crawl: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -89,20 +101,20 @@ class TrafilaturaTools(Toolkit):
         self.max_known_urls = max_known_urls
 
         tools: List[Callable] = []
-        if all or extract_text:
-            tools.append(self.extract_text)
-        if all or extract_metadata_only:
-            tools.append(self.extract_metadata_only)
-        if all or html_to_text:
-            tools.append(self.html_to_text)
-        if all or extract_batch:
-            tools.append(self.extract_batch)
+        if all or scrape:
+            tools.append(self.scrape)
+        if all or get_metadata:
+            tools.append(self.get_metadata)
+        if all or convert_html:
+            tools.append(self.convert_html)
+        if all or scrape_batch:
+            tools.append(self.scrape_batch)
 
-        if all or crawl_website:
+        if all or crawl:
             if not SPIDER_AVAILABLE:
                 logger.warning("Web crawling requested but spider module not available. Skipping crawler tool.")
             else:
-                tools.append(self.crawl_website)
+                tools.append(self.crawl)
 
         super().__init__(name="trafilatura_tools", tools=tools, **kwargs)
 
@@ -141,7 +153,7 @@ class TrafilaturaTools(Toolkit):
             "author_blacklist": author_blacklist,
         }
 
-    def extract_text(
+    def scrape(
         self,
         url: str,
         output_format: Optional[str] = None,
@@ -181,7 +193,7 @@ class TrafilaturaTools(Toolkit):
             log_warning(f"Error extracting text from {url}: {str(e)}")
             return f"Error extracting text from {url}: {e}"
 
-    def extract_metadata_only(
+    def get_metadata(
         self,
         url: str,
         as_json: bool = True,
@@ -229,7 +241,7 @@ class TrafilaturaTools(Toolkit):
             log_warning(f"Error extracting metadata from {url}: {str(e)}")
             return f"Error extracting metadata from {url}: {e}"
 
-    def crawl_website(
+    def crawl(
         self,
         homepage_url: str,
         extract_content: bool = False,
@@ -304,7 +316,7 @@ class TrafilaturaTools(Toolkit):
             log_warning(f"Error crawling website {homepage_url}: {str(e)}")
             return f"Error crawling website {homepage_url}: {e}"
 
-    def html_to_text(
+    def convert_html(
         self,
         html_content: str,
         clean: bool = True,
@@ -333,7 +345,7 @@ class TrafilaturaTools(Toolkit):
             log_warning(f"Error converting HTML to text: {str(e)}")
             return f"Error converting HTML to text: {e}"
 
-    def extract_batch(
+    def scrape_batch(
         self,
         urls: List[str],
     ) -> str:

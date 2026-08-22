@@ -31,18 +31,24 @@ def _remove_file_if_exists(path: Optional[str]) -> None:
 class MoviePyVideoTools(Toolkit):
     """Tool for processing video files, extracting audio, transcribing and adding captions"""
 
+    _legacy_param_aliases = {
+        "enable_process_video": "extract_audio",
+        "enable_generate_captions": "create_srt",
+        "enable_embed_captions": "embed_captions",
+    }
+
     def __init__(
         self,
-        process_video: bool = True,
-        generate_captions: bool = True,
+        extract_audio: bool = True,
+        create_srt: bool = True,
         embed_captions: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools: List[Any] = []
-        if process_video or all:
+        if extract_audio or all:
             tools.append(self.extract_audio)
-        if generate_captions or all:
+        if create_srt or all:
             tools.append(self.create_srt)
         if embed_captions or all:
             tools.append(self.embed_captions)

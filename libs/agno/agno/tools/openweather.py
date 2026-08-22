@@ -18,22 +18,29 @@ class OpenWeatherTools(Toolkit):
     Args:
         api_key (Optional[str]): OpenWeatherMap API key. If not provided, will try to get from OPENWEATHER_API_KEY env var.
         units (str): Units of measurement. Options are 'standard', 'metric', and 'imperial'. Default is 'metric'.
-        enable_current_weather (bool): Enable current weather function. Default is True.
-        enable_forecast (bool): Enable forecast function. Default is True.
-        enable_air_pollution (bool): Enable air pollution function. Default is True.
-        enable_geocoding (bool): Enable geocoding function. Default is True.
+        get_current_weather (bool): Enable current weather function. Default is True.
+        get_forecast (bool): Enable forecast function. Default is True.
+        get_air_pollution (bool): Enable air pollution function. Default is True.
+        geocode_location (bool): Enable geocoding function. Default is True.
         all (bool): Enable all functions. Default is False.
         timeout (int): Per-request HTTP timeout in seconds. Default is 30.
     """
+
+    _legacy_param_aliases = {
+        "enable_current_weather": "get_current_weather",
+        "enable_forecast": "get_forecast",
+        "enable_air_pollution": "get_air_pollution",
+        "enable_geocoding": "geocode_location",
+    }
 
     def __init__(
         self,
         api_key: Optional[str] = None,
         units: str = "metric",
-        current_weather: bool = True,
-        forecast: bool = True,
-        air_pollution: bool = True,
-        geocoding: bool = True,
+        get_current_weather: bool = True,
+        get_forecast: bool = True,
+        get_air_pollution: bool = True,
+        geocode_location: bool = True,
         all: bool = False,
         timeout: int = 30,
         **kwargs,
@@ -49,13 +56,13 @@ class OpenWeatherTools(Toolkit):
         self.geo_url = "https://api.openweathermap.org/geo/1.0"
 
         tools: List[Any] = []
-        if current_weather or all:
+        if get_current_weather or all:
             tools.append(self.get_current_weather)
-        if forecast or all:
+        if get_forecast or all:
             tools.append(self.get_forecast)
-        if air_pollution or all:
+        if get_air_pollution or all:
             tools.append(self.get_air_pollution)
-        if geocoding or all:
+        if geocode_location or all:
             tools.append(self.geocode_location)
 
         super().__init__(name="openweather_tools", tools=tools, timeout=timeout, **kwargs)
