@@ -25,7 +25,7 @@ except ImportError:
     print("Error importing googlemaps. Please install the package using `pip install googlemaps google-maps-places`.")
 
 
-class GoogleMapTools(Toolkit):
+class GoogleMapsTools(Toolkit):
     def __init__(
         self,
         key: Optional[str] = None,
@@ -37,6 +37,7 @@ class GoogleMapTools(Toolkit):
         get_distance_matrix: bool = True,
         get_elevation: bool = True,
         get_timezone: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = key or getenv("GOOGLE_MAPS_API_KEY")
@@ -47,21 +48,21 @@ class GoogleMapTools(Toolkit):
         self.places_client = places_v1.PlacesClient()
 
         tools: List[Any] = []
-        if search_places:
+        if all or search_places:
             tools.append(self.search_places)
-        if get_directions:
+        if all or get_directions:
             tools.append(self.get_directions)
-        if validate_address:
+        if all or validate_address:
             tools.append(self.validate_address)
-        if geocode_address:
+        if all or geocode_address:
             tools.append(self.geocode_address)
-        if reverse_geocode:
+        if all or reverse_geocode:
             tools.append(self.reverse_geocode)
-        if get_distance_matrix:
+        if all or get_distance_matrix:
             tools.append(self.get_distance_matrix)
-        if get_elevation:
+        if all or get_elevation:
             tools.append(self.get_elevation)
-        if get_timezone:
+        if all or get_timezone:
             tools.append(self.get_timezone)
 
         super().__init__(name="google_maps", tools=tools, **kwargs)

@@ -12,14 +12,14 @@ class WebTools(Toolkit):
     def __init__(
         self,
         retries: int = 3,
-        enable_expand_url: bool = True,
+        expand_url: bool = True,
         all: bool = False,
         **kwargs,
     ):
         self.retries = retries
 
         tools = []
-        if all or enable_expand_url:
+        if all or expand_url:
             tools.append(self.expand_url)
 
         super().__init__(name="web_tools", tools=tools, **kwargs)

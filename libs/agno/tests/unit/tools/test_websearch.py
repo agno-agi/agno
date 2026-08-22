@@ -340,7 +340,7 @@ def test_search_news_basic(mock_ddgs):
 
 
 def test_search_news_with_timelimit(mock_ddgs):
-    """Test that timelimit is passed to ddgs.news()."""
+    """Test that timelimit is passed to ddgs.search_news()."""
     mock_instance, _ = mock_ddgs
     mock_instance.news.return_value = []
 
@@ -351,7 +351,7 @@ def test_search_news_with_timelimit(mock_ddgs):
 
 
 def test_search_news_with_region(mock_ddgs):
-    """Test that region is passed to ddgs.news()."""
+    """Test that region is passed to ddgs.search_news()."""
     mock_instance, _ = mock_ddgs
     mock_instance.news.return_value = []
 

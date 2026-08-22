@@ -118,14 +118,14 @@ def test_init_tools_selection_read_only():
     """Test initialization with only read_url tool"""
     tools = JinaReaderTools(api_key="test_key", enable_read_url=True, enable_search_query=False)
     assert len(tools.tools) == 1
-    assert tools.tools[0].__name__ == "read_url"
+    assert tools.tools[0].__name__ == "jina_read_url"
 
 
 def test_init_tools_selection_search_only():
     """Test initialization with only search_query tool"""
     tools = JinaReaderTools(api_key="test_key", enable_read_url=False, enable_search_query=True)
     assert len(tools.tools) == 1
-    assert tools.tools[0].__name__ == "search_query"
+    assert tools.tools[0].__name__ == "jina_search"
 
 
 def test_init_tools_selection_both():
@@ -133,8 +133,8 @@ def test_init_tools_selection_both():
     tools = JinaReaderTools(api_key="test_key", enable_read_url=True, enable_search_query=True)
     assert len(tools.tools) == 2
     tool_names = [tool.__name__ for tool in tools.tools]
-    assert "read_url" in tool_names
-    assert "search_query" in tool_names
+    assert "jina_read_url" in tool_names
+    assert "jina_search" in tool_names
 
 
 def test_init_tools_selection_none():
@@ -153,7 +153,7 @@ def test_read_url_successful(mock_httpx_get, sample_read_url_response):
     mock_httpx_get.return_value = mock_response
 
     tools = JinaReaderTools(api_key="test_key")
-    result = tools.read_url("https://example.com")
+    result = tools.jina_read_url("https://example.com")
 
     # Verify the call
     expected_url = f"{tools.config.base_url}https://example.com"
@@ -170,7 +170,7 @@ def test_read_url_http_error(mock_log_error, mock_httpx_get):
     mock_httpx_get.side_effect = httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
 
     tools = JinaReaderTools(api_key="test_key")
-    result = tools.read_url("https://example.com")
+    result = tools.jina_read_url("https://example.com")
 
     assert "Error reading URL" in result
     assert "HTTP Error" in result
@@ -184,7 +184,7 @@ def test_read_url_connection_error(mock_log_error, mock_httpx_get):
     mock_httpx_get.side_effect = httpx.ConnectError("Connection failed")
 
     tools = JinaReaderTools(api_key="test_key")
-    result = tools.read_url("https://example.com")
+    result = tools.jina_read_url("https://example.com")
 
     assert "Error reading URL" in result
     assert "Connection failed" in result
@@ -202,7 +202,7 @@ def test_read_url_with_truncation(mock_httpx_get):
     mock_httpx_get.return_value = mock_response
 
     tools = JinaReaderTools(api_key="test_key", max_content_length=1000)
-    result = tools.read_url("https://example.com")
+    result = tools.jina_read_url("https://example.com")
 
     assert len(result) <= 1000 + len("... (content truncated)")
     assert "... (content truncated)" in result
@@ -218,7 +218,7 @@ def test_search_query_successful(mock_httpx_post, sample_search_query_response):
     mock_httpx_post.return_value = mock_response
 
     tools = JinaReaderTools(api_key="test_key", enable_search_query=True)
-    result = tools.search_query("test query")
+    result = tools.jina_search("test query")
 
     # Verify the call
     expected_headers = tools._get_headers()
@@ -239,7 +239,7 @@ def test_search_query_http_error(mock_log_error, mock_httpx_post):
     mock_httpx_post.side_effect = httpx.HTTPStatusError("HTTP Error", request=MagicMock(), response=MagicMock())
 
     tools = JinaReaderTools(api_key="test_key", enable_search_query=True)
-    result = tools.search_query("test query")
+    result = tools.jina_search("test query")
 
     assert "Error performing search" in result
     assert "HTTP Error" in result
@@ -257,7 +257,7 @@ def test_search_query_with_truncation(mock_httpx_post):
     mock_httpx_post.return_value = mock_response
 
     tools = JinaReaderTools(api_key="test_key", enable_search_query=True, max_content_length=1000)
-    result = tools.search_query("test query")
+    result = tools.jina_search("test query")
 
     assert len(result) <= 1000 + len("... (content truncated)")
     assert "... (content truncated)" in result

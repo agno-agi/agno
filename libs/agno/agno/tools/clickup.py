@@ -1,7 +1,7 @@
 import json
 import re
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
@@ -13,32 +13,70 @@ except ImportError:
 
 
 class ClickUpTools(Toolkit):
+    """ClickUp project management toolkit.
+
+    Requires:
+        1. A ClickUp API key from Settings > Apps > API Token
+        2. Your workspace ID (team_id) from the ClickUp URL
+
+    Set environment variables:
+        - CLICKUP_API_KEY: Your personal API token
+        - MASTER_SPACE_ID: Your workspace/team ID
+
+    Args:
+        api_key: ClickUp API key. Falls back to CLICKUP_API_KEY env var.
+        master_space_id: Workspace/team ID. Falls back to MASTER_SPACE_ID env var.
+        timeout: Request timeout in seconds. Defaults to 30.
+        list_spaces: Enable list_spaces tool. Defaults to True.
+        list_lists: Enable list_lists tool. Defaults to True.
+        list_tasks: Enable list_tasks tool. Defaults to True.
+        get_task: Enable get_task tool. Defaults to True.
+        create_task: Enable create_task tool. Defaults to False (creates external records).
+        update_task: Enable update_task tool. Defaults to False (modifies external records).
+        delete_task: Enable delete_task tool. Defaults to False (destructive).
+        all: Enable all tools. Defaults to True.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         master_space_id: Optional[str] = None,
         timeout: int = 30,
+        list_spaces: bool = True,
+        list_lists: bool = True,
+        list_tasks: bool = True,
+        get_task: bool = True,
+        create_task: bool = True,
+        update_task: bool = True,
+        delete_task: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("CLICKUP_API_KEY")
         self.master_space_id = master_space_id or getenv("MASTER_SPACE_ID")
         self.base_url = "https://api.clickup.com/api/v2"
-        self.headers: Dict[str, Any] = {"Authorization": self.api_key}
+        self.headers: Dict[str, str] = {"Authorization": self.api_key or ""}
 
         if not self.api_key:
             raise ValueError("CLICKUP_API_KEY not set. Please set the CLICKUP_API_KEY environment variable.")
         if not self.master_space_id:
             raise ValueError("MASTER_SPACE_ID not set. Please set the MASTER_SPACE_ID environment variable.")
 
-        tools: List[Any] = [
-            self.list_tasks,
-            self.create_task,
-            self.get_task,
-            self.update_task,
-            self.delete_task,
-            self.list_spaces,
-            self.list_lists,
-        ]
+        tools: List[Callable] = []
+        if all or list_spaces:
+            tools.append(self.list_spaces)
+        if all or list_lists:
+            tools.append(self.list_lists)
+        if all or list_tasks:
+            tools.append(self.list_tasks)
+        if all or get_task:
+            tools.append(self.get_task)
+        if all or create_task:
+            tools.append(self.create_task)
+        if all or update_task:
+            tools.append(self.update_task)
+        if all or delete_task:
+            tools.append(self.delete_task)
 
         super().__init__(name="clickup", tools=tools, timeout=timeout, **kwargs)
 

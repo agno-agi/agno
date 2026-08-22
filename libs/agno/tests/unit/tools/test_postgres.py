@@ -88,7 +88,7 @@ def test_show_tables_success(postgres_tools, mock_connection, mock_cursor):
     mock_cursor.description = [("table_name",)]
     mock_cursor.fetchall.return_value = MOCK_TABLES_RESULT
 
-    result = postgres_tools.show_tables()
+    result = postgres_tools.show_postgres_tables()
 
     # Verify parameterized query was used
     mock_cursor.execute.assert_called_with(
@@ -108,7 +108,7 @@ def test_describe_table_success(postgres_tools, mock_connection, mock_cursor):
     mock_cursor.description = [("column_name",), ("data_type",), ("is_nullable",)]
     mock_cursor.fetchall.return_value = MOCK_DESCRIBE_RESULT
 
-    result = postgres_tools.describe_table("employees")
+    result = postgres_tools.describe_postgres_table("employees")
 
     # Verify parameterized query was used (check if call contains expected parameters)
     mock_cursor.execute.assert_called()
@@ -127,7 +127,7 @@ def test_run_query_success(postgres_tools, mock_connection, mock_cursor):
     mock_cursor.description = [("count",)]
     mock_cursor.fetchall.return_value = MOCK_COUNT_RESULT
 
-    result = postgres_tools.run_query("SELECT COUNT(*) FROM employees;")
+    result = postgres_tools.run_postgres_sql("SELECT COUNT(*) FROM employees;")
 
     # Verify query was executed
     mock_cursor.execute.assert_called_with("SELECT COUNT(*) FROM employees;", None)
@@ -150,7 +150,7 @@ def test_export_table_to_path_success(postgres_tools, mock_connection, mock_curs
     export_path = "/tmp/test_export.csv"
 
     with patch("builtins.open", mock_file):
-        result = postgres_tools.export_table_to_path("employees", export_path)
+        result = postgres_tools.export_postgres_table_to_path("employees", export_path)
 
     # Verify safe query construction (using sql.Identifier)
     mock_cursor.execute.assert_called_once()
@@ -168,7 +168,7 @@ def test_inspect_query_success(postgres_tools, mock_connection, mock_cursor):
     mock_cursor.description = [("QUERY PLAN",)]
     mock_cursor.fetchall.return_value = MOCK_EXPLAIN_RESULT
 
-    result = postgres_tools.inspect_query("SELECT name FROM employees WHERE salary > 10000;")
+    result = postgres_tools.inspect_postgres_query("SELECT name FROM employees WHERE salary > 10000;")
 
     # Verify EXPLAIN query was executed
     mock_cursor.execute.assert_called_with("EXPLAIN SELECT name FROM employees WHERE salary > 10000;", None)
@@ -184,7 +184,7 @@ def test_database_error_handling(postgres_tools, mock_connection, mock_cursor):
     mock_cursor.execute.side_effect = psycopg.DatabaseError("Table does not exist")
     mock_connection.rollback = Mock()
 
-    result = postgres_tools.show_tables()
+    result = postgres_tools.show_postgres_tables()
 
     # Verify error is caught and returned as string
     assert "Error executing query: Table does not exist" in result
@@ -199,7 +199,7 @@ def test_export_file_error_handling(postgres_tools, mock_connection, mock_cursor
 
     # Mock file operations to raise IOError
     with patch("builtins.open", side_effect=IOError("Permission denied")):
-        result = postgres_tools.export_table_to_path("employees", "/invalid/path/file.csv")
+        result = postgres_tools.export_postgres_table_to_path("employees", "/invalid/path/file.csv")
 
     # Verify error is caught and returned
     assert "Error exporting table: Permission denied" in result
@@ -236,7 +236,7 @@ def test_sql_injection_prevention(postgres_tools, mock_connection, mock_cursor):
 
     # Attempt SQL injection
     malicious_table = "users'; DROP TABLE employees; --"
-    postgres_tools.describe_table(malicious_table)
+    postgres_tools.describe_postgres_table(malicious_table)
 
     # Verify the malicious input was passed as a parameter, not concatenated
     call_args = mock_cursor.execute.call_args

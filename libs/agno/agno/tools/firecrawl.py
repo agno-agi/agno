@@ -43,10 +43,10 @@ class FirecrawlTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_scrape: bool = True,
-        enable_crawl: bool = False,
-        enable_mapping: bool = False,
-        enable_search: bool = False,
+        scrape: bool = True,
+        crawl: bool = False,
+        mapping: bool = False,
+        search: bool = False,
         all: bool = False,
         formats: Optional[List[str]] = None,
         limit: int = 10,
@@ -66,18 +66,18 @@ class FirecrawlTools(Toolkit):
         self.search_params = search_params
 
         tools: List[Any] = []
-        if all or enable_scrape:
-            tools.append(self.scrape_website)
-        if all or enable_crawl:
-            tools.append(self.crawl_website)
-        if all or enable_mapping:
+        if all or scrape:
+            tools.append(self.firecrawl_scrape_website)
+        if all or crawl:
+            tools.append(self.firecrawl_crawl_website)
+        if all or mapping:
             tools.append(self.map_website)
-        if all or enable_search:
-            tools.append(self.search_web)
+        if all or search:
+            tools.append(self.firecrawl_search_web)
 
         super().__init__(name="firecrawl_tools", tools=tools, **kwargs)
 
-    def scrape_website(self, url: str) -> str:
+    def firecrawl_scrape_website(self, url: str) -> str:
         """Use this function to scrape a website using Firecrawl.
 
         Args:
@@ -90,7 +90,7 @@ class FirecrawlTools(Toolkit):
         scrape_result = self.app.scrape(url, **params)
         return json.dumps(scrape_result.model_dump(), cls=CustomJSONEncoder)
 
-    def crawl_website(self, url: str, limit: Optional[int] = None) -> str:
+    def firecrawl_crawl_website(self, url: str, limit: Optional[int] = None) -> str:
         """Use this function to Crawls a website using Firecrawl.
 
         Args:
@@ -123,7 +123,7 @@ class FirecrawlTools(Toolkit):
         map_result = self.app.map(url)
         return json.dumps(map_result.model_dump(), cls=CustomJSONEncoder)
 
-    def search_web(self, query: str, limit: Optional[int] = None):
+    def firecrawl_search_web(self, query: str, limit: Optional[int] = None):
         """Use this function to search for the web using Firecrawl.
 
         Args:

@@ -9,7 +9,7 @@ class UserControlFlowTools(Toolkit):
         self,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
-        enable_get_user_input: bool = True,
+        get_user_input: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -21,7 +21,7 @@ class UserControlFlowTools(Toolkit):
             self.instructions = instructions
 
         tools = []
-        if all or enable_get_user_input:
+        if all or get_user_input:
             tools.append(self.get_user_input)
 
         super().__init__(

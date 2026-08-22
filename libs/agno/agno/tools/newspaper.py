@@ -16,12 +16,12 @@ class NewspaperTools(Toolkit):
 
     def __init__(
         self,
-        enable_get_article_text: bool = True,
+        get_article_text: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools = []
-        if all or enable_get_article_text:
+        if all or get_article_text:
             tools.append(self.get_article_text)
 
         super().__init__(name="newspaper_toolkit", tools=tools, **kwargs)

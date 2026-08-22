@@ -82,14 +82,14 @@ class FileTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        enable_save_file: bool = True,
-        enable_read_file: bool = True,
-        enable_delete_file: bool = False,
-        enable_list_files: bool = True,
-        enable_search_files: bool = True,
-        enable_read_file_chunk: bool = True,
-        enable_replace_file_chunk: bool = True,
-        enable_search_content: bool = True,
+        save_file: bool = True,
+        read_file: bool = True,
+        delete_file: bool = False,
+        list_files: bool = True,
+        search_files: bool = True,
+        read_file_chunk: bool = True,
+        replace_file_chunk: bool = True,
+        search_content: bool = True,
         expose_base_directory: bool = False,
         max_file_length: int = 10000000,
         max_file_lines: int = 100000,
@@ -108,21 +108,21 @@ class FileTools(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
-        if all or enable_save_file:
+        if all or save_file:
             tools.append(self.save_file)
-        if all or enable_read_file:
+        if all or read_file:
             tools.append(self.read_file)
-        if all or enable_list_files:
+        if all or list_files:
             tools.append(self.list_files)
-        if all or enable_search_files:
+        if all or search_files:
             tools.append(self.search_files)
-        if all or enable_delete_file:
+        if all or delete_file:
             tools.append(self.delete_file)
-        if all or enable_read_file_chunk:
+        if all or read_file_chunk:
             tools.append(self.read_file_chunk)
-        if all or enable_replace_file_chunk:
+        if all or replace_file_chunk:
             tools.append(self.replace_file_chunk)
-        if all or enable_search_content:
+        if all or search_content:
             tools.append(self.search_content)
 
         super().__init__(name="file_tools", tools=tools, **kwargs)

@@ -12,18 +12,50 @@ except ImportError:
 
 
 class TrelloTools(Toolkit):
+    """Trello board and card management toolkit.
+
+    Requires py-trello: `pip install py-trello`
+
+    Authentication:
+        Set environment variables TRELLO_API_KEY, TRELLO_API_SECRET, and TRELLO_TOKEN,
+        or pass them as constructor arguments.
+
+        Get credentials at: https://trello.com/app-key
+
+    Args:
+        api_key: Trello API key. Falls back to TRELLO_API_KEY env var.
+        api_secret: Trello API secret. Falls back to TRELLO_API_SECRET env var.
+        token: Trello token. Falls back to TRELLO_TOKEN env var.
+        list_boards: Enable list_boards tool. Defaults to True.
+        get_board_lists: Enable get_board_lists tool. Defaults to True.
+        get_cards: Enable get_cards tool. Defaults to True.
+        create_card: Enable create_card tool. Defaults to False (creates external content).
+        create_board: Enable create_board tool. Defaults to False (creates external content).
+        create_list: Enable create_list tool. Defaults to False (creates external content).
+        move_card: Enable move_card tool. Defaults to False (modifies external content).
+        all: Enable all tools. Defaults to True.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
         api_secret: Optional[str] = None,
         token: Optional[str] = None,
+        list_boards: bool = True,
+        get_board_lists: bool = True,
+        get_cards: bool = True,
+        create_card: bool = True,
+        create_board: bool = True,
+        create_list: bool = True,
+        move_card: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.api_key = api_key or getenv("TRELLO_API_KEY")
         self.api_secret = api_secret or getenv("TRELLO_API_SECRET")
         self.token = token or getenv("TRELLO_TOKEN")
 
-        if not all([self.api_key, self.api_secret, self.token]):
+        if not self.api_key or not self.api_secret or not self.token:
             logger.warning("Missing Trello credentials")
 
         try:
@@ -32,15 +64,21 @@ class TrelloTools(Toolkit):
             logger.exception("Error initializing Trello client")
             self.client = None
 
-        tools: List[Any] = [
-            self.create_card,
-            self.get_board_lists,
-            self.move_card,
-            self.get_cards,
-            self.create_board,
-            self.create_list,
-            self.list_boards,
-        ]
+        tools: List[Any] = []
+        if all or list_boards:
+            tools.append(self.list_boards)
+        if all or get_board_lists:
+            tools.append(self.get_board_lists)
+        if all or get_cards:
+            tools.append(self.get_cards)
+        if all or create_card:
+            tools.append(self.create_card)
+        if all or create_board:
+            tools.append(self.create_board)
+        if all or create_list:
+            tools.append(self.create_list)
+        if all or move_card:
+            tools.append(self.move_card)
 
         super().__init__(name="trello", tools=tools, **kwargs)
 

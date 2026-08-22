@@ -9,8 +9,8 @@ class DuckDuckGoTools(WebSearchTools):
     defaulting to "duckduckgo".
 
     Args:
-        enable_search (bool): Enable web search function.
-        enable_news (bool): Enable news search function.
+        search (bool): Enable web search function.
+        news (bool): Enable news search function.
         modifier (Optional[str]): A modifier to be prepended to search queries.
         fixed_max_results (Optional[int]): A fixed number of maximum results.
         proxy (Optional[str]): Proxy to be used for requests.
@@ -25,8 +25,8 @@ class DuckDuckGoTools(WebSearchTools):
 
     def __init__(
         self,
-        enable_search: bool = True,
-        enable_news: bool = True,
+        search: bool = True,
+        news: bool = True,
         modifier: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         proxy: Optional[str] = None,
@@ -38,8 +38,8 @@ class DuckDuckGoTools(WebSearchTools):
         **kwargs,
     ):
         super().__init__(
-            enable_search=enable_search,
-            enable_news=enable_news,
+            search=search,
+            news=news,
             backend=backend or "duckduckgo",
             modifier=modifier,
             fixed_max_results=fixed_max_results,

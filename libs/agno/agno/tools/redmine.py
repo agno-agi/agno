@@ -18,16 +18,16 @@ class RedmineTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
-        enable_get_issue: bool = True,
-        enable_create_issue: bool = True,
-        enable_update_issue: bool = True,
-        enable_search_issues: bool = True,
-        enable_add_comment: bool = True,
-        enable_log_time: bool = True,
-        enable_list_projects: bool = True,
-        enable_list_users: bool = True,
-        enable_list_project_members: bool = True,
-        enable_list_versions: bool = True,
+        get_issue: bool = True,
+        create_issue: bool = True,
+        update_issue: bool = True,
+        search_issues: bool = True,
+        add_comment: bool = True,
+        log_time: bool = True,
+        list_projects: bool = True,
+        list_users: bool = True,
+        list_project_members: bool = True,
+        list_versions: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -51,25 +51,25 @@ class RedmineTools(Toolkit):
             self.redmine = Redmine(url=self.server_url, raise_attr_exception=False)
 
         tools: List[Any] = []
-        if enable_get_issue or all:
+        if get_issue or all:
             tools.append(self.get_issue)
-        if enable_create_issue or all:
+        if create_issue or all:
             tools.append(self.create_issue)
-        if enable_update_issue or all:
+        if update_issue or all:
             tools.append(self.update_issue)
-        if enable_search_issues or all:
+        if search_issues or all:
             tools.append(self.search_issues)
-        if enable_add_comment or all:
+        if add_comment or all:
             tools.append(self.add_comment)
-        if enable_log_time or all:
+        if log_time or all:
             tools.append(self.log_time)
-        if enable_list_projects or all:
+        if list_projects or all:
             tools.append(self.list_projects)
-        if enable_list_users or all:
+        if list_users or all:
             tools.append(self.list_users)
-        if enable_list_project_members or all:
+        if list_project_members or all:
             tools.append(self.list_project_members)
-        if enable_list_versions or all:
+        if list_versions or all:
             tools.append(self.list_versions)
 
         super().__init__(name="redmine_tools", tools=tools, **kwargs)

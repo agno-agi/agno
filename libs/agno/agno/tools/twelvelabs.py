@@ -56,9 +56,9 @@ class TwelveLabsTools(Toolkit):
         max_tokens: int = 2048,
         embed_poll_interval: float = 5.0,
         embed_timeout: float = 300.0,
-        enable_analyze_video: bool = True,
-        enable_embed_text: bool = True,
-        enable_embed_video: bool = False,
+        analyze_video: bool = True,
+        embed_text: bool = True,
+        embed_video: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -74,11 +74,11 @@ class TwelveLabsTools(Toolkit):
         self._client: Optional[TwelveLabs] = None
 
         tools: List[Any] = []
-        if all or enable_analyze_video:
+        if all or analyze_video:
             tools.append(self.analyze_video)
-        if all or enable_embed_text:
+        if all or embed_text:
             tools.append(self.embed_text)
-        if all or enable_embed_video:
+        if all or embed_video:
             tools.append(self.embed_video)
 
         super().__init__(name="twelvelabs_tools", tools=tools, **kwargs)

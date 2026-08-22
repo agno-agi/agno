@@ -9,7 +9,7 @@ class ShellTools(Toolkit):
     def __init__(
         self,
         base_dir: Optional[Union[Path, str]] = None,
-        enable_run_shell_command: bool = True,
+        run_shell_command: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -28,7 +28,7 @@ class ShellTools(Toolkit):
             self.base_dir = Path(base_dir) if isinstance(base_dir, str) else base_dir
 
         tools = []
-        if all or enable_run_shell_command:
+        if all or run_shell_command:
             tools.append(self.run_shell_command)
 
         super().__init__(name="shell_tools", tools=tools, **kwargs)

@@ -40,8 +40,8 @@ def test_init_registers_default_tools():
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools()
             names = [f.name for f in tools.functions.values()]
-            assert "send_message" in names
-            assert "send_message_thread" in names
+            assert "send_slack_message" in names
+            assert "send_slack_message_thread" in names
             assert len(names) == 6
 
 
@@ -82,7 +82,7 @@ def test_search_messages_disabled_without_user_token():
         with patch("agno.tools.slack.WebClient"):
             with patch("agno.tools.slack.log_warning") as mock_warn:
                 tools = SlackTools(enable_search_messages=True)
-                assert "search_messages" not in tools.functions
+                assert "search_slack_messages" not in tools.functions
                 mock_warn.assert_called_once()
 
 
@@ -116,12 +116,12 @@ def test_explicit_flags_expose_expected_surfaces():
                 enable_get_channel_info=True,
             )
 
-    assert "search_workspace" in read.functions
-    assert "get_channel_history" in read.functions
-    assert "get_thread" in read.functions
-    assert "send_message" not in read.functions
-    assert "send_message" in write.functions
-    assert "get_channel_history" not in write.functions
+    assert "search_slack_workspace" in read.functions
+    assert "get_slack_channel_history" in read.functions
+    assert "get_slack_thread" in read.functions
+    assert "send_slack_message" not in read.functions
+    assert "send_slack_message" in write.functions
+    assert "get_slack_channel_history" not in write.functions
 
 
 # === Core Tools ===
@@ -129,33 +129,33 @@ def test_explicit_flags_expose_expected_surfaces():
 
 def test_send_message(slack_tools):
     slack_tools.client.chat_postMessage.return_value = Mock(data={"ok": True})
-    result = slack_tools.send_message("#general", "Hello")
+    result = slack_tools.send_slack_message("#general", "Hello")
     assert json.loads(result)["ok"] is True
 
 
 def test_send_message_error(slack_tools):
     slack_tools.client.chat_postMessage.side_effect = SlackApiError("error", response=Mock())
-    result = slack_tools.send_message("#general", "Hello")
+    result = slack_tools.send_slack_message("#general", "Hello")
     assert "error" in json.loads(result)
 
 
 def test_send_message_thread(slack_tools):
     slack_tools.client.chat_postMessage.return_value = Mock(data={"ok": True, "thread_ts": "1.0"})
-    result = slack_tools.send_message_thread("C1", "reply", thread_ts="1.0")
+    result = slack_tools.send_slack_message_thread("C1", "reply", thread_ts="1.0")
     assert json.loads(result)["ok"] is True
     slack_tools.client.chat_postMessage.assert_called_with(channel="C1", text="reply", thread_ts="1.0", mrkdwn=True)
 
 
-def test_list_channels(slack_tools):
+def test_list_slack_channels(slack_tools):
     slack_tools.client.conversations_list.return_value = {"channels": [{"id": "C1", "name": "general"}]}
-    result = slack_tools.list_channels()
+    result = slack_tools.list_slack_channels()
     assert json.loads(result) == [{"id": "C1", "name": "general", "is_private": False}]
 
 
-def test_get_channel_history(slack_tools):
+def test_get_slack_channel_history(slack_tools):
     slack_tools.client.conversations_history.return_value = {"messages": [{"text": "hi", "user": "U1", "ts": "1.0"}]}
     slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
-    result = slack_tools.get_channel_history("C1")
+    result = slack_tools.get_slack_channel_history("C1")
     messages = json.loads(result)
     assert messages[0]["text"] == "hi"
     assert messages[0]["user"] == "User One"
@@ -169,7 +169,7 @@ def test_get_channel_history_resolves_channel_name(slack_tools):
     slack_tools.client.conversations_history.return_value = {"messages": [{"text": "hi", "user": "U1", "ts": "1.0"}]}
     slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
 
-    result = slack_tools.get_channel_history("#engineering")
+    result = slack_tools.get_slack_channel_history("#engineering")
 
     assert json.loads(result)[0]["text"] == "hi"
     slack_tools.client.conversations_history.assert_called_with(channel="C1", limit=100)
@@ -186,8 +186,8 @@ def test_channel_resolution_cache_reuses_resolved_names(slack_tools):
     }
     slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
 
-    slack_tools.get_channel_history("#agents")
-    slack_tools.get_thread("#agents", "2.0")
+    slack_tools.get_slack_channel_history("#agents")
+    slack_tools.get_slack_thread("#agents", "2.0")
 
     assert slack_tools.client.conversations_list.call_count == 1
     slack_tools.client.conversations_replies.assert_called_with(channel="C1", ts="2.0", limit=20)
@@ -195,13 +195,13 @@ def test_channel_resolution_cache_reuses_resolved_names(slack_tools):
 
 def test_upload_file(slack_tools):
     slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
-    result = slack_tools.upload_file("C1", "content", "file.txt")
+    result = slack_tools.upload_slack_file("C1", "content", "file.txt")
     assert json.loads(result)["ok"] is True
 
 
 def test_upload_file_bytes(slack_tools):
     slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
-    slack_tools.upload_file("C1", b"bytes", "file.bin")
+    slack_tools.upload_slack_file("C1", b"bytes", "file.bin")
     slack_tools.client.files_upload_v2.assert_called_once()
     assert slack_tools.client.files_upload_v2.call_args[1]["content"] == b"bytes"
 
@@ -216,7 +216,7 @@ def test_download_file_saves_to_disk(slack_tools, tmp_path):
     with patch("agno.tools.slack.httpx.get") as mock_get:
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
-        result = slack_tools.download_file("F1")
+        result = slack_tools.download_slack_file("F1")
         parsed = json.loads(result)
         assert "path" in parsed
         assert (tmp_path / "f.txt").exists()
@@ -226,7 +226,7 @@ def test_upload_file_rejected_on_dangerous_filename(slack_tools, tmp_path):
     """Dangerous filename aborts the upload — Slack never sees the raw name."""
     slack_tools.output_directory = tmp_path
     slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
-    result = slack_tools.upload_file("C1", b"data", "evil\x00name.bin")
+    result = slack_tools.upload_slack_file("C1", b"data", "evil\x00name.bin")
     parsed = json.loads(result)
     assert "error" in parsed
     assert "Invalid filename" in parsed["error"]
@@ -237,7 +237,7 @@ def test_upload_file_sanitizes_filename_for_slack(slack_tools, tmp_path):
     """Path components in the filename are stripped before reaching Slack."""
     slack_tools.output_directory = tmp_path
     slack_tools.client.files_upload_v2.return_value = Mock(data={"ok": True})
-    result = slack_tools.upload_file("C1", b"data", "subdir/../report.bin")
+    result = slack_tools.upload_slack_file("C1", b"data", "subdir/../report.bin")
     parsed = json.loads(result)
     assert parsed["ok"] is True
     assert slack_tools.client.files_upload_v2.call_args[1]["filename"] == "report.bin"
@@ -253,7 +253,7 @@ def test_download_file_dest_path_traversal_falls_back_to_base64(slack_tools, tmp
     with patch("agno.tools.slack.httpx.get") as mock_get:
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
-        result = slack_tools.download_file("F1", dest_path="../../escape.bin")
+        result = slack_tools.download_slack_file("F1", dest_path="../../escape.bin")
         parsed = json.loads(result)
         assert "save_error" in parsed
         assert "resolves outside" in parsed["save_error"]
@@ -271,7 +271,7 @@ def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tool
     with patch("agno.tools.slack.httpx.get") as mock_get:
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
-        result = slack_tools.download_file("F1", dest_path="subdir/foo.bin")
+        result = slack_tools.download_slack_file("F1", dest_path="subdir/foo.bin")
         parsed = json.loads(result)
         assert "path" in parsed
         assert (tmp_path / "subdir" / "foo.bin").read_bytes() == b"data"
@@ -280,19 +280,19 @@ def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tool
 # === Extended Tools ===
 
 
-def test_search_messages(slack_tools):
+def test_search_slack_messages(slack_tools):
     slack_tools._user_client = slack_tools.client
     slack_tools._user_client.search_messages.return_value = {
         "messages": {"matches": [{"text": "found", "user": "U1", "channel": {}, "ts": "1"}]}
     }
-    result = slack_tools.search_messages("query")
+    result = slack_tools.search_slack_messages("query")
     assert json.loads(result)["count"] == 1
 
 
-def test_get_thread(slack_tools):
+def test_get_slack_thread(slack_tools):
     slack_tools.client.conversations_replies.return_value = {"messages": [{"text": "parent", "user": "U1", "ts": "1"}]}
     slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
-    result = slack_tools.get_thread("C1", "1")
+    result = slack_tools.get_slack_thread("C1", "1")
     data = json.loads(result)
     assert data["reply_count"] == 0
     assert data["messages"][0]["user"] == "User One"
@@ -306,23 +306,23 @@ def test_get_thread_resolves_channel_name(slack_tools):
     slack_tools.client.conversations_replies.return_value = {"messages": [{"text": "parent", "user": "U1", "ts": "1"}]}
     slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
 
-    result = slack_tools.get_thread("#agents", "1")
+    result = slack_tools.get_slack_thread("#agents", "1")
 
     assert json.loads(result)["messages"][0]["text"] == "parent"
     slack_tools.client.conversations_replies.assert_called_with(channel="C1", ts="1", limit=20)
 
 
-def test_list_users(slack_tools):
+def test_list_slack_users(slack_tools):
     slack_tools.client.users_list.return_value = {
         "members": [{"id": "U1", "name": "user", "deleted": False, "is_bot": False, "profile": {}}]
     }
-    result = slack_tools.list_users()
+    result = slack_tools.list_slack_users()
     assert json.loads(result)["count"] == 1
 
 
-def test_get_user_info(slack_tools):
+def test_get_slack_user_info(slack_tools):
     slack_tools.client.users_info.return_value = {"user": {"id": "U1", "name": "user", "profile": {}}}
-    result = slack_tools.get_user_info("U1")
+    result = slack_tools.get_slack_user_info("U1")
     assert json.loads(result)["name"] == "user"
 
 
@@ -344,7 +344,7 @@ def test_get_channel_info(slack_tools):
             "creator": "U1",
         }
     }
-    result = slack_tools.get_channel_info("#general")
+    result = slack_tools.get_slack_channel_info("#general")
     data = json.loads(result)
     assert data["name"] == "general"
     assert data["num_members"] == 5
@@ -362,7 +362,7 @@ def test_search_workspace_no_action_token():
             # No action_token in metadata
             ctx = Mock()
             ctx.metadata = {}
-            result = json.loads(tools.search_workspace(ctx, "test query"))
+            result = json.loads(tools.search_slack_workspace(ctx, "test query"))
             assert "error" in result
             assert "action_token" in result["error"]
 
@@ -371,7 +371,7 @@ def test_search_workspace_no_run_context():
     with patch.dict("os.environ", {"SLACK_TOKEN": "test"}):
         with patch("agno.tools.slack.WebClient"):
             tools = SlackTools(enable_search_workspace=True)
-            result = json.loads(tools.search_workspace(None, "test query"))
+            result = json.loads(tools.search_slack_workspace(None, "test query"))
             assert "error" in result
 
 
@@ -419,7 +419,7 @@ def test_search_workspace_success():
             ctx = Mock()
             ctx.metadata = {"action_token": "xoxo-action-token"}
 
-            result = json.loads(tools.search_workspace(ctx, "auth migration"))
+            result = json.loads(tools.search_slack_workspace(ctx, "auth migration"))
 
             assert result["result_count"] == 3
             assert len(result["messages"]) == 1
@@ -453,7 +453,7 @@ def test_search_workspace_api_error():
             ctx = Mock()
             ctx.metadata = {"action_token": "xoxo-token"}
 
-            result = json.loads(tools.search_workspace(ctx, "query"))
+            result = json.loads(tools.search_slack_workspace(ctx, "query"))
             assert result["error"] == "not_allowed_token_type"
 
 
@@ -461,35 +461,37 @@ def test_search_workspace_api_error():
 
 
 def test_build_instructions_single_tool_returns_empty():
-    result = SlackTools._build_instructions(["get_channel_history"])
+    result = SlackTools._build_instructions(["get_slack_channel_history"])
     assert result == ""
 
 
 def test_build_instructions_multiple_tools():
-    result = SlackTools._build_instructions(["search_workspace", "get_channel_history", "get_thread"])
+    result = SlackTools._build_instructions(["search_slack_workspace", "get_slack_channel_history", "get_slack_thread"])
     assert "## Slack Tool Selection" in result
-    assert "search_workspace" in result
-    assert "get_channel_history" in result
+    assert "search_slack_workspace" in result
+    assert "get_slack_channel_history" in result
     assert "## When to use which" in result
     assert "Deep-dive into a message" in result
 
 
 def test_build_instructions_search_messages_fallback():
-    result = SlackTools._build_instructions(["search_workspace", "search_messages", "get_channel_history"])
+    result = SlackTools._build_instructions(
+        ["search_slack_workspace", "search_slack_messages", "get_slack_channel_history"]
+    )
     assert "Fallback (user-token only)" in result
 
 
 def test_build_instructions_never_references_disabled_tools():
     # get_channel_history enabled without get_thread — should NOT mention get_thread
-    result = SlackTools._build_instructions(["search_workspace", "get_channel_history"])
-    assert "get_thread" not in result
+    result = SlackTools._build_instructions(["search_slack_workspace", "get_slack_channel_history"])
+    assert "get_slack_thread" not in result
 
     # get_thread enabled without search_workspace — should NOT mention search_workspace
-    result = SlackTools._build_instructions(["get_channel_history", "get_thread"])
-    assert "search_workspace" not in result
+    result = SlackTools._build_instructions(["get_slack_channel_history", "get_slack_thread"])
+    assert "search_slack_workspace" not in result
 
     # search_messages without search_workspace — should NOT mention "unavailable"
-    result = SlackTools._build_instructions(["search_messages", "get_channel_history"])
+    result = SlackTools._build_instructions(["search_slack_messages", "get_slack_channel_history"])
     assert "unavailable" not in result
 
 

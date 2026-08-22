@@ -36,9 +36,9 @@ class ValyuTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_academic_search: bool = True,
-        enable_web_search: bool = True,
-        enable_paper_search: bool = True,
+        academic_search: bool = True,
+        web_search: bool = True,
+        paper_search: bool = True,
         all: bool = False,
         text_length: int = 1000,
         max_results: int = 10,
@@ -69,11 +69,11 @@ class ValyuTools(Toolkit):
         self.tool_call_mode = tool_call_mode
 
         tools: List[Any] = []
-        if all or enable_academic_search:
+        if all or academic_search:
             tools.append(self.search_academic_sources)
-        if all or enable_web_search:
+        if all or web_search:
             tools.append(self.search_web)
-        if all or enable_paper_search:
+        if all or paper_search:
             tools.append(self.search_within_paper)
 
         super().__init__(name="valyu_search", tools=tools, **kwargs)

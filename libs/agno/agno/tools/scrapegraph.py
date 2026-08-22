@@ -38,11 +38,11 @@ class ScrapeGraphTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_smartscraper: bool = True,
-        enable_markdownify: bool = False,
-        enable_searchscraper: bool = False,
-        enable_crawl: bool = False,
-        enable_scrape: bool = False,
+        smartscraper: bool = True,
+        markdownify: bool = False,
+        searchscraper: bool = False,
+        crawl: bool = False,
+        scrape: bool = False,
         render_heavy_js: bool = False,
         headers: Optional[Dict[str, str]] = None,
         crawl_poll_interval: int = 3,
@@ -76,15 +76,15 @@ class ScrapeGraphTools(Toolkit):
         self.crawl_max_wait: int = crawl_max_wait
 
         tools: List[Any] = []
-        if all or enable_smartscraper:
+        if all or smartscraper:
             tools.append(self.smartscraper)
-        if all or enable_markdownify:
+        if all or markdownify:
             tools.append(self.markdownify)
-        if all or enable_searchscraper:
+        if all or searchscraper:
             tools.append(self.searchscraper)
-        if all or enable_crawl:
+        if all or crawl:
             tools.append(self.crawl)
-        if all or enable_scrape:
+        if all or scrape:
             tools.append(self.scrape)
 
         super().__init__(name="scrapegraph_tools", tools=tools, **kwargs)

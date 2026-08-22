@@ -1,3 +1,4 @@
+import builtins
 import json
 from os import getenv
 from typing import Callable, Dict, List, Optional, Union
@@ -21,6 +22,15 @@ class RedditTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         allowed_subreddits: Optional[List[str]] = None,
+        get_user_info: bool = True,
+        get_top_posts: bool = True,
+        get_subreddit_info: bool = True,
+        get_trending_subreddits: bool = True,
+        get_subreddit_stats: bool = True,
+        create_post: bool = False,
+        reply_to_post: bool = False,
+        reply_to_comment: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         if isinstance(allowed_subreddits, str):
@@ -42,9 +52,9 @@ class RedditTools(Toolkit):
 
             self.reddit = None
             # Check if we have all required credentials
-            if all([self.client_id, self.client_secret]):
+            if builtins.all([self.client_id, self.client_secret]):
                 # Initialize with read-only access if no user credentials
-                if not all([self.username, self.password]):
+                if not builtins.all([self.username, self.password]):
                     log_info("Initializing Reddit client with read-only access")
                     self.reddit = praw.Reddit(
                         client_id=self.client_id,
@@ -64,16 +74,23 @@ class RedditTools(Toolkit):
             else:
                 logger.warning("Missing Reddit API credentials")
 
-        tools: List[Callable] = [
-            self.get_user_info,
-            self.get_top_posts,
-            self.get_subreddit_info,
-            self.get_trending_subreddits,
-            self.get_subreddit_stats,
-            self.create_post,
-            self.reply_to_post,
-            self.reply_to_comment,
-        ]
+        tools: List[Callable] = []
+        if all or get_user_info:
+            tools.append(self.get_user_info)
+        if all or get_top_posts:
+            tools.append(self.get_top_posts)
+        if all or get_subreddit_info:
+            tools.append(self.get_subreddit_info)
+        if all or get_trending_subreddits:
+            tools.append(self.get_trending_subreddits)
+        if all or get_subreddit_stats:
+            tools.append(self.get_subreddit_stats)
+        if all or create_post:
+            tools.append(self.create_post)
+        if all or reply_to_post:
+            tools.append(self.reply_to_post)
+        if all or reply_to_comment:
+            tools.append(self.reply_to_comment)
 
         super().__init__(name="reddit", tools=tools, **kwargs)
 
@@ -87,7 +104,7 @@ class RedditTools(Toolkit):
             log_error("Reddit client not initialized")
             return False
 
-        if not all([self.username, self.password]):
+        if not builtins.all([self.username, self.password]):
             log_error("User authentication required. Please provide username and password.")
             return False
 

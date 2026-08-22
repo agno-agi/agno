@@ -29,10 +29,14 @@ except ImportError:
 
 
 class MLXTranscribeTools(Toolkit):
+    _legacy_param_aliases = {
+        "enable_read_files_in_base_dir": "read_files",
+    }
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,
-        enable_read_files_in_base_dir: bool = True,
+        read_files: bool = True,
         restrict_to_base_dir: bool = True,
         path_or_hf_repo: str = "mlx-community/whisper-large-v3-turbo",
         verbose: Optional[bool] = None,
@@ -69,7 +73,7 @@ class MLXTranscribeTools(Toolkit):
         self.decode_options: Optional[dict] = decode_options
 
         tools: List[Any] = [self.transcribe]
-        if enable_read_files_in_base_dir or all:
+        if read_files or all:
             tools.append(self.read_files)
 
         super().__init__(name="mlx_transcribe", tools=tools, **kwargs)

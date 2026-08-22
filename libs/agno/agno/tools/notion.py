@@ -28,9 +28,9 @@ class NotionTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         database_id: Optional[str] = None,
-        enable_create_page: bool = True,
-        enable_update_page: bool = True,
-        enable_search_pages: bool = True,
+        create_page: bool = True,
+        update_page: bool = True,
+        search_pages: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -49,11 +49,11 @@ class NotionTools(Toolkit):
         self.client = Client(auth=self.api_key)
 
         tools: List[Any] = []
-        if all or enable_create_page:
+        if all or create_page:
             tools.append(self.create_page)
-        if all or enable_update_page:
+        if all or update_page:
             tools.append(self.update_page)
-        if all or enable_search_pages:
+        if all or search_pages:
             tools.append(self.search_pages)
 
         super().__init__(name="notion_tools", tools=tools, **kwargs)

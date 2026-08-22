@@ -69,7 +69,7 @@ def test_get_schema():
         mock_session.__enter__.return_value = mock_session
         mock_result = MagicMock()
         mock_result.data.return_value = [
-            {"nodes": [{"id": 1, "labels": ["Person"]}], "relationships": [{"id": 1, "type": "ACTED_IN"}]}
+            {"nodes": [{"id": 1, "list_labels": ["Person"]}], "relationships": [{"id": 1, "type": "ACTED_IN"}]}
         ]
         mock_session.run.return_value = mock_result
 

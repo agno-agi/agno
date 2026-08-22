@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agno.tools.google.maps import GoogleMapTools
+from agno.tools.google.maps import GoogleMapsTools
 
 # Mock responses
 MOCK_PLACES_RESPONSE = {
@@ -97,10 +97,10 @@ MOCK_TIMEZONE_RESPONSE = {
 
 @pytest.fixture
 def google_maps_tools():
-    """Create a GoogleMapTools instance with a mock API key."""
+    """Create a GoogleMapsTools instance with a mock API key."""
     with patch.dict("os.environ", {"GOOGLE_MAPS_API_KEY": "AIzaTest"}):
         with patch("google.maps.places_v1.PlacesClient"):
-            return GoogleMapTools()
+            return GoogleMapsTools()
 
 
 @pytest.fixture
@@ -236,7 +236,7 @@ def test_initialization_without_api_key():
     """Test initialization without API key."""
     with patch.dict("os.environ", clear=True):
         with pytest.raises(ValueError, match="GOOGLE_MAPS_API_KEY is not set"):
-            GoogleMapTools()
+            GoogleMapsTools()
 
 
 def test_search_places_success(google_maps_tools):

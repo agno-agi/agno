@@ -17,8 +17,8 @@ except ImportError as e:
 class WebexTools(Toolkit):
     def __init__(
         self,
-        enable_send_message: bool = True,
-        enable_list_rooms: bool = True,
+        send_message: bool = True,
+        list_rooms: bool = True,
         all: bool = False,
         access_token: Optional[str] = None,
         **kwargs,
@@ -30,14 +30,14 @@ class WebexTools(Toolkit):
         self.client = WebexAPI(access_token=access_token)
 
         tools: List[Any] = []
-        if all or enable_send_message:
-            tools.append(self.send_message)
-        if all or enable_list_rooms:
-            tools.append(self.list_rooms)
+        if all or send_message:
+            tools.append(self.send_webex_message)
+        if all or list_rooms:
+            tools.append(self.list_webex_rooms)
 
         super().__init__(name="webex", tools=tools, **kwargs)
 
-    def send_message(self, room_id: str, text: str) -> str:
+    def send_webex_message(self, room_id: str, text: str) -> str:
         """
         Send a message to a Webex Room.
         Args:
@@ -53,7 +53,7 @@ class WebexTools(Toolkit):
             logger.exception(f"Error sending message in room: {room_id}")
             return json.dumps({"error": str(e)})
 
-    def list_rooms(self) -> str:
+    def list_webex_rooms(self) -> str:
         """
         List all rooms in the Webex.
         Returns:

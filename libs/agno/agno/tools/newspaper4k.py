@@ -23,7 +23,7 @@ class Newspaper4kTools(Toolkit):
         self,
         include_summary: bool = False,
         article_length: Optional[int] = None,
-        enable_read_article: bool = True,
+        read_article: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -31,7 +31,7 @@ class Newspaper4kTools(Toolkit):
         self.article_length: Optional[int] = article_length
 
         tools = []
-        if all or enable_read_article:
+        if all or read_article:
             tools.append(self.read_article)
 
         super().__init__(name="newspaper4k_tools", tools=tools, **kwargs)

@@ -31,10 +31,10 @@ class SearchApiTools(Toolkit):
         api_key: Optional[str] = None,
         num_results: int = 5,
         timeout: int = 30,
-        enable_search_google: bool = True,
-        enable_search_news: bool = False,
-        enable_search_images: bool = False,
-        enable_search_youtube: bool = False,
+        search_google: bool = True,
+        search_news: bool = False,
+        search_images: bool = False,
+        search_youtube: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -47,13 +47,13 @@ class SearchApiTools(Toolkit):
         self.base_url = "https://www.searchapi.io/api/v1/search"
 
         tools: List[Any] = []
-        if all or enable_search_google:
+        if all or search_google:
             tools.append(self.search_google)
-        if all or enable_search_news:
+        if all or search_news:
             tools.append(self.search_news)
-        if all or enable_search_images:
+        if all or search_images:
             tools.append(self.search_images)
-        if all or enable_search_youtube:
+        if all or search_youtube:
             tools.append(self.search_youtube)
 
         super().__init__(name="searchapi_tools", tools=tools, **kwargs)

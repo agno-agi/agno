@@ -21,19 +21,34 @@ class XTools(Toolkit):
         access_token_secret: Optional[str] = None,
         include_post_metrics: bool = False,
         wait_on_rate_limit: bool = False,
+        create_post: bool = False,
+        reply_to_post: bool = False,
+        send_dm: bool = False,
+        get_my_info: bool = True,
+        get_user_info: bool = True,
+        get_home_timeline: bool = False,
+        search_posts: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        """
-        Initialize the XTools.
+        """Initialize XTools for interacting with X (Twitter) API.
 
         Args:
-            bearer_token Optional[str]: The bearer token for Twitter API.
-            consumer_key Optional[str]: The consumer key for Twitter API.
-            consumer_secret Optional[str]: The consumer secret for Twitter API.
-            access_token Optional[str]: The access token for Twitter API.
-            access_token_secret Optional[str]: The access token secret for Twitter API.
-            include_post_metrics Optional[bool]: Whether to include post metrics in the search results.
-            wait_on_rate_limit Optional[bool]: Whether to wait on rate limit.
+            bearer_token: Bearer token for X API. Falls back to X_BEARER_TOKEN env var.
+            consumer_key: Consumer key for X API. Falls back to X_CONSUMER_KEY env var.
+            consumer_secret: Consumer secret for X API. Falls back to X_CONSUMER_SECRET env var.
+            access_token: Access token for X API. Falls back to X_ACCESS_TOKEN env var.
+            access_token_secret: Access token secret for X API. Falls back to X_ACCESS_TOKEN_SECRET env var.
+            include_post_metrics: Include engagement metrics in search results. Defaults to False.
+            wait_on_rate_limit: Wait when rate limited instead of raising error. Defaults to False.
+            create_post: Enable create_x_post tool. Defaults to False (externally visible).
+            reply_to_post: Enable reply_to_x_post tool. Defaults to False (externally visible).
+            send_dm: Enable send_x_dm tool. Defaults to False (externally visible).
+            get_my_info: Enable get_x_my_info tool. Defaults to True.
+            get_user_info: Enable get_x_user_info tool. Defaults to True.
+            get_home_timeline: Enable get_x_home_timeline tool. Defaults to False (token heavy).
+            search_posts: Enable search_x_posts tool. Defaults to True.
+            all: Enable all tools. Defaults to False.
         """
         self.bearer_token = bearer_token or getenv("X_BEARER_TOKEN")
         self.consumer_key = consumer_key or getenv("X_CONSUMER_KEY")
@@ -51,18 +66,25 @@ class XTools(Toolkit):
         )
         self.include_post_metrics = include_post_metrics
 
-        tools: List[Any] = [
-            self.create_post,
-            self.reply_to_post,
-            self.send_dm,
-            self.get_user_info,
-            self.get_home_timeline,
-            self.search_posts,
-        ]
+        tools: List[Any] = []
+        if all or create_post:
+            tools.append(self.create_x_post)
+        if all or reply_to_post:
+            tools.append(self.reply_to_x_post)
+        if all or send_dm:
+            tools.append(self.send_x_dm)
+        if all or get_my_info:
+            tools.append(self.get_x_my_info)
+        if all or get_user_info:
+            tools.append(self.get_x_user_info)
+        if all or get_home_timeline:
+            tools.append(self.get_x_home_timeline)
+        if all or search_posts:
+            tools.append(self.search_x_posts)
 
         super().__init__(name="x", tools=tools, **kwargs)
 
-    def create_post(self, text: str) -> str:
+    def create_x_post(self, text: str) -> str:
         """
         Create a new X post.
 
@@ -86,7 +108,7 @@ class XTools(Toolkit):
             logger.exception("Error creating post")
             return json.dumps({"error": str(e)})
 
-    def reply_to_post(self, post_id: str, text: str) -> str:
+    def reply_to_x_post(self, post_id: str, text: str) -> str:
         """
         Reply to an existing post.
 
@@ -110,7 +132,7 @@ class XTools(Toolkit):
             logger.exception("Error replying to post")
             return json.dumps({"error": str(e)})
 
-    def send_dm(self, recipient: str, text: str) -> str:
+    def send_x_dm(self, recipient: str, text: str) -> str:
         """
         Send a direct message to a user.
 
@@ -156,7 +178,7 @@ class XTools(Toolkit):
             logger.exception("Unexpected error sending DM")
             return json.dumps({"error": f"An unexpected error occurred: {str(e)}"}, indent=2)
 
-    def get_my_info(self) -> str:
+    def get_x_my_info(self) -> str:
         """
         Retrieve information about the authenticated user.
 
@@ -183,7 +205,7 @@ class XTools(Toolkit):
             logger.exception("Error fetching user info")
             return json.dumps({"error": str(e)})
 
-    def get_user_info(self, username: str) -> str:
+    def get_x_user_info(self, username: str) -> str:
         """
         Retrieve information about a specific user.
 
@@ -213,7 +235,7 @@ class XTools(Toolkit):
             logger.exception("Error fetching user info")
             return json.dumps({"error": str(e)})
 
-    def get_home_timeline(self, max_results: int = 10) -> str:
+    def get_x_home_timeline(self, max_results: int = 10) -> str:
         """
         Retrieve the authenticated user's home timeline.
 
@@ -247,7 +269,7 @@ class XTools(Toolkit):
             logger.exception("Error fetching home timeline")
             return json.dumps({"error": str(e)})
 
-    def search_posts(self, query: str, max_results: int = 10) -> str:
+    def search_x_posts(self, query: str, max_results: int = 10) -> str:
         """
         Search for tweets based on a search query.
 

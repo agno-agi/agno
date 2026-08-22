@@ -126,13 +126,13 @@ class CodingTools(Toolkit):
         max_lines: int = 2000,
         max_bytes: int = 50_000,
         shell_timeout: int = 120,
-        enable_read_file: bool = True,
-        enable_edit_file: bool = True,
-        enable_write_file: bool = True,
-        enable_run_shell: bool = True,
-        enable_grep: bool = False,
-        enable_find: bool = False,
-        enable_ls: bool = False,
+        read_file: bool = True,
+        edit_file: bool = True,
+        write_file: bool = True,
+        run_shell: bool = True,
+        grep: bool = False,
+        find: bool = False,
+        ls: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         all: bool = False,
@@ -176,19 +176,19 @@ class CodingTools(Toolkit):
 
         # Build the list of enabled tools (used for both registration and instructions)
         _enabled: List[tuple] = []
-        if all or enable_read_file:
+        if all or read_file:
             _enabled.append(("read_file", self.read_file))
-        if all or enable_edit_file:
+        if all or edit_file:
             _enabled.append(("edit_file", self.edit_file))
-        if all or enable_write_file:
+        if all or write_file:
             _enabled.append(("write_file", self.write_file))
-        if all or enable_run_shell:
+        if all or run_shell:
             _enabled.append(("run_shell", self.run_shell))
-        if all or enable_grep:
+        if all or grep:
             _enabled.append(("grep", self.grep))
-        if all or enable_find:
+        if all or find:
             _enabled.append(("find", self.find))
-        if all or enable_ls:
+        if all or ls:
             _enabled.append(("ls", self.ls))
 
         tool_names = [name for name, _ in _enabled]

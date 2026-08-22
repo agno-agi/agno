@@ -22,7 +22,7 @@ class NebiusTools(Toolkit):
         image_quality: Optional[str] = "standard",
         image_size: Optional[str] = "1024x1024",
         image_style: Optional[str] = None,
-        enable_generate_image: bool = True,
+        generate_image: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -43,7 +43,7 @@ class NebiusTools(Toolkit):
             **kwargs: Additional arguments to pass to Toolkit.
         """
         tools = []
-        if all or enable_generate_image:
+        if all or generate_image:
             tools.append(self.generate_image)
 
         super().__init__(name="nebius_tools", tools=tools, **kwargs)

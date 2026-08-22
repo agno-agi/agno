@@ -17,11 +17,11 @@ class OpenBBTools(Toolkit):
         obb: Optional[Any] = None,
         openbb_pat: Optional[str] = None,
         provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = "yfinance",
-        enable_get_stock_price: bool = True,
-        enable_search_company_symbol: bool = False,
-        enable_get_company_news: bool = False,
-        enable_get_company_profile: bool = False,
-        enable_get_price_targets: bool = False,
+        get_stock_price: bool = True,
+        search_company_symbol: bool = False,
+        get_company_news: bool = False,
+        get_company_profile: bool = False,
+        get_price_targets: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -35,15 +35,15 @@ class OpenBBTools(Toolkit):
         self.provider: Literal["benzinga", "fmp", "intrinio", "polygon", "tiingo", "tmx", "yfinance"] = provider
 
         tools: List[Any] = []
-        if enable_get_stock_price or all:
+        if get_stock_price or all:
             tools.append(self.get_stock_price)
-        if enable_search_company_symbol or all:
+        if search_company_symbol or all:
             tools.append(self.search_company_symbol)
-        if enable_get_company_news or all:
-            tools.append(self.get_company_news)
-        if enable_get_company_profile or all:
+        if get_company_news or all:
+            tools.append(self.openbb_get_company_news)
+        if get_company_profile or all:
             tools.append(self.get_company_profile)
-        if enable_get_price_targets or all:
+        if get_price_targets or all:
             tools.append(self.get_price_targets)
 
         super().__init__(name="openbb_tools", tools=tools, **kwargs)
@@ -119,7 +119,7 @@ class OpenBBTools(Toolkit):
         except Exception as e:
             return f"Error fetching company news for {symbol}: {e}"
 
-    def get_company_news(self, symbol: str, num_stories: int = 10) -> str:
+    def openbb_get_company_news(self, symbol: str, num_stories: int = 10) -> str:
         """Use this function to get company news for a stock symbol or list of symbols.
 
         Args:

@@ -57,14 +57,15 @@ def test_init_with_default_scopes():
 
 
 def test_enable_aliases_still_work():
-    """The enable_* aliases are kept for backwards compatibility and override
-    the canonical flags when passed explicitly."""
+    """The enable_* aliases are remapped to canonical names for backwards compat.
+    When both are passed, the canonical name takes precedence."""
     read_tools = GoogleSheetsTools(enable_read_sheet=True, enable_create_sheet=False, enable_update_sheet=False)
     assert read_tools.scopes == [GoogleSheetsTools.DEFAULT_SCOPES["read"]]
 
+    # When both canonical and legacy params passed, canonical takes precedence
     write_tools = GoogleSheetsTools(read_sheet=True, enable_read_sheet=False, enable_create_sheet=True)
     assert GoogleSheetsTools.DEFAULT_SCOPES["write"] in write_tools.scopes
-    assert GoogleSheetsTools.DEFAULT_SCOPES["read"] not in write_tools.scopes
+    assert GoogleSheetsTools.DEFAULT_SCOPES["read"] in write_tools.scopes  # read_sheet=True wins
 
 
 def test_init_with_custom_scopes():

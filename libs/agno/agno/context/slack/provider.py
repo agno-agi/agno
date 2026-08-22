@@ -124,8 +124,8 @@ class SlackContextProvider(ContextProvider):
         """
         if self.mode == ContextMode.tools:
             return (
-                f"`{self.name}`: `get_channel_history(channel)` for latest messages in a known channel; "
-                "`get_thread(channel, ts)` to expand a thread; `get_channel_info` / `get_user_info` "
+                f"`{self.name}`: `get_slack_channel_history(channel)` for latest messages in a known channel; "
+                "`get_slack_thread(channel, ts)` to expand a thread; `get_slack_channel_info` / `get_slack_user_info` "
                 "to resolve names. Pass channel names like `#agents` directly."
             )
         if self.mode == ContextMode.agent:
@@ -299,15 +299,15 @@ You answer questions by searching and reading Slack.
 Workflow:
 1. **Use the deterministic tools for exact reads.** If the user asks for
    recent messages in a specific channel, call
-   `get_channel_history(channel)`. If they ask about a thread or a
-   message with replies, call `get_thread(channel, ts)`.
-2. **Use search for broad reads.** `search_workspace(query)` uses Slack
-   interface permissions; `search_messages(query)` works with user tokens.
+   `get_slack_channel_history(channel)`. If they ask about a thread or a
+   message with replies, call `get_slack_thread(channel, ts)`.
+2. **Use search for broad reads.** `search_slack_workspace(query)` uses Slack
+   interface permissions; `search_slack_messages(query)` works with user tokens.
    Try one, and if it fails or returns nothing relevant, try the other.
 3. **Shape search queries.** Include channel or topic hints from the
    user's request. Use Slack search filters when useful, e.g.
    `in:#agents`.
-4. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
+4. **Resolve names.** `get_slack_user_info` / `list_slack_users` turn Slack user IDs
    into display names. Don't invent a name when the ID doesn't resolve -
    report the raw user id instead.
 5. **Cite.** Every claim should point to channel + author + timestamp
@@ -323,18 +323,18 @@ _SLACK_BOT_TOKEN_READ_INSTRUCTIONS = """\
 You answer questions by reading Slack with bot-token-compatible tools.
 
 Workflow:
-1. **Search first.** Use `search_messages(query)` to find messages across
+1. **Search first.** Use `search_slack_messages(query)` to find messages across
    accessible channels. Shape queries with channel or topic hints, e.g.
    `in:#agents topic`.
 2. **Read known channels directly.** If the user provides a channel name
-   or ID, pass it straight to `get_channel_history(channel)`. The tool
+   or ID, pass it straight to `get_slack_channel_history(channel)`. The tool
    resolves names like `#agents` to IDs.
-3. **Discover only when needed.** Use `list_channels` only when the user
+3. **Discover only when needed.** Use `list_slack_channels` only when the user
    did not name a channel. The bot must be a member of private channels.
 4. **Expand threads.** When a message has replies, call
-   `get_thread(channel, ts)` for the full discussion. Pass the same
+   `get_slack_thread(channel, ts)` for the full discussion. Pass the same
    channel name or ID you used for history.
-5. **Resolve names.** `get_user_info` / `list_users` turn Slack user IDs
+5. **Resolve names.** `get_slack_user_info` / `list_slack_users` turn Slack user IDs
    into display names. Don't invent a name when the ID doesn't resolve —
    report the raw user id instead.
 6. **Cite.** Every claim should point to channel + author + timestamp.
@@ -353,7 +353,7 @@ You post messages to Slack on behalf of the caller.
 1. **Pass channel names straight through.** `send_message` (and
    `send_message_thread`) accept either a channel ID (`C0123...`)
    or a name like `#releases` — Slack resolves names server-side.
-   **Do NOT call `list_channels` to find an ID first.** On large
+   **Do NOT call `list_slack_channels` to find an ID first.** On large
    workspaces pagination will mask your target and waste calls.
 2. **Compose the message exactly.** Preserve the caller's wording
    unless asked to rephrase.
@@ -365,8 +365,8 @@ You post messages to Slack on behalf of the caller.
      the channel doesn't exist — report it, don't retry blindly.
    - If a post fails with `not_in_channel`, the bot needs to be
      invited; report that so the caller can add it.
-   - User mentions: format as `<@UXXXXXX>`. Use `get_user_info`
-     when you already know the user ID; fall back to `list_users`
+   - User mentions: format as `<@UXXXXXX>`. Use `get_slack_user_info`
+     when you already know the user ID; fall back to `list_slack_users`
      only as a last resort (same pagination concern as channels).
 5. **Report what you posted**, echoing the destination + the final
    text. If the post errored, return the error verbatim.
