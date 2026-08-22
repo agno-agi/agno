@@ -45,6 +45,8 @@ app = agent_os.get_app()
 
 if __name__ == "__main__":
     print("Starting AgentOS on http://localhost:7777")
-    print("Connect via os.agno.com and ask: 'Go to news.ycombinator.com and get the top 3 stories'")
+    print(
+        "Connect via os.agno.com and ask: 'Go to news.ycombinator.com and get the top 3 stories'"
+    )
     print()
     agent_os.serve(app="27_browser_agentos_streaming:app", reload=True)
