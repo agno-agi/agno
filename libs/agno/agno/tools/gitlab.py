@@ -27,7 +27,9 @@ class GitlabTools(Toolkit):
         enable_get_projects: bool = True,
         enable_list_merge_requests: bool = True,
         enable_get_merge_request: bool = True,
+        enable_create_merge_request: bool = True,
         enable_list_issues: bool = True,
+        enable_create_issue: bool = True,
         **kwargs,
     ):
         self.access_token = access_token or getenv("GITLAB_ACCESS_TOKEN")
@@ -51,9 +53,15 @@ class GitlabTools(Toolkit):
         if enable_get_merge_request:
             tools.append(self.get_merge_request)
             async_tools.append((self.aget_merge_request, "get_merge_request"))
+        if enable_create_merge_request:
+            tools.append(self.create_merge_request)
+            async_tools.append((self.acreate_merge_request, "create_merge_request"))
         if enable_list_issues:
             tools.append(self.list_issues)
             async_tools.append((self.alist_issues, "list_issues"))
+        if enable_create_issue:
+            tools.append(self.create_issue)
+            async_tools.append((self.acreate_issue, "create_issue"))
 
         super().__init__(name="gitlab", tools=tools, async_tools=async_tools, **kwargs)
 
@@ -129,6 +137,14 @@ class GitlabTools(Toolkit):
         headers = self._build_headers()
         client = self._get_async_client()
         response = await client.get(url, params=params, headers=headers)
+        response.raise_for_status()
+        return response.json()
+
+    async def _apost(self, endpoint: str, data: Optional[Dict[str, Any]] = None) -> Any:
+        url = self._build_api_url(endpoint)
+        headers = self._build_headers()
+        client = self._get_async_client()
+        response = await client.post(url, json=data, headers=headers)
         response.raise_for_status()
         return response.json()
 
@@ -468,6 +484,116 @@ class GitlabTools(Toolkit):
             logger.exception(f"Unexpected error while getting merge request {merge_request_iid}")
             return self._json_error(str(e))
 
+    def create_merge_request(
+        self,
+        project_id_or_path: str,
+        source_branch: str,
+        target_branch: str,
+        title: str,
+        description: Optional[str] = None,
+        assignee_id: Optional[int] = None,
+        labels: Optional[str] = None,
+        remove_source_branch: bool = False,
+    ) -> str:
+        """
+        Create a new merge request in a project.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path.
+            source_branch: Branch containing the changes to merge.
+            target_branch: Branch the changes should be merged into.
+            title: Title of the merge request.
+            description: Optional description of the merge request.
+            assignee_id: Optional user ID to assign the merge request to.
+            labels: Optional comma-separated label list.
+            remove_source_branch: If True, remove the source branch once merged.
+
+        Returns:
+            JSON string containing the created merge request details.
+        """
+        try:
+            project = self._get_project(project_id_or_path)
+            payload: Dict[str, Any] = {
+                "source_branch": source_branch,
+                "target_branch": target_branch,
+                "title": title,
+                "remove_source_branch": remove_source_branch,
+            }
+            if description:
+                payload["description"] = description
+            if assignee_id is not None:
+                payload["assignee_id"] = assignee_id
+            if labels:
+                payload["labels"] = labels
+
+            log_debug(f"Creating merge request for project {project_id_or_path} with payload: {payload}")
+            merge_request = project.mergerequests.create(payload)
+            return json.dumps(self._serialize_merge_request(merge_request), indent=2)
+        except (GitlabAuthenticationError, GitlabError) as e:
+            logger.exception(f"GitLab API error while creating merge request for project {project_id_or_path}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while creating merge request for project {project_id_or_path}")
+            return self._json_error(str(e))
+
+    async def acreate_merge_request(
+        self,
+        project_id_or_path: str,
+        source_branch: str,
+        target_branch: str,
+        title: str,
+        description: Optional[str] = None,
+        assignee_id: Optional[int] = None,
+        labels: Optional[str] = None,
+        remove_source_branch: bool = False,
+    ) -> str:
+        """
+        Create a new merge request in a project using async HTTP requests.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path.
+            source_branch: Branch containing the changes to merge.
+            target_branch: Branch the changes should be merged into.
+            title: Title of the merge request.
+            description: Optional description of the merge request.
+            assignee_id: Optional user ID to assign the merge request to.
+            labels: Optional comma-separated label list.
+            remove_source_branch: If True, remove the source branch once merged.
+
+        Returns:
+            JSON string containing the created merge request details.
+        """
+        try:
+            project_ref = self._encode_project_ref(project_id_or_path)
+            payload: Dict[str, Any] = {
+                "source_branch": source_branch,
+                "target_branch": target_branch,
+                "title": title,
+                "remove_source_branch": remove_source_branch,
+            }
+            if description:
+                payload["description"] = description
+            if assignee_id is not None:
+                payload["assignee_id"] = assignee_id
+            if labels:
+                payload["labels"] = labels
+
+            log_debug(f"Creating merge request for project {project_id_or_path} with payload: {payload}")
+            merge_request = await self._apost(f"/projects/{project_ref}/merge_requests", data=payload)
+            return json.dumps(self._serialize_merge_request(merge_request), indent=2)
+        except httpx.HTTPStatusError as e:
+            message = self._http_error_message(e.response)
+            log_error(
+                f"GitLab API error while creating merge request for project {project_id_or_path}: {message}: {str(e)}"
+            )
+            return self._json_error(message)
+        except httpx.RequestError as e:
+            logger.exception(f"GitLab request error while creating merge request for project {project_id_or_path}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while creating merge request for project {project_id_or_path}")
+            return self._json_error(str(e))
+
     def list_issues(
         self,
         project_id_or_path: str,
@@ -572,4 +698,98 @@ class GitlabTools(Toolkit):
             return self._json_error(str(e))
         except Exception as e:
             logger.exception(f"Unexpected error while listing issues for project {project_id_or_path}")
+            return self._json_error(str(e))
+
+    def create_issue(
+        self,
+        project_id_or_path: str,
+        title: str,
+        description: Optional[str] = None,
+        labels: Optional[str] = None,
+        assignee_ids: Optional[List[int]] = None,
+        due_date: Optional[str] = None,
+    ) -> str:
+        """
+        Create a new issue in a project.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path.
+            title: Title of the issue.
+            description: Optional description of the issue.
+            labels: Optional comma-separated label list.
+            assignee_ids: Optional list of user IDs to assign the issue to.
+            due_date: Optional due date in YYYY-MM-DD format.
+
+        Returns:
+            JSON string containing the created issue details.
+        """
+        try:
+            project = self._get_project(project_id_or_path)
+            payload: Dict[str, Any] = {"title": title}
+            if description:
+                payload["description"] = description
+            if labels:
+                payload["labels"] = labels
+            if assignee_ids:
+                payload["assignee_ids"] = assignee_ids
+            if due_date:
+                payload["due_date"] = due_date
+
+            log_debug(f"Creating issue for project {project_id_or_path} with payload: {payload}")
+            issue = project.issues.create(payload)
+            return json.dumps(self._serialize_issue(issue), indent=2)
+        except (GitlabAuthenticationError, GitlabError) as e:
+            logger.exception(f"GitLab API error while creating issue for project {project_id_or_path}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while creating issue for project {project_id_or_path}")
+            return self._json_error(str(e))
+
+    async def acreate_issue(
+        self,
+        project_id_or_path: str,
+        title: str,
+        description: Optional[str] = None,
+        labels: Optional[str] = None,
+        assignee_ids: Optional[List[int]] = None,
+        due_date: Optional[str] = None,
+    ) -> str:
+        """
+        Create a new issue in a project using async HTTP requests.
+
+        Args:
+            project_id_or_path: GitLab project ID or URL-encoded path.
+            title: Title of the issue.
+            description: Optional description of the issue.
+            labels: Optional comma-separated label list.
+            assignee_ids: Optional list of user IDs to assign the issue to.
+            due_date: Optional due date in YYYY-MM-DD format.
+
+        Returns:
+            JSON string containing the created issue details.
+        """
+        try:
+            project_ref = self._encode_project_ref(project_id_or_path)
+            payload: Dict[str, Any] = {"title": title}
+            if description:
+                payload["description"] = description
+            if labels:
+                payload["labels"] = labels
+            if assignee_ids:
+                payload["assignee_ids"] = assignee_ids
+            if due_date:
+                payload["due_date"] = due_date
+
+            log_debug(f"Creating issue for project {project_id_or_path} with payload: {payload}")
+            issue = await self._apost(f"/projects/{project_ref}/issues", data=payload)
+            return json.dumps(self._serialize_issue(issue), indent=2)
+        except httpx.HTTPStatusError as e:
+            message = self._http_error_message(e.response)
+            log_error(f"GitLab API error while creating issue for project {project_id_or_path}: {message}: {str(e)}")
+            return self._json_error(message)
+        except httpx.RequestError as e:
+            logger.exception(f"GitLab request error while creating issue for project {project_id_or_path}")
+            return self._json_error(str(e))
+        except Exception as e:
+            logger.exception(f"Unexpected error while creating issue for project {project_id_or_path}")
             return self._json_error(str(e))
