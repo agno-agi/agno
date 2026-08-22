@@ -261,6 +261,34 @@ class TestConfigEndpointSerialization:
         assert "manifest" not in resp.json()
 
 
+class TestModelsEndpointSerialization:
+    """End-to-end tests for config-backed model discovery."""
+
+    def test_available_models_from_yaml_are_returned_by_models_endpoint(self, tmp_path):
+        config_path = tmp_path / "agent_os_config.yaml"
+        config_path.write_text(
+            """
+            available_models:
+              - "openai:gpt-oss-120b"
+              - "openai:gpt-oss-20b"
+            """
+        )
+        agent = Agent(name="Marketing Agent", id="marketing-agent", telemetry=False)
+        os_instance = AgentOS(agents=[agent], telemetry=False, config=str(config_path))
+        client = TestClient(os_instance.get_app())
+
+        config_resp = client.get("/config")
+        assert config_resp.status_code == 200
+        assert config_resp.json()["available_models"] == ["openai:gpt-oss-120b", "openai:gpt-oss-20b"]
+
+        models_resp = client.get("/models")
+        assert models_resp.status_code == 200
+        assert models_resp.json() == [
+            {"id": "gpt-oss-120b", "provider": "openai"},
+            {"id": "gpt-oss-20b", "provider": "openai"},
+        ]
+
+
 class TestAgentSummaryModelField:
     def test_from_agent_extracts_model(self):
         agent = Agent(
