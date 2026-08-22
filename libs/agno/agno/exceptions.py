@@ -190,6 +190,7 @@ class CheckTrigger(Enum):
 
     PROMPT_INJECTION = "prompt_injection"
     PII_DETECTED = "pii_detected"
+    AGENT_THREAT_DETECTED = "agent_threat_detected"
 
 
 class InputCheckError(Exception):

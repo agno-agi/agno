@@ -120,4 +120,4 @@ def test_get_models(client: httpx.Client):
     for model in data:
         assert "id" in model
         assert "provider" in model
-        assert model["provider"] == "OpenAI"
+        assert model["provider"] == "openai-chat"
