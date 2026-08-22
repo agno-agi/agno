@@ -291,6 +291,64 @@ def test_read_file_blocks_parent_traversal(temp_dir):
     assert "top secret" not in result
 
 
+# --- Encoding ---
+
+
+NON_ASCII_CONTENT = "héllo wörld — 你好 ✅"
+
+
+def test_write_file_encodes_non_ascii_as_utf8(tools, temp_dir):
+    """write_file encodes as UTF-8 regardless of the host locale encoding."""
+    result = tools.write_file(NON_ASCII_CONTENT, filename="unicode")
+    assert "Successfully wrote file to:" in result
+
+    # Asserted on the bytes: reading back as text would apply the same encoding
+    # and hide a locale-dependent write.
+    filepath = Path(temp_dir) / "unicode.txt"
+    assert filepath.read_bytes() == NON_ASCII_CONTENT.encode("utf-8")
+
+
+def test_read_file_decodes_utf8_content(tools, temp_dir):
+    """read_file decodes UTF-8 content written by another process."""
+    filepath = Path(temp_dir) / "unicode.txt"
+    filepath.write_bytes(NON_ASCII_CONTENT.encode("utf-8"))
+
+    assert tools.read_file("unicode.txt") == NON_ASCII_CONTENT
+
+
+def test_write_read_round_trip_non_ascii(tools):
+    """Non-ASCII content survives a write followed by a read."""
+    tools.write_file(NON_ASCII_CONTENT, filename="roundtrip_unicode")
+    assert tools.read_file("roundtrip_unicode.txt") == NON_ASCII_CONTENT
+
+
+def test_write_file_honours_encoding_argument(tools, temp_dir):
+    """An explicit encoding overrides the UTF-8 default."""
+    content = "héllo wörld"
+    tools.write_file(content, filename="latin", encoding="latin-1")
+
+    filepath = Path(temp_dir) / "latin.txt"
+    assert filepath.read_bytes() == content.encode("latin-1")
+
+
+def test_read_file_honours_encoding_argument(tools, temp_dir):
+    """read_file decodes with the requested encoding."""
+    content = "héllo wörld"
+    filepath = Path(temp_dir) / "latin.txt"
+    filepath.write_bytes(content.encode("latin-1"))
+
+    assert tools.read_file("latin.txt", encoding="latin-1") == content
+
+
+def test_read_file_undecodable_content_returns_error(tools, temp_dir):
+    """A file that is not valid UTF-8 is reported as an error, not raised."""
+    filepath = Path(temp_dir) / "binary.txt"
+    filepath.write_bytes(b"\xff\xfe\x00invalid")
+
+    result = tools.read_file("binary.txt")
+    assert "Error:" in result
+
+
 def test_restrict_to_base_dir_false_allows_escape(temp_dir):
     """restrict_to_base_dir=False disables the sandbox for callers that opt out."""
     safe_dir = Path(temp_dir) / "safe"
