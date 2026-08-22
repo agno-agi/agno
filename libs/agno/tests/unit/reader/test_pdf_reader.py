@@ -532,3 +532,25 @@ def test_pdf_reader_multiple_instances_independent():
     assert reader1.chunking_strategy is not reader2.chunking_strategy
     assert reader1.chunking_strategy.chunk_size == 300
     assert reader2.chunking_strategy.chunk_size == 400
+
+
+def test_clean_page_numbers_extra_content_default_is_none():
+    """Regression: mutable default argument (B006) must not be used for extra_content."""
+    import inspect
+
+    default = inspect.signature(_clean_page_numbers).parameters["extra_content"].default
+    assert default is None
+
+
+def test_clean_page_numbers_default_extra_content_matches_empty_list():
+    """Omitting extra_content must behave exactly like passing an empty list.
+
+    NOTE: _clean_page_numbers mutates its input list in place, so each call must
+    receive a fresh copy to keep the two invocations independent.
+    """
+    content = ["1 Introduction", "2 Background"]
+    expected, expected_shift = _clean_page_numbers(list(content), extra_content=[])
+    actual, actual_shift = _clean_page_numbers(list(content))
+
+    assert actual == expected
+    assert actual_shift == expected_shift

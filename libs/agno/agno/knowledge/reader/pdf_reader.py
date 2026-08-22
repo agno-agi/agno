@@ -96,7 +96,7 @@ async def _async_ocr_reader(page: Any) -> str:
 
 def _clean_page_numbers(
     page_content_list: List[str],
-    extra_content: List[str] = [],
+    extra_content: Optional[List[str]] = None,
     page_start_numbering_format: str = PAGE_START_NUMBERING_FORMAT_DEFAULT,
     page_end_numbering_format: str = PAGE_END_NUMBERING_FORMAT_DEFAULT,
 ) -> Tuple[List[str], Optional[int]]:
@@ -121,8 +121,10 @@ def _clean_page_numbers(
         - If at least a specified ratio of pages (defined by `PAGE_NUMBERING_CORRECTNESS_RATIO_FOR_REMOVAL`) has correct sequential numbering,
           the page numbers are processed.
         - If page numbers are found, the function will add formatted page numbers to each page's content if `page_start_numbering_format` or
-          `page_end_numbering_format` is provided.
+        `page_end_numbering_format` is provided.
     """
+    extra_content = extra_content or []
+
     assert len(extra_content) == 0 or len(extra_content) == len(page_content_list), (
         "Please provide an equally sized list of extra content if provided."
     )
