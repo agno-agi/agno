@@ -2130,6 +2130,27 @@ class Model(ABC):
             tool_call_error=True,
         )
 
+    def create_deferred_function_call_result(
+        self,
+        function_call: FunctionCall,
+        *,
+        boundary_tool_name: str,
+    ) -> Message:
+        """Settle a later call without executing it across a stop-after boundary."""
+
+        return Message(
+            role=self.tool_message_role,
+            content=(
+                f"Tool call {function_call.function.name} was not executed because "
+                f"{boundary_tool_name} is a stop-after boundary. Reissue it after "
+                "that result only if it is still needed."
+            ),
+            tool_call_id=function_call.call_id,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            tool_call_error=True,
+        )
+
     def run_function_call(
         self,
         function_call: FunctionCall,
@@ -2322,7 +2343,7 @@ class Model(ABC):
         if additional_input is None:
             additional_input = []
 
-        for fc in function_calls:
+        for index, fc in enumerate(function_calls):
             if function_call_limit is not None:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
@@ -2454,12 +2475,30 @@ class Model(ABC):
                     tool_executions=paused_tool_executions,
                     event=ModelResponseEvent.tool_call_paused.value,
                 )
+                if fc.function.stop_after_tool_call:
+                    function_call_results.extend(
+                        self.create_deferred_function_call_result(
+                            later_call,
+                            boundary_tool_name=fc.function.name,
+                        )
+                        for later_call in function_calls[index + 1 :]
+                    )
+                    break
                 # We don't execute the function calls here
                 continue
 
             yield from self.run_function_call(
                 function_call=fc, function_call_results=function_call_results, additional_input=additional_input
             )
+            if function_call_results and function_call_results[-1].stop_after_tool_call:
+                function_call_results.extend(
+                    self.create_deferred_function_call_result(
+                        later_call,
+                        boundary_tool_name=fc.function.name,
+                    )
+                    for later_call in function_calls[index + 1 :]
+                )
+                break
 
         # Add any additional messages at the end
         if additional_input:
@@ -2534,6 +2573,15 @@ class Model(ABC):
                     # Skip this function call
                     continue
             function_calls_to_run.append(fc)
+
+        deferred_function_calls: List[FunctionCall] = []
+        boundary_tool_name: Optional[str] = None
+        for index, fc in enumerate(function_calls_to_run):
+            if fc.function.stop_after_tool_call:
+                boundary_tool_name = fc.function.name
+                deferred_function_calls = function_calls_to_run[index + 1 :]
+                function_calls_to_run = function_calls_to_run[: index + 1]
+                break
 
         # Yield tool_call_started events for all function calls or pause them
         for fc in function_calls_to_run:
@@ -2989,6 +3037,15 @@ class Model(ABC):
 
             # Add function call result to function call results
             function_call_results.append(function_call_result)
+
+        if deferred_function_calls and boundary_tool_name is not None:
+            function_call_results.extend(
+                self.create_deferred_function_call_result(
+                    function_call,
+                    boundary_tool_name=boundary_tool_name,
+                )
+                for function_call in deferred_function_calls
+            )
 
         # Add any additional messages at the end
         if additional_input:
