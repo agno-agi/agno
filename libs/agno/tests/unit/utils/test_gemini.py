@@ -738,3 +738,48 @@ def test_inject_header_overrides_existing_x_goog_api_client():
     params = {"http_options": {"headers": {"x-goog-api-client": "stale/0.0.0"}}}
     result = inject_agno_client_header(params)
     assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+
+def test_format_image_for_message_missing_filepath(tmp_path):
+    """A filepath that does not exist is reported as a missing file, not as a reraise failure."""
+    from unittest.mock import patch
+
+    from agno.media import Image
+    from agno.utils.gemini import format_image_for_message
+
+    missing = tmp_path / "absent.png"
+    with patch("agno.utils.gemini.log_error") as mock_error, patch("agno.utils.gemini.log_warning") as mock_warning:
+        assert format_image_for_message(Image(filepath=str(missing))) is None
+
+    # The branch used a bare `raise` with no active exception, so RuntimeError("No
+    # active exception to reraise") was caught below and logged in place of the real
+    # cause, hiding which file was missing.
+    mock_error.assert_called_once()
+    assert "does not exist" in mock_error.call_args.args[0]
+    mock_warning.assert_not_called()
+
+
+def test_format_image_for_message_reads_existing_filepath(tmp_path):
+    """An existing filepath is read and returned as image bytes."""
+    from agno.media import Image
+    from agno.utils.gemini import format_image_for_message
+
+    image_path = tmp_path / "present.png"
+    image_path.write_bytes(b"fake-image-bytes")
+
+    result = format_image_for_message(Image(filepath=str(image_path)))
+
+    assert result == {"mime_type": "image/jpeg", "data": b"fake-image-bytes"}
+
+
+def test_format_image_for_message_directory_filepath(tmp_path):
+    """A filepath pointing at a directory is reported as missing rather than read."""
+    from unittest.mock import patch
+
+    from agno.media import Image
+    from agno.utils.gemini import format_image_for_message
+
+    with patch("agno.utils.gemini.log_error") as mock_error:
+        assert format_image_for_message(Image(filepath=str(tmp_path))) is None
+
+    assert "does not exist" in mock_error.call_args.args[0]
