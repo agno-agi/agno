@@ -61,10 +61,14 @@ uv venv "${VENV_DIR}" --python 3.12 --quiet
 # tree, not the last release. The os extra is required because agno.workflow
 # imports fastapi. The other frameworks are the comparison set for
 # cookbook/performance/comparison and cookbook/09_evals/performance/comparison.
+# pydantic-ai is installed as pydantic-ai-slim: the full pydantic-ai bundle
+# hard-requires the logfire SDK, whose pydantic plugin loads at the first
+# BaseModel definition and inflates the measured cold import of every
+# framework in the shared environment.
 echo ""
 echo -e "    ${DIM}Installing agno[os] (editable) and the comparison frameworks...${NC}"
-echo -e "    ${DIM}> uv pip install -e libs/agno[os] langgraph langgraph-checkpoint-sqlite langchain_openai crewai pydantic_ai openai-agents smolagents autogen-agentchat autogen-ext[openai]${NC}"
-VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNO_DIR}[os]" langgraph langgraph-checkpoint-sqlite langchain_openai openai-agents crewai pydantic_ai smolagents autogen-agentchat "autogen-ext[openai]" --quiet
+echo -e "    ${DIM}> uv pip install -e libs/agno[os] langgraph langgraph-checkpoint-sqlite langchain_openai crewai pydantic-ai-slim[openai] openai-agents smolagents autogen-agentchat autogen-ext[openai]${NC}"
+VIRTUAL_ENV="${VENV_DIR}" uv pip install -e "${AGNO_DIR}[os]" langgraph langgraph-checkpoint-sqlite langchain_openai openai-agents crewai "pydantic-ai-slim[openai]" smolagents autogen-agentchat "autogen-ext[openai]" --quiet
 
 # Copy activation command to clipboard
 ACTIVATE_CMD="source .venvs/perfenv/bin/activate"

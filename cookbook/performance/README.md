@@ -15,10 +15,17 @@ identical conditions.
 ## Reference results
 
 Measured 2026-08-22 on an Apple M4 Max, Python 3.12, all four frameworks
-installed in a single environment, one sequential run, medians reported.
-Framework versions: LangGraph 1.2.11, PydanticAI 2.31.1, CrewAI 1.15.17;
-Agno at the feat/v3.0 tip, which includes the copy-on-write history and
-incremental run-persistence changes.
+installed in a single environment created by `perf_setup.sh`, one
+sequential run, medians reported. Framework versions: LangGraph 1.2.11,
+PydanticAI 2.31.1 (slim install), CrewAI 1.15.17; Agno at the feat/v3.0
+tip, which includes the copy-on-write history and incremental
+run-persistence changes. Two cells were re-measured in follow-up
+sessions on the same machine: the durable row after SqliteDb adopted
+SQLite's WAL journal mode (matching the journal configuration
+SqliteSaver already used), and PydanticAI's cold import after the
+environment switched to the slim install (the full bundle's logfire
+plugin had inflated it). The conversation rows reproduced within noise
+in both re-measurement sessions.
 
 | Metric | Agno | LangGraph | PydanticAI | CrewAI |
 |---|---|---|---|---|
@@ -26,10 +33,10 @@ incremental run-persistence changes.
 | Tool-call run (mocked model) | 327 us | 787 us (2.4x) | 2,394 us (7.3x) | excluded |
 | 5-turn conversation, in-memory | 1.0 ms | 3.5 ms (3.4x) | 8.0 ms (7.9x) | 19.0 ms (19x) |
 | 25-turn conversation, in-memory | 12.2 ms | 22.3 ms (1.8x) | 39.2 ms (3.2x) | 92.9 ms (7.6x) |
-| 25-turn conversation, durable (SQLite) | 52.3 ms | 39.0 ms (0.7x) | excluded | excluded |
+| 25-turn conversation, durable (SQLite) | 42.2 ms | 36.5 ms (0.9x) | excluded | excluded |
 | Agent construction (1 tool) | 4.7 us | 1,256 us (269x) | 9,546 us (2,046x) | 19,101 us (4,094x) |
 | Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.6x) | 24 KiB (3.3x) |
-| Cold import | 147 ms | 313 ms (2.1x) | 419 ms (2.9x) | 1,031 ms (7.0x) |
+| Cold import | 147 ms | 313 ms (2.1x) | 222 ms (1.5x) | 1,031 ms (7.0x) |
 
 Multipliers are relative to Agno. The committed reference runs, including
 per-benchmark distributions, are under `baselines/`; the definition of each
@@ -50,11 +57,16 @@ paths were rewritten — history messages are copied on write, and the
 in-memory store persists runs incrementally — and the row now measures
 a 1.8x win under the same matched configuration, against LangGraph's
 reference-holding checkpointer with Agno's session cache enabled. Third,
-the durable 25-turn row is the benchmark Agno still loses. Both sides
-serialize every turn to SQLite; Agno's SQL adapter write path spends more
-per turn on serializing session state that grows with length. It is the
-remaining known optimization target, and the row will be re-measured when
-that work lands.
+the durable 25-turn row is the benchmark Agno still loses, though by a
+far narrower margin than earlier revisions reported (52.3 ms against
+39.0 ms). Most of that gap was a journal-mode mismatch rather than
+framework overhead: SqliteSaver configures its connection into WAL mode
+while SqliteDb ran SQLite's DELETE default, paying a journal-file
+create, double fsync, and delete on every commit. SqliteDb now runs WAL
+too (with `synchronous` left at FULL, so commit durability is
+unchanged), and the row compares frameworks on equal footing. The
+remaining difference is Agno's per-turn serialization of session state
+that grows with length — the known optimization target for this row.
 
 ## 1. Environment setup
 
@@ -171,8 +183,11 @@ call real models, see `cookbook/09_evals/performance/`.
   absolute values should only be compared within one. Packages that
   register pydantic plugins are a specific hazard: pydantic imports every
   registered plugin when the first model class is defined, which taxes the
-  import time of every framework here. Benchmark in an environment created
-  by `perf_setup.sh`, not one that has accumulated extra packages.
+  import time of every framework here. This is why `perf_setup.sh`
+  installs `pydantic-ai-slim` rather than the full `pydantic-ai` bundle,
+  which hard-requires the plugin-registering logfire SDK (see
+  `comparison/README.md`). Benchmark in an environment created by
+  `perf_setup.sh`, not one that has accumulated extra packages.
 - Mocked-run numbers are per-framework floors, not full provider-path
   costs. A comparison at the HTTP boundary — a canned response beneath each
   framework's real provider adapter — would include client-side provider
