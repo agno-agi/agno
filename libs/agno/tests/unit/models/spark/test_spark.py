@@ -4,6 +4,7 @@ from unittest.mock import patch
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
+from agno.models.openai.like import OpenAILike
 from agno.models.spark import Spark
 from agno.models.utils import get_model
 
@@ -35,6 +36,14 @@ def test_spark_client_params():
     client_params = model._get_client_params()
     assert client_params["api_key"] == "test-api-key"
     assert client_params["base_url"] == "https://spark-api-open.xf-yun.com/v1"
+
+
+def test_spark_client_params_delegate_to_openai_like():
+    with patch.object(OpenAILike, "_get_client_params", return_value={"delegated": True}) as get_client_params:
+        model = Spark(api_key="test-api-key")
+
+        assert model._get_client_params() == {"delegated": True}
+        get_client_params.assert_called_once_with()
 
 
 def test_spark_default_values():

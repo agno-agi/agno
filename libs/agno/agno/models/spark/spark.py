@@ -45,21 +45,4 @@ class Spark(OpenAILike):
                     model_name=self.name,
                 )
 
-        # Define base client params
-        base_params = {
-            "api_key": self.api_key,
-            "organization": self.organization,
-            "base_url": self.base_url,
-            "timeout": self.timeout,
-            "max_retries": self.max_retries,
-            "default_headers": self.default_headers,
-            "default_query": self.default_query,
-        }
-
-        # Create client_params dict with non-None values
-        client_params = {k: v for k, v in base_params.items() if v is not None}
-
-        # Add additional client params if provided
-        if self.client_params:
-            client_params.update(self.client_params)
-        return client_params
+        return super()._get_client_params()
