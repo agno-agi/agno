@@ -659,3 +659,109 @@ async def test_provider_aquery_propagates_run_context():
         "metadata": {"request_id": "req-789"},
         "dependencies": {"db": "postgres"},
     }
+
+
+# ---------------------------------------------------------------------------
+# BrowserContextProvider — Streaming Event Propagation
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_query_tool_streams_events_with_parent_run_id():
+    """Events from sub-agent must be yielded with parent_run_id set."""
+    from agno.run import RunContext
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
+
+    provider = BrowserContextProvider()
+
+    # Mock the agent to yield events then RunOutput
+    async def mock_arun(*args, **kwargs):
+        event1 = ToolCallStartedEvent()
+        event1.tool_call_id = "tc-1"
+        event2 = ToolCallStartedEvent()
+        event2.tool_call_id = "tc-2"
+        yield event1
+        yield event2
+        yield RunOutput(run_id="sub-run-1", content="Done")
+
+    mock_agent = type("MockAgent", (), {"arun": mock_arun})()
+    provider._agent = mock_agent
+
+    # Get the query tool and run it
+    query_tool = provider._query_tool()
+    rc = RunContext(run_id="parent-run-1", user_id="u", session_id="s")
+
+    # Collect yielded events
+    gen = await query_tool.entrypoint(question="navigate to example.com", run_context=rc)
+    yielded_events = []
+    async for item in gen:
+        if not isinstance(item, str):
+            yielded_events.append(item)
+
+    # Should yield all events except RunOutput
+    assert len(yielded_events) == 2
+
+    # Each event should have parent_run_id set to the parent's run_id
+    for event in yielded_events:
+        assert event.parent_run_id == "parent-run-1"
+
+
+@pytest.mark.asyncio
+async def test_query_tool_respects_stream_sub_agent_events_false():
+    """When stream_sub_agent_events=False, yield JSON answer, not events."""
+    import json
+    from unittest.mock import AsyncMock
+
+    provider = BrowserContextProvider(stream_sub_agent_events=False)
+
+    # Mock the sub-agent
+    mock_agent = type("MockAgent", (), {"arun": AsyncMock()})()
+    mock_output = type(
+        "Out",
+        (),
+        {"content": "Found 3 stories", "get_content_as_string": lambda self: "Found 3 stories"},
+    )()
+    mock_agent.arun.return_value = mock_output
+    provider._agent = mock_agent
+
+    # Get the query tool and run it
+    query_tool = provider._query_tool()
+
+    # Collect yielded items
+    gen = await query_tool.entrypoint(question="get top stories")
+    yielded_items = []
+    async for item in gen:
+        yielded_items.append(item)
+
+    # Should yield exactly one JSON string (not events)
+    assert len(yielded_items) == 1
+    result = json.loads(yielded_items[0])
+    assert result["text"] == "Found 3 stories"
+
+
+@pytest.mark.asyncio
+async def test_query_tool_skips_run_output():
+    """RunOutput from sub-agent must NOT be yielded (avoids content duplication)."""
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    provider = BrowserContextProvider()
+
+    # Mock the agent to yield content event then RunOutput
+    async def mock_arun(*args, **kwargs):
+        yield RunContentEvent(run_id="sub-run-1", content="Result text")
+        yield RunOutput(run_id="sub-run-1", content="Result text")
+
+    mock_agent = type("MockAgent", (), {"arun": mock_arun})()
+    provider._agent = mock_agent
+
+    query_tool = provider._query_tool()
+
+    gen = await query_tool.entrypoint(question="test query")
+    yielded_events = []
+    async for item in gen:
+        if not isinstance(item, str):
+            yielded_events.append(item)
+
+    # Only the content event should be yielded, not RunOutput
+    assert len(yielded_events) == 1
+    assert isinstance(yielded_events[0], RunContentEvent)
