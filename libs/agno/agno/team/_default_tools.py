@@ -740,13 +740,17 @@ def _get_delegate_task_function(
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
-        if not stream:
+        # Surface empty/None member responses for BOTH stream and non-stream paths.
+        # Previously only the non-stream branch reported emptiness; streaming
+        # members could leave the team with silent early-stop (#5278).
+        from agno.team._member_response import empty_member_response_message, member_run_is_empty
+
+        if member_run_is_empty(member_agent_run_response):
+            member_label = member_agent.name or member_agent.id or member_id
+            yield empty_member_response_message(str(member_label))
+        elif not stream:
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
+                if isinstance(member_agent_run_response.content, str):  # type: ignore
                     content = member_agent_run_response.content.strip()  # type: ignore
                     if len(content) > 0:
                         yield content
@@ -926,13 +930,14 @@ def _get_delegate_task_function(
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
 
-        if not stream:
+        from agno.team._member_response import empty_member_response_message, member_run_is_empty
+
+        if member_run_is_empty(member_agent_run_response):
+            member_label = member_agent.name or member_agent.id or member_id
+            yield empty_member_response_message(str(member_label))
+        elif not stream:
             try:
-                if member_agent_run_response.content is None and (  # type: ignore
-                    member_agent_run_response.tools is None or len(member_agent_run_response.tools) == 0  # type: ignore
-                ):
-                    yield "No response from the member agent."
-                elif isinstance(member_agent_run_response.content, str):  # type: ignore
+                if isinstance(member_agent_run_response.content, str):  # type: ignore
                     if len(member_agent_run_response.content.strip()) > 0:  # type: ignore
                         yield member_agent_run_response.content  # type: ignore
 
