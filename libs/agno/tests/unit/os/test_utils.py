@@ -121,6 +121,8 @@ DOCUMENT_FORMATS = [
     ("sheet.xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
     ("sheet.xls", "application/vnd.ms-excel"),
     ("email.msg", "application/vnd.ms-outlook"),
+    ("archive.zip", "application/zip"),
+    ("email.eml", "message/rfc822"),
     ("module.py", "text/x-python"),
     ("readme.txt", "text/plain"),
     ("page.html", "text/html"),
@@ -162,7 +164,6 @@ class TestClassifyUploadFile:
 
     def test_unsupported_type_returns_none(self):
         """Genuinely unsupported files must still be rejected (router raises 400)."""
-        assert classify_upload_file(_make_upload_file("archive.zip", "application/zip")) is None
         assert classify_upload_file(_make_upload_file("mystery.xyz", "application/octet-stream")) is None
         assert classify_upload_file(_make_upload_file("noext", "application/octet-stream")) is None
 
