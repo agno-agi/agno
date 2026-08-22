@@ -4217,3 +4217,106 @@ async def test_a_warm_entry_is_not_served_once_a_hook_rewrites_the_argument_asyn
     assert first.result == "data for 123"
     assert second.result == "data for profile-v2"
     assert executions == ["123", "profile-v2"]
+
+
+def test_tool_hook_next_func_kwargs_reach_entrypoint():
+    """A hook may hand next_func a fresh dict; those overrides reach the entrypoint.
+
+    The innermost executor used to rebuild its arguments from the model's
+    original call, so a new-dict rewrite was silently discarded.
+    """
+
+    def rewrite(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        rewritten = dict(arguments)
+        rewritten["param1"] = "rewritten"
+        return function_call(**rewritten)
+
+    executions = []
+
+    def echo(param1: str) -> str:
+        executions.append(param1)
+        return f"echo {param1}"
+
+    func = Function(name="echo", entrypoint=echo, tool_hooks=[rewrite])
+    result = FunctionCall(function=func, arguments={"param1": "original"}).execute()
+
+    assert result.status == "success"
+    assert result.result == "echo rewritten"
+    assert executions == ["rewritten"]
+
+
+def test_tool_hook_in_place_mutation_still_reaches_entrypoint():
+    """The documented in-place mutation form keeps working beside the fresh-dict form."""
+
+    def mutate(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        arguments["param1"] = "mutated"
+        return function_call(**arguments)
+
+    def echo(param1: str) -> str:
+        return f"echo {param1}"
+
+    func = Function(name="echo", entrypoint=echo, tool_hooks=[mutate])
+    result = FunctionCall(function=func, arguments={"param1": "original"}).execute()
+
+    assert result.status == "success"
+    assert result.result == "echo mutated"
+
+
+@pytest.mark.asyncio
+async def test_tool_hook_async_next_func_kwargs_reach_entrypoint():
+    """Same contract through the async chain with an async hook and entrypoint."""
+
+    async def rewrite(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        rewritten = dict(arguments)
+        rewritten["param1"] = "rewritten"
+        return await function_call(**rewritten)
+
+    async def echo(param1: str) -> str:
+        return f"echo {param1}"
+
+    func = Function(name="echo_async", entrypoint=echo, tool_hooks=[rewrite])
+    result = await FunctionCall(function=func, arguments={"param1": "original"}).aexecute()
+
+    assert result.status == "success"
+    assert result.result == "echo rewritten"
+
+
+@pytest.mark.asyncio
+async def test_cached_call_with_next_func_override_never_serves_or_stores_stale(tmp_path):
+    """A kwargs-form rewrite moves what the tool is asked, like an in-place one:
+    the cached answer under the lookup key is not served, and the rewritten
+    answer is not stored under that key either."""
+
+    calls = []
+
+    async def rewrite(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        rewritten = dict(arguments)
+        if rewritten.get("customer") == "override":
+            rewritten["customer"] = "rewritten"
+        return await function_call(**rewritten)
+
+    async def lookup(customer: str) -> str:
+        calls.append(customer)
+        return f"data for {customer}"
+
+    func = Function(
+        name="lookup_kwargs_cache",
+        entrypoint=lookup,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[rewrite],
+    )
+
+    base = await FunctionCall(function=func, arguments={"customer": "123"}).aexecute()
+    hit = await FunctionCall(function=func, arguments={"customer": "123"}).aexecute()
+    assert base.result == "data for 123"
+    assert hit.result == "data for 123"  # served from cache
+    assert calls == ["123"]
+
+    first = await FunctionCall(function=func, arguments={"customer": "override"}).aexecute()
+    again = await FunctionCall(function=func, arguments={"customer": "override"}).aexecute()
+    assert first.result == "data for rewritten"
+    assert again.result == "data for rewritten"
+    # Both override calls ran for real: neither answered from key("override")
+    # nor stored anything under it.
+    assert calls == ["123", "rewritten", "rewritten"]

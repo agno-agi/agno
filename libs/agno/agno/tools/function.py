@@ -2023,6 +2023,7 @@ class FunctionCall(BaseModel):
         cached_result: Optional[Any] = None,
         raw_results: Optional[List[Any]] = None,
         cache_key: Optional[str] = None,
+        effective_call_args: Optional[Dict[str, Any]] = None,
     ):
         """Build a nested chain of hook executions with the entrypoint at the center.
 
@@ -2045,11 +2046,22 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
-            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
-                return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
+            if args:
+                # A hook may hand the next link a fresh dict instead of mutating
+                # the one it received; those overrides are what the tool is then
+                # asked, so the entrypoint runs on them and the key they name.
+                arguments.update(args)
+            call_args_view = dict(self.arguments or {})
+            if args:
+                call_args_view.update(args)
+            if effective_call_args is not None:
+                effective_call_args.clear()
+                effective_call_args.update(call_args_view)
+            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args, call_args_view):
+                return _detached(cached_result)
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
@@ -2088,20 +2100,35 @@ class FunctionCall(BaseModel):
         chain = reduce(create_hook_wrapper, hooks, execute_entrypoint)
         return chain
 
-    def _moved_its_key(self, cache_key: Optional[str], entrypoint_args: Dict[str, Any]) -> bool:
+    def _moved_its_key(
+        self,
+        cache_key: Optional[str],
+        entrypoint_args: Dict[str, Any],
+        call_args: Optional[Dict[str, Any]] = None,
+    ) -> bool:
         """Whether anything the key is built from changed since the lookup.
 
         Hooks hold the live arguments and the run context, so by the time the
         entrypoint is reached the call may be asking something other than what
         the key names. Such a call is neither answered from the entry under
-        that key nor stored under it.
+        that key nor stored under it. ``call_args`` is the effective model
+        arguments once hook overrides are applied; when omitted, the live
+        ``self.arguments`` answers for calls whose hooks only mutate in place.
         """
         if cache_key is None:
             return False
-        return self.function._get_cache_key(entrypoint_args, self.arguments) != cache_key
+        return (
+            self.function._get_cache_key(entrypoint_args, call_args if call_args is not None else self.arguments)
+            != cache_key
+        )
 
     def _save_entrypoint_result(
-        self, cache_key: str, cache_file: str, entrypoint_args: Dict[str, Any], raw_results: List[Any]
+        self,
+        cache_key: str,
+        cache_file: str,
+        entrypoint_args: Dict[str, Any],
+        raw_results: List[Any],
+        call_args_view: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Store what the entrypoint returned, so a hit replays the hooks over
         the same value the miss handed them.
@@ -2138,7 +2165,7 @@ class FunctionCall(BaseModel):
         if isgenerator(result_to_cache) or isasyncgen(result_to_cache):
             return
 
-        if self._moved_its_key(cache_key, entrypoint_args):
+        if self._moved_its_key(cache_key, entrypoint_args, call_args_view):
             log_debug(
                 f"Skipping cache for {self.function.name}: the call changed what it was asked, "
                 "so the result does not answer the question the key names"
@@ -2191,6 +2218,7 @@ class FunctionCall(BaseModel):
         exception_to_raise = None
 
         raw_results: List[Any] = []
+        effective_call_args: Dict[str, Any] = {}
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -2199,6 +2227,7 @@ class FunctionCall(BaseModel):
                     cached_result=cached_result,
                     raw_results=raw_results if cacheable else None,
                     cache_key=cache_key if cacheable else None,
+                    effective_call_args=effective_call_args,
                 )
                 result = execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             elif from_cache:
@@ -2224,7 +2253,13 @@ class FunctionCall(BaseModel):
                 # Only cache non-generator results, and never re-save a result
                 # that was just served from cache
                 if cacheable and not from_cache:
-                    self._save_entrypoint_result(cache_key, cache_file, entrypoint_args, raw_results)
+                    self._save_entrypoint_result(
+                        cache_key,
+                        cache_file,
+                        entrypoint_args,
+                        raw_results,
+                        call_args_view=dict(effective_call_args) or None,
+                    )
 
                 updated_session_state = None
                 run_context = entrypoint_args.get("run_context") or entrypoint_args.get("_agno_run_context")
@@ -2325,6 +2360,7 @@ class FunctionCall(BaseModel):
         cached_result: Optional[Any] = None,
         raw_results: Optional[List[Any]] = None,
         cache_key: Optional[str] = None,
+        effective_call_args: Optional[Dict[str, Any]] = None,
     ):
         """Build a nested chain of async hook executions with the entrypoint at the center.
 
@@ -2336,12 +2372,22 @@ class FunctionCall(BaseModel):
 
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
-            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
-                return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
-
+            if args:
+                # A hook may hand the next link a fresh dict instead of mutating
+                # the one it received; those overrides are what the tool is then
+                # asked, so the entrypoint runs on them and the key they name.
+                arguments.update(args)
+            call_args_view = dict(self.arguments or {})
+            if args:
+                call_args_view.update(args)
+            if effective_call_args is not None:
+                effective_call_args.clear()
+                effective_call_args.update(call_args_view)
+            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args, call_args_view):
+                return _detached(cached_result)
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if iscoroutinefunction(self.function.entrypoint) and not isasyncgenfunction(self.function.entrypoint):
@@ -2352,11 +2398,20 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
-            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
-                return _detached(cached_result)
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
+            if args:
+                # Same contract as the async executor above.
+                arguments.update(args)
+            call_args_view = dict(self.arguments or {})
+            if args:
+                call_args_view.update(args)
+            if effective_call_args is not None:
+                effective_call_args.clear()
+                effective_call_args.update(call_args_view)
+            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args, call_args_view):
+                return _detached(cached_result)
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
@@ -2449,6 +2504,7 @@ class FunctionCall(BaseModel):
         exception_to_raise = None
 
         raw_results: List[Any] = []
+        effective_call_args: Dict[str, Any] = {}
         try:
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
@@ -2457,6 +2513,7 @@ class FunctionCall(BaseModel):
                     cached_result=cached_result,
                     raw_results=raw_results if cacheable else None,
                     cache_key=cache_key if cacheable else None,
+                    effective_call_args=effective_call_args,
                 )
                 self.result = await execution_chain(self.function.name, self.function.entrypoint, self.arguments or {})
             elif from_cache:
@@ -2480,7 +2537,13 @@ class FunctionCall(BaseModel):
             # Only cache if not a generator, and never re-save a result that
             # was just served from cache
             if cacheable and not from_cache:
-                self._save_entrypoint_result(cache_key, cache_file, entrypoint_args, raw_results)
+                self._save_entrypoint_result(
+                    cache_key,
+                    cache_file,
+                    entrypoint_args,
+                    raw_results,
+                    call_args_view=dict(effective_call_args) or None,
+                )
 
             # For generators, don't capture updated_session_state -
             # session_state is passed by reference, so mutations made during
