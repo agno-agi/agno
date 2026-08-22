@@ -127,6 +127,50 @@ _CANCEL_BYPASS_EVENT_TYPES = (
     RunCompletedEvent,
 )
 
+
+def _set_continue_run_trace_attributes(
+    agent: Agent,
+    run_response: RunOutput,
+    *,
+    session_id: Optional[str],
+    user_id: Optional[str],
+) -> None:
+    """Attach continue-run identity fields to the current OTel span, when present."""
+    try:
+        from opentelemetry import trace as otel_trace  # type: ignore
+    except ImportError:
+        return
+
+    current_span = otel_trace.get_current_span()
+    if current_span is None or not current_span.is_recording():
+        return
+
+    run_id = run_response.run_id
+    span_session_id = run_response.session_id or session_id
+    span_user_id = user_id or run_response.user_id
+    agent_id = getattr(agent, "agent_id", None) or getattr(agent, "id", None) or run_response.agent_id
+
+    attributes = {
+        "run_id": run_id,
+        "agno.run.id": run_id,
+        "session_id": span_session_id,
+        "agno.session.id": span_session_id,
+        "session.id": span_session_id,
+        "user_id": span_user_id,
+        "agno.user.id": span_user_id,
+        "user.id": span_user_id,
+        "agent_id": agent_id,
+        "agno.agent.id": agent_id,
+        "forked_from_run_id": run_response.forked_from_run_id,
+        "agno.run.forked_from_id": run_response.forked_from_run_id,
+        "regenerated_from": run_response.regenerated_from,
+        "agno.run.regenerated_from_id": run_response.regenerated_from,
+    }
+    for key, value in attributes.items():
+        if value is not None:
+            current_span.set_attribute(key, value)
+
+
 # ---------------------------------------------------------------------------
 # Run dependency resolution
 # ---------------------------------------------------------------------------
@@ -3536,6 +3580,7 @@ def continue_run_dispatch(
     )
 
     run_response = cast(RunOutput, run_response)
+    _set_continue_run_trace_attributes(agent, run_response, session_id=session_id, user_id=user_id)
 
     log_debug(f"Agent Run Start: {run_response.run_id}", center=True)
 
@@ -4695,6 +4740,7 @@ async def _acontinue_run(
                     input_messages = run_response.messages or []
 
                 run_response = cast(RunOutput, run_response)
+                _set_continue_run_trace_attributes(agent, run_response, session_id=session_id, user_id=user_id)
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
@@ -5186,6 +5232,7 @@ async def _acontinue_run_stream(
                     input_messages = run_response.messages or []
 
                 run_response = cast(RunOutput, run_response)
+                _set_continue_run_trace_attributes(agent, run_response, session_id=session_id, user_id=user_id)
 
                 # 5. Determine tools for model
                 agent.model = cast(Model, agent.model)
