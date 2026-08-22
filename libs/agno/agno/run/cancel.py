@@ -3,6 +3,7 @@
 import asyncio
 from typing import Dict, Set
 
+from agno.run.base import RunStatus
 from agno.run.cancellation_management.base import BaseRunCancellationManager
 from agno.run.cancellation_management.in_memory_cancellation_manager import InMemoryRunCancellationManager
 from agno.utils.log import logger
@@ -14,6 +15,12 @@ _cancellation_manager: BaseRunCancellationManager = InMemoryRunCancellationManag
 # handler awaits these before persisting so each member's post-cancel
 # add_member_run lands on run_response in time.
 _member_drain_tasks: Dict[str, Set[asyncio.Task]] = {}
+
+
+def reraise_if_paused_on_disconnect(run_status: RunStatus, error: BaseException) -> None:
+    """Preserve a paused run when async task teardown looks like a disconnect."""
+    if run_status == RunStatus.paused and isinstance(error, (asyncio.CancelledError, GeneratorExit)):
+        raise error
 
 
 def set_cancellation_manager(manager: BaseRunCancellationManager) -> None:
