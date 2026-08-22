@@ -1120,9 +1120,9 @@ jobs:
           # Install the branch, not PyPI: `uv pip install agno` resolved to the
           # last published stable release, so this gate certified that release's
           # clean install on every run and could never fail on branch changes.
-          # requirements.txt is not applied on top - it pins agnoctl==0.1.0a4,
-          # below agno's own agnoctl>=0.1.1 floor, and would downgrade the
-          # package that was just installed to satisfy it.
+          # requirements.txt is not applied on top: it pins the published
+          # agnoctl, which around a release is older than the workspace build
+          # installed here, and layering it would downgrade that build.
           VIRTUAL_ENV=.venv uv pip install ./libs/agnoctl ./libs/agno
           VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
@@ -1192,9 +1192,9 @@ jobs:
           # Install the branch, not PyPI: `uv pip install agno` resolved to the
           # last published stable release, so this gate certified that release's
           # clean install on every run and could never fail on branch changes.
-          # requirements.txt is not applied on top - it pins agnoctl==0.1.0a4,
-          # below agno's own agnoctl>=0.1.1 floor, and would downgrade the
-          # package that was just installed to satisfy it.
+          # requirements.txt is not applied on top: it pins the published
+          # agnoctl, which around a release is older than the workspace build
+          # installed here, and layering it would downgrade that build.
           VIRTUAL_ENV=.venv uv pip install ./libs/agnoctl ./libs/agno
           VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi python-multipart pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
