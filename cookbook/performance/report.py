@@ -196,11 +196,11 @@ def comparison_groups(versions: dict) -> list:
             "ratio_to": "long_conversation_compare_agno",
             "blurb": (
                 "The five-turn benchmark extended to twenty-five turns, so costs "
-                "that grow with history length dominate. Agno does not currently "
-                "win this one: even with its session cache enabled, its per-turn "
-                "write path re-serializes conversation state that LangGraph's "
-                "in-memory checkpointer stores by reference. Published as "
-                "measured; the growth term is a known optimization target."
+                "that grow with history length dominate. Earlier revisions "
+                "reported this as a loss; after the copy-on-write history and "
+                "incremental run-persistence changes it measures a win over "
+                "LangGraph's reference-holding in-memory checkpointer, with "
+                "Agno's session cache enabled in the matched configuration."
             ),
             "rows": [
                 ("long_conversation_compare_agno", agno, "sync"),
@@ -220,10 +220,11 @@ def comparison_groups(versions: dict) -> list:
                 "The twenty-five-turn conversation persisted to a SQLite "
                 "database every turn: Agno with SqliteDb, LangGraph with "
                 "SqliteSaver, both paying real serialization and database "
-                "writes. Agno does not currently win this one either; the "
-                "write path is a known optimization target. PydanticAI ships "
-                "no persistence layer and CrewAI has no conversation "
-                "primitive, so neither appears here."
+                "writes, both running SQLite's WAL journal mode. LangGraph "
+                "still measures modestly faster; the per-turn serialization "
+                "of growing session state is the known optimization target. "
+                "PydanticAI ships no persistence layer and CrewAI has no "
+                "conversation primitive, so neither appears here."
             ),
             "rows": [
                 ("durable_conversation_compare_agno", agno, "sync"),
