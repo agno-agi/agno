@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelAuthenticationError, ModelProviderError
 from agno.models.base import Model
+from agno.models.finish_reason import map_groq_finish_reason
 from agno.models.message import Message
 from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
@@ -517,6 +518,14 @@ class Groq(Model):
         if response.usage is not None:
             model_response.response_usage = self._get_metrics(response.usage)
 
+        # Normalize the finish reason and preserve the raw provider value
+        if response.choices and response.choices[0].finish_reason is not None:
+            finish_reason, native_finish_reason = map_groq_finish_reason(response.choices[0].finish_reason)
+            model_response.finish_reason = finish_reason
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["native_finish_reason"] = native_finish_reason
+
         return model_response
 
     def _parse_provider_response_delta(self, response: ChatCompletionChunk) -> ModelResponse:
@@ -542,6 +551,14 @@ class Groq(Model):
                 # Add tool calls
                 if choice_delta.tool_calls is not None:
                     model_response.tool_calls = choice_delta.tool_calls  # type: ignore
+
+        # Normalize the finish reason from the final chunk and preserve the raw provider value
+        if len(response.choices) > 0 and response.choices[0].finish_reason is not None:
+            finish_reason, native_finish_reason = map_groq_finish_reason(response.choices[0].finish_reason)
+            model_response.finish_reason = finish_reason
+            if model_response.provider_data is None:
+                model_response.provider_data = {}
+            model_response.provider_data["native_finish_reason"] = native_finish_reason
 
         # Add usage metrics if present
         if response.x_groq is not None and response.x_groq.usage is not None:

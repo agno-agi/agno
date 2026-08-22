@@ -85,3 +85,12 @@
 **Result:** Completed successfully in 9s.
 
 ---
+
+### finish_reason.py
+
+**Status:** NOT RUN
+**Tier:** untagged
+**Description:** Reads RunOutput.finish_reason for a normal completion (stop) and a token-capped run (length), plus the raw native_finish_reason. Not executed end-to-end here: no demo venv and no OPENAI_API_KEY in this environment.
+**Result:** py_compile passes; imports and model construction verified with .venv. Underlying mapping/propagation covered by unit tests (test_finish_reason_mapping.py, openai/test_finish_reason_openai.py, agent/test_finish_reason.py). Run with `.venvs/demo/bin/python cookbook/02_agents/02_input_output/finish_reason.py` once OPENAI_API_KEY is set.
+
+---
