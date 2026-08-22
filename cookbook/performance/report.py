@@ -177,7 +177,8 @@ def comparison_groups(versions: dict) -> list:
                 "cache enabled over an in-memory database, LangGraph's "
                 "InMemorySaver per thread, PydanticAI passing message_history, "
                 "CrewAI chaining five tasks through task context. Each variant "
-                "asserts the history actually accumulated."
+                "asserts the history actually accumulated; the durable "
+                "benchmark below measures the persisted configuration."
             ),
             "rows": [
                 ("multi_turn_compare_agno", agno, "sync"),
@@ -195,11 +196,11 @@ def comparison_groups(versions: dict) -> list:
             "ratio_to": "long_conversation_compare_agno",
             "blurb": (
                 "The five-turn benchmark extended to twenty-five turns, so costs "
-                "that grow with history length dominate. Agno does not currently "
-                "win this one: even with its session cache enabled, its per-turn "
-                "write path re-serializes conversation state that LangGraph's "
-                "in-memory checkpointer stores by reference. Published as "
-                "measured; the growth term is a known optimization target."
+                "that grow with history length dominate. Earlier revisions "
+                "reported this as a loss; after the copy-on-write history and "
+                "incremental run-persistence changes it measures a win over "
+                "LangGraph's reference-holding in-memory checkpointer, with "
+                "Agno's session cache enabled in the matched configuration."
             ),
             "rows": [
                 ("long_conversation_compare_agno", agno, "sync"),
@@ -208,12 +209,28 @@ def comparison_groups(versions: dict) -> list:
                 ("long_conversation_compare_crewai", crewai, "other"),
             ],
         },
-        # The durable SQLite configuration is excluded from the report while
-        # the two adapters run different SQLite journal configurations
-        # (SqliteSaver self-configures WAL; SqliteDb uses the DELETE
-        # default), which makes the row compare journal modes as well as
-        # frameworks. The benchmark still runs and records raw results;
-        # comparison/README.md documents the exclusion.
+        {
+            "key": "cmp_durable_conversation",
+            "metric": "25-turn conversation, durable (SQLite)",
+            "title": "Durable twenty-five-turn conversation vs other frameworks",
+            "unit": "ms",
+            "measure": "time",
+            "ratio_to": "durable_conversation_compare_agno",
+            "blurb": (
+                "The twenty-five-turn conversation persisted to a SQLite "
+                "database every turn: Agno with SqliteDb, LangGraph with "
+                "SqliteSaver, both paying real serialization and database "
+                "writes, both running SQLite's WAL journal mode. LangGraph "
+                "still measures modestly faster; the per-turn serialization "
+                "of growing session state is the known optimization target. "
+                "PydanticAI ships no persistence layer and CrewAI has no "
+                "conversation primitive, so neither appears here."
+            ),
+            "rows": [
+                ("durable_conversation_compare_agno", agno, "sync"),
+                ("durable_conversation_compare_langgraph", langgraph, "other"),
+            ],
+        },
         {
             "key": "cmp_import",
             "metric": "Cold import",
@@ -256,6 +273,7 @@ COMPARISON_TABLE_ORDER = [
     "cmp_tool_run",
     "cmp_multi_turn",
     "cmp_long_conversation",
+    "cmp_durable_conversation",
     "cmp_construction",
     "cmp_memory",
     "cmp_import",

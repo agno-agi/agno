@@ -14,15 +14,12 @@ included variant uses a fresh database file per conversation so
 per-iteration work is constant, and asserts after the final turn that
 history actually accumulated.
 
-This configuration is currently excluded from the headline comparison
-table: the two adapters run different SQLite journal configurations
-(SqliteSaver configures its connection into WAL mode; SqliteDb uses
-SQLite's DELETE default, paying a journal-file create, double fsync, and
-delete per commit), so the row compares journal modes as well as
-frameworks — matching modes narrows the gap by about a third. The
-benchmark still runs and records raw results; it returns to the headline
-table when Agno's SQL write path work (WAL adoption and per-turn
-serialization) lands. See comparison/README.md.
+Both adapters run SQLite's WAL journal mode (SqliteSaver configures it
+on its connection; SqliteDb enables it on every new connection), so the
+row compares frameworks rather than journal configurations. Agno still
+measures modestly slower here; the result is published as measured and
+the per-turn serialization of growing session state is the known
+optimization target.
 """
 
 import itertools

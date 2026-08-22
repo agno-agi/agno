@@ -215,10 +215,24 @@ class SqliteDb(BaseDb):
         from sqlalchemy import event as _sa_event
 
         @_sa_event.listens_for(self.db_engine, "connect")
-        def _enable_sqlite_fk_pragma(dbapi_connection, connection_record):  # type: ignore[no-redef]
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):  # type: ignore[no-redef]
             try:
                 cursor = dbapi_connection.cursor()
                 cursor.execute("PRAGMA foreign_keys = ON")
+                # WAL replaces the default DELETE journal, which creates, fsyncs
+                # and deletes a journal file on every commit. The mode persists
+                # in the database file, so re-issuing it per connection is an
+                # idempotent no-op. synchronous is left at its default (FULL):
+                # commits still fsync, durability is unchanged. Where SQLite
+                # cannot switch (in-memory databases, filesystems without
+                # shared-memory support such as some network mounts) the pragma
+                # reports the mode actually in effect — keep whatever it gives
+                # back.
+                cursor.execute("PRAGMA journal_mode=WAL")
+                row = cursor.fetchone()
+                mode = row[0] if row else None
+                if isinstance(mode, str) and mode.lower() != "wal":
+                    log_debug(f"SQLite journal_mode=WAL unavailable, running with journal_mode={mode}")
                 cursor.close()
             except Exception:
                 # Not SQLite (someone passed a different db_engine) — ignore.

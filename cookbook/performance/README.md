@@ -16,20 +16,27 @@ identical conditions.
 
 Measured 2026-08-22 on an Apple M4 Max, Python 3.12, all four frameworks
 installed in a single environment created by `perf_setup.sh`, one
-sequential run, medians reported. Agno is the released `agno==3.0.0a3`
-wheel from PyPI (installed non-editable), which includes the copy-on-write
-history and incremental run-persistence changes. Framework versions:
-LangGraph 1.2.11, PydanticAI 2.31.1 (slim install), CrewAI 1.15.17.
+sequential run, medians reported. Framework versions: LangGraph 1.2.11,
+PydanticAI 2.31.1 (slim install), CrewAI 1.15.17; Agno at the feat/v3.0
+tip, which includes the copy-on-write history and incremental
+run-persistence changes. Two cells were re-measured in follow-up
+sessions on the same machine: the durable row after SqliteDb adopted
+SQLite's WAL journal mode (matching the journal configuration
+SqliteSaver already used), and PydanticAI's cold import after the
+environment switched to the slim install (the full bundle's logfire
+plugin had inflated it). The conversation rows reproduced within noise
+in both re-measurement sessions.
 
 | Metric | Agno | LangGraph | PydanticAI | CrewAI |
 |---|---|---|---|---|
-| Single-turn run (mocked model) | 67 us | 306 us (4.5x) | 1,511 us (22x) | 4,349 us (65x) |
-| Tool-call run (mocked model) | 323 us | 770 us (2.4x) | 2,368 us (7.3x) | excluded |
-| 5-turn conversation, in-memory | 1.0 ms | 3.1 ms (3.1x) | 7.6 ms (7.5x) | 19.0 ms (19x) |
-| 25-turn conversation, in-memory | 12.0 ms | 22.0 ms (1.8x) | 39.3 ms (3.3x) | 93.7 ms (7.8x) |
-| Agent construction (1 tool) | 4.7 us | 1,106 us (235x) | 9,448 us (2,007x) | 19,094 us (4,055x) |
-| Construction memory peak | 7.1 KiB | 146 KiB (21x) | 40 KiB (5.7x) | 24 KiB (3.4x) |
-| Cold import | 155 ms | 333 ms (2.1x) | 222 ms (1.4x) | 1,030 ms (6.6x) |
+| Single-turn run (mocked model) | 65 us | 303 us (4.6x) | 1,580 us (24x) | 4,439 us (68x) |
+| Tool-call run (mocked model) | 327 us | 787 us (2.4x) | 2,394 us (7.3x) | excluded |
+| 5-turn conversation, in-memory | 1.0 ms | 3.5 ms (3.4x) | 8.0 ms (7.9x) | 19.0 ms (19x) |
+| 25-turn conversation, in-memory | 12.2 ms | 22.3 ms (1.8x) | 39.2 ms (3.2x) | 92.9 ms (7.6x) |
+| 25-turn conversation, durable (SQLite) | 42.2 ms | 36.5 ms (0.9x) | excluded | excluded |
+| Agent construction (1 tool) | 4.7 us | 1,256 us (269x) | 9,546 us (2,046x) | 19,101 us (4,094x) |
+| Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.6x) | 24 KiB (3.3x) |
+| Cold import | 147 ms | 313 ms (2.1x) | 222 ms (1.5x) | 1,031 ms (7.0x) |
 
 Multipliers are relative to Agno. The committed reference runs, including
 per-benchmark distributions, are under `baselines/`; the definition of each
@@ -50,13 +57,16 @@ paths were rewritten — history messages are copied on write, and the
 in-memory store persists runs incrementally — and the row now measures
 a 1.8x win under the same matched configuration, against LangGraph's
 reference-holding checkpointer with Agno's session cache enabled. Third,
-a durable 25-turn configuration (SqliteDb versus LangGraph's SqliteSaver)
-exists in the suite but is excluded from this table: an instrumented
-probe showed the two adapters run different SQLite journal configurations
-(SqliteSaver self-configures WAL; SqliteDb currently uses the DELETE
-default), so the row as previously measured compared journal modes as
-well as frameworks. `comparison/README.md` documents the exclusion, the
-probe, and the conditions under which the row returns.
+the durable 25-turn row is the benchmark Agno still loses, though by a
+far narrower margin than earlier revisions reported (52.3 ms against
+39.0 ms). Most of that gap was a journal-mode mismatch rather than
+framework overhead: SqliteSaver configures its connection into WAL mode
+while SqliteDb ran SQLite's DELETE default, paying a journal-file
+create, double fsync, and delete on every commit. SqliteDb now runs WAL
+too (with `synchronous` left at FULL, so commit durability is
+unchanged), and the row compares frameworks on equal footing. The
+remaining difference is Agno's per-turn serialization of session state
+that grows with length — the known optimization target for this row.
 
 ## 1. Environment setup
 

@@ -50,26 +50,19 @@ advantaged:
   persisted by anyone.
 - **Durable** (25-turn): Agno with `SqliteDb`, LangGraph with
   `SqliteSaver`; both serialize and write to a SQLite file every turn,
-  with a fresh database file per conversation. LangGraph's figure
-  includes one graph compile (the checkpointer binds at compile).
-  PydanticAI ships no persistence layer and CrewAI has no conversation
-  primitive, so neither appears in this configuration.
+  with a fresh database file per conversation. Both adapters run
+  SQLite's WAL journal mode (SqliteSaver configures it on its
+  connection; SqliteDb enables it on every new connection), so the row
+  compares frameworks rather than journal configurations. LangGraph's
+  figure includes one graph compile (the checkpointer binds at
+  compile). PydanticAI ships no persistence layer and CrewAI has no
+  conversation primitive, so neither appears in this row.
 
-The durable configuration is currently excluded from the headline
-comparison table, and the exclusion is documented rather than silent.
-An instrumented probe (statement traces, durability pragmas, and
-fresh-connection readback on both sides) confirmed both variants are
-genuinely durable, but also that they run different SQLite journal
-configurations: `SqliteSaver` configures its connection into WAL mode,
-while `SqliteDb` currently uses SQLite's default DELETE journal, which
-pays a journal-file create, double fsync, and delete on every commit.
-Matching journal modes narrows the measured gap by about a third, so
-the row as measured compares journal configuration as well as framework
-overhead. The benchmark file remains in the suite, its raw results are
-still collected and reported in the full summary, and the row returns
-to the headline table when Agno's SQL write path work (WAL adoption and
-per-turn serialization) lands. Every conversation variant asserts after
-the final turn that history actually accumulated, so a silently
+Agno wins the 25-turn in-memory configuration and loses the durable one
+by a narrow margin: its per-turn write path re-serializes conversation
+state that grows with length. The results are published as measured;
+the growth term is a known optimization target. Every variant asserts
+after the final turn that history actually accumulated, so a silently
 stateless conversation fails instead of producing a flattering number.
 
 All conversation variants raise Agno's default history cap
