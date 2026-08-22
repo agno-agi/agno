@@ -22,6 +22,7 @@ from agno.agent import Agent
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
+from agno.run.team import TeamRunOutput
 from agno.utils.print_response.team import (
     aprint_response,
     aprint_response_stream,
@@ -72,7 +73,7 @@ def team_print_response(
     console: Optional[Any] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[TeamRunOutput]:
     from agno.team._init import _has_async_db
 
     if _has_async_db(team):
@@ -97,7 +98,7 @@ def team_print_response(
         show_member_responses = team.show_members_responses
 
     if stream:
-        print_response_stream(
+        return print_response_stream(
             team=team,
             input=input,
             console=console,
@@ -126,7 +127,7 @@ def team_print_response(
             **kwargs,
         )
     else:
-        print_response(
+        return print_response(
             team=team,
             input=input,
             console=console,
@@ -183,7 +184,7 @@ async def team_aprint_response(
     console: Optional[Any] = None,
     tags_to_include_in_markdown: Optional[Set[str]] = None,
     **kwargs: Any,
-) -> None:
+) -> Optional[TeamRunOutput]:
     if not tags_to_include_in_markdown:
         tags_to_include_in_markdown = {"think", "thinking"}
 
@@ -203,7 +204,7 @@ async def team_aprint_response(
         show_member_responses = team.show_members_responses
 
     if stream:
-        await aprint_response_stream(
+        return await aprint_response_stream(
             team=team,
             input=input,
             console=console,
@@ -232,7 +233,7 @@ async def team_aprint_response(
             **kwargs,
         )
     else:
-        await aprint_response(
+        return await aprint_response(
             team=team,
             input=input,
             console=console,
