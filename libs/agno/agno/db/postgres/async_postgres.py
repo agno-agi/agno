@@ -898,7 +898,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = await sess.execute(stmt)
                     row = result.fetchone()
@@ -939,7 +938,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = await sess.execute(stmt)
                     row = result.fetchone()
@@ -980,7 +978,6 @@ class AsyncPostgresDb(AsyncBaseDb):
                             runs=session_dict.get("runs"),
                             updated_at=int(time.time()),
                         ),
-                        where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                     ).returning(table)
                     result = await sess.execute(stmt)
                     row = result.fetchone()
