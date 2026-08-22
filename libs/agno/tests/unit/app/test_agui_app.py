@@ -2152,3 +2152,82 @@ def test_extract_context_preserves_none_value():
     item = MagicMock(description="empty", value=None)
     result = extract_context([item])
     assert result == {"empty": None}
+
+
+@pytest.mark.asyncio
+async def test_followups_completed_emits_custom_event():
+    """FollowupsCompleted must surface as a CustomEvent named 'followups' before RUN_FINISHED.
+
+    Regression guard: the agui handler registry had no entry for this event, so
+    generated followup suggestions reached the client as an opaque RawEvent that
+    no frontend renders.
+    """
+    from agno.run.agent import FollowupsCompletedEvent
+
+    async def mock_stream():
+        text = RunContentEvent()
+        text.event = RunEvent.run_content
+        text.content = "Looking for a house"
+        yield text
+        yield FollowupsCompletedEvent(followups=["budget?", "location?", "size?"])
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    followups = [e for e in events if e.type == EventType.CUSTOM and getattr(e, "name", None) == "followups"]
+    assert len(followups) == 1, f"expected 1 followups CustomEvent, got {len(followups)}"
+    assert followups[0].value == {"suggestions": ["budget?", "location?", "size?"]}
+
+    types = [e.type for e in events]
+    assert types.index(EventType.CUSTOM) < types.index(EventType.RUN_FINISHED), (
+        "followups CustomEvent must precede RUN_FINISHED so the client can render it"
+    )
+
+
+@pytest.mark.asyncio
+async def test_followups_completed_empty_emits_nothing():
+    """None or empty followups must not emit a CustomEvent.
+
+    Guards the truthy check so an empty payload does not clutter the stream.
+    """
+    from agno.run.agent import FollowupsCompletedEvent
+
+    async def mock_stream():
+        yield FollowupsCompletedEvent(followups=None)
+        yield FollowupsCompletedEvent(followups=[])
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    assert [e for e in events if e.type == EventType.CUSTOM] == []
+
+
+@pytest.mark.asyncio
+async def test_team_followups_completed_uses_same_handler():
+    """TeamFollowupsCompleted normalizes to the agent handler, so teams behave identically."""
+    from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
+
+    async def mock_stream():
+        yield TeamFollowupsCompletedEvent(followups=["next step?"])
+        completed = RunContentEvent()
+        completed.event = RunEvent.run_completed
+        completed.content = ""
+        yield completed
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    followups = [e for e in events if e.type == EventType.CUSTOM and getattr(e, "name", None) == "followups"]
+    assert len(followups) == 1
+    assert followups[0].value == {"suggestions": ["next step?"]}

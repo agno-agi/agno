@@ -292,6 +292,23 @@ def on_reasoning_completed(chunk: BaseRunOutputEvent, state: StreamState) -> Lis
     return events
 
 
+def on_followups_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Surface generated followup suggestions to the frontend.
+
+    Without a handler this event falls through to on_unknown_event and is emitted
+    as an opaque RawEvent, which no AG-UI client renders. A named CustomEvent
+    gives frontends a stable contract to hook onto.
+
+    Registered under the agent event name only: _normalize_event strips the
+    "Team" prefix, so TeamFollowupsCompleted resolves to this same handler.
+    """
+    followups = getattr(chunk, "followups", None)
+    if not followups:
+        return []
+
+    return [CustomEvent(name="followups", value={"suggestions": followups})]
+
+
 def on_custom_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
     try:
         custom_event_name = chunk.__class__.__name__
@@ -425,6 +442,7 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.reasoning_step.value: on_reasoning_step,
     RunEvent.reasoning_completed.value: on_reasoning_completed,
     RunEvent.custom_event.value: on_custom_event,
+    RunEvent.followups_completed.value: on_followups_completed,
 }
 
 # Terminal events that trigger completion handling
