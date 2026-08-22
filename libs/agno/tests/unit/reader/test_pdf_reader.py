@@ -317,6 +317,18 @@ def test_clean_page_numbers_single_page_leading_digit_preserved(p_nr_format):
     assert not clean_content[0].startswith(p_nr_format["start"].format(page_nr=2))
 
 
+def test_clean_page_numbers_default_extra_content_is_not_shared():
+    from inspect import signature
+
+    assert signature(_clean_page_numbers).parameters["extra_content"].default is None
+
+    first, _ = _clean_page_numbers(["page one"])
+    second, _ = _clean_page_numbers(["page two"])
+
+    assert first == ["page one"]
+    assert second == ["page two"]
+
+
 def _create_encrypted_pdf_with_empty_password() -> BytesIO:
     from pypdf import PdfWriter
 
