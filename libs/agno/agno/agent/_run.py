@@ -3473,6 +3473,8 @@ def continue_run_dispatch(
         run_response = _apply_continue_modifiers(run_response, fork, continue_index)
         if fork:
             run_context.run_id = run_response.run_id
+            if run_context.session_state is not None:
+                run_context.session_state["current_run_id"] = run_response.run_id
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
@@ -3527,6 +3529,8 @@ def continue_run_dispatch(
         run_response = _apply_continue_modifiers(run_response, fork, continue_index)
         if fork:
             run_context.run_id = run_response.run_id
+            if run_context.session_state is not None:
+                run_context.session_state["current_run_id"] = run_response.run_id
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
@@ -4764,6 +4768,8 @@ async def _acontinue_run(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if fork:
                         run_context.run_id = run_response.run_id
+                        if run_context.session_state is not None:
+                            run_context.session_state["current_run_id"] = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -4810,6 +4816,8 @@ async def _acontinue_run(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if fork:
                         run_context.run_id = run_response.run_id
+                        if run_context.session_state is not None:
+                            run_context.session_state["current_run_id"] = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -5254,6 +5262,8 @@ async def _acontinue_run_stream(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if fork:
                         run_context.run_id = run_response.run_id
+                        if run_context.session_state is not None:
+                            run_context.session_state["current_run_id"] = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -5301,6 +5311,8 @@ async def _acontinue_run_stream(
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
                     if fork:
                         run_context.run_id = run_response.run_id
+                        if run_context.session_state is not None:
+                            run_context.session_state["current_run_id"] = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
