@@ -750,6 +750,16 @@ class OpenAIChat(Model):
         """
         Build tool calls from streamed tool call data.
 
+        Routing is index-based (OpenAI spec), with three corrections for
+        OpenAI-compatible providers that emit unreliable deltas (observed live with
+        deepseek served through OpenAI-compatible endpoints): a delta carrying an
+        already-seen id always belongs to that call; a NEW id whose index collides
+        with a DIFFERENT call is appended instead of merged (the collision would
+        concatenate the arguments of two calls into invalid JSON, which the provider
+        then rejects with 400 "invalid tool call arguments"); a fragment without id
+        nor index belongs to the call currently being streamed (`index or 0` used to
+        collapse it onto index 0).
+
         Args:
             tool_calls_data (List[ChoiceDeltaToolCall]): The tool call data to build from.
 
@@ -757,12 +767,34 @@ class OpenAIChat(Model):
             List[Dict[str, Any]]: The built tool calls.
         """
         tool_calls: List[Dict[str, Any]] = []
+        index_by_id: Dict[str, int] = {}
+        last_index: int = 0
         for _tool_call in tool_calls_data:
-            _index = _tool_call.index or 0
             _tool_call_id = _tool_call.id
             _tool_call_type = _tool_call.type
             _function_name = _tool_call.function.name if _tool_call.function else None
             _function_arguments = _tool_call.function.arguments if _tool_call.function else None
+
+            _index = _tool_call.index
+            if _tool_call_id and _tool_call_id in index_by_id:
+                # A delta carrying a known id belongs to that call, whatever its index says.
+                _index = index_by_id[_tool_call_id]
+            elif _tool_call_id:
+                # First delta of a new call. If the provider reuses an index already
+                # claimed by a different call, or omits the index, append instead of
+                # merging two calls into one entry.
+                if _index is None or (
+                    _index < len(tool_calls)
+                    and bool(tool_calls[_index])
+                    and tool_calls[_index].get("id") not in (None, "", _tool_call_id)
+                ):
+                    _index = len(tool_calls)
+                index_by_id[_tool_call_id] = _index
+            elif _index is None:
+                # Continuation fragment without id nor index: it belongs to the call
+                # currently being streamed (fragments arrive right after their head).
+                _index = last_index
+            last_index = _index
 
             if len(tool_calls) <= _index:
                 tool_calls.extend([{} for _ in range(_index - len(tool_calls) + 1)])
