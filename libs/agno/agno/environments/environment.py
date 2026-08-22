@@ -120,6 +120,27 @@ class Environment:
                 if task.id in declared_ids:
                     raise ValueError(f"duplicate task id {task.id!r}; task ids must be unique")
                 declared_ids.add(task.id)
+        # Typed as Scorer but structurally checked: a bare callable otherwise sails
+        # through construction and dies at score time with an AttributeError naming
+        # `ascore`, long after the run has been paid for.
+        # `isinstance(x, Scorer)` is a structural check, and a class object carries its
+        # own methods -- so `scorer=CodeScorer` (the class, unconstructed) would pass
+        # it. That is the same typo class this guard exists to catch.
+        if isinstance(self.scorer, type) or not isinstance(self.scorer, Scorer):
+            received = self.scorer.__name__ if isinstance(self.scorer, type) else type(self.scorer).__name__
+            raise TypeError(
+                f"Environment.scorer must be a Scorer instance, got {received}; "
+                "wrap a callable in CodeScorer, or use JudgeScorer / ToolCallScorer"
+            )
+        # The structural check above only proves the ATTRIBUTE exists -- a
+        # runtime_checkable Protocol never checks callability -- so an `ascore` that
+        # is data rather than a method would pass construction and crash every
+        # attempt at score time, after the whole batch has been paid for.
+        if not callable(getattr(self.scorer, "ascore", None)):
+            raise TypeError(
+                f"Environment.scorer has a non-callable ascore: {type(self.scorer).__name__}.ascore is "
+                f"{type(getattr(self.scorer, 'ascore', None)).__name__}, so it could never score an attempt"
+            )
         received = type(self.agent).__name__
         # The Team check runs before the Agent accept: a hybrid subclassing both must
         # not slip through as an Agent.

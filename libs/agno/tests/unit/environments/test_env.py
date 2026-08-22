@@ -393,6 +393,22 @@ def test_team_agent_hybrid_rejected():
         _env(agent=lambda: hybrid).env_fingerprint()
 
 
+def test_scorer_with_non_callable_ascore_rejected():
+    # `isinstance(x, Scorer)` is a runtime_checkable Protocol check, which only proves
+    # the ascore ATTRIBUTE exists. An ascore that is data rather than a method would
+    # pass construction and crash on every attempt at score time -- after the whole
+    # batch has been paid for.
+    from agno.scorer import Scorer
+
+    class AttributeOnlyScorer:
+        ascore = "not-callable"
+
+    assert isinstance(AttributeOnlyScorer(), Scorer)  # the structural check alone would admit it
+
+    with pytest.raises(TypeError, match="non-callable ascore"):
+        _env(scorer=AttributeOnlyScorer())
+
+
 def test_duplicate_declared_task_ids_rejected():
     with pytest.raises(ValueError, match="duplicate task id"):
         _env(tasks=(Task(input="a", id="dup"), Task(input="b", id="dup")))
