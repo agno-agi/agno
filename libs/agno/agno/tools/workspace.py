@@ -227,7 +227,18 @@ class Workspace(Toolkit):
     Listing results from ``list_files`` and ``search_content`` skip common noise directories
     (``.venv``, ``.venvs``, ``.context``, ``.git``, ``__pycache__``,
     ``node_modules``, etc.) by default. Pass ``exclude_patterns=[]`` to disable,
-    or ``exclude_patterns=[...]`` to override.
+    or ``exclude_patterns=[...]`` to override. By default (case-sensitive
+    matching) exclusion is a listing/search filter only — direct-path tools still
+    accept excluded paths. Pass ``enforce_exclude_patterns=True`` to make excluded paths
+    fully off-limits to ``read_file`` / ``write_file`` / ``edit_file`` /
+    ``move_file`` (source and destination) / ``delete_file``; excluded paths
+    return the same error whether or not they exist. Under the flag, matching
+    everywhere — the direct-path guards and the ``list_files`` / ``search_content``
+    filters — is casefolded and unicode-normalized (``.ENV`` is blocked by the
+    ``.env*`` pattern), so a case-insensitive filesystem cannot be used to reach
+    an excluded file's path or surface its content; on case-sensitive filesystems
+    this over-blocks case-variant names by design. ``run_command`` is not bounded
+    by the flag — a shell command can still touch excluded files.
 
     Optional ``require_read_before_write=True`` blocks ``write_file`` / ``edit_file`` /
     ``move_file`` / ``delete_file`` on existing files until the agent has read them in
@@ -259,6 +270,7 @@ class Workspace(Toolkit):
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
         exclude_patterns: Optional[List[str]] = None,
+        enforce_exclude_patterns: bool = False,
         **kwargs,
     ):
         # Resolve root to an absolute path once — never re-read cwd later (reload-safe).
@@ -273,6 +285,7 @@ class Workspace(Toolkit):
         self.exclude_patterns: List[str] = (
             exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
         )
+        self.enforce_exclude_patterns = enforce_exclude_patterns
         # Tracks which paths have been read this session — used by require_read_before_write.
         # Resolved absolute paths so move/rename interactions are unambiguous.
         self._read_paths: Set[Path] = set()
@@ -375,6 +388,29 @@ class Workspace(Toolkit):
         """Return True if any component of ``path`` (relative to ``root``) matches an exclude pattern."""
         return path_matches_exclude(path, self.root, self.exclude_patterns)
 
+    def _is_excluded_enforced(self, path: Path) -> bool:
+        """Enforcement variant of ``_is_excluded``: matches casefolded and NFC-normalized.
+
+        Case-insensitive filesystems (macOS, Windows) resolve ``.ENV`` to ``.env``,
+        so the enforcement guard must match case and unicode-normalization variants
+        of excluded names. On case-sensitive filesystems this over-blocks
+        case-variant names by design.
+        """
+        return path_matches_exclude(path, self.root, self.exclude_patterns, casefold=True)
+
+    def _is_excluded_for_listing(self, path: Path) -> bool:
+        """Exclusion check for ``list_files`` / ``search_content``.
+
+        When ``enforce_exclude_patterns`` is set, the read surface matches the direct-path
+        guard (casefolded), so a case-variant of an excluded file cannot have its
+        name listed or — more importantly — its content surfaced by
+        ``search_content`` on a case-insensitive filesystem. Otherwise matching
+        stays case-sensitive, a pure listing filter.
+        """
+        if self.enforce_exclude_patterns:
+            return self._is_excluded_enforced(path)
+        return self._is_excluded(path)
+
     def _check_read_before_write(self, file_path: Path, op: str) -> Optional[str]:
         """If require_read_before_write is on, verify the file was read this session.
 
@@ -426,6 +462,10 @@ class Workspace(Toolkit):
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
                 return "Error: path escapes workspace root"
+            # Before the existence check so excluded paths error identically
+            # whether or not they exist (no existence oracle).
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
+                return "Error: path is excluded from this workspace"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             contents = file_path.read_text(encoding=encoding)
@@ -499,10 +539,14 @@ class Workspace(Toolkit):
                     rel_depth = len(Path(dirpath).parts) - base_depth
                     if rel_depth >= max_depth:
                         # Stop recursion but keep dir names for enumeration below.
-                        visible_dirs = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                        visible_dirs = [
+                            name for name in dirnames if not self._is_excluded_for_listing(Path(dirpath) / name)
+                        ]
                         dirnames[:] = []
                     else:
-                        dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                        dirnames[:] = [
+                            name for name in dirnames if not self._is_excluded_for_listing(Path(dirpath) / name)
+                        ]
                         visible_dirs = list(dirnames)
                     for name in filenames + visible_dirs:
                         full = Path(dirpath) / name
@@ -510,7 +554,7 @@ class Workspace(Toolkit):
                             safe_join_relative_path(self.root, full.relative_to(self.root).as_posix())
                         except PathSecurityError:
                             continue
-                        if self._is_excluded(full):
+                        if self._is_excluded_for_listing(full):
                             continue
                         if pattern and not fnmatch(name, pattern):
                             continue
@@ -522,7 +566,7 @@ class Workspace(Toolkit):
                         safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
                     except PathSecurityError:
                         continue
-                    if not self._is_excluded(p):
+                    if not self._is_excluded_for_listing(p):
                         entries.append(p)
             else:
                 entries = []
@@ -531,7 +575,7 @@ class Workspace(Toolkit):
                         safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
                     except PathSecurityError:
                         continue
-                    if not self._is_excluded(p):
+                    if not self._is_excluded_for_listing(p):
                         entries.append(p)
 
             files = []
@@ -592,7 +636,7 @@ class Workspace(Toolkit):
             for dirpath, dirnames, filenames in os.walk(search_dir):
                 if walk_done:
                     break
-                dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+                dirnames[:] = [name for name in dirnames if not self._is_excluded_for_listing(Path(dirpath) / name)]
                 for filename in filenames:
                     if len(matches) >= limit:
                         walk_done = True
@@ -602,7 +646,7 @@ class Workspace(Toolkit):
                         safe_join_relative_path(self.root, file_path.relative_to(self.root).as_posix())
                     except PathSecurityError:
                         continue
-                    if self._is_excluded(file_path):
+                    if self._is_excluded_for_listing(file_path):
                         continue
                     if file_path.suffix.lower() not in TEXT_EXTENSIONS:
                         continue
@@ -650,6 +694,8 @@ class Workspace(Toolkit):
             if not safe:
                 log_error(f"Path escapes workspace: {path}")
                 return "Error: path escapes workspace root"
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
+                return "Error: path is excluded from this workspace"
             if file_path.exists() and not overwrite:
                 return f"Error: file exists and overwrite=False: {path}"
             check_err = self._check_read_before_write(file_path, op="write")
@@ -701,6 +747,8 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 return "Error: path escapes workspace root"
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
+                return "Error: path is excluded from this workspace"
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             check_err = self._check_read_before_write(file_path, op="edit")
@@ -748,6 +796,12 @@ class Workspace(Toolkit):
             safe_dst, dst_path = self._check_path(dst, self.root)
             if not safe_dst:
                 return "Error: dst escapes workspace root"
+            # Destination too — otherwise a move could smuggle content into (or
+            # rename it out of) the excluded set.
+            if self.enforce_exclude_patterns and (
+                self._is_excluded_enforced(src_path) or self._is_excluded_enforced(dst_path)
+            ):
+                return "Error: path is excluded from this workspace"
             if not src_path.exists():
                 return f"Error: src not found: {src}"
             if src_path.is_dir():
@@ -779,6 +833,8 @@ class Workspace(Toolkit):
             safe, file_path = self._check_path(path, self.root)
             if not safe:
                 return "Error: path escapes workspace root"
+            if self.enforce_exclude_patterns and self._is_excluded_enforced(file_path):
+                return "Error: path is excluded from this workspace"
             if not file_path.exists():
                 return f"Error: file not found: {path}"
             if file_path.is_dir():

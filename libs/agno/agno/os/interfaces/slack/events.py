@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Awaitable, Callable, Dict, Union, cast
 from agno.agent import RunEvent
 from agno.os.interfaces.slack.helpers import member_name, task_id
 from agno.os.interfaces.slack.state import StreamState
+from agno.os.interfaces.slack.types import sanitize_mrkdwn_text
 from agno.run.agent import BaseAgentRunEvent
 from agno.run.team import TeamRunEvent
 from agno.run.workflow import WorkflowRunEvent
@@ -65,7 +66,8 @@ class _ToolRef:
 def _extract_tool_ref(chunk: BaseRunOutputEvent, state: StreamState, *, fallback_id: str | None = None) -> _ToolRef:
     """Build unique (tid, label) for each tool call's Slack task card."""
     tool = getattr(chunk, "tool", None)
-    tool_name = (tool.tool_name if tool else None) or "tool"
+    raw_name = (tool.tool_name if tool else None) or "tool"
+    tool_name = sanitize_mrkdwn_text(raw_name)
     call_id = (tool.tool_call_id if tool else None) or fallback_id
     member = member_name(chunk, state.entity_name)
     label = f"{member}: {tool_name}" if member else tool_name

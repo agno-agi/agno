@@ -7,8 +7,10 @@ lives in a real git repository. After the write sub-agent returns,
 the backend stages, commits with an LLM-summarised one-line message,
 rebases onto the remote, and pushes.
 
-Auth is PAT-based (`x-access-token:<TOKEN>@github.com/...`). The token
-is registered with a `Scrubber` at construction so it never reaches a
+Auth is PAT-based. The token is injected into each remote git call
+through a credential helper carried in the subprocess environment, so
+it never appears on the command line or in `.git/config`. It is also
+registered with a `Scrubber` at construction so it never reaches a
 log line — including stderr from a failed git invocation.
 
 This cookbook is env-gated. It runs only when both
