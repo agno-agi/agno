@@ -334,7 +334,29 @@ async def test_span_upsert_sanitizes_fields(async_postgres_db_real: AsyncPostgre
     """Test that null bytes in span fields are sanitized."""
     from datetime import datetime, timezone
 
-    from agno.tracing.schemas import Span
+    from agno.tracing.schemas import Span, Trace
+
+    # Spans carry a NOT NULL foreign key to their trace, and the exporter always
+    # upserts the trace before that trace's spans, so create the parent first.
+    await async_postgres_db_real.upsert_trace(
+        Trace(
+            trace_id="test_trace_null",
+            name="Trace\x00Name",
+            status="OK",
+            start_time=datetime.now(timezone.utc),
+            end_time=datetime.now(timezone.utc),
+            duration_ms=100,
+            total_spans=1,
+            error_count=0,
+            run_id=None,
+            session_id=None,
+            user_id=None,
+            agent_id=None,
+            team_id=None,
+            workflow_id=None,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
 
     span = Span(
         span_id="test_span_null",
