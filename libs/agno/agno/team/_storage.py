@@ -337,10 +337,10 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     # Create new session if none found
     if team_session is None:
         log_debug(f"Creating new TeamSession: {session_id}")
+        from copy import deepcopy
+
         session_data = {}
         if team.session_state is not None:
-            from copy import deepcopy
-
             session_data["session_state"] = deepcopy(team.session_state)
         team_session = TeamSession(
             session_id=session_id,
@@ -348,7 +348,8 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
             user_id=user_id,
             team_data=get_team_data(team),
             session_data=session_data,
-            metadata=team.metadata,
+            # Copy so the session record never aliases the shared Team's dict
+            metadata=deepcopy(team.metadata),
             created_at=int(time()),
         )
         if team.introduction is not None:
@@ -410,10 +411,10 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     # Create new session if none found
     if team_session is None:
         log_debug(f"Creating new TeamSession: {session_id}")
+        from copy import deepcopy
+
         session_data = {}
         if team.session_state is not None:
-            from copy import deepcopy
-
             session_data["session_state"] = deepcopy(team.session_state)
         team_session = TeamSession(
             session_id=session_id,
@@ -421,7 +422,8 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
             user_id=user_id,
             team_data=get_team_data(team),
             session_data=session_data,
-            metadata=team.metadata,
+            # Copy so the session record never aliases the shared Team's dict
+            metadata=deepcopy(team.metadata),
             created_at=int(time()),
         )
         if team.introduction is not None:
@@ -488,16 +490,20 @@ def _load_session_state(team: "Team", session: TeamSession, session_state: Dict[
 
 
 def _update_metadata(team: "Team", session: TeamSession):
-    """Update the extra_data in the session"""
+    """Merge the team's metadata into the session's metadata.
 
-    # Read metadata from the database
-    if session.metadata is not None:
-        # If metadata is set in the agent, update the database metadata with the agent's metadata
-        if team.metadata is not None:
-            # Updates agent's session metadata in place
-            merge_dictionaries(session.metadata, team.metadata)
-        # Update the current metadata with the metadata from the database which is updated in place
-        team.metadata = session.metadata
+    Team metadata provides defaults; the session's own stored values win on
+    conflict, matching resolve_run_options (team < session), so a value set on
+    the session is not overwritten by a team default and persists across runs.
+    Only the session is updated; the shared Team instance is never mutated.
+    """
+    if session.metadata is not None and team.metadata is not None:
+        from copy import deepcopy
+
+        merged = deepcopy(team.metadata)
+        merge_dictionaries(merged, session.metadata)
+        session.metadata.clear()
+        session.metadata.update(merged)
 
 
 def to_dict(team: "Team") -> Dict[str, Any]:

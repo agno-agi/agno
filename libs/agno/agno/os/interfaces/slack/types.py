@@ -91,10 +91,29 @@ def truncate(text: str, limit: int) -> str:
     return text[: limit - 1] + "…"
 
 
+def sanitize_mrkdwn_text(text: str) -> str:
+    """Sanitize untrusted text for safe embedding in Slack mrkdwn.
+
+    Replaces characters that could break formatting or inject Slack controls:
+    - Backticks: close code spans, replaced with modifier letter grave accent
+    - Angle brackets: create mentions/links/commands (<@U123>, <!here>), replaced with quotation marks
+    - Newlines: exit inline code spans, replaced with visible escapes
+    """
+    return (
+        text.replace("`", "ˋ")  # U+02CB modifier letter grave accent
+        .replace("<", "‹")  # U+2039 single left-pointing angle quotation mark
+        .replace(">", "›")  # U+203A single right-pointing angle quotation mark
+        .replace("\r", "\\r")
+        .replace("\n", "\\n")
+    )
+
+
 # tool_execution may be None or lack tool_name if requirement is for user_input/feedback
 def tool_name(requirement: "RunRequirement") -> str:
     tool = requirement.tool_execution
-    return getattr(tool, "tool_name", None) or "tool"
+    raw = getattr(tool, "tool_name", None) or "tool"
+    # MCP and dynamically-registered tools can have arbitrary names; sanitize for mrkdwn
+    return sanitize_mrkdwn_text(raw)
 
 
 def tool_args(requirement: "RunRequirement") -> Dict[str, Any]:

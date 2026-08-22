@@ -2201,7 +2201,7 @@ async def aprepare_queued_run(
         appended = await _atomic_append_run(component, session_id, workflow_run_dict, user_id)
         if appended is not None:
             return
-        workflow_session, _ = await component._aload_or_create_session(
+        workflow_session, _, _ = await component._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=None
         )
         if await _ainsert_session_if_absent(component, workflow_session) is not None:
