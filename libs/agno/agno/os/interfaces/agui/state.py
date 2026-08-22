@@ -1,9 +1,64 @@
 import copy
+import re
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Set, Tuple
 
 from agno.utils.log import log_warning
+
+REDACTED_STATE_VALUE = "[REDACTED]"
+SENSITIVE_STATE_KEY_NAMES = {
+    "apikey",
+    "api_key",
+    "authorization",
+    "credential",
+    "db_password",
+    "password",
+    "passwd",
+    "private_key",
+    "secret",
+    "token",
+}
+SENSITIVE_STATE_KEY_SUFFIXES = (
+    "_api_key",
+    "_access_token",
+    "_auth_token",
+    "_bearer_token",
+    "_client_secret",
+    "_db_password",
+    "_id_token",
+    "_private_key",
+    "_refresh_token",
+    "_session_token",
+)
+SENSITIVE_STATE_VALUE_PATTERN = re.compile(
+    r"(Bearer\s+[A-Za-z0-9._~+/=-]{8,}|"
+    r"sk-[A-Za-z0-9_-]{8,}|"
+    r"gh[pousr]_[A-Za-z0-9_]{8,}|"
+    r"xox[baprs]-[A-Za-z0-9-]{8,}|"
+    r"AIza[A-Za-z0-9_-]{8,})"
+)
+
+
+def _is_sensitive_agui_state_key(key: str) -> bool:
+    normalized_key = re.sub(r"[^a-z0-9]+", "_", key.lower()).strip("_")
+    return normalized_key in SENSITIVE_STATE_KEY_NAMES or normalized_key.endswith(SENSITIVE_STATE_KEY_SUFFIXES)
+
+
+def _redact_agui_state_value(value: Any, key: Optional[str] = None) -> Any:
+    if key is not None and _is_sensitive_agui_state_key(key):
+        return REDACTED_STATE_VALUE
+
+    if isinstance(value, dict):
+        return {k: _redact_agui_state_value(v, str(k)) for k, v in value.items()}
+
+    if isinstance(value, list):
+        return [_redact_agui_state_value(item) for item in value]
+
+    if isinstance(value, str) and SENSITIVE_STATE_VALUE_PATTERN.search(value):
+        return SENSITIVE_STATE_VALUE_PATTERN.sub(REDACTED_STATE_VALUE, value)
+
+    return value
 
 
 @dataclass
@@ -98,7 +153,10 @@ class StreamState:
         try:
             import jsonpatch
 
-            patch = jsonpatch.make_patch(self._last_snapshot, current_state)
+            patch = jsonpatch.make_patch(
+                _redact_agui_state_value(self._last_snapshot),
+                _redact_agui_state_value(current_state),
+            )
             ops = patch.patch
             if not ops:
                 return None
