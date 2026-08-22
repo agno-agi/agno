@@ -22,7 +22,7 @@ class BitbucketTools(Toolkit):
         timeout: int = 30,
         list_repositories: bool = True,
         get_repository_details: bool = True,
-        create_repository: bool = False,
+        create_repository: bool = True,
         list_repository_commits: bool = True,
         list_all_pull_requests: bool = True,
         get_pull_request_details: bool = True,
@@ -50,7 +50,7 @@ class BitbucketTools(Toolkit):
             get_pull_request_details: Enable get_pull_request_details tool. Defaults to True.
             get_pull_request_changes: Enable get_pull_request_changes tool. Defaults to True.
             list_issues: Enable list_issues tool. Defaults to True.
-            all: Enable all tools. Defaults to False.
+            all: Enable all tools. Defaults to True.
         """
         self.username = username or getenv("BITBUCKET_USERNAME")
         self.password = password or getenv("BITBUCKET_PASSWORD")

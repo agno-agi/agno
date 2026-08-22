@@ -23,10 +23,10 @@ class ConfluenceTools(Toolkit):
         verify_ssl: bool = True,
         get_page_content: bool = True,
         get_space_key: bool = True,
-        get_all_space_detail: bool = False,
-        get_all_page_from_space: bool = False,
-        create_page: bool = False,
-        update_page: bool = False,
+        get_all_space_detail: bool = True,
+        get_all_page_from_space: bool = True,
+        create_page: bool = True,
+        update_page: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -44,7 +44,7 @@ class ConfluenceTools(Toolkit):
             get_all_page_from_space: Enable get_all_page_from_space tool. Defaults to False (token heavy).
             create_page: Enable create_page tool. Defaults to False (creates external content).
             update_page: Enable update_page tool. Defaults to False (modifies external content).
-            all: Enable all tools. Defaults to False.
+            all: Enable all tools. Defaults to True.
         """
 
         self.url = url or getenv("CONFLUENCE_URL")

@@ -34,7 +34,7 @@ class ClickUpTools(Toolkit):
         create_task: Enable create_task tool. Defaults to False (creates external records).
         update_task: Enable update_task tool. Defaults to False (modifies external records).
         delete_task: Enable delete_task tool. Defaults to False (destructive).
-        all: Enable all tools. Defaults to False.
+        all: Enable all tools. Defaults to True.
     """
 
     def __init__(
@@ -46,9 +46,9 @@ class ClickUpTools(Toolkit):
         list_lists: bool = True,
         list_tasks: bool = True,
         get_task: bool = True,
-        create_task: bool = False,
-        update_task: bool = False,
-        delete_task: bool = False,
+        create_task: bool = True,
+        update_task: bool = True,
+        delete_task: bool = True,
         all: bool = False,
         **kwargs,
     ):

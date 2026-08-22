@@ -45,7 +45,7 @@ class AntigravityTools(Toolkit):
         persistent: Persist sandbox across calls in same session. Defaults to True.
         timeout: Request timeout in seconds. Defaults to 600.
         instructions: Custom instructions for the toolkit.
-        add_instructions: Add instructions to agent. Defaults to False.
+        add_instructions: Add instructions to agent. Defaults to True.
         agent_directory: Path to agent directory (agent.yaml + workspace/).
         register: Register agent from directory on construction. Defaults to True.
         run_task: Enable run_antigravity_task tool. Defaults to True.
@@ -57,7 +57,7 @@ class AntigravityTools(Toolkit):
         list_versions: Enable list_antigravity_agent_versions tool. Defaults to True.
         delete_agent: Enable delete_antigravity_agent tool. Defaults to False (destructive).
         download_snapshot: Enable download_antigravity_environment_snapshot tool. Defaults to False (downloads).
-        all: Enable all tools. Defaults to False.
+        all: Enable all tools. Defaults to True.
     """
 
     def __init__(
@@ -74,13 +74,13 @@ class AntigravityTools(Toolkit):
         register: bool = True,
         run_task: bool = True,
         run_custom_agent: bool = True,
-        create_agent: bool = False,
-        update_agent: bool = False,
+        create_agent: bool = True,
+        update_agent: bool = True,
         get_agent: bool = True,
         list_agents: bool = True,
         list_versions: bool = True,
-        delete_agent: bool = False,
-        download_snapshot: bool = False,
+        delete_agent: bool = True,
+        download_snapshot: bool = True,
         all: bool = False,
         **kwargs,
     ):

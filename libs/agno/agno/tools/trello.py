@@ -33,7 +33,7 @@ class TrelloTools(Toolkit):
         create_board: Enable create_board tool. Defaults to False (creates external content).
         create_list: Enable create_list tool. Defaults to False (creates external content).
         move_card: Enable move_card tool. Defaults to False (modifies external content).
-        all: Enable all tools. Defaults to False.
+        all: Enable all tools. Defaults to True.
     """
 
     def __init__(
@@ -44,10 +44,10 @@ class TrelloTools(Toolkit):
         list_boards: bool = True,
         get_board_lists: bool = True,
         get_cards: bool = True,
-        create_card: bool = False,
-        create_board: bool = False,
-        create_list: bool = False,
-        move_card: bool = False,
+        create_card: bool = True,
+        create_board: bool = True,
+        create_list: bool = True,
+        move_card: bool = True,
         all: bool = False,
         **kwargs,
     ):
