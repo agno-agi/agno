@@ -126,6 +126,18 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
             m.stop_after_tool_call = True
 
 
+def _merge_streamed_run_content(content_by_run: Dict[str, List[str]], names_by_run: Dict[str, str]) -> str:
+    """Join streamed content deltas, keeping each run's content contiguous and separated."""
+    if not content_by_run:
+        return ""
+    if len(content_by_run) == 1:
+        return "".join(next(iter(content_by_run.values())))
+    return "\n\n".join(
+        f"Agent {names_by_run[run_id]}: {''.join(parts)}" if run_id in names_by_run else "".join(parts)
+        for run_id, parts in content_by_run.items()
+    )
+
+
 @dataclass
 class Model(ABC):
     # ID of the model to use.
@@ -2723,6 +2735,8 @@ class Model(ABC):
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
             function_call_output = ""
+            content_by_run: Dict[str, List[str]] = {}
+            names_by_run: Dict[str, str] = {}
 
             try:
                 async for item in function_call.result:
@@ -2736,10 +2750,18 @@ class Model(ABC):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
+                                content_delta = item.content.model_dump_json()
                             else:
                                 # Capture output
-                                function_call_output += item.content or ""
+                                content_delta = item.content or ""
+
+                            if item.run_id:
+                                content_by_run.setdefault(item.run_id, []).append(content_delta)
+                                member_name = getattr(item, "agent_name", None) or getattr(item, "team_name", None)
+                                if member_name:
+                                    names_by_run[item.run_id] = member_name
+                            else:
+                                function_call_output += content_delta
 
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
@@ -2769,7 +2791,10 @@ class Model(ABC):
                             await event_queue.put(ModelResponse(content=str(item)))
 
                 # Store the final output for this generator
-                async_generator_outputs[generator_id] = (result, function_call_output, None)
+                merged_content = _merge_streamed_run_content(content_by_run, names_by_run)
+                if len(content_by_run) > 1 and merged_content and function_call_output:
+                    merged_content += "\n\n"
+                async_generator_outputs[generator_id] = (result, merged_content + function_call_output, None)
 
             except Exception as e:
                 # Store the exception
