@@ -50,6 +50,15 @@
 
 ---
 
+### agent_cancelled_runs_in_context.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Cancels a story mid-stream, then a follow-up turn with add_cancelled_runs_to_context=True recalls the interrupted story (dragon named Ember learning to code), confirming the cancelled run's partial content is fed back into context.
+**Result:** Completed successfully.
+
+---
+
 ### agent_run_cancel_persistence.py
 
 **Status:** PASS
