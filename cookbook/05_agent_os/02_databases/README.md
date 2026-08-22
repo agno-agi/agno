@@ -10,6 +10,7 @@ other supported storage adapters without repeating the same AgentOS example.
 | File | Description |
 |---|---|
 | `basic.py` | Demonstrates default-database inheritance and automatic table provisioning with SQLite. |
+| `oracle.py` | Selects a synchronous or asynchronous Oracle adapter for production persistence. |
 | `postgres.py` | Selects a synchronous or asynchronous Postgres adapter for production persistence. |
 | `surreal.py` | Shows SurrealDB's client, credentials, namespace, and database constructor shape. |
 
@@ -28,6 +29,7 @@ schema.
 | SQLite | `from agno.db.sqlite import SqliteDb` | `SqliteDb(db_file="tmp/agent_os.db")` | None |
 | JSON | `from agno.db.json import JsonDb` | `JsonDb(db_path="tmp/agent_os_json")` | None |
 | Postgres | `from agno.db.postgres import PostgresDb` | `PostgresDb(db_url="postgresql+psycopg://user:pass@host:5432/db")` | PostgreSQL |
+| Oracle | `from agno.db.oracle import OracleDb` | `OracleDb(db_url="oracle+oracledb://ai:ai@localhost:1521/?service_name=FREEPDB1")` | Oracle Database |
 | MySQL | `from agno.db.mysql import MySQLDb` | `MySQLDb(db_url="mysql+pymysql://user:pass@host:3306/db")` | MySQL |
 | MongoDB | `from agno.db.mongo import MongoDb` | `MongoDb(db_url="mongodb://localhost:27017", db_name="agno")` | MongoDB |
 | Redis | `from agno.db.redis import RedisDb` | `RedisDb(db_url="redis://localhost:6379/0")` | Redis |
@@ -45,12 +47,16 @@ strings to `PostgresDb` rather than using a separate adapter. For asynchronous
 Postgres, import `AsyncPostgresDb` and use a
 `postgresql+psycopg_async://...` URL.
 
+For asynchronous Oracle, import `AsyncOracleDb` and use an
+`oracle+oracledb_async://...` URL.
+
 ClickHouse implements the trace and span surface. Use a row store such as
 Postgres for sessions, memories, knowledge, evals, and components.
 
 ## Prerequisites
 
 - All examples need `OPENAI_API_KEY` only when an agent run calls the model.
+- Start Oracle with `./cookbook/scripts/run_oracle.sh`.
 - Start Postgres with `./cookbook/scripts/run_pgvector.sh`.
 - Install `agno[surrealdb]` and start SurrealDB with
   `./cookbook/scripts/run_surrealdb.sh`.
@@ -61,6 +67,19 @@ SQLite:
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/02_databases/basic.py
+```
+
+Synchronous Oracle:
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/02_databases/oracle.py
+```
+
+Asynchronous Oracle:
+
+```bash
+AGENTOS_USE_ASYNC_ORACLE=true \
+  .venvs/demo/bin/python cookbook/05_agent_os/02_databases/oracle.py
 ```
 
 Synchronous Postgres:

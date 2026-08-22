@@ -9,6 +9,7 @@ This directory contains examples demonstrating how to integrate various database
 uv pip install psycopg2-binary  # PostgreSQL
 uv pip install pymongo         # MongoDB
 uv pip install mysql-connector-python  # MySQL
+uv pip install oracledb      # Oracle
 uv pip install redis           # Redis
 uv pip install valkey-glide-sync  # Valkey
 uv pip install google-cloud-firestore  # Firestore
@@ -39,6 +40,7 @@ agent = Agent(
 - [`sqlite`](sqlite/) - SQLite lightweight database integration
 - [`mongo`](mongo/) - MongoDB document database integration
 - [`mysql`](mysql/) - MySQL relational database integration
+- [`oracle`](oracle/) - Oracle Database relational database integration
 - [`redis`](redis/) - Redis in-memory data structure store integration
 - [`valkey`](valkey/) - Valkey in-memory data structure store integration
 - [`singlestore`](singlestore/) - SingleStore distributed SQL database integration

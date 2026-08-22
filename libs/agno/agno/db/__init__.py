@@ -24,5 +24,13 @@ def __getattr__(name: str):
         from agno.db.clickhouse import ClickhouseDb
 
         return ClickhouseDb
+    elif name == "OracleDb":
+        from agno.db.oracle import OracleDb
+
+        return OracleDb
+    elif name == "AsyncOracleDb":
+        from agno.db.oracle import AsyncOracleDb
+
+        return AsyncOracleDb
     # Add other db implementations as needed
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
