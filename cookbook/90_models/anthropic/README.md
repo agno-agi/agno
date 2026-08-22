@@ -122,3 +122,11 @@ model = Claude(
 - `"medium"` - Balanced approach with moderate savings
 - `"high"` - Default, high capability for complex reasoning
 - `"max"` - Absolute maximum capability (Opus 4.6 only)
+
+### 14. Pre-warm the prompt cache
+
+Warm the Anthropic prompt cache before the first request, so the first user interaction skips the cache-miss latency.
+
+```shell
+python cookbook/90_models/anthropic/prompt_caching_prewarm.py
+```
