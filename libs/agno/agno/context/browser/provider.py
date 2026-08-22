@@ -55,8 +55,9 @@ class BrowserContextProvider(ContextProvider):
         model: Model | None = None,
         write: bool = False,
         headless: bool = True,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events)
         self.backend = backend if backend is not None else self._create_default_backend(write, headless)
         self.instructions_text = instructions if instructions is not None else DEFAULT_BROWSER_INSTRUCTIONS
         self._agent: Agent | None = None
