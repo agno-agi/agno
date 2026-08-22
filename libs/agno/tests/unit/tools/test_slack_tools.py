@@ -146,13 +146,13 @@ def test_send_message_thread(slack_tools):
     slack_tools.client.chat_postMessage.assert_called_with(channel="C1", text="reply", thread_ts="1.0", mrkdwn=True)
 
 
-def test_list_channels(slack_tools):
+def test_list_slack_channels(slack_tools):
     slack_tools.client.conversations_list.return_value = {"channels": [{"id": "C1", "name": "general"}]}
     result = slack_tools.list_slack_channels()
     assert json.loads(result) == [{"id": "C1", "name": "general", "is_private": False}]
 
 
-def test_get_channel_history(slack_tools):
+def test_get_slack_channel_history(slack_tools):
     slack_tools.client.conversations_history.return_value = {"messages": [{"text": "hi", "user": "U1", "ts": "1.0"}]}
     slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
     result = slack_tools.get_slack_channel_history("C1")
@@ -280,7 +280,7 @@ def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tool
 # === Extended Tools ===
 
 
-def test_search_messages(slack_tools):
+def test_search_slack_messages(slack_tools):
     slack_tools._user_client = slack_tools.client
     slack_tools._user_client.search_messages.return_value = {
         "messages": {"matches": [{"text": "found", "user": "U1", "channel": {}, "ts": "1"}]}
@@ -289,7 +289,7 @@ def test_search_messages(slack_tools):
     assert json.loads(result)["count"] == 1
 
 
-def test_get_thread(slack_tools):
+def test_get_slack_thread(slack_tools):
     slack_tools.client.conversations_replies.return_value = {"messages": [{"text": "parent", "user": "U1", "ts": "1"}]}
     slack_tools.client.users_info.return_value = {"user": {"profile": {"display_name": "User One"}}}
     result = slack_tools.get_slack_thread("C1", "1")
@@ -312,7 +312,7 @@ def test_get_thread_resolves_channel_name(slack_tools):
     slack_tools.client.conversations_replies.assert_called_with(channel="C1", ts="1", limit=20)
 
 
-def test_list_users(slack_tools):
+def test_list_slack_users(slack_tools):
     slack_tools.client.users_list.return_value = {
         "members": [{"id": "U1", "name": "user", "deleted": False, "is_bot": False, "profile": {}}]
     }
@@ -320,7 +320,7 @@ def test_list_users(slack_tools):
     assert json.loads(result)["count"] == 1
 
 
-def test_get_user_info(slack_tools):
+def test_get_slack_user_info(slack_tools):
     slack_tools.client.users_info.return_value = {"user": {"id": "U1", "name": "user", "profile": {}}}
     result = slack_tools.get_slack_user_info("U1")
     assert json.loads(result)["name"] == "user"

@@ -445,31 +445,32 @@ def test_slack_read_surfaces_are_split_by_mode():
     bot_tools = p._ensure_bot_read_tools()
     assisted_tools = p._ensure_assisted_read_tools()
 
-    assert "search_workspace" not in bot_tools.functions
-    assert "get_channel_history" in bot_tools.functions
-    assert "search_workspace" in assisted_tools.functions
-    assert "get_channel_history" in assisted_tools.functions
-    assert "get_thread" in assisted_tools.functions
+    assert "search_slack_workspace" not in bot_tools.functions
+    assert "get_slack_channel_history" in bot_tools.functions
+    assert "search_slack_workspace" in assisted_tools.functions
+    assert "get_slack_channel_history" in assisted_tools.functions
+    assert "get_slack_thread" in assisted_tools.functions
 
 
-def test_slack_bot_token_without_user_token_excludes_search_messages():
-    """Without a user token, search_messages should not be registered."""
+def test_slack_bot_token_without_user_token_excludes_search_slack_messages(monkeypatch):
+    """Without a user token, search_slack_messages should not be registered."""
+    monkeypatch.delenv("SLACK_USER_TOKEN", raising=False)
     p = SlackContextProvider(token="xoxb-x")
     bot_tools = p._ensure_bot_read_tools()
     assisted_tools = p._ensure_assisted_read_tools()
 
-    assert "search_messages" not in bot_tools.functions
-    assert "search_messages" not in assisted_tools.functions
+    assert "search_slack_messages" not in bot_tools.functions
+    assert "search_slack_messages" not in assisted_tools.functions
 
 
-def test_slack_user_token_enables_search_messages():
-    """With a user token, search_messages should be registered."""
+def test_slack_user_token_enables_search_slack_messages():
+    """With a user token, search_slack_messages should be registered."""
     p = SlackContextProvider(token="xoxb-x", user_token="xoxp-user")
     bot_tools = p._ensure_bot_read_tools()
     assisted_tools = p._ensure_assisted_read_tools()
 
-    assert "search_messages" in bot_tools.functions
-    assert "search_messages" in assisted_tools.functions
+    assert "search_slack_messages" in bot_tools.functions
+    assert "search_slack_messages" in assisted_tools.functions
 
 
 def test_slack_read_instructions_override_both_read_agents(monkeypatch):
@@ -506,9 +507,9 @@ def test_slack_default_read_instructions_stay_tool_specific(monkeypatch):
     _ = p._ensure_bot_read_agent()
     _ = p._ensure_assisted_read_agent()
 
-    assert "get_channel_history" in captured["slack-bot-read"]
-    assert "get_channel_history" in captured["slack-assisted-read"]
-    assert "search_workspace" in captured["slack-assisted-read"]
+    assert "get_slack_channel_history" in captured["slack-bot-read"]
+    assert "get_slack_channel_history" in captured["slack-assisted-read"]
+    assert "search_slack_workspace" in captured["slack-assisted-read"]
     assert captured["slack-bot-read"] != captured["slack-assisted-read"]
 
 
@@ -602,8 +603,8 @@ async def test_slack_uses_bot_read_without_action_token(monkeypatch):
 def test_slack_tools_mode_uses_bot_read_surface():
     p = SlackContextProvider(token="xoxb-x", mode=ContextMode.tools)
     tools = p.get_tools()[0]
-    assert "search_workspace" not in tools.functions
-    assert "get_channel_history" in tools.functions
+    assert "search_slack_workspace" not in tools.functions
+    assert "get_slack_channel_history" in tools.functions
 
 
 def test_slack_default_instructions_advertise_query_and_update():
