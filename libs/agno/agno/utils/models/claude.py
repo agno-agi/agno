@@ -426,6 +426,10 @@ def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
     Anthropic's prompt caching rejects requests where a longer-TTL cache entry
     follows a shorter-TTL one in the cached prefix. Catch this at assembly
     time with an actionable error rather than letting the API reject it.
+
+    Note: This only validates system blocks. Tools are validated separately in
+    _validate_request_cache_order because tools are processed before system blocks
+    in Anthropic's request processing order.
     """
     seen_5m = False
     for block in blocks:
@@ -446,6 +450,39 @@ def _validate_cache_ttl_order(blocks: List[Dict[str, Any]]) -> None:
                 )
         else:
             seen_5m = True
+
+
+def _validate_request_cache_order(
+    tools: Optional[List[Dict[str, Any]]] = None,
+    system: Optional[List[Dict[str, Any]]] = None,
+) -> None:
+    """Validate cache TTL ordering across tools + system blocks.
+
+    Anthropic processes cache_control in order: tools → system → messages.
+    A 1h cached system block cannot follow 5m cached tools.
+    """
+    has_cached_tools_5m = False
+    if tools:
+        for tool in tools:
+            cc = tool.get("cache_control")
+            if cc and cc.get("type") == "ephemeral" and cc.get("ttl") != "1h":
+                has_cached_tools_5m = True
+                break
+
+    if not has_cached_tools_5m or not system:
+        return
+
+    for block in system:
+        cc = block.get("cache_control")
+        if cc and cc.get("ttl") == "1h":
+            raise ValueError(
+                "Invalid Anthropic cache TTL ordering: a 1h cached system block cannot "
+                "follow 5m cached tools. Anthropic processes cache_control in order: "
+                "tools → system → messages. Fix with one of:\n"
+                "  - Set cache_tools=False to disable tool caching\n"
+                "  - Change system block ttl to '5m' or None\n"
+                "  - Set extended_cache_time=True AND cache_tools=False"
+            )
 
 
 def format_messages(
