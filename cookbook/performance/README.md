@@ -15,14 +15,17 @@ identical conditions.
 ## Reference results
 
 Measured 2026-08-22 on an Apple M4 Max, Python 3.12, all four frameworks
-installed in a single environment, one sequential run, medians reported.
-Framework versions: LangGraph 1.2.11, PydanticAI 2.31.1, CrewAI 1.15.17;
-Agno at the feat/v3.0 tip, which includes the copy-on-write history and
-incremental run-persistence changes. The durable row was re-measured
-after SqliteDb adopted SQLite's WAL journal mode, matching the journal
-configuration SqliteSaver already used; the other rows are unchanged
-from the prior run, and the conversation rows reproduced within noise
-in the re-measurement session.
+installed in a single environment created by `perf_setup.sh`, one
+sequential run, medians reported. Framework versions: LangGraph 1.2.11,
+PydanticAI 2.31.1 (slim install), CrewAI 1.15.17; Agno at the feat/v3.0
+tip, which includes the copy-on-write history and incremental
+run-persistence changes. Two cells were re-measured in follow-up
+sessions on the same machine: the durable row after SqliteDb adopted
+SQLite's WAL journal mode (matching the journal configuration
+SqliteSaver already used), and PydanticAI's cold import after the
+environment switched to the slim install (the full bundle's logfire
+plugin had inflated it). The conversation rows reproduced within noise
+in both re-measurement sessions.
 
 | Metric | Agno | LangGraph | PydanticAI | CrewAI |
 |---|---|---|---|---|
@@ -33,7 +36,7 @@ in the re-measurement session.
 | 25-turn conversation, durable (SQLite) | 42.2 ms | 36.5 ms (0.9x) | excluded | excluded |
 | Agent construction (1 tool) | 4.7 us | 1,256 us (269x) | 9,546 us (2,046x) | 19,101 us (4,094x) |
 | Construction memory peak | 7.1 KiB | 146 KiB (21x) | 39 KiB (5.6x) | 24 KiB (3.3x) |
-| Cold import | 147 ms | 313 ms (2.1x) | 419 ms (2.9x) | 1,031 ms (7.0x) |
+| Cold import | 147 ms | 313 ms (2.1x) | 222 ms (1.5x) | 1,031 ms (7.0x) |
 
 Multipliers are relative to Agno. The committed reference runs, including
 per-benchmark distributions, are under `baselines/`; the definition of each
@@ -180,8 +183,11 @@ call real models, see `cookbook/09_evals/performance/`.
   absolute values should only be compared within one. Packages that
   register pydantic plugins are a specific hazard: pydantic imports every
   registered plugin when the first model class is defined, which taxes the
-  import time of every framework here. Benchmark in an environment created
-  by `perf_setup.sh`, not one that has accumulated extra packages.
+  import time of every framework here. This is why `perf_setup.sh`
+  installs `pydantic-ai-slim` rather than the full `pydantic-ai` bundle,
+  which hard-requires the plugin-registering logfire SDK (see
+  `comparison/README.md`). Benchmark in an environment created by
+  `perf_setup.sh`, not one that has accumulated extra packages.
 - Mocked-run numbers are per-framework floors, not full provider-path
   costs. A comparison at the HTTP boundary — a canned response beneath each
   framework's real provider adapter — would include client-side provider
