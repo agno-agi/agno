@@ -18,12 +18,11 @@ Run the database first:
 This example runs one agent against PostgreSQL, then queries both schemas.
 """
 
-from sqlalchemy import text
-
 from agno.agent import Agent
 from agno.db.base import SessionType
 from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
+from sqlalchemy import text
 
 db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url, db_schema="ai")

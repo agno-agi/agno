@@ -5400,9 +5400,7 @@ def _build_continue_run_messages(
         run_messages.messages.append(system_message)
 
     if add_history_to_context and session is not None and not input_has_history:
-        from copy import deepcopy
-
-        from agno.utils.message import filter_tool_calls
+        from agno.utils.message import copy_history_message, filter_tool_calls
 
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
@@ -5414,9 +5412,7 @@ def _build_continue_run_messages(
         )
 
         if len(history) > 0:
-            history_copy = [deepcopy(msg) for msg in history]
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
             log_debug(f"Adding {len(history_copy)} messages from history")

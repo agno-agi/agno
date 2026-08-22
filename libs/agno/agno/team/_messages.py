@@ -48,7 +48,7 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
-from agno.utils.message import filter_tool_calls, get_text_from_message
+from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message
 from agno.utils.team import (
     get_member_id,
 )
@@ -952,8 +952,6 @@ def _get_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -967,12 +965,7 @@ def _get_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Refresh pre-signed URLs for media loaded from history
             if team.media_storage is not None:
@@ -1094,8 +1087,6 @@ async def _aget_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
-        from copy import deepcopy
-
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1108,12 +1099,7 @@ async def _aget_run_messages(
         )
 
         if len(history) > 0:
-            # Create a deep copy of the history messages to avoid modifying the original messages
-            history_copy = [deepcopy(msg) for msg in history]
-
-            # Tag each message as coming from history
-            for _msg in history_copy:
-                _msg.from_history = True
+            history_copy = [copy_history_message(msg) for msg in history]
 
             # Refresh pre-signed URLs for media loaded from history
             if team.media_storage is not None:
