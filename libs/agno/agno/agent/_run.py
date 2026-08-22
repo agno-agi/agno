@@ -99,8 +99,6 @@ from agno.utils.events import (
     create_run_error_event,
     create_run_paused_event,
     create_run_started_event,
-    create_session_summary_completed_event,
-    create_session_summary_started_event,
     error_type_of,
     handle_event,
 )
@@ -782,8 +780,8 @@ def _run_stream(
     9. Process model response
     10. Parse response with parser model if provided
     11. Wait for background memory creation and cultural knowledge creation
-    12. Create session summary
-    13. Cleanup and store the run response and session
+    12. Cleanup and store the run response and session
+    13. Create the session summary in a background thread
     """
     from agno.agent._hooks import execute_post_hooks, execute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools
@@ -805,6 +803,7 @@ def _run_stream(
     memory_future = None
     learning_future = None
     cultural_knowledge_future = None
+    summary_future = None
     agent_session: Optional[AgentSession] = None
 
     try:
@@ -1102,34 +1101,6 @@ def _run_stream(
                     collect_background_metrics(memory_future, cultural_knowledge_future, learning_future),
                 )
 
-                # 9. Create session summary
-                if agent.session_summary_manager is not None and agent.enable_session_summaries:
-                    # Upsert the RunOutput to Agent Session before creating the session summary
-                    agent_session.upsert_run(run=run_response)
-
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_started_event(from_run_response=run_response),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-                    try:
-                        agent.session_summary_manager.create_session_summary(
-                            session=agent_session, run_metrics=run_response.metrics
-                        )
-                    except Exception as e:
-                        log_warning(f"Error in session summary creation: {str(e)}")
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_completed_event(
-                                from_run_response=run_response, session_summary=agent_session.summary
-                            ),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-
                 # Update run_response.session_state before creating RunCompletedEvent
                 # This ensures the event has the final state after all tool modifications
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
@@ -1146,10 +1117,18 @@ def _run_stream(
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
 
-                # 10. Cleanup and store the run response and session
+                # 9. Cleanup and store the run response and session
                 cleanup_and_store(
                     agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
+
+                # 10. Create the session summary in a background thread so RunCompleted
+                # is not delayed by the summary model call. The thread persists the
+                # summary itself once generated.
+                if agent.session_summary_manager is not None and agent.enable_session_summaries:
+                    summary_future = _managers.start_session_summary_future(
+                        agent, session=agent_session, existing_future=summary_future
+                    )
 
                 if stream_events:
                     yield completed_event  # type: ignore
@@ -1276,6 +1255,14 @@ def _run_stream(
                     )
 
                 yield run_error
+
+        # All events are delivered; block until the background summary (if any) is
+        # generated and persisted, so callers that exhaust the stream can rely on it.
+        # The merged summary metrics are in-memory only — the run row was stored
+        # before the summary ran.
+        if summary_future is not None:
+            summary_future.result()
+            merge_background_metrics(run_response.metrics, collect_background_metrics(summary_future))
     finally:
         # Cancel background futures on error (wait_for_thread_tasks_stream handles waiting on success)
         for future in (memory_future, cultural_knowledge_future, learning_future):
@@ -2179,8 +2166,8 @@ async def _arun_stream(
     9. Generate a response from the Model (includes running function calls)
     10. Parse response with parser model if provided
     11. Wait for background memory creation
-    12. Create session summary
-    13. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
+    12. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
+    13. Create the session summary in a background task
     """
     from agno.agent._hooks import aexecute_post_hooks, aexecute_pre_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
@@ -2202,6 +2189,7 @@ async def _arun_stream(
     memory_task = None
     cultural_knowledge_task = None
     learning_task = None
+    summary_task = None
     agent_session: Optional[AgentSession] = None
 
     # Set up retry logic
@@ -2507,34 +2495,6 @@ async def _arun_stream(
                     collect_background_metrics(memory_task, cultural_knowledge_task, learning_task),
                 )
 
-                # 12. Create session summary
-                if agent.session_summary_manager is not None and agent.enable_session_summaries:
-                    # Upsert the RunOutput to Agent Session before creating the session summary
-                    agent_session.upsert_run(run=run_response)
-
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_started_event(from_run_response=run_response),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-                    try:
-                        await agent.session_summary_manager.acreate_session_summary(
-                            session=agent_session, run_metrics=run_response.metrics
-                        )
-                    except Exception as e:
-                        log_warning(f"Error in session summary creation: {str(e)}")
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_completed_event(
-                                from_run_response=run_response, session_summary=agent_session.summary
-                            ),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-
                 # Update run_response.session_state before creating RunCompletedEvent
                 # This ensures the event has the final state after all tool modifications
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
@@ -2551,7 +2511,7 @@ async def _arun_stream(
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
 
-                # 13. Cleanup and store the run response and session
+                # 12. Cleanup and store the run response and session
                 await acleanup_and_store(
                     agent,
                     run_response=run_response,
@@ -2559,6 +2519,19 @@ async def _arun_stream(
                     run_context=run_context,
                     user_id=user_id,
                 )
+
+                # 13. Create the session summary in a background task so RunCompleted
+                # is not delayed by the summary model call. The task persists the
+                # summary itself once generated.
+                if agent.session_summary_manager is not None and agent.enable_session_summaries:
+                    summary_task = await _managers.astart_session_summary_task(
+                        agent, session=agent_session, existing_task=summary_task
+                    )
+                    if summary_task is not None:
+                        # Strong reference: if the generator is closed on client disconnect,
+                        # the task keeps running detached and persists the summary.
+                        _background_tasks.add(summary_task)
+                        summary_task.add_done_callback(_background_tasks.discard)
 
                 if stream_events:
                     yield completed_event  # type: ignore
@@ -2708,6 +2681,16 @@ async def _arun_stream(
 
                 # Yield the error event
                 yield run_error
+
+        # All events are delivered; wait for the background summary (if any) so
+        # callers that exhaust the stream can rely on the persisted summary.
+        # Shielded: a client disconnect cancels this await, not the task — it
+        # finishes detached (kept alive by _background_tasks) and persists the
+        # summary itself. The merged summary metrics are in-memory only — the
+        # run row was stored before the summary ran.
+        if summary_task is not None:
+            await asyncio.shield(summary_task)
+            merge_background_metrics(run_response.metrics, collect_background_metrics(summary_task))
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
@@ -3828,10 +3811,11 @@ def _continue_run_stream(
     2. Handle any updated tools
     3. Process model response
     4. Execute post-hooks
-    5. Create session summary
-    6. Cleanup and store the run response and session
+    5. Cleanup and store the run response and session
+    6. Create the session summary in a background thread
     """
 
+    from agno.agent import _managers
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
     from agno.agent._response import (
@@ -3843,6 +3827,8 @@ def _continue_run_stream(
     from agno.agent._tools import handle_tool_call_updates_stream
 
     register_run(run_response.run_id)  # type: ignore
+
+    summary_future = None
 
     # Set up retry logic
     num_attempts = agent.retries + 1
@@ -3951,35 +3937,6 @@ def _continue_run_stream(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 4. Create session summary
-                if agent.session_summary_manager is not None and agent.enable_session_summaries:
-                    # Upsert the RunOutput to Agent Session before creating the session summary
-                    session.upsert_run(run=run_response)
-
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_started_event(from_run_response=run_response),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-                    try:
-                        agent.session_summary_manager.create_session_summary(
-                            session=session, run_metrics=run_response.metrics
-                        )
-                    except Exception as e:
-                        log_warning(f"Error in session summary creation: {str(e)}")
-
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_completed_event(
-                                from_run_response=run_response, session_summary=session.summary
-                            ),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-
                 # Update run_response.session_state before creating RunCompletedEvent
                 # This ensures the event has the final state after all tool modifications
                 if session.session_data is not None and "session_state" in session.session_data:
@@ -3996,10 +3953,18 @@ def _continue_run_stream(
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
 
-                # 5. Cleanup and store the run response and session
+                # 4. Cleanup and store the run response and session
                 cleanup_and_store(
                     agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                 )
+
+                # 5. Create the session summary in a background thread so RunCompleted
+                # is not delayed by the summary model call. The thread persists the
+                # summary itself once generated.
+                if agent.session_summary_manager is not None and agent.enable_session_summaries:
+                    summary_future = _managers.start_session_summary_future(
+                        agent, session=session, existing_future=summary_future
+                    )
 
                 if stream_events:
                     yield completed_event  # type: ignore
@@ -4109,6 +4074,14 @@ def _continue_run_stream(
                 )
 
                 yield run_error
+
+        # All events are delivered; block until the background summary (if any) is
+        # generated and persisted, so callers that exhaust the stream can rely on it.
+        # The merged summary metrics are in-memory only — the run row was stored
+        # before the summary ran.
+        if summary_future is not None:
+            summary_future.result()
+            merge_background_metrics(run_response.metrics, collect_background_metrics(summary_future))
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
@@ -5002,10 +4975,11 @@ async def _acontinue_run_stream(
     6. Prepare run messages
     7. Handle the updated tools
     8. Process model response
-    9. Create session summary
-    10. Execute post-hooks
-    11. Cleanup and store the run response and session
+    9. Execute post-hooks
+    10. Cleanup and store the run response and session
+    11. Create the session summary in a background task
     """
+    from agno.agent import _managers
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import get_continue_run_messages
@@ -5022,6 +4996,7 @@ async def _acontinue_run_stream(
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
 
     agent_session: Optional[AgentSession] = None
+    summary_task = None
 
     # Resolve retry parameters
     try:
@@ -5361,34 +5336,6 @@ async def _acontinue_run_stream(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Create session summary
-                if agent.session_summary_manager is not None and agent.enable_session_summaries:
-                    # Upsert the RunOutput to Agent Session before creating the session summary
-                    agent_session.upsert_run(run=run_response)
-
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_started_event(from_run_response=run_response),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-                    try:
-                        await agent.session_summary_manager.acreate_session_summary(
-                            session=agent_session, run_metrics=run_response.metrics
-                        )
-                    except Exception as e:
-                        log_warning(f"Error in session summary creation: {str(e)}")
-                    if stream_events:
-                        yield handle_event(  # type: ignore
-                            create_session_summary_completed_event(
-                                from_run_response=run_response, session_summary=agent_session.summary
-                            ),
-                            run_response,
-                            events_to_skip=agent.events_to_skip,  # type: ignore
-                            store_events=agent.store_events,
-                        )
-
                 # Update run_response.session_state before creating RunCompletedEvent
                 # This ensures the event has the final state after all tool modifications
                 if agent_session.session_data is not None and "session_state" in agent_session.session_data:
@@ -5405,10 +5352,23 @@ async def _acontinue_run_stream(
                 # Set the run status to completed
                 run_response.status = RunStatus.completed
 
-                # 10. Cleanup and store the run response and session
+                # 9. Cleanup and store the run response and session
                 await acleanup_and_store(
                     agent, run_response=run_response, session=agent_session, run_context=run_context, user_id=user_id
                 )
+
+                # 10. Create the session summary in a background task so RunCompleted
+                # is not delayed by the summary model call. The task persists the
+                # summary itself once generated.
+                if agent.session_summary_manager is not None and agent.enable_session_summaries:
+                    summary_task = await _managers.astart_session_summary_task(
+                        agent, session=agent_session, existing_task=summary_task
+                    )
+                    if summary_task is not None:
+                        # Strong reference: if the generator is closed on client disconnect,
+                        # the task keeps running detached and persists the summary.
+                        _background_tasks.add(summary_task)
+                        summary_task.add_done_callback(_background_tasks.discard)
 
                 if stream_events:
                     yield completed_event  # type: ignore
@@ -5569,6 +5529,16 @@ async def _acontinue_run_stream(
 
                 # Yield the error event
                 yield run_error
+
+        # All events are delivered; wait for the background summary (if any) so
+        # callers that exhaust the stream can rely on the persisted summary.
+        # Shielded: a client disconnect cancels this await, not the task — it
+        # finishes detached (kept alive by _background_tasks) and persists the
+        # summary itself. The merged summary metrics are in-memory only — the
+        # run row was stored before the summary ran.
+        if summary_task is not None:
+            await asyncio.shield(summary_task)
+            merge_background_metrics(run_response.metrics, collect_background_metrics(summary_task))  # type: ignore
     finally:
         # Always disconnect connectable tools
         disconnect_connectable_tools(agent)
