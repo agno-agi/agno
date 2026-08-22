@@ -32,6 +32,27 @@ from agno.utils.string import generate_id_from_name
 logger = logging.getLogger(__name__)
 
 
+# Connection-secret fields that must never be persisted in / returned with a
+# component config. When a db is resolved by id, the live connection is
+# re-resolved from the registry/OS db at load time, so these secrets round-trip
+# through the config for no benefit and leak backend DB credentials to any
+# caller with components:read (agno-agi/agno#8706).
+_DB_SECRET_FIELDS = ("db_url", "db_file", "db_password")
+
+
+def _redact_db_secrets(db_dict: Dict[str, Any]) -> Dict[str, Any]:
+    """Return a copy of a resolved db dict with connection-secret fields removed.
+
+    Args:
+        db_dict: The resolved db serialization (output of ``to_dict()``).
+
+    Returns:
+        A new dict without ``db_url`` / ``db_file`` / ``db_password``. The input
+        is not mutated.
+    """
+    return {k: v for k, v in db_dict.items() if k not in _DB_SECRET_FIELDS}
+
+
 def _resolve_db_in_config(
     config: Dict[str, Any],
     os_db: BaseDb,
@@ -70,12 +91,15 @@ def _resolve_db_in_config(
                 resolved_db = registry.get_db(component_db_id)
 
             # Merge resolved db with caller-provided table-name overrides.
-            # Connection-defining fields (type, db_url, db_file, db_schema,
-            # id, ...) always come from the resolved db so the caller can't
-            # redirect a referenced db to a different backend. Only the
-            # whitelisted table-name keys are taken from the caller.
+            # Connection-defining fields (type, db_schema, id, ...) always come
+            # from the resolved db so the caller can't redirect a referenced db
+            # to a different backend. Only the whitelisted table-name keys are
+            # taken from the caller. Connection SECRETS (db_url / db_file) are
+            # stripped: the db is resolved by id, so the live connection is
+            # re-resolved at load time and the secrets must not round-trip into
+            # the persisted / returned config (agno-agi/agno#8706).
             if resolved_db is not None:
-                resolved_dict = resolved_db.to_dict()
+                resolved_dict = _redact_db_secrets(resolved_db.to_dict())
                 table_overrides = {key: component_db[key] for key in DB_TABLE_NAME_KEYS if key in component_db}
                 config["db"] = {**resolved_dict, **table_overrides}
             else:
