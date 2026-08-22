@@ -30,7 +30,7 @@ def run_example() -> None:
     try:
         start = time.time()
         agent_deepseek = Agent(
-            model=Groq(id="llama-3.3-70b-versatile"),
+            model=Groq(id="openai/gpt-oss-120b"),
             markdown=True,
         )
         response = agent_deepseek.run(task, stream=False)
@@ -50,7 +50,7 @@ def run_example() -> None:
     try:
         start = time.time()
         agent_llama = Agent(
-            model=Groq(id="llama-3.3-70b-versatile"),
+            model=Groq(id="openai/gpt-oss-120b"),
             markdown=True,
         )
         response = agent_llama.run(task, stream=False)
