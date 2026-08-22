@@ -33,6 +33,12 @@ class RunContext:
     # Individual Message objects are shared references — do not mutate them.
     messages: Optional[List[Message]] = None
 
+    # The current turn's raw input. Populated from run_input.input_content
+    # before tools/knowledge are resolved each run, so a callable tools factory
+    # can select tools by relevance to what the user just asked (query-aware
+    # "tool search"). None outside a run. See agno-agi/agno#8603.
+    input_content: Optional[Any] = None
+
     # Runtime-resolved callable factory results
     tools: Optional[List[Any]] = None
     knowledge: Optional[Any] = None
