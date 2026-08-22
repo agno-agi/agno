@@ -166,10 +166,9 @@ class TestExecution:
         finally:
             await worker.stop()
 
-    # NOTE: the old test_unknown_component_fails_job asserted that a missing
-    # component fails the ticket - that orphaned the PENDING run row forever.
-    # The new contract (claim left stale, sweep retries) is covered by
-    # TestCrashRecovery.test_claim_time_component_missing_leaves_claim_stale.
+    # NOTE: missing components at claim-time leave the claim stale for
+    # cross-replica recovery. The sweep fails permanently-gone components
+    # after lock_grace. See TestCrashRecovery tests for both paths.
 
 
 class TestCrashRecovery:
@@ -303,58 +302,34 @@ class TestCrashRecovery:
             await worker.stop()
 
     @pytest.mark.asyncio
-    async def test_sweep_leaves_ticket_when_component_missing(self, monkeypatch: pytest.MonkeyPatch):
+    async def test_sweep_fails_ticket_when_component_missing(self):
         """A deploy removed the component: the run row is unreachable, so the
-        sweep must leave the ticket for a future tick (a replica that has the
-        component back finishes the job honestly)."""
-        from agno.run.agent import RunOutput
-        from agno.session import AgentSession
-
-        store, agent = InMemoryQueueStore(), FakeAgent()
-        run_row = RunOutput(run_id="r1", session_id="s1", status=RunStatus.running)
-        session = AgentSession(session_id="s1", runs=[run_row])
-
-        async def fake_read(component, session_id=None, user_id=None):
-            return session
-
-        async def fake_save(component, session=None):
-            pass
-
-        monkeypatch.setattr("agno.agent._storage.aread_or_create_session", fake_read)
-        monkeypatch.setattr("agno.agent._session.asave_session", fake_save)
+        sweep must fail the ticket immediately to free the concurrency slot
+        (waiting forever would block the queue)."""
+        store = InMemoryQueueStore()
 
         await store.enqueue_job(make_job(max_attempts=1))
         await store.claim_job("dead-worker")
         store._jobs["r1"]["locked_at"] -= 1000
 
-        components: dict = {"agent-1": None}  # deploy removed it
         worker = QueueWorker(
             store=store,
-            resolve_component=lambda ctype, cid: components.get(cid),
+            resolve_component=lambda ctype, cid: None,  # component gone
             config=make_config(),
             worker_id="live-worker",
         )
         await worker.start()
         try:
-            await asyncio.sleep(0.2)  # several sweep ticks
-            job = await store.get_job("r1")
-            assert job["status"] == "running", "component-missing must not terminalize the ticket"
-            assert run_row.status == RunStatus.running
-
-            components["agent-1"] = agent  # redeploy restores it
-            # The sweeper holds a fresh lock from its failed attempt; the job
-            # becomes re-sweepable once that lock goes stale (retry backoff)
-            store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
-            assert run_row.status == RunStatus.error
+            assert "Component not found" in job["error"]
         finally:
             await worker.stop()
 
     @pytest.mark.asyncio
     async def test_claim_time_component_missing_leaves_claim_stale(self):
-        """Claiming a job whose component is gone must not fail the ticket
-        (the PENDING run row would be orphaned): the claim goes stale and the
-        sweep owns the retry loop."""
+        """Claiming a job whose component is gone leaves the claim stale
+        for cross-replica recovery. The sweep fails it after lock_grace
+        if the component is permanently unresolvable."""
         store = InMemoryQueueStore()
         worker = make_worker(store, None, make_config())
         await store.enqueue_job(make_job())
@@ -363,7 +338,7 @@ class TestCrashRecovery:
             await wait_for_status(store, "r1", "running")
             await asyncio.sleep(0.2)
             job = await store.get_job("r1")
-            assert job["status"] == "running", "missing component must leave the claim, not fail the ticket"
+            assert job["status"] == "running", "missing component must leave the claim, not fail"
             assert job["locked_by"] == "live-worker"
         finally:
             await worker.stop()
