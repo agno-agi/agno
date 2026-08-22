@@ -46,6 +46,7 @@ from agno.os.job_queue import (
     payload_is_queueable,
     ticket_status_to_api,
     validate_seam_input,
+    wake_queue_worker,
 )
 from agno.os.middleware.user_scope import (
     MISSING_USER_IDENTITY,
@@ -341,6 +342,8 @@ async def handle_workflow_via_websocket(
                 deployment_id=queue_worker.config.deployment_id,
             ).to_dict()
             enqueue_result = await queue_worker.store.enqueue_job(job, max_depth=queue_worker.config.max_queue_depth)
+            if enqueue_result.get("accepted"):
+                wake_queue_worker(queue_worker)
             if not enqueue_result["accepted"]:
                 # No Idempotency-Key over WS, so "duplicate" cannot legitimately
                 # happen on a fresh uuid - either way nothing was enqueued and
@@ -1779,6 +1782,8 @@ def get_workflow_router(
                     enqueue_result = await queue_worker.store.enqueue_job(
                         job, max_depth=queue_worker.config.max_queue_depth
                     )
+                    if enqueue_result.get("accepted"):
+                        wake_queue_worker(queue_worker)
                     if enqueue_result["reason"] == "queue_full":
                         raise HTTPException(status_code=429, detail="Job queue is full")
                     if enqueue_result["reason"] == "duplicate":
@@ -1888,6 +1893,8 @@ def get_workflow_router(
                 enqueue_result = await queue_worker.store.enqueue_job(
                     job, max_depth=queue_worker.config.max_queue_depth
                 )
+                if enqueue_result.get("accepted"):
+                    wake_queue_worker(queue_worker)
                 if enqueue_result["reason"] == "queue_full":
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:

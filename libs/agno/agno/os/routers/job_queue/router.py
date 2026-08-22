@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
 from agno.db.schemas.jobs import JOB_STATUSES
 from agno.os.auth import get_authentication_dependency
+from agno.os.job_queue import wake_queue_worker
 from agno.os.routers.job_queue.schema import QueueJobSchema
 from agno.os.schema import (
     BadRequestResponse,
@@ -228,6 +229,8 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
                 )
         if not await store.requeue_job(job_id):
             raise HTTPException(status_code=400, detail=f"Job {job_id} not found or not in a requeueable state")
+        # The requeued ticket is claimable now; claim it now (best-effort)
+        wake_queue_worker(getattr(request.app.state, "queue_worker", None))
         return await store.get_job(job_id)
 
     @router.get(

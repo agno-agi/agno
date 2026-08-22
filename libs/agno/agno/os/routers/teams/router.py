@@ -47,6 +47,7 @@ from agno.os.job_queue import (
     payload_is_queueable,
     ticket_status_to_api,
     validate_seam_input,
+    wake_queue_worker,
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
@@ -827,6 +828,8 @@ def get_team_router(
                     enqueue_result = await queue_worker.store.enqueue_job(
                         job, max_depth=queue_worker.config.max_queue_depth
                     )
+                    if enqueue_result.get("accepted"):
+                        wake_queue_worker(queue_worker)
                     if enqueue_result["reason"] == "queue_full":
                         raise HTTPException(status_code=429, detail="Job queue is full")
                     if enqueue_result["reason"] == "duplicate":
@@ -941,6 +944,8 @@ def get_team_router(
                 enqueue_result = await queue_worker.store.enqueue_job(
                     job, max_depth=queue_worker.config.max_queue_depth
                 )
+                if enqueue_result.get("accepted"):
+                    wake_queue_worker(queue_worker)
                 if enqueue_result["reason"] == "queue_full":
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
