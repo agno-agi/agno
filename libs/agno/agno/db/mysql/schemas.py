@@ -162,8 +162,64 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces", db_schema: st
     }
 
 
+
+SCHEDULE_TABLE_SCHEMA = {
+    "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+    "name": {"type": lambda: String(255), "nullable": False, "index": True},
+    "description": {"type": Text, "nullable": True},
+    "method": {"type": lambda: String(20), "nullable": False},
+    "endpoint": {"type": lambda: String(512), "nullable": False},
+    "payload": {"type": JSON, "nullable": True},
+    "cron_expr": {"type": lambda: String(128), "nullable": False},
+    "timezone": {"type": lambda: String(64), "nullable": False},
+    "timeout_seconds": {"type": BigInteger, "nullable": False},
+    "max_retries": {"type": BigInteger, "nullable": False},
+    "retry_delay_seconds": {"type": BigInteger, "nullable": False},
+    "enabled": {"type": Boolean, "nullable": False, "default": True},
+    "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
+    "locked_by": {"type": lambda: String(128), "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+    ],
+}
+
+
+def _get_schedule_runs_table_schema(
+    schedules_table_name: str = "agno_schedules", db_schema: str = "agno"
+) -> dict[str, Any]:
+    """Get the schedule runs table schema with a foreign key to the schedules table."""
+    return {
+        "id": {"type": lambda: String(128), "primary_key": True, "nullable": False},
+        "schedule_id": {
+            "type": lambda: String(128),
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{db_schema}.{schedules_table_name}.id",
+            "ondelete": "CASCADE",
+        },
+        "attempt": {"type": BigInteger, "nullable": False},
+        "triggered_at": {"type": BigInteger, "nullable": True},
+        "completed_at": {"type": BigInteger, "nullable": True},
+        "status": {"type": lambda: String(50), "nullable": False, "index": True},
+        "status_code": {"type": BigInteger, "nullable": True},
+        "run_id": {"type": lambda: String(128), "nullable": True},
+        "session_id": {"type": lambda: String(128), "nullable": True},
+        "error": {"type": Text, "nullable": True},
+        "input": {"type": JSON, "nullable": True},
+        "output": {"type": JSON, "nullable": True},
+        "requirements": {"type": JSON, "nullable": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    }
+
+
 def get_table_schema_definition(
-    table_type: str, traces_table_name: str = "agno_traces", db_schema: str = "agno"
+    table_type: str,
+    traces_table_name: str = "agno_traces",
+    db_schema: str = "agno",
+    schedules_table_name: str = "agno_schedules",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -176,9 +232,11 @@ def get_table_schema_definition(
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
     """
-    # Handle spans table specially to resolve the foreign key reference
+    # Handle tables with dynamic foreign key references
     if table_type == "spans":
         return _get_span_table_schema(traces_table_name, db_schema)
+    if table_type == "schedule_runs":
+        return _get_schedule_runs_table_schema(schedules_table_name, db_schema)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -189,6 +247,7 @@ def get_table_schema_definition(
         "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
+        "schedules": SCHEDULE_TABLE_SCHEMA,
     }
 
     schema = schemas.get(table_type, {})
