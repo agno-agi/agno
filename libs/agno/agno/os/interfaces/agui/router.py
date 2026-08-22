@@ -2,7 +2,7 @@ import copy
 import uuid
 from typing import AsyncIterator, Optional, Union
 
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_info
 
 try:
     from ag_ui.core import (
@@ -35,14 +35,15 @@ from agno.os.middleware.user_scope import resolve_run_user_id
 from agno.run.base import RunContext
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+from agno.workflow import RemoteWorkflow, Workflow
 
 
 async def run_entity(
-    entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
+    entity: Union[Agent, RemoteAgent, Team, RemoteTeam, Workflow, RemoteWorkflow],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
-    """Shared handler for running an Agent or Team with AG-UI input/output mapping.
+    """Shared handler for running an Agent, Team, or Workflow with AG-UI input/output mapping.
 
     ``user_id`` is the server-resolved identity (see the route handler). It is
     deliberately NOT read from ``run_input.forwarded_props`` here: an authenticated
@@ -95,8 +96,9 @@ async def run_entity(
                 run_kwargs=run_kwargs,
             )
         else:
-            # Fresh run: new user input
-            response_stream = entity.arun(  # type: ignore
+            # Fresh run. Agents/Teams take a RunContext (client-tool bundle); Workflows do
+            # not accept run_context -> pass session_state directly (the proven workflow path).
+            fresh_kwargs: dict = dict(
                 input=user_input,
                 stream=True,
                 stream_events=True,
@@ -107,9 +109,13 @@ async def run_entity(
                 audio=audio or None,
                 videos=videos or None,
                 files=files or None,
-                run_context=run_context,
                 **run_kwargs,
             )
+            if isinstance(entity, (Workflow, RemoteWorkflow)):
+                fresh_kwargs["session_state"] = session_state
+            else:
+                fresh_kwargs["run_context"] = run_context
+            response_stream = entity.arun(**fresh_kwargs)  # type: ignore
 
         async for event in async_stream_agno_response_as_agui_events(
             response_stream=response_stream,  # type: ignore
@@ -125,12 +131,15 @@ async def run_entity(
 
 
 def attach_routes(
-    router: APIRouter, agent: Optional[Union[Agent, RemoteAgent]] = None, team: Optional[Union[Team, RemoteTeam]] = None
+    router: APIRouter,
+    agent: Optional[Union[Agent, RemoteAgent]] = None,
+    team: Optional[Union[Team, RemoteTeam]] = None,
+    workflow: Optional[Union[Workflow, RemoteWorkflow]] = None,
 ) -> APIRouter:
-    if agent is None and team is None:
-        raise ValueError("Either agent or team must be provided.")
+    if agent is None and team is None and workflow is None:
+        raise ValueError("Either agent, team, or workflow must be provided.")
 
-    entity = agent or team
+    entity = agent or team or workflow
     encoder = EventEncoder()
 
     @router.post("/agui", name="run_agent")
@@ -140,7 +149,16 @@ def attach_routes(
         user_id = resolve_run_user_id(request, client_user_id)
 
         async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
+            async for event in run_entity(
+                entity,  # type: ignore
+                run_input,
+                user_id=user_id,
+            ):
+                # Workflows fan out many steps; stop streaming if the client
+                # disconnected, to avoid burning tokens on output nobody sees.
+                if workflow is not None and await request.is_disconnected():
+                    log_info("AGUI client disconnected; stopping workflow stream")
+                    break
                 yield encoder.encode(event)
 
         return StreamingResponse(

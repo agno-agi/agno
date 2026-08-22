@@ -1526,6 +1526,7 @@ class Workflow:
                 session.session_data["session_state"].pop("run_id", None)
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
+                session.session_data["session_state"].pop("workflow_progress", None)
 
             if self._has_async_db():
                 result = await self._aupsert_session(session=session)  # type: ignore
@@ -1555,6 +1556,7 @@ class Workflow:
                 session.session_data["session_state"].pop("run_id", None)
                 session.session_data["session_state"].pop("session_id", None)
                 session.session_data["session_state"].pop("workflow_name", None)
+                session.session_data["session_state"].pop("workflow_progress", None)
 
             result = self._upsert_session(session=session)
             if result is None:
