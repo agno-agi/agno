@@ -48,8 +48,8 @@ class PostgresTools(Toolkit):
         describe_table: bool = True,
         summarize_table: bool = True,
         inspect_query: bool = True,
-        run_query: bool = False,
-        export_table_to_path: bool = False,
+        run_query: bool = True,
+        export_table_to_path: bool = True,
         all: bool = False,
         **kwargs,
     ):
