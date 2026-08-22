@@ -1,3 +1,4 @@
+from typing import Dict, List
 from unittest.mock import patch
 
 import httpx
@@ -452,3 +453,111 @@ def test_crawl_real_network_failure_still_raises():
     ):
         with pytest.raises(httpx.RequestError):
             reader.crawl("https://example.com")
+
+
+def test_is_same_domain_requires_a_label_boundary():
+    """An unrelated registered domain must not read as in-scope.
+
+    `netloc.endswith(primary_domain)` has no label boundary, so `evilexample.com`
+    satisfies a primary domain of `example.com`. Anyone able to put a link on a
+    crawled page could then steer the crawl onto a host they control.
+    """
+    reader = WebsiteReader()
+    primary_domain = reader._get_primary_domain("https://docs.example.com/guide")
+
+    # In scope: the domain itself and any subdomain of it.
+    assert reader._is_same_domain("https://example.com/x", primary_domain)
+    assert reader._is_same_domain("https://api.example.com/x", primary_domain)
+    assert reader._is_same_domain("https://deep.nested.example.com/x", primary_domain)
+
+    # Out of scope: shares a suffix but is a different registration.
+    assert not reader._is_same_domain("https://evilexample.com/x", primary_domain)
+    assert not reader._is_same_domain("https://not-example.com/x", primary_domain)
+
+    # Out of scope: the domain appears as a prefix, not a suffix.
+    assert not reader._is_same_domain("https://example.com.attacker.net/x", primary_domain)
+
+    # Hostnames are case-insensitive, and a port must not defeat a real match.
+    assert reader._is_same_domain("https://ExAmPlE.CoM/x", primary_domain)
+    assert reader._is_same_domain("https://api.example.com:8443/x", primary_domain)
+
+    # Nothing to compare against is not a match.
+    assert not reader._is_same_domain("not a url", primary_domain)
+    assert not reader._is_same_domain("https://example.com/x", "")
+
+
+def _page_handler(fetched: List[str], pages: Dict[str, str]):
+    """An httpx handler recording every host fetched and serving canned HTML."""
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        fetched.append(request.url.host)
+        return httpx.Response(200, text=pages.get(request.url.host, "<html><body><main>x</main></body></html>"))
+
+    return handler
+
+
+LOOKALIKE_PAGES = {
+    "docs.example.com": """<html><body><main>Docs home</main>
+        <a href="https://evilexample.com/steal">Looks internal</a>
+        <a href="https://api.example.com/real">Real subdomain</a>
+        <a href="https://unrelated.org/x">Clearly external</a>
+        </body></html>""",
+    "evilexample.com": "<html><body><main>attacker content</main></body></html>",
+    "api.example.com": "<html><body><main>legitimate subdomain content</main></body></html>",
+}
+
+
+def test_crawl_does_not_follow_a_lookalike_domain(monkeypatch):
+    """A link to a suffix-matching domain must not be crawled or ingested.
+
+    `unrelated.org` in the same page is the control: it proves the scope check is
+    doing its job, so a passing test cannot be explained by the crawl stopping early.
+    """
+    fetched: List[str] = []
+    transport = httpx.MockTransport(_page_handler(fetched, LOOKALIKE_PAGES))
+
+    monkeypatch.setattr(
+        "agno.knowledge.reader.website_reader.httpx.get",
+        lambda url, **kwargs: httpx.Client(transport=transport).get(url, follow_redirects=True),
+    )
+
+    reader = WebsiteReader(max_depth=2, max_links=10)
+    monkeypatch.setattr(reader, "delay", lambda *args, **kwargs: None)
+    result = reader.crawl("https://docs.example.com/guide")
+
+    assert "evilexample.com" not in fetched, "crawl escaped onto a lookalike domain"
+    assert not any("evilexample.com" in url for url in result)
+    assert "unrelated.org" not in fetched
+
+    # The legitimate subdomain must still be reached: the fix narrows the scope
+    # rather than disabling subdomain crawling.
+    assert "api.example.com" in fetched
+    assert "https://api.example.com/real" in result
+
+
+@pytest.mark.asyncio
+async def test_async_crawl_does_not_follow_a_lookalike_domain(monkeypatch):
+    """The async crawl shares the scope check and must behave identically."""
+    fetched: List[str] = []
+    transport = httpx.MockTransport(_page_handler(fetched, LOOKALIKE_PAGES))
+    original_async_client = httpx.AsyncClient
+
+    def _async_client(*args, **kwargs):
+        kwargs["transport"] = transport
+        kwargs.pop("proxy", None)
+        return original_async_client(*args, **kwargs)
+
+    async def _no_delay(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr("agno.knowledge.reader.website_reader.httpx.AsyncClient", _async_client)
+
+    reader = WebsiteReader(max_depth=2, max_links=10)
+    monkeypatch.setattr(reader, "async_delay", _no_delay)
+    result = await reader.async_crawl("https://docs.example.com/guide")
+
+    assert "evilexample.com" not in fetched, "async crawl escaped onto a lookalike domain"
+    assert not any("evilexample.com" in url for url in result)
+    assert "unrelated.org" not in fetched
+    assert "api.example.com" in fetched
+    assert "https://api.example.com/real" in result
