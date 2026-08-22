@@ -111,6 +111,31 @@ class TestEmptyBodyResume:
         # The loaded run state passes through unchanged
         assert captured["run_response"].tools == [completed_tool]
 
+    def test_resume_restores_user_id_from_run_response(self, monkeypatch: pytest.MonkeyPatch):
+        """A resumed run keeps its original identity when user_id is omitted."""
+        paused_run = RunOutput(
+            run_id="run-user",
+            session_id="session-1",
+            user_id="user-from-run",
+            status=RunStatus.running,
+            tools=[],
+            requirements=None,
+            messages=[],
+        )
+        agent = _make_agent(monkeypatch, runs=[paused_run])
+        captured: dict[str, Any] = {}
+
+        def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
+            captured["user_id"] = run_context.user_id
+            run_response.status = RunStatus.completed
+            return run_response
+
+        monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+        _run.continue_run_dispatch(agent=agent, run_response=paused_run, stream=False)
+
+        assert captured["user_id"] == "user-from-run"
+
     def test_resume_error_run_with_empty_body(self, monkeypatch: pytest.MonkeyPatch):
         """An ERROR run with no unresolved requirements can be retried with empty body."""
         errored_run = RunOutput(

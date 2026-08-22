@@ -3320,6 +3320,8 @@ def continue_run_dispatch(
 
     session_id = run_response.session_id if run_response else session_id
     run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+    if not user_id and run_response is not None:
+        user_id = run_response.user_id
 
     session_id, user_id = initialize_session(
         agent,
@@ -4191,6 +4193,8 @@ def acontinue_run_dispatch(  # type: ignore
 
     session_id = run_response.session_id if run_response else session_id
     run_id: str = run_response.run_id if run_response else run_id  # type: ignore
+    if not user_id and run_response is not None:
+        user_id = run_response.user_id
 
     session_id, user_id = initialize_session(
         agent,

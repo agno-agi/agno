@@ -6629,10 +6629,12 @@ class Workflow:
 
         # Apply resolved requirements to the paused run_response (update tool states)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        continue_user_id = paused_run_response.user_id or workflow_run_response.user_id
 
         # Call executor's continue_run with the stored run_response
         continued_response = executor.continue_run(
             run_response=paused_run_response,
+            user_id=continue_user_id,
         )
 
         # Store executor response for potential chained HITL
@@ -6688,10 +6690,12 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        continue_user_id = paused_run_response.user_id or workflow_run_response.user_id
 
         # Call executor's continue_run with the stored run_response (streaming).
         response_stream = executor.continue_run(
             run_response=paused_run_response,
+            user_id=continue_user_id,
             stream=True,
             stream_events=True,
             yield_run_output=True,
@@ -6776,11 +6780,13 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        continue_user_id = paused_run_response.user_id or workflow_run_response.user_id
 
         # Call executor's acontinue_run with the stored run_response (streaming).
         # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
         response_stream = executor.acontinue_run(
             run_response=paused_run_response,
+            user_id=continue_user_id,
             stream=True,
             stream_events=True,
             yield_run_output=True,
@@ -6860,10 +6866,12 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        continue_user_id = paused_run_response.user_id or workflow_run_response.user_id
 
         # Call executor's acontinue_run with the stored run_response
         continued_response = await executor.acontinue_run(
             run_response=paused_run_response,
+            user_id=continue_user_id,
         )
 
         # Store executor response for potential chained HITL
