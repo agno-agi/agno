@@ -39,6 +39,7 @@ from agno.os.interfaces.slack.types import (
     RowActionContext,
     RowTransformResult,
     block_to_dict,
+    sanitize_mrkdwn_text,
     tool_args,
     tool_name,
     truncate,
@@ -50,14 +51,17 @@ from agno.utils.serialize import json_serializer
 MAX_MESSAGE_BLOCKS = 50
 
 
-# Formats tool arg values for display in HITL approval cards; strings pass through, others JSON-encode
+# Formats tool arg values for display in HITL approval cards; strings pass through, others
+# JSON-encode. Output is always inerted so it cannot break out of the surrounding code span.
 def render_arg_value(value: Any) -> str:
     if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, default=json_serializer)
-    except (TypeError, ValueError):
-        return str(value)
+        rendered = value
+    else:
+        try:
+            rendered = json.dumps(value, default=json_serializer)
+        except (TypeError, ValueError):
+            rendered = str(value)
+    return sanitize_mrkdwn_text(rendered)
 
 
 # --- Type detection helpers ---
@@ -185,8 +189,9 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     name = tool_name(requirement)
     args = tool_args(requirement)
 
-    # Format args as bullet points in body (not subtitle which truncates)
-    body_lines = [f"• {k}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
+    # Format args as bullet points in body (not subtitle which truncates). Arg keys are
+    # model-derived and sit outside the code span, so inert them too.
+    body_lines = [f"• {sanitize_mrkdwn_text(str(k))}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
     body_text = "\n".join(body_lines) if body_lines else "_(no arguments)_"
     # Slack Block Kit section text has ~200 char limit; truncate to prevent silent card rejection
     body_text = truncate(body_text, 200)
@@ -566,7 +571,9 @@ def response_blocks(
         action_id = element.get("action_id", "")
         submitted = (state_values.get(block_id) or {}).get(action_id) or {}
         value = _extract_input_value(element, submitted)
-        submissions.append(f"• {label}: `{value}`")
+        # Labels round-trip through Slack from the input schema (may be model-derived)
+        # and sit outside the code span, so inert them too.
+        submissions.append(f"• {sanitize_mrkdwn_text(label)}: `{sanitize_mrkdwn_text(value)}`")
 
     if not submissions:
         return preserved

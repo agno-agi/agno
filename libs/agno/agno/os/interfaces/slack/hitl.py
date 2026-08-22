@@ -46,6 +46,9 @@ class HITLHandler:
     entity_type: Literal["agent", "team", "workflow"]
     task_display_mode: str
     buffer_size: int
+    unfurl_links: bool = True
+    unfurl_media: bool = True
+    markdown: bool = True
 
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
@@ -220,10 +223,20 @@ class HITLHandler:
                     thread_ts=ctx.thread_ts,
                     requirements=requirements,
                     log_prefix="re-",
+                    unfurl_links=self.unfurl_links,
+                    unfurl_media=self.unfurl_media,
+                    mrkdwn=self.markdown,
                 )
                 try:
                     await post_pause_card(
-                        self._client(), state.paused_event, ctx.channel, ctx.thread_ts, new_awaiting_ts
+                        self._client(),
+                        state.paused_event,
+                        ctx.channel,
+                        ctx.thread_ts,
+                        new_awaiting_ts,
+                        unfurl_links=self.unfurl_links,
+                        unfurl_media=self.unfurl_media,
+                        mrkdwn=self.markdown,
                     )
                 except Exception as exc:
                     log_error(f"[HITL] Failed to post Card block (re-pause): {exc}")
