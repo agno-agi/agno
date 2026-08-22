@@ -97,6 +97,7 @@ from agno.utils.events import (
     create_run_content_completed_event,
     create_run_continued_event,
     create_run_error_event,
+    create_run_output_content_event,
     create_run_paused_event,
     create_run_started_event,
     create_session_summary_completed_event,
@@ -126,6 +127,24 @@ _CANCEL_BYPASS_EVENT_TYPES = (
     RunCancelledEvent,
     RunCompletedEvent,
 )
+
+
+def _pending_confirmed_stop_after_tools(
+    run_response: RunOutput,
+    tools: List[Union[Function, dict]],
+) -> List[ToolExecution]:
+    """Snapshot confirmed terminal calls before streaming executes them."""
+
+    stop_after_names = {tool.name for tool in tools if isinstance(tool, Function) and tool.stop_after_tool_call}
+    return [
+        tool
+        for tool in (run_response.tools or [])
+        if (tool.stop_after_tool_call or tool.tool_name in stop_after_names)
+        and tool.requires_confirmation is True
+        and tool.confirmed is True
+        and tool.result is None
+    ]
+
 
 # ---------------------------------------------------------------------------
 # Run dependency resolution
@@ -3628,7 +3647,9 @@ def _continue_run(
     agent.model = cast(Model, agent.model)
 
     # 1. Handle the updated tools
-    handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
+    stop_after_tool_call = handle_tool_call_updates(
+        agent, run_response=run_response, run_messages=run_messages, tools=tools
+    )
 
     try:
         num_attempts = agent.retries + 1
@@ -3639,25 +3660,29 @@ def _continue_run(
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
-                model_response: ModelResponse = call_model_with_fallback(
-                    agent.model,
-                    agent.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=tools,
-                    tool_choice=agent.tool_choice,
-                    tool_call_limit=agent.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-                    after_tool_results=build_after_tool_results_callback(
-                        agent,
+                model_response: ModelResponse
+                if stop_after_tool_call:
+                    model_response = ModelResponse(content=str(run_response.content or ""))
+                else:
+                    model_response = call_model_with_fallback(
+                        agent.model,
+                        agent.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=agent.tool_choice,
+                        tool_call_limit=agent.tool_call_limit,
                         run_response=run_response,
-                        session=session,
-                        run_messages=run_messages,
-                        run_context=run_context,
-                    ),
-                )
+                        send_media_to_model=agent.send_media_to_model,
+                        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                        after_tool_results=build_after_tool_results_callback(
+                            agent,
+                            run_response=run_response,
+                            session=session,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                        ),
+                    )
 
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
@@ -3846,6 +3871,8 @@ def _continue_run_stream(
 
     # Set up retry logic
     num_attempts = agent.retries + 1
+    stop_after_tools = _pending_confirmed_stop_after_tools(run_response, tools)
+    terminal_content_yielded = False
     try:
         for attempt in range(num_attempts):
             try:
@@ -3875,20 +3902,38 @@ def _continue_run_stream(
                     yield event
 
                 # 3. Process model response
-                for event in handle_model_response_stream(
-                    agent,
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                if stop_after_tools:
+                    run_response.content = stop_after_tools[-1].result
+                    run_response.messages = [
+                        message for message in run_messages.messages if message.add_to_agent_memory
+                    ]
+                    if not terminal_content_yielded:
+                        yield handle_event(  # type: ignore
+                            create_run_output_content_event(
+                                from_run_response=run_response,
+                                content=run_response.content,
+                                content_type=run_response.content_type,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        terminal_content_yielded = True
+                else:
+                    for event in handle_model_response_stream(
+                        agent,
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
 
                 # Parse response with parser model if provided
                 for event in parse_response_with_parser_model_stream(
@@ -4531,6 +4576,7 @@ async def _acontinue_run(
     agent_session: Optional[AgentSession] = None
 
     # Resolve retry parameters
+    stop_after_tool_call = False
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
@@ -4730,30 +4776,37 @@ async def _acontinue_run(
                 await aregister_run(run_response.run_id)  # type: ignore
 
                 # 7. Handle the updated tools
-                await ahandle_tool_call_updates(
-                    agent, run_response=run_response, run_messages=run_messages, tools=_tools
+                stop_after_tool_call = (
+                    await ahandle_tool_call_updates(
+                        agent, run_response=run_response, run_messages=run_messages, tools=_tools
+                    )
+                    or stop_after_tool_call
                 )
 
                 # 8. Get model response
-                model_response: ModelResponse = await acall_model_with_fallback(
-                    agent.model,
-                    agent.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=_tools,
-                    tool_choice=agent.tool_choice,
-                    tool_call_limit=agent.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
-                    after_tool_results=abuild_after_tool_results_callback(
-                        agent,
+                model_response: ModelResponse
+                if stop_after_tool_call:
+                    model_response = ModelResponse(content=str(run_response.content or ""))
+                else:
+                    model_response = await acall_model_with_fallback(
+                        agent.model,
+                        agent.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=_tools,
+                        tool_choice=agent.tool_choice,
+                        tool_call_limit=agent.tool_call_limit,
                         run_response=run_response,
-                        session=agent_session,
-                        run_messages=run_messages,
-                        run_context=run_context,
-                    ),
-                )
+                        send_media_to_model=agent.send_media_to_model,
+                        compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                        after_tool_results=abuild_after_tool_results_callback(
+                            agent,
+                            run_response=run_response,
+                            session=agent_session,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                        ),
+                    )
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -5024,6 +5077,8 @@ async def _acontinue_run_stream(
     agent_session: Optional[AgentSession] = None
 
     # Resolve retry parameters
+    stop_after_tools: List[ToolExecution] = []
+    terminal_content_yielded = False
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
@@ -5230,6 +5285,7 @@ async def _acontinue_run_stream(
                     )
 
                 # 7. Handle the updated tools
+                stop_after_tools = _pending_confirmed_stop_after_tools(run_response, _tools) or stop_after_tools
                 async for event in ahandle_tool_call_updates_stream(
                     agent,
                     run_response=run_response,
@@ -5242,7 +5298,24 @@ async def _acontinue_run_stream(
                     yield event
 
                 # 8. Process model response
-                if agent.output_model is None:
+                if stop_after_tools:
+                    run_response.content = stop_after_tools[-1].result
+                    run_response.messages = [
+                        message for message in run_messages.messages if message.add_to_agent_memory
+                    ]
+                    if not terminal_content_yielded:
+                        yield handle_event(  # type: ignore
+                            create_run_output_content_event(
+                                from_run_response=run_response,
+                                content=run_response.content,
+                                content_type=run_response.content_type,
+                            ),
+                            run_response,
+                            events_to_skip=agent.events_to_skip,  # type: ignore
+                            store_events=agent.store_events,
+                        )
+                        terminal_content_yielded = True
+                elif agent.output_model is None:
                     async for event in ahandle_model_response_stream(
                         agent,
                         session=agent_session,
