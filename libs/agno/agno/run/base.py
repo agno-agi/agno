@@ -1,4 +1,4 @@
-from dataclasses import asdict, dataclass
+from dataclasses import MISSING, asdict, dataclass, fields
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -41,6 +41,30 @@ class RunContext:
     # Per-run additive tools from the client (e.g., AG-UI frontend tools)
     # Merged AFTER agent.tools during tool resolution
     client_tools: Optional[List[Any]] = None
+
+
+def init_event_with_dynamic_fields(event: Any, kwargs: Dict[str, Any]) -> None:
+    """Initialize a CustomEvent that accepts arbitrary user-supplied fields.
+
+    Declared dataclass fields are populated from kwargs or their defaults, so the instance
+    stays a valid dataclass for asdict(); anything left over is set as a dynamic attribute.
+    """
+    remaining = dict(kwargs)
+    for f in fields(event):
+        if f.name in remaining:
+            setattr(event, f.name, remaining.pop(f.name))
+        elif f.default is not MISSING:
+            setattr(event, f.name, f.default)
+        elif f.default_factory is not MISSING:
+            setattr(event, f.name, f.default_factory())
+    for key, value in remaining.items():
+        setattr(event, key, value)
+
+
+def get_dynamic_fields(event: Any) -> Dict[str, Any]:
+    """Return the attributes of a CustomEvent that are not declared dataclass fields."""
+    declared = {f.name for f in fields(event)}
+    return {k: v for k, v in event.__dict__.items() if k not in declared}
 
 
 @dataclass
