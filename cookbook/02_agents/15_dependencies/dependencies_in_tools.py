@@ -72,7 +72,7 @@ def analyze_user(user_id: str, run_context: RunContext) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     tools=[analyze_user],
     name="User Analysis Agent",
     description="An agent specialized in analyzing users using integrated data sources.",

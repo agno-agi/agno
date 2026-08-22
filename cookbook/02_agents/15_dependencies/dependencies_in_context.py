@@ -43,7 +43,7 @@ def get_top_hackernews_stories(num_stories: int = 5) -> str:
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.4"),
     # Each function in the dependencies is resolved when the agent is run,
     # think of it as dependency injection for Agents
     dependencies={"top_hackernews_stories": get_top_hackernews_stories},

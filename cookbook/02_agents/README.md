@@ -20,10 +20,10 @@ Practical examples for building agents with Agno, organized by feature area.
 | 12 | [12_multimodal](./12_multimodal/) | Image, audio, video processing | 10 |
 | 13 | [13_reasoning](./13_reasoning/) | Multi-step reasoning, reasoning models | 2 |
 | 14 | [14_advanced](./14_advanced/) | Caching, compression, events, retries, concurrency, culture | 20 |
-| 15 | [15_dependencies](./15_dependencies/) | Dependency injection in tools and context | 3 |
+| 15 | [15_dependencies](./15_dependencies/) | Dependency injection in tools and context | 10 |
 | 16 | [16_skills](./16_skills/) | Agent skills with scripts and reference docs | 1 |
 
-**Total: 111 files across 16 directories**
+**Total: 118 files across 16 directories**
 
 ## Prerequisites
 
