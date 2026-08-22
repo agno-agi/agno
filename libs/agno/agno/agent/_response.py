@@ -923,6 +923,9 @@ def get_response_format(
 def convert_response_to_structured_format(
     agent: Agent, run_response: Union[RunOutput, ModelResponse], run_context: Optional[RunContext] = None
 ):
+    if _response_stopped_after_tool_call(run_response):
+        return
+
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
 
@@ -955,6 +958,11 @@ def convert_response_to_structured_format(
                     log_warning(f"Failed to convert response to output model: {str(e)}")
             else:
                 log_warning("Something went wrong. Run response content is not a string")
+
+
+def _response_stopped_after_tool_call(run_response: Union[RunOutput, ModelResponse]) -> bool:
+    tool_executions = getattr(run_response, "tools", None) or getattr(run_response, "tool_executions", None) or []
+    return any(getattr(tool_execution, "stop_after_tool_call", False) for tool_execution in tool_executions)
 
 
 # ---------------------------------------------------------------------------
