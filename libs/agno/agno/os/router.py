@@ -453,6 +453,29 @@ def get_websocket_router(
                                 )
                                 continue
 
+                            # Fail closed under per-user isolation: a validly signed
+                            # token that carries scopes but no identity (missing ``sub``,
+                            # or a ``user_id_claim`` that does not match the token) must
+                            # not authenticate as a non-admin WS client. Reconnect
+                            # ownership is keyed on this identity; with it absent the
+                            # dispatcher cannot pin ``user_id`` (see the reconnect branch)
+                            # and handle_workflow_subscription falls through to an
+                            # unscoped, run-id-keyed event replay of another user's run.
+                            # Admin tokens are exempt (they read across users by design);
+                            # isolation-off deployments are unchanged.
+                            ws_is_admin = ws_admin_scope in (claims.get("scopes") or [])
+                            if ws_user_isolation_enabled and not ws_is_admin and not claims.get("user_id"):
+                                await websocket.send_text(
+                                    json.dumps(
+                                        {
+                                            "event": "auth_error",
+                                            "error": "Invalid token subject",
+                                            "error_type": "invalid_token",
+                                        }
+                                    )
+                                )
+                                continue
+
                             await websocket_manager.authenticate_websocket(websocket)
 
                             # Store user context from JWT
