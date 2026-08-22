@@ -1,6 +1,6 @@
 import copy
 import uuid
-from typing import AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from agno.utils.log import log_error
 
@@ -41,12 +41,19 @@ async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
+    dependencies: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping.
 
     ``user_id`` is the server-resolved identity (see the route handler). It is
     deliberately NOT read from ``run_input.forwarded_props`` here: an authenticated
     caller must not attribute runs, sessions, or memory writes to an arbitrary user.
+
+    ``dependencies`` carries server-side values populated by middleware via
+    ``request.state.dependencies`` (#6164) — e.g. user claims, permissions, or a
+    custom system prompt. They are merged with the AG-UI client context
+    dependencies, with the server-side values taking precedence (they are
+    trusted runtime config and must not be overridden by client input).
     """
     run_id = run_input.run_id or str(uuid.uuid4())
 
@@ -69,6 +76,9 @@ async def run_entity(
             yield StateSnapshotEvent(type=EventType.STATE_SNAPSHOT, snapshot=copy.deepcopy(session_state))
 
         ui_deps = extract_context(run_input.context)
+        # Merge client AG-UI context deps with server-side request.state deps
+        # (#6164); server-side values win since they are trusted runtime config.
+        merged_deps = {**(ui_deps or {}), **(dependencies or {})}
 
         # 3. Build RunContext with client_tools and session_state
         run_context = RunContext(
@@ -76,12 +86,12 @@ async def run_entity(
             session_id=run_input.thread_id,
             user_id=user_id,
             client_tools=client_tools,
-            dependencies=ui_deps,
+            dependencies=merged_deps or None,
             session_state=session_state,
         )
 
         run_kwargs: dict = {}
-        if ui_deps:
+        if merged_deps:
             run_kwargs["add_dependencies_to_context"] = True
 
         # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
@@ -139,8 +149,14 @@ def attach_routes(
         client_user_id = run_input.forwarded_props.get("user_id") if run_input.forwarded_props else None
         user_id = resolve_run_user_id(request, client_user_id)
 
+        # Surface request.state.dependencies populated by middleware (#6164) so
+        # runtime config (user claims, permissions, custom prompts) reaches the run.
+        dependencies = None
+        if hasattr(request.state, "dependencies") and request.state.dependencies is not None:
+            dependencies = request.state.dependencies
+
         async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
+            async for event in run_entity(entity, run_input, user_id=user_id, dependencies=dependencies):  # type: ignore
                 yield encoder.encode(event)
 
         return StreamingResponse(
