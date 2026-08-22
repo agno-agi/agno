@@ -50,17 +50,20 @@ advantaged:
   persisted by anyone.
 - **Durable** (25-turn): Agno with `SqliteDb`, LangGraph with
   `SqliteSaver`; both serialize and write to a SQLite file every turn,
-  with a fresh database file per conversation. LangGraph's figure
-  includes one graph compile (the checkpointer binds at compile).
-  PydanticAI ships no persistence layer and CrewAI has no conversation
-  primitive, so neither appears in this row.
+  with a fresh database file per conversation. Both adapters run
+  SQLite's WAL journal mode (SqliteSaver configures it on its
+  connection; SqliteDb enables it on every new connection), so the row
+  compares frameworks rather than journal configurations. LangGraph's
+  figure includes one graph compile (the checkpointer binds at
+  compile). PydanticAI ships no persistence layer and CrewAI has no
+  conversation primitive, so neither appears in this row.
 
-Agno does not currently win the 25-turn benchmark in either
-configuration: its per-turn write path re-serializes conversation state
-that grows with length. The results are published as measured; the growth
-term is a known optimization target. Every variant asserts after the
-final turn that history actually accumulated, so a silently stateless
-conversation fails instead of producing a flattering number.
+Agno wins the 25-turn in-memory configuration and loses the durable one
+by a narrow margin: its per-turn write path re-serializes conversation
+state that grows with length. The results are published as measured;
+the growth term is a known optimization target. Every variant asserts
+after the final turn that history actually accumulated, so a silently
+stateless conversation fails instead of producing a flattering number.
 
 All conversation variants raise Agno's default history cap
 (`num_history_runs=3`) so the full conversation stays in context, matching

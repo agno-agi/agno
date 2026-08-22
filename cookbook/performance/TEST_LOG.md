@@ -179,6 +179,29 @@ robustness; every finding independently verified) confirmed 21 findings, all fix
   streaming benchmark asserts error-free content, import failures surface stderr, the runner
   clears stale result files, and quick runs are isolated and labeled in the report.
 
+## 2026-08-22
+
+### comparison/run_all.py (full suite, after SqliteDb WAL journal mode)
+
+**Status:** PASS
+
+**Description:** Full sequential comparison run at commit 6dd178afe (feat/v3.0 plus the
+SqliteDb WAL change) in a fresh perf environment; 10 benchmark files, zero failures,
+summary.json written. Purpose: re-measure the durable 25-turn row now that SqliteDb runs
+WAL journal mode, matching the configuration LangGraph's SqliteSaver already used.
+
+**Result:** Durable 25-turn medians: agno 42.2 ms vs LangGraph 36.5 ms (0.9x) — up from
+52.3 vs 39.0 ms (0.7x) before WAL; most of the previous gap was the journal-mode mismatch
+(DELETE journal's file create, double fsync, and delete per commit). A standalone run of
+durable_conversation_comparison.py in the same environment measured agno at 39.6 ms median,
+at parity with LangGraph — run-to-run variance on this row is a few ms. All other rows
+reproduced the published reference table within noise, except the cold-import rows, which
+are inflated for every framework in this environment by full pydantic-ai pulling logfire
+(its pydantic plugin hooks imports); the import rows were therefore left as published.
+Reference table durable row and discussion updated in README.md.
+
+---
+
 ## Notes
 
 - 2026-08-21: First version of `_bench.py` stored the mock's requested tool name as
