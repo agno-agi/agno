@@ -785,12 +785,20 @@ def parse_topics(
         examples=["preferences,technical,communication_style"],
     ),
 ) -> Optional[List[str]]:
-    """Parse comma-separated topics into a list for filtering memories by topic."""
+    """Parse comma-separated topics into a list for filtering memories by topic.
+
+    The parameter is declared ``List[str]``, so FastAPI collects a repeated query
+    parameter into one element per occurrence: ``?topics=a&topics=b`` arrives as
+    ``["a", "b"]``. Every element is split, not just the first -- reading only
+    ``topics[0]`` silently narrowed the filter to the first occurrence and
+    discarded the rest, returning a result set the caller did not ask for with no
+    error to indicate it. Both spellings, and a mix of them, are accepted.
+    """
     if not topics:
         return None
 
     try:
-        return [topic.strip() for topic in topics[0].split(",") if topic.strip()]
+        return [topic.strip() for value in topics for topic in value.split(",") if topic.strip()]
 
     except Exception as e:
         raise HTTPException(status_code=422, detail=f"Invalid topics format: {e}")
