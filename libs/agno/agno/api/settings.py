@@ -18,7 +18,18 @@ class AgnoAPISettings(BaseSettings):
 
     api_url: str = "https://os-api.agno.com"
 
+    # Background telemetry delivery. Override with AGNO_TELEMETRY_TIMEOUT and
+    # AGNO_TELEMETRY_SHUTDOWN_TIMEOUT (seconds). The shutdown timeout bounds the
+    # at-exit flush of queued events; set it to 0 to skip that flush entirely.
+    telemetry_timeout: float = 5.0
+    telemetry_shutdown_timeout: float = 2.0
+
     model_config = SettingsConfigDict(env_prefix="AGNO_")
+
+    @field_validator("telemetry_timeout", "telemetry_shutdown_timeout")
+    def clamp_non_negative(cls, v: float) -> float:
+        """A negative timeout is meaningless; treat it as zero rather than failing import."""
+        return max(0.0, v)
 
     @field_validator("api_runtime", mode="before")
     def validate_runtime_env(cls, v):
