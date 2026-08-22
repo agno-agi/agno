@@ -647,6 +647,98 @@ def test_continue_run_dispatch_respects_run_context_precedence(monkeypatch: pyte
     assert empty_context.metadata == {"agent_meta": "default"}
 
 
+def test_continue_run_dispatch_aligns_agent_session_state_with_run_context(monkeypatch: pytest.MonkeyPatch):
+    agent = Agent(name="stateful-continue-agent", session_state={"from_agent": "initial"})
+    _patch_continue_dispatch_dependencies(agent, monkeypatch)
+    captured: dict[str, Any] = {}
+
+    def fake_continue_run(
+        agent: Agent,
+        run_response: RunOutput,
+        run_messages: RunMessages,
+        run_context: RunContext,
+        session: AgentSession,
+        tools,
+        **kwargs: Any,
+    ) -> RunOutput:
+        assert agent.session_state is not None
+        agent.session_state["from_agent_tool"] = "persisted"
+        captured["session_state"] = run_context.session_state
+        return run_response
+
+    monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
+
+    _run.continue_run_dispatch(
+        agent=agent,
+        run_response=RunOutput(
+            run_id="continue-state",
+            session_id="session-1",
+            status=RunStatus.running,
+            messages=[],
+        ),
+        stream=False,
+    )
+
+    assert agent.session_state is captured["session_state"]
+    assert captured["session_state"]["from_agent_tool"] == "persisted"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_acontinue_run_aligns_agent_session_state_after_loading(monkeypatch: pytest.MonkeyPatch, stream: bool):
+    agent = Agent(name="stateful-continue-agent", session_state={"from_agent": "initial"}, retries=0)
+    session = AgentSession(
+        session_id="session-1",
+        runs=[],
+        session_data={"session_state": {"from_db": "loaded"}},
+    )
+    run_context = RunContext(run_id="continue-state", session_id="session-1", session_state={})
+    run_response = RunOutput(
+        run_id="continue-state",
+        session_id="session-1",
+        status=RunStatus.running,
+        messages=[],
+    )
+
+    async def fake_aread_or_create_session(agent, session_id: str, user_id: Optional[str] = None):
+        return session
+
+    async def fake_aget_tools(**kwargs: Any):
+        assert agent.session_state is not None
+        agent.session_state["from_agent_tool"] = "persisted"
+        raise ValueError("stop after session state write")
+
+    async def noop_async(*args: Any, **kwargs: Any):
+        return None
+
+    monkeypatch.setattr(_storage, "aread_or_create_session", fake_aread_or_create_session)
+    monkeypatch.setattr(_storage, "update_metadata", lambda agent, session=None: None)
+    monkeypatch.setattr(agent, "aget_tools", fake_aget_tools)
+    monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
+    monkeypatch.setattr(_init, "disconnect_mcp_tools", noop_async)
+
+    with pytest.raises(ValueError, match="stop after session state write"):
+        if stream:
+            async for _ in _run._acontinue_run_stream(
+                agent=agent,
+                session_id="session-1",
+                run_context=run_context,
+                run_response=run_response,
+            ):
+                pass
+        else:
+            await _run._acontinue_run(
+                agent=agent,
+                session_id="session-1",
+                run_context=run_context,
+                run_response=run_response,
+            )
+
+    assert agent.session_state is run_context.session_state
+    assert session.session_data is not None
+    assert session.session_data["session_state"]["from_agent_tool"] == "persisted"
+
+
 @pytest.mark.asyncio
 async def test_acontinue_run_dispatch_respects_run_context_precedence(monkeypatch: pytest.MonkeyPatch):
     agent = _make_precedence_test_agent()
