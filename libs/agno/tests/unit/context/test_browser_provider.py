@@ -614,10 +614,9 @@ async def test_provider_aquery_returns_answer():
 
     # Mock the sub-agent
     mock_agent = type("MockAgent", (), {"arun": AsyncMock()})()
-    mock_output = type("Out", (), {
-        "content": "Top 3 stories from HN",
-        "get_content_as_string": lambda self: "Top 3 stories from HN"
-    })()
+    mock_output = type(
+        "Out", (), {"content": "Top 3 stories from HN", "get_content_as_string": lambda self: "Top 3 stories from HN"}
+    )()
     mock_agent.arun.return_value = mock_output
     provider._agent = mock_agent
 
@@ -639,10 +638,7 @@ async def test_provider_aquery_propagates_run_context():
 
     # Mock the sub-agent
     mock_agent = type("MockAgent", (), {"arun": AsyncMock()})()
-    mock_output = type("Out", (), {
-        "content": "ok",
-        "get_content_as_string": lambda self: "ok"
-    })()
+    mock_output = type("Out", (), {"content": "ok", "get_content_as_string": lambda self: "ok"})()
     mock_agent.arun.return_value = mock_output
     provider._agent = mock_agent
 
