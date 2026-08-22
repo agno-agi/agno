@@ -596,7 +596,7 @@ def _find_member_by_id(
 
         # If this member is a team, search its members recursively
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            result = _find_member_by_id(member, member_id, run_context=run_context)
             if result is not None:
                 return result
 
@@ -633,7 +633,7 @@ def _find_member_route_by_id(
             return i, member
 
         if isinstance(member, Team):
-            result = member._find_member_by_id(member_id, run_context=run_context)
+            result = _find_member_by_id(member, member_id, run_context=run_context)
             if result is not None:
                 return i, member
 
