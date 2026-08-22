@@ -11,7 +11,9 @@ There were two bugs that combined to override the outer trace's session_id:
 1. `create_trace_from_spans` fell back to `spans[0]` when no true root span was
    present in the batch, then read `session_id`/`agent_id`/etc. from that
    non-root span. So a batch containing only the post-hook agent's child spans
-   produced a Trace dict tagged with the post-hook agent's session_id.
+   produced a Trace dict tagged with the post-hook agent's session_id. The
+   run_id is allowed to come from child spans because workflow root spans can
+   omit it entirely.
 
 2. `upsert_trace`'s ON CONFLICT clause used
        COALESCE(insert_stmt.excluded.session_id, table.c.session_id)
@@ -28,8 +30,7 @@ This file covers both layers:
 from datetime import datetime, timedelta, timezone
 
 import pytest
-
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.tracing.schemas import Span, Trace, create_trace_from_spans
 
 
@@ -86,6 +87,15 @@ def _read_trace(db: SqliteDb, trace_id: str) -> dict:
         return dict(row)
 
 
+async def _aread_trace(db: AsyncSqliteDb, trace_id: str) -> dict:
+    from sqlalchemy import select
+
+    table = await db._get_table(table_type="traces", create_table_if_not_found=True)
+    async with db.async_session_factory() as sess:
+        row = (await sess.execute(select(table).where(table.c.trace_id == trace_id))).mappings().one()
+        return dict(row)
+
+
 def test_upsert_trace_preserves_session_id_when_inner_context_arrives_after(db):
     """Outer team's correct session_id must survive a follow-up upsert tagged
     with the post-hook (rating) agent's session_id."""
@@ -133,6 +143,7 @@ def _make_span(
     session_id=None,
     agent_id=None,
     team_id=None,
+    workflow_id=None,
     run_id=None,
     user_id=None,
     start_offset_s: float = 0.0,
@@ -147,6 +158,8 @@ def _make_span(
         attrs["agno.agent.id"] = agent_id
     if team_id is not None:
         attrs["agno.team.id"] = team_id
+    if workflow_id is not None:
+        attrs["agno.workflow.id"] = workflow_id
     if run_id is not None:
         attrs["agno.run.id"] = run_id
     if user_id is not None:
@@ -171,7 +184,8 @@ def test_create_trace_from_spans_skips_context_when_no_root_in_batch():
     """A child-only batch (post-hook agent's spans exporting before the parent
     span ends) must not produce a Trace tagged with the child's session_id.
     Context fields stay None so the upsert COALESCE preserves whatever the
-    root-span batch wrote."""
+    root-span batch wrote. run_id is the exception because workflow root spans
+    can lack it."""
     trace_id = "trace-child-only"
 
     inner_run = _make_span(
@@ -196,7 +210,41 @@ def test_create_trace_from_spans_skips_context_when_no_root_in_batch():
     assert trace is not None
     assert trace.session_id is None
     assert trace.agent_id is None
-    assert trace.run_id is None
+    assert trace.run_id == "run-inner-1"
+
+
+def test_create_trace_from_spans_uses_child_run_id_when_root_omits_it():
+    """Workflow root spans can carry workflow/session context while child
+    agent spans carry the queryable agent run_id."""
+    trace_id = "trace-workflow-child-run-id"
+
+    workflow_run = _make_span(
+        span_id="workflow-run",
+        parent_span_id=None,
+        trace_id=trace_id,
+        name="research_workflow.run",
+        session_id="workflow-session-1",
+        workflow_id="research-workflow",
+    )
+    agent_run = _make_span(
+        span_id="agent-run",
+        parent_span_id="workflow-run",
+        trace_id=trace_id,
+        name="ResearchAgent.run",
+        session_id="agent-session-1",
+        agent_id="research-agent",
+        run_id="agent-run-1",
+        start_offset_s=0.05,
+    )
+
+    trace = create_trace_from_spans([workflow_run, agent_run])
+
+    assert trace is not None
+    assert trace.name == "research_workflow.run"
+    assert trace.session_id == "workflow-session-1"
+    assert trace.workflow_id == "research-workflow"
+    assert trace.agent_id is None
+    assert trace.run_id == "agent-run-1"
 
 
 def test_create_trace_from_spans_uses_root_when_present():
@@ -267,6 +315,81 @@ def test_pipeline_inner_batch_first_then_root_batch(db):
     assert row["team_id"] == "customer_support_team"
     assert row["run_id"] == "run-outer-1"
     assert row["name"] == "customer_support_team.run"
+
+
+def test_pipeline_preserves_child_run_id_when_workflow_root_omits_it(db):
+    """Full pipeline: a workflow root can fill root context after a child agent
+    batch has supplied the only run_id."""
+    trace_id = "trace-workflow-child-run-id"
+
+    agent_run = _make_span(
+        span_id="agent-run",
+        parent_span_id="workflow-run",
+        trace_id=trace_id,
+        name="ResearchAgent.run",
+        session_id="agent-session-1",
+        agent_id="research-agent",
+        run_id="agent-run-1",
+        start_offset_s=0.05,
+    )
+    db.upsert_trace(create_trace_from_spans([agent_run]))
+
+    workflow_run = _make_span(
+        span_id="workflow-run",
+        parent_span_id=None,
+        trace_id=trace_id,
+        name="research_workflow.run",
+        session_id="workflow-session-1",
+        workflow_id="research-workflow",
+    )
+    db.upsert_trace(create_trace_from_spans([workflow_run]))
+
+    row = _read_trace(db, trace_id)
+    assert row["name"] == "research_workflow.run"
+    assert row["session_id"] == "workflow-session-1"
+    assert row["workflow_id"] == "research-workflow"
+    assert row["agent_id"] is None
+    assert row["run_id"] == "agent-run-1"
+
+
+async def test_async_pipeline_preserves_child_run_id_when_workflow_root_omits_it(tmp_path):
+    """Async SQLite follows the same run_id merge behavior as sync SQLite."""
+    db = AsyncSqliteDb(db_file=str(tmp_path / "trace_context_async.db"))
+    await db._get_table(table_type="traces", create_table_if_not_found=True)
+    trace_id = "trace-async-workflow-child-run-id"
+
+    try:
+        agent_run = _make_span(
+            span_id="agent-run",
+            parent_span_id="workflow-run",
+            trace_id=trace_id,
+            name="ResearchAgent.run",
+            session_id="agent-session-1",
+            agent_id="research-agent",
+            run_id="agent-run-1",
+            start_offset_s=0.05,
+        )
+        await db.upsert_trace(create_trace_from_spans([agent_run]))
+
+        workflow_run = _make_span(
+            span_id="workflow-run",
+            parent_span_id=None,
+            trace_id=trace_id,
+            name="research_workflow.run",
+            session_id="workflow-session-1",
+            workflow_id="research-workflow",
+        )
+        await db.upsert_trace(create_trace_from_spans([workflow_run]))
+
+        row = await _aread_trace(db, trace_id)
+    finally:
+        await db.close()
+
+    assert row["name"] == "research_workflow.run"
+    assert row["session_id"] == "workflow-session-1"
+    assert row["workflow_id"] == "research-workflow"
+    assert row["agent_id"] is None
+    assert row["run_id"] == "agent-run-1"
 
 
 def test_pipeline_root_batch_first_then_inner_batch(db):
