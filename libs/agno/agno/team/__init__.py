@@ -18,6 +18,26 @@ from agno.run.team import (
     ToolCallCompletedEvent,
     ToolCallStartedEvent,
 )
+from agno.settings import (
+    CacheSettings,
+    CompressionSettings,
+    ContextSettings,
+    DebugSettings,
+    DelegationSettings,
+    EventSettings,
+    FollowupSettings,
+    HistorySettings,
+    KnowledgeSettings,
+    LearningSettings,
+    MemorySettings,
+    ModelSettings,
+    OutputSettings,
+    ReasoningSettings,
+    RetrySettings,
+    SessionSettings,
+    StorageSettings,
+    ToolSettings,
+)
 from agno.team.factory import TeamFactory
 from agno.team.mode import TeamMode
 from agno.team.remote import RemoteTeam
@@ -25,8 +45,26 @@ from agno.team.task import Task, TaskList, TaskStatus
 from agno.team.team import Team, get_team_by_id, get_teams
 
 __all__ = [
+    "CacheSettings",
+    "CompressionSettings",
+    "ContextSettings",
+    "DebugSettings",
+    "DelegationSettings",
+    "EventSettings",
     "FallbackConfig",
+    "FollowupSettings",
+    "HistorySettings",
+    "KnowledgeSettings",
+    "LearningSettings",
+    "MemorySettings",
+    "ModelSettings",
+    "OutputSettings",
+    "ReasoningSettings",
+    "RetrySettings",
+    "SessionSettings",
+    "StorageSettings",
     "Team",
+    "ToolSettings",
     "TeamFactory",
     "TeamMode",
     "RemoteTeam",
