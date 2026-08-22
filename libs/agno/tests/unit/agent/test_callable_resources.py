@@ -2,15 +2,20 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, Optional
+import asyncio
+from typing import Any, AsyncIterator, Dict, Iterator, Optional
 from unittest.mock import MagicMock
 
 import pytest
 
 from agno.agent.agent import Agent
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
 from agno.run.base import RunContext
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.runtime_registry import ToolRegistry
 from agno.utils.callables import (
     aclear_callable_cache,
     ainvoke_callable_factory,
@@ -69,9 +74,93 @@ def _another_tool(x: str) -> str:
     return f"other: {x}"
 
 
-# ---------------------------------------------------------------------------
-# is_callable_factory
-# ---------------------------------------------------------------------------
+class _StepToolRefreshModel(Model):
+    """Offline model that requests a tool once, then verifies refreshed tools."""
+
+    def __init__(self):
+        super().__init__(id="step-refresh-test", name="step-refresh-test", provider="test")
+        self.tool_names_by_step = []
+
+    def get_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    def get_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_instructions_for_model(self, *args, **kwargs):
+        return None
+
+    async def aget_system_message_for_model(self, *args, **kwargs):
+        return None
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def invoke(self, *args, **kwargs) -> ModelResponse:
+        return ModelResponse(content="unused", role="assistant", response_usage=MessageMetrics())
+
+    async def ainvoke(self, *args, **kwargs) -> ModelResponse:
+        return self.invoke(*args, **kwargs)
+
+    def invoke_stream(self, *args, **kwargs) -> Iterator[ModelResponse]:
+        yield self.invoke(*args, **kwargs)
+
+    async def ainvoke_stream(self, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+        yield self.invoke(*args, **kwargs)
+
+    def _parse_provider_response(self, response: Any, **kwargs) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
+
+    @staticmethod
+    def _tool_names(tools):
+        names = []
+        for tool in tools or []:
+            if isinstance(tool, dict):
+                function = tool.get("function") or {}
+                names.append(function.get("name") or tool.get("name"))
+            else:
+                names.append(getattr(tool, "name", None))
+        return [name for name in names if name]
+
+    def _process_model_response(
+        self,
+        *,
+        messages,
+        assistant_message,
+        model_response,
+        response_format=None,
+        tools=None,
+        tool_choice=None,
+        run_response=None,
+        compress_tool_results=False,
+    ):
+        tool_names = self._tool_names(tools)
+        self.tool_names_by_step.append(tool_names)
+        model_response.response_usage = MessageMetrics()
+
+        if len(self.tool_names_by_step) == 1:
+            assert "unlock_tool" in tool_names
+            assert "second_tool" not in tool_names
+            assistant_message.content = None
+            assistant_message.tool_calls = [
+                {
+                    "id": "call_unlock",
+                    "type": "function",
+                    "function": {"name": "unlock_tool", "arguments": "{}"},
+                }
+            ]
+            return
+
+        assert "second_tool" in tool_names
+        assistant_message.content = "refreshed"
+        assistant_message.tool_calls = None
+        model_response.content = "refreshed"
+
+    async def _aprocess_model_response(self, **kwargs):
+        self._process_model_response(**kwargs)
 
 
 class TestIsCallableFactory:
@@ -251,6 +340,62 @@ class TestAgentCallableToolsStorage:
         assert hasattr(agent, "_callable_knowledge_cache")
         assert isinstance(agent._callable_tools_cache, dict)
         assert isinstance(agent._callable_knowledge_cache, dict)
+
+
+class TestAgentToolRegistry:
+    @staticmethod
+    def _make_registry():
+        registry = ToolRegistry()
+
+        def unlock_tool() -> str:
+            registry.register(second_tool)
+            return "unlocked"
+
+        def second_tool() -> str:
+            return "available"
+
+        registry.register(unlock_tool)
+        return registry
+
+    def test_registry_refreshes_after_tool_batch(self):
+        registry = self._make_registry()
+        model = _StepToolRefreshModel()
+        agent = Agent(model=model, tools=registry)
+
+        response = agent.run("refresh tools")
+
+        assert response.content == "refreshed"
+        assert model.tool_names_by_step[0] == ["unlock_tool"]
+        assert set(model.tool_names_by_step[1]) == {"unlock_tool", "second_tool"}
+
+    def test_registry_refreshes_in_async_runs(self):
+        registry = self._make_registry()
+        model = _StepToolRefreshModel()
+        agent = Agent(model=model, tools=registry)
+
+        response = asyncio.run(agent.arun("refresh tools asynchronously"))
+
+        assert response.content == "refreshed"
+        assert model.tool_names_by_step[0] == ["unlock_tool"]
+        assert set(model.tool_names_by_step[1]) == {"unlock_tool", "second_tool"}
+
+    def test_registry_versions_and_unregister(self):
+        registry = ToolRegistry([_dummy_tool])
+        assert registry.snapshot().version == 0
+        assert registry.unregister("missing") is False
+        assert registry.register(_another_tool) == 1
+        assert registry.unregister("_dummy_tool") is True
+        snapshot = registry.snapshot()
+        assert snapshot.version == 2
+        assert [tool.__name__ for tool in snapshot.tools] == ["_another_tool"]
+
+    def test_agent_add_tool_updates_registry(self):
+        registry = ToolRegistry([_dummy_tool])
+        agent = Agent(tools=registry)
+
+        agent.add_tool(_another_tool)
+
+        assert [tool.__name__ for tool in registry.snapshot().tools] == ["_dummy_tool", "_another_tool"]
 
 
 # ---------------------------------------------------------------------------
@@ -793,6 +938,13 @@ class TestAgentDeepCopyCallable:
         # The Toolkit must actually be deep-copied, not shared by reference.
         assert copied.tools[0] is not tk
         assert copied.tools is not agent.tools
+
+    def test_deep_copy_preserves_runtime_tool_registry(self):
+        """A live registry is shared instead of being iterated or copied with its lock."""
+        registry = ToolRegistry([_dummy_tool])
+        agent = Agent(name="test", tools=registry)
+        copied = agent.deep_copy()
+        assert copied.tools is registry
 
     def test_deep_copy_async_factory_preserved(self):
         """An `async def` factory must be shared by reference, not deep-copied."""

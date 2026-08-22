@@ -7,6 +7,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -262,6 +263,7 @@ def reason(
     default Chain-of-Thought reasoning with a clean, unified interface.
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
+    from agno.tools import ToolRegistry
 
     # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = agent.reasoning_model
@@ -271,13 +273,20 @@ def reason(
         reasoning_model = deepcopy(agent.model)
 
     # Create reasoning manager with config
+    reasoning_tools = (
+        list(agent.tools.snapshot().tools)
+        if isinstance(agent.tools, ToolRegistry)
+        else agent.tools
+        if isinstance(agent.tools, list)
+        else None
+    )
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=agent.reasoning_agent,
             min_steps=agent.reasoning_min_steps,
             max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
+            tools=reasoning_tools,
             tool_call_limit=agent.tool_call_limit,
             use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,
@@ -309,6 +318,7 @@ async def areason(
     default Chain-of-Thought reasoning with a clean, unified interface.
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
+    from agno.tools import ToolRegistry
 
     # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = agent.reasoning_model
@@ -318,13 +328,20 @@ async def areason(
         reasoning_model = deepcopy(agent.model)
 
     # Create reasoning manager with config
+    reasoning_tools = (
+        list(agent.tools.snapshot().tools)
+        if isinstance(agent.tools, ToolRegistry)
+        else agent.tools
+        if isinstance(agent.tools, list)
+        else None
+    )
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=agent.reasoning_agent,
             min_steps=agent.reasoning_min_steps,
             max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
+            tools=reasoning_tools,
             tool_call_limit=agent.tool_call_limit,
             use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,
@@ -1055,6 +1072,7 @@ def handle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    tools_resolver: Optional[Callable[[], Optional[List[Union[Function, dict]]]]] = None,
 ) -> Iterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
@@ -1094,6 +1112,7 @@ def handle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        tools_resolver=tools_resolver,
     ):
         # Handle LLM request events and compression events from ModelResponse
         if isinstance(model_response_event, ModelResponse):
@@ -1215,6 +1234,7 @@ async def ahandle_model_response_stream(
     stream_events: bool = False,
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
+    tools_resolver: Optional[Callable[[], Any]] = None,
 ) -> AsyncIterator[RunOutputEvent]:
     agent.model = cast(Model, agent.model)
 
@@ -1254,6 +1274,7 @@ async def ahandle_model_response_stream(
             run_messages=run_messages,
             run_context=run_context,
         ),
+        tools_resolver=tools_resolver,
     )  # type: ignore
 
     async for model_response_event in model_response_stream:  # type: ignore

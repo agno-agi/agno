@@ -59,6 +59,10 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
 
+ModelTools = List[Union[Function, dict]]
+ToolsResolver = Callable[[], Optional[ModelTools]]
+AsyncToolsResolver = Callable[[], Awaitable[Optional[ModelTools]]]
+
 
 @dataclass
 class MessageData:
@@ -612,6 +616,41 @@ class Model(ABC):
         _tool_dicts.sort(key=self._tool_name)
         return _tool_dicts
 
+    def _resolve_tools_for_model_step(
+        self,
+        tools: Optional[ModelTools],
+        tools_resolver: Optional[ToolsResolver] = None,
+    ) -> Tuple[Optional[ModelTools], List[dict], Dict[str, Function]]:
+        """Return the tool snapshot and provider-specific representations for one model call.
+
+        ``tools_resolver`` is evaluated only when a caller explicitly asks for a new
+        snapshot. Keeping this operation in the model loop lets Agent refresh tools
+        after a completed tool batch without changing the default run-level snapshot.
+        """
+        if tools_resolver is not None:
+            resolved_tools = tools_resolver()
+            if resolved_tools is not None:
+                tools = resolved_tools
+
+        tool_dicts = self._format_tools(tools) if tools is not None else []
+        functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+        return tools, tool_dicts, functions
+
+    async def _aresolve_tools_for_model_step(
+        self,
+        tools: Optional[ModelTools],
+        tools_resolver: Optional[AsyncToolsResolver] = None,
+    ) -> Tuple[Optional[ModelTools], List[dict], Dict[str, Function]]:
+        """Async counterpart to :meth:`_resolve_tools_for_model_step`."""
+        if tools_resolver is not None:
+            resolved_tools = await tools_resolver()
+            if resolved_tools is not None:
+                tools = resolved_tools
+
+        tool_dicts = self._format_tools(tools) if tools is not None else []
+        functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+        return tools, tool_dicts, functions
+
     def _ensure_message_metrics_initialized(self, assistant_message: Message) -> None:
         """
         Ensure message metrics are initialized and timer is started.
@@ -658,6 +697,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        tools_resolver: Optional[ToolsResolver] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -676,9 +716,14 @@ class Model(ABC):
                 as its single argument. Used by Agent-level checkpointing
                 (``checkpoint="tool-batch"``) to persist mid-run state. Exceptions are caught and
                 logged — a failed callback must not kill the run.
+            tools_resolver: Optional callback that returns the tool snapshot for the next model
+                call. It is evaluated after a completed tool batch and is intended for Agent
+                tool factories whose available tools can change during a run. Response caching
+                is disabled while this callback is active because the tool snapshot is dynamic.
         """
         # Check cache if enabled
-        if self.cache_response:
+        cache_enabled = self.cache_response and tools_resolver is None
+        if cache_enabled:
             cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
@@ -694,13 +739,17 @@ class Model(ABC):
 
         function_call_count = 0
 
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+        tools, _tool_dicts, _functions = self._resolve_tools_for_model_step(tools)
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
+        refresh_tools_next_step = False
         while True:
+            if refresh_tools_next_step:
+                tools, _tool_dicts, _functions = self._resolve_tools_for_model_step(tools, tools_resolver)
+                refresh_tools_next_step = False
+
             # Compress tool results if compression is enabled and threshold is met
             if _compression_manager is not None and _compression_manager.should_compress(
                 messages, tools, model=self, response_format=response_format
@@ -845,6 +894,9 @@ class Model(ABC):
                     except Exception as e:
                         log_error(f"after_tool_results callback failed: {e}")
 
+                if tools_resolver is not None:
+                    refresh_tools_next_step = True
+
                 # If we have any tool calls that require confirmation, break the loop
                 if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
                     break
@@ -873,7 +925,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response End", center=True, symbol="-")
 
         # Save to cache if enabled
-        if self.cache_response:
+        if cache_enabled:
             self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
 
         return model_response
@@ -889,6 +941,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        tools_resolver: Optional[AsyncToolsResolver] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -901,7 +954,8 @@ class Model(ABC):
         """
 
         # Check cache if enabled
-        if self.cache_response:
+        cache_enabled = self.cache_response and tools_resolver is None
+        if cache_enabled:
             cache_key = self._get_model_cache_key(messages, stream=False, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
@@ -914,15 +968,19 @@ class Model(ABC):
         _log_messages(messages)
         model_response = ModelResponse()
 
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+        tools, _tool_dicts, _functions = await self._aresolve_tools_for_model_step(tools)
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
 
+        refresh_tools_next_step = False
         while True:
+            if refresh_tools_next_step:
+                tools, _tool_dicts, _functions = await self._aresolve_tools_for_model_step(tools, tools_resolver)
+                refresh_tools_next_step = False
+
             # Compress existing tool results BEFORE making API call to avoid context overflow
             if _compression_manager is not None and await _compression_manager.ashould_compress(
                 messages, tools, model=self, response_format=response_format
@@ -1066,6 +1124,9 @@ class Model(ABC):
                     except Exception as e:
                         log_error(f"after_tool_results callback failed: {e}")
 
+                if tools_resolver is not None:
+                    refresh_tools_next_step = True
+
                 # If we have any tool calls that require confirmation, break the loop
                 if any(tc.requires_confirmation for tc in model_response.tool_executions or []):
                     break
@@ -1094,7 +1155,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response End", center=True, symbol="-")
 
         # Save to cache if enabled
-        if self.cache_response:
+        if cache_enabled:
             self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
 
         return model_response
@@ -1371,6 +1432,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        tools_resolver: Optional[ToolsResolver] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1383,7 +1445,8 @@ class Model(ABC):
         """
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
-        if self.cache_response:
+        cache_enabled = self.cache_response and tools_resolver is None
+        if cache_enabled:
             cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
@@ -1403,15 +1466,19 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+        tools, _tool_dicts, _functions = self._resolve_tools_for_model_step(tools)
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
 
+        refresh_tools_next_step = False
         while True:
+            if refresh_tools_next_step:
+                tools, _tool_dicts, _functions = self._resolve_tools_for_model_step(tools, tools_resolver)
+                refresh_tools_next_step = False
+
             # Compress existing tool results BEFORE invoke
             if _compression_manager is not None and _compression_manager.should_compress(
                 messages, tools, model=self, response_format=response_format
@@ -1572,6 +1639,9 @@ class Model(ABC):
                     except Exception as e:
                         log_error(f"after_tool_results callback failed: {e}")
 
+                if tools_resolver is not None:
+                    refresh_tools_next_step = True
+
                 # If we have any tool calls that require confirmation, break the loop
                 if any(fc.function.requires_confirmation for fc in function_calls_to_run):
                     break
@@ -1600,7 +1670,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Response Stream End", center=True, symbol="-")
 
         # Save streaming responses to cache if enabled
-        if self.cache_response and cache_key and streaming_responses:
+        if cache_enabled and cache_key and streaming_responses:
             self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
     async def aprocess_response_stream(
@@ -1650,6 +1720,7 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        tools_resolver: Optional[AsyncToolsResolver] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1662,7 +1733,8 @@ class Model(ABC):
         """
         # Check cache if enabled - capture key BEFORE streaming to avoid mismatch
         cache_key = None
-        if self.cache_response:
+        cache_enabled = self.cache_response and tools_resolver is None
+        if cache_enabled:
             cache_key = self._get_model_cache_key(messages, stream=True, response_format=response_format, tools=tools)
             cached_data = self._get_cached_model_response(cache_key)
 
@@ -1682,15 +1754,19 @@ class Model(ABC):
         log_debug(f"Model: {self.id}", center=True, symbol="-")
         _log_messages(messages)
 
-        _tool_dicts = self._format_tools(tools) if tools is not None else []
-        _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
+        tools, _tool_dicts, _functions = await self._aresolve_tools_for_model_step(tools)
 
         _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
         _compression_manager = compression_manager if _compress_tool_results else None
 
         function_call_count = 0
 
+        refresh_tools_next_step = False
         while True:
+            if refresh_tools_next_step:
+                tools, _tool_dicts, _functions = await self._aresolve_tools_for_model_step(tools, tools_resolver)
+                refresh_tools_next_step = False
+
             # Compress existing tool results BEFORE making API call to avoid context overflow
             if _compression_manager is not None and await _compression_manager.ashould_compress(
                 messages, tools, model=self, response_format=response_format
@@ -1851,6 +1927,9 @@ class Model(ABC):
                     except Exception as e:
                         log_error(f"after_tool_results callback failed: {e}")
 
+                if tools_resolver is not None:
+                    refresh_tools_next_step = True
+
                 # If we have any tool calls that require confirmation, break the loop
                 if any(fc.function.requires_confirmation for fc in function_calls_to_run):
                     break
@@ -1879,7 +1958,7 @@ class Model(ABC):
         log_debug(f"{self.get_provider()} Async Response Stream End", center=True, symbol="-")
 
         # Save streaming responses to cache if enabled
-        if self.cache_response and cache_key and streaming_responses:
+        if cache_enabled and cache_key and streaming_responses:
             self._save_streaming_responses_to_cache(cache_key, streaming_responses)
 
     def _populate_assistant_message_from_stream_data(
