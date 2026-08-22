@@ -13,6 +13,7 @@ from typing import (
     AsyncIterator,
     Awaitable,
     Callable,
+    ClassVar,
     Dict,
     Iterator,
     List,
@@ -141,6 +142,14 @@ class Model(ABC):
     # Functional role of this model (e.g., MODEL, OUTPUT_MODEL, PARSER_MODEL).
     # Set by the agent during initialization; defaults to MODEL.
     model_type: ModelType = ModelType.MODEL
+
+    # Config fields (beyond id/name/provider) that both to_dict serializes and
+    # get_model_from_dict restores. One declaration drives both directions, so a
+    # class's serialization and reconstruction can never drift apart. Connection
+    # config (base_url, endpoints, deployments, routing candidates) belongs here;
+    # secrets and secret-carrying fields (api_key, tokens, default_headers,
+    # client_params) never do — to_dict would write them into the database.
+    _extra_serialized_fields: ClassVar[Tuple[str, ...]] = ()
 
     # -*- Do not set the following attributes directly -*-
     # -*- Set them on the Agent instead -*-
@@ -428,7 +437,7 @@ class Model(ABC):
         raise last_exception  # type: ignore
 
     def to_dict(self) -> Dict[str, Any]:
-        fields = {"name", "id", "provider"}
+        fields = {"name", "id", "provider", *self._extra_serialized_fields}
         _dict = {field: getattr(self, field) for field in fields if getattr(self, field) is not None}
         return _dict
 

@@ -331,3 +331,65 @@ def test_every_model_subclass_is_registered():
         + ". Add each to the registry in agno/models/utils.py (or to the test allowlist if it is "
         "not a user-selectable provider)."
     )
+
+
+# Field names that are, or can carry, a secret. A class's serialization allowlist
+# (``_extra_serialized_fields``) drives ``to_dict``, so declaring any of these would write the
+# secret into the database on every save. Connection config (base_url, endpoints, deployments)
+# is fine to declare; secrets and their carriers are not.
+_SECRET_FIELD_NAMES = {"api_key", "default_headers", "default_query", "client_params", "http_client"}
+_SECRET_FIELD_MARKERS = ("token", "secret", "password", "credential")
+
+
+def _import_class_or_skip(key):
+    """Import a provider class without constructing it, or skip if its SDK is not installed.
+
+    Provider packages swap in a non-Model stub class when their optional SDK is missing, so a
+    successful import is not enough; the stub has no allowlist to check.
+    """
+    import importlib
+
+    module_path, class_name = MODEL_PROVIDER_CLASSES[key]
+    try:
+        model_class = getattr(importlib.import_module(module_path), class_name)
+    except ImportError as e:
+        pytest.skip(f"optional SDK for '{key}' not installed: {e}")
+    if not (isinstance(model_class, type) and issubclass(model_class, Model)):
+        pytest.skip(f"optional SDK for '{key}' not installed (stub class exported)")
+    return model_class
+
+
+@pytest.mark.parametrize("key", ALL_PROVIDER_KEYS)
+def test_serialization_allowlist_never_declares_secrets(key):
+    """Guard against a provider declaring a credential or secret-carrying field as serializable."""
+    model_class = _import_class_or_skip(key)
+    declared = set(model_class._extra_serialized_fields)
+    leaked = {
+        name
+        for name in declared
+        if name in _SECRET_FIELD_NAMES or any(marker in name.lower() for marker in _SECRET_FIELD_MARKERS)
+    }
+    assert not leaked, (
+        f"{model_class.__name__}._extra_serialized_fields declares secret-carrying field(s) {sorted(leaked)}; "
+        "to_dict would persist them. Only non-secret config may be serialized."
+    )
+
+
+def test_stub_provider_class_raises_install_hint(monkeypatch):
+    """Provider packages export a non-Model stub when their optional SDK is missing; rebuilding
+    such a model must surface the stub's ImportError (which names the package to install), not
+    fail earlier on the stub lacking a serialization allowlist."""
+    import sys
+    import types
+
+    class _Stub:  # mirrors the fallback classes in agno/models/<provider>/__init__.py
+        def __init__(self, *args, **kwargs):
+            raise ImportError("`fake-sdk` not installed. Please install it via `pip install fake-sdk`")
+
+    stub_module = types.ModuleType("agno_test_stub_provider")
+    stub_module.Stub = _Stub  # type: ignore[attr-defined]
+    monkeypatch.setitem(sys.modules, "agno_test_stub_provider", stub_module)
+    monkeypatch.setitem(MODEL_PROVIDER_CLASSES, "stub-provider", ("agno_test_stub_provider", "Stub"))
+
+    with pytest.raises(ImportError, match="fake-sdk"):
+        get_model_from_dict({"id": "x", "provider": "stub-provider", "name": "Stub"})
