@@ -158,6 +158,29 @@ class TestGetFallbackModels:
         result = get_fallback_models(config, error)
         assert result == [general_model]
 
+    def test_get_fallback_models_routes_background_rate_limit(self):
+        """A response-level rate limit failure (no HTTP status) routes to on_rate_limit.
+
+        Mirrors what OpenAIResponses raises for a background response that failed
+        with error code rate_limit_exceeded: status 429 + the provider code.
+        """
+        rl_model = _make_model("rate-limit-fallback")
+        config = FallbackConfig(on_error=[_make_model("general")], on_rate_limit=[rl_model])
+        error = ModelProviderError("Rate limit exceeded", status_code=429, code="rate_limit_exceeded")
+        result = get_fallback_models(config, error)
+        assert result == [rl_model]
+
+    def test_get_fallback_models_blocks_background_client_error(self):
+        """A response-level client error (e.g. invalid_prompt) is not masked by on_error.
+
+        Mirrors what OpenAIResponses raises for a background response that failed
+        with a client-side error code: status 400 + the provider code.
+        """
+        config = FallbackConfig(on_error=[_make_model("fallback")])
+        error = ModelProviderError("Invalid prompt: flagged", status_code=400, code="invalid_prompt")
+        result = get_fallback_models(config, error)
+        assert result is None
+
 
 # =============================================================================
 # Group 3: call_model_with_fallback() (sync)
@@ -518,6 +541,41 @@ class TestClassifyError:
         classified = Model.classify_error(error)
         assert classified is error
         assert type(classified) is ModelProviderError
+
+    def test_classify_error_rate_limit_code_fast_path(self):
+        """A rate_limit_exceeded provider code classifies as ModelRateLimitError regardless of status."""
+        error = ModelProviderError("Rate limit exceeded", status_code=502, code="rate_limit_exceeded")
+        classified = Model.classify_error(error)
+        assert isinstance(classified, ModelRateLimitError)
+        assert classified.code == "rate_limit_exceeded"
+
+    def test_classify_error_context_window_code_fast_path(self):
+        """A context_length_exceeded provider code classifies as ContextWindowExceededError."""
+        error = ModelProviderError("Request rejected", status_code=400, code="context_length_exceeded")
+        classified = Model.classify_error(error)
+        assert isinstance(classified, ContextWindowExceededError)
+        assert classified.code == "context_length_exceeded"
+
+    def test_classify_error_preserves_code_on_status_path(self):
+        """Status-based classification carries the provider code onto the subclass."""
+        error = ModelProviderError("too many requests", status_code=429, code="rate_limit_exceeded")
+        classified = Model.classify_error(error)
+        assert isinstance(classified, ModelRateLimitError)
+        assert classified.code == "rate_limit_exceeded"
+
+    def test_classify_error_preserves_code_on_message_path(self):
+        """Message-pattern classification carries the provider code onto the subclass."""
+        error = ModelProviderError("maximum context length is 8192 tokens", status_code=400, code="some_code")
+        classified = Model.classify_error(error)
+        assert isinstance(classified, ContextWindowExceededError)
+        assert classified.code == "some_code"
+
+    def test_classify_error_code_defaults_to_none(self):
+        """Errors raised without a provider code keep code=None end to end."""
+        error = ModelProviderError("rate limited", status_code=429)
+        classified = Model.classify_error(error)
+        assert isinstance(classified, ModelRateLimitError)
+        assert classified.code is None
 
 
 # =============================================================================

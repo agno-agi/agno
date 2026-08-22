@@ -110,11 +110,19 @@ class ModelProviderError(AgnoError):
     ]
 
     def __init__(
-        self, message: str, status_code: int = 502, model_name: Optional[str] = None, model_id: Optional[str] = None
+        self,
+        message: str,
+        status_code: int = 502,
+        model_name: Optional[str] = None,
+        model_id: Optional[str] = None,
+        code: Optional[str] = None,
     ):
         super().__init__(message, status_code)
         self.model_name = model_name
         self.model_id = model_id
+        # Provider-native machine-readable error code (e.g. OpenAI "invalid_prompt",
+        # "context_length_exceeded"). Best-effort; None when the provider supplies no code.
+        self.code = code
 
         self.type = "model_provider_error"
         self.error_id = "model_provider_error"
@@ -125,12 +133,30 @@ class ModelProviderError(AgnoError):
 
         If the error is already a specific subclass (ModelRateLimitError,
         ContextWindowExceededError), it is returned as-is. Otherwise, the
-        error message and status code are inspected to determine if a more
-        specific subclass applies.
+        provider error code, error message and status code are inspected to
+        determine if a more specific subclass applies.
         """
         # Already classified
         if isinstance(error, (ModelRateLimitError, ContextWindowExceededError)):
             return error
+
+        # Provider error code fast-path (deterministic, preferred over message matching)
+        if error.code == "rate_limit_exceeded":
+            return ModelRateLimitError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+                code=error.code,
+            )
+        if error.code == "context_length_exceeded":
+            return ContextWindowExceededError(
+                message=error.message,
+                status_code=error.status_code,
+                model_name=error.model_name,
+                model_id=error.model_id,
+                code=error.code,
+            )
 
         # Rate-limit detection (429 standard, 529 Anthropic OverloadedError)
         if error.status_code in {429, 529}:
@@ -139,6 +165,7 @@ class ModelProviderError(AgnoError):
                 status_code=error.status_code,
                 model_name=error.model_name,
                 model_id=error.model_id,
+                code=error.code,
             )
 
         # Context-window detection
@@ -149,6 +176,7 @@ class ModelProviderError(AgnoError):
                 status_code=error.status_code,
                 model_name=error.model_name,
                 model_id=error.model_id,
+                code=error.code,
             )
 
         return error
@@ -158,9 +186,14 @@ class ModelRateLimitError(ModelProviderError):
     """Exception raised when a model provider returns a rate limit error."""
 
     def __init__(
-        self, message: str, status_code: int = 429, model_name: Optional[str] = None, model_id: Optional[str] = None
+        self,
+        message: str,
+        status_code: int = 429,
+        model_name: Optional[str] = None,
+        model_id: Optional[str] = None,
+        code: Optional[str] = None,
     ):
-        super().__init__(message, status_code, model_name, model_id)
+        super().__init__(message, status_code, model_name, model_id, code)
         self.error_id = "model_rate_limit_error"
 
 
@@ -168,9 +201,14 @@ class ContextWindowExceededError(ModelProviderError):
     """Exception raised when the input exceeds a model's context window."""
 
     def __init__(
-        self, message: str, status_code: int = 400, model_name: Optional[str] = None, model_id: Optional[str] = None
+        self,
+        message: str,
+        status_code: int = 400,
+        model_name: Optional[str] = None,
+        model_id: Optional[str] = None,
+        code: Optional[str] = None,
     ):
-        super().__init__(message, status_code, model_name, model_id)
+        super().__init__(message, status_code, model_name, model_id, code)
         self.error_id = "context_window_exceeded_error"
 
 

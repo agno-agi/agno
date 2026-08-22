@@ -26,6 +26,15 @@ try:
 except ImportError as e:
     raise ImportError("`openai` not installed. Please install using `pip install openai -U`") from e
 
+# Response-level failures (``Response.error``) carry no HTTP status. Map the provider
+# error code to its HTTP equivalent so retry and fallback semantics treat client vs
+# server failures correctly; codes not listed here are client errors.
+RESPONSE_ERROR_STATUS_CODES: Dict[str, int] = {
+    "server_error": 502,
+    "rate_limit_exceeded": 429,
+    "vector_store_timeout": 504,
+}
+
 
 @dataclass
 class OpenAIResponses(Model):
@@ -193,6 +202,24 @@ class OpenAIResponses(Model):
 
         self.async_client = AsyncOpenAI(**client_params)
         return self.async_client
+
+    def _response_error(self, response: "Response") -> ModelProviderError:
+        """Build a ModelProviderError from a response that reports a provider-side error.
+
+        Response-level errors have no HTTP status and no underlying exception to chain
+        from, so the typed ``Response.error`` code is carried on the raised error and
+        mapped to an HTTP-equivalent status code.
+        """
+        error = response.error
+        if error is None:
+            return ModelProviderError(message=f"Response {response.id} failed", model_name=self.name, model_id=self.id)
+        return ModelProviderError(
+            message=error.message,
+            status_code=RESPONSE_ERROR_STATUS_CODES.get(error.code, 400),
+            model_name=self.name,
+            model_id=self.id,
+            code=error.code,
+        )
 
     def _poll_background_response(self, response_id: str) -> "Response":
         """Poll for a background response until it reaches a terminal state.
@@ -794,8 +821,7 @@ class OpenAIResponses(Model):
                 provider_response = self._poll_background_response(provider_response.id)
 
             if provider_response.status == "failed":
-                error_msg = provider_response.error.message if provider_response.error else "Background response failed"
-                raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+                raise self._response_error(provider_response)
             if provider_response.status == "cancelled":
                 raise ModelProviderError(
                     message=f"Background response {provider_response.id} was cancelled",
@@ -848,16 +874,20 @@ class OpenAIResponses(Model):
                     status_code=exc.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from exc
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
             raise exc
+        except ModelProviderError:
+            raise
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -899,8 +929,7 @@ class OpenAIResponses(Model):
                 provider_response = await self._apoll_background_response(provider_response.id)
 
             if provider_response.status == "failed":
-                error_msg = provider_response.error.message if provider_response.error else "Background response failed"
-                raise ModelProviderError(message=error_msg, model_name=self.name, model_id=self.id)
+                raise self._response_error(provider_response)
             if provider_response.status == "cancelled":
                 raise ModelProviderError(
                     message=f"Background response {provider_response.id} was cancelled",
@@ -953,16 +982,20 @@ class OpenAIResponses(Model):
                     status_code=exc.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from exc
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
             raise exc
+        except ModelProviderError:
+            raise
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -1042,16 +1075,20 @@ class OpenAIResponses(Model):
                     status_code=exc.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from exc
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
             raise exc
+        except ModelProviderError:
+            raise
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -1128,16 +1165,20 @@ class OpenAIResponses(Model):
                     status_code=exc.response.status_code,
                     model_name=self.name,
                     model_id=self.id,
+                    code=error_code,
                 ) from exc
             raise ModelProviderError(
                 message=error_message,
                 status_code=exc.response.status_code,
                 model_name=self.name,
                 model_id=self.id,
+                code=error_code,
             ) from exc
         except ModelAuthenticationError as exc:
             log_error(f"Model authentication error from OpenAI API: {exc}")
             raise exc
+        except ModelProviderError:
+            raise
         except Exception as exc:
             log_error(f"Error from OpenAI API: {exc}")
             raise ModelProviderError(message=str(exc), model_name=self.name, model_id=self.id) from exc
@@ -1172,11 +1213,7 @@ class OpenAIResponses(Model):
         model_response = ModelResponse()
 
         if response.error:
-            raise ModelProviderError(
-                message=response.error.message,
-                model_name=self.name,
-                model_id=self.id,
-            )
+            raise self._response_error(response)
 
         # Store the response ID for continuity
         if response.id:
