@@ -101,7 +101,7 @@ class MultiMCPTools(Toolkit):
                     raise ValueError("urls and urls_transports must be of the same length")
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
-        # beacuse tools are not available until `initialize()` is called.
+        # because tools are not available until `initialize()` is called.
         self.include_tools = include_tools
         self.exclude_tools = exclude_tools
         self.refresh_connection = refresh_connection

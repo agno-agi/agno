@@ -2397,7 +2397,7 @@ class Step:
             log_warning(f"Step '{self.name}': executor produced no response to store")
             return
         if self._executor_type in ["agent", "team"]:
-            # propogate the workflow run id as parent run id to the executor response
+            # propagate the workflow run id as parent run id to the executor response
             executor_run_response.parent_run_id = workflow_run_response.run_id
             executor_run_response.workflow_step_id = self.step_id
 
