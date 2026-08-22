@@ -686,15 +686,47 @@ class TestResolveDbInConfig:
 
         assert "db" not in out
 
-    def test_db_without_id_is_passed_through(self, tmp_path):
+    def test_db_without_id_uses_os_db_and_rejects_connection_fields(self, tmp_path):
         from agno.os.routers.components.components import _resolve_db_in_config
 
         os_db = self._make_os_db(tmp_path)
-        payload = {"db": {"type": "sqlite", "session_table": "custom"}}
+        payload = {
+            "db": {
+                "type": "postgres",
+                "db_url": "postgresql://attacker/evil",
+                "db_file": str(tmp_path / "attacker" / "evil.db"),
+                "session_table": "custom_sessions",
+            }
+        }
 
         out = _resolve_db_in_config(dict(payload), os_db, None)
 
-        assert out["db"] == payload["db"]
+        assert out["db"]["id"] == os_db.id
+        assert out["db"]["type"] == "sqlite"
+        assert out["db"]["db_file"] == os_db.db_file
+        assert out["db"].get("db_url") == os_db.db_url
+        assert out["db"]["session_table"] == "custom_sessions"
+
+    def test_unknown_db_id_uses_os_db_and_rejects_connection_fields(self, tmp_path):
+        from agno.os.routers.components.components import _resolve_db_in_config
+
+        os_db = self._make_os_db(tmp_path)
+        payload = {
+            "db": {
+                "id": "unknown-db",
+                "type": "postgres",
+                "db_url": "postgresql://attacker/evil",
+                "session_table": "custom_sessions",
+            }
+        }
+
+        out = _resolve_db_in_config(dict(payload), os_db, None)
+
+        assert out["db"]["id"] == os_db.id
+        assert out["db"]["type"] == "sqlite"
+        assert out["db"]["db_file"] == os_db.db_file
+        assert out["db"].get("db_url") == os_db.db_url
+        assert out["db"]["session_table"] == "custom_sessions"
 
     def test_matching_id_merges_table_overrides_onto_resolved_db(self, tmp_path):
         """The reported bug: table-name overrides in the payload were being
