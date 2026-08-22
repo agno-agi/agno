@@ -66,6 +66,7 @@ class PgVector(VectorDb):
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
+        create_extension: bool = True,
     ):
         """
         Initialize the PgVector instance.
@@ -90,6 +91,8 @@ class PgVector(VectorDb):
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
             similarity_threshold (Optional[float]): Minimum similarity score (0.0-1.0) to filter results.
+            create_extension (bool): Whether to attempt creating the pgvector extension.
+                Set to False when the extension is pre-installed by a database admin. Defaults to True.
         """
         if not table_name:
             raise ValueError("Table name must be provided.")
@@ -157,6 +160,8 @@ class PgVector(VectorDb):
 
         # Schema creation flag
         self.create_schema: bool = create_schema
+        # Extension creation flag
+        self.create_extension: bool = create_extension
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
@@ -223,14 +228,31 @@ class PgVector(VectorDb):
             log_error(f"Error checking if table exists: {str(e)}")
             return False
 
+    def _vector_extension_exists(self, sess: Session) -> bool:
+        """Return True if the pgvector extension is installed."""
+        result = sess.execute(text("SELECT EXISTS(SELECT 1 FROM pg_extension WHERE extname = 'vector')")).scalar()
+        return bool(result)
+
+    def _ensure_vector_extension(self, sess: Session) -> None:
+        """Create the pgvector extension if needed and permitted."""
+        if not self.create_extension:
+            return
+        if self._vector_extension_exists(sess):
+            log_debug("pgvector extension already exists")
+            return
+        try:
+            log_debug("Creating extension: vector")
+            sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+        except Exception as e:
+            log_warning(f"Could not create pgvector extension (requires superuser): {str(e)}")
+
     def create(self) -> None:
         """
         Create the table if it does not exist.
         """
         if not self.table_exists():
             with self.Session() as sess, sess.begin():
-                log_debug("Creating extension: vector")
-                sess.execute(text("CREATE EXTENSION IF NOT EXISTS vector;"))
+                self._ensure_vector_extension(sess)
                 if self.create_schema and self.schema is not None:
                     try:
                         log_debug(f"Creating schema: {self.schema}")
