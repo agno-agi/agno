@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from typing import TYPE_CHECKING, Any, Dict, Optional
 
 if TYPE_CHECKING:
@@ -44,18 +45,21 @@ def log_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = N
     if not agent.telemetry:
         return
 
-    from agno.api.agent import AgentRunCreate, create_agent_run
+    def _send() -> None:
+        from agno.api.agent import AgentRunCreate, create_agent_run
 
-    try:
-        create_agent_run(
-            run=AgentRunCreate(
-                session_id=session_id,
-                run_id=run_id,
-                data=get_telemetry_data(agent),
-            ),
-        )
-    except Exception as e:
-        log_debug(f"Could not create Agent run telemetry event: {e}")
+        try:
+            create_agent_run(
+                run=AgentRunCreate(
+                    session_id=session_id,
+                    run_id=run_id,
+                    data=get_telemetry_data(agent),
+                ),
+            )
+        except Exception as e:
+            log_debug(f"Could not create Agent run telemetry event: {e}")
+
+    threading.Thread(target=_send, daemon=True).start()
 
 
 async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = None) -> None:
