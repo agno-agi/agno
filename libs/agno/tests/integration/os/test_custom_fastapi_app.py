@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from unittest.mock import Mock, patch
 
 import pytest
-from fastapi import FastAPI, HTTPException
+from fastapi import APIRouter, FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from starlette.middleware.cors import CORSMiddleware
 
@@ -710,6 +710,57 @@ def test_complex_route_conflict_scenario(test_agent: Agent, test_team: Team, tes
     response = client.post("/agents")
     # Should either work (custom) or have specific AgentOS behavior
     assert response.status_code != 404
+
+
+def test_conflict_detected_for_included_router(test_agent: Agent):
+    """A base-app route registered via include_router still conflicts with an AgentOS route."""
+    custom_router = APIRouter()
+
+    @custom_router.get("/health")
+    async def custom_health():
+        return {"status": "custom_ok"}
+
+    # error mode must raise on the real conflict
+    error_app = FastAPI(title="Custom App")
+    error_app.include_router(custom_router)
+    with pytest.raises(ValueError):
+        AgentOS(agents=[test_agent], base_app=error_app, on_route_conflict="error").get_app()
+
+    # preserve_agentos must override the included route, not leave both in place
+    override_app = FastAPI(title="Custom App")
+    override_app.include_router(custom_router)
+    client = TestClient(
+        AgentOS(agents=[test_agent], base_app=override_app, on_route_conflict="preserve_agentos").get_app()
+    )
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"  # AgentOS health endpoint, not custom_ok
+
+
+def test_prefixed_included_router_not_treated_as_conflict(test_agent: Agent):
+    """A prefixed include_router route at /api/health must not be mistaken for AgentOS /health."""
+    custom_router = APIRouter()
+
+    @custom_router.get("/health")
+    async def custom_health():
+        return {"status": "custom_ok"}
+
+    custom_app = FastAPI(title="Custom App")
+    custom_app.include_router(custom_router, prefix="/api")
+
+    client = TestClient(
+        AgentOS(agents=[test_agent], base_app=custom_app, on_route_conflict="preserve_agentos").get_app()
+    )
+
+    # The custom route lives at /api/health and must survive (no false conflict with /health)
+    response = client.get("/api/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "custom_ok"
+
+    # AgentOS still owns its own /health
+    response = client.get("/health")
+    assert response.status_code == 200
+    assert response.json()["status"] == "ok"
 
 
 def test_custom_app_with_mcp_tools_lifespan(test_agent: Agent):
