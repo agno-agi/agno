@@ -273,7 +273,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("testuser")
+            result = hackernews_tools.hackernews_get_user_details("testuser")
 
         user_details = json.loads(result)
         assert user_details["id"] == "testuser"
@@ -294,7 +294,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("testuser123")
+            result = hackernews_tools.hackernews_get_user_details("testuser123")
 
         user_details = json.loads(result)
         assert user_details["id"] == "testuser123"
@@ -312,7 +312,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("newuser")
+            result = hackernews_tools.hackernews_get_user_details("newuser")
 
         user_details = json.loads(result)
         assert user_details["total_items_submitted"] == 0
@@ -329,7 +329,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("quietuser")
+            result = hackernews_tools.hackernews_get_user_details("quietuser")
 
         user_details = json.loads(result)
         assert user_details["about"] is None
@@ -337,7 +337,7 @@ class TestGetUserDetails:
     def test_get_user_details_error_handling(self, hackernews_tools):
         """Test error handling when API call fails."""
         with patch("agno.tools.hackernews.httpx.get", side_effect=Exception("Network error")):
-            result = hackernews_tools.get_user_details("testuser")
+            result = hackernews_tools.hackernews_get_user_details("testuser")
 
         assert "Error getting user details" in result
         assert "Network error" in result
@@ -348,7 +348,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = None
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("nonexistentuser12345")
+            result = hackernews_tools.hackernews_get_user_details("nonexistentuser12345")
 
         # Should handle None gracefully by catching the exception
         assert "Error getting user details" in result
@@ -432,7 +432,7 @@ class TestEdgeCases:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("user_with-special.chars")
+            result = hackernews_tools.hackernews_get_user_details("user_with-special.chars")
 
         user_details = json.loads(result)
         assert user_details["karma"] == 100
