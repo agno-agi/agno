@@ -2050,6 +2050,10 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
+            if args:
+                # A tool hook may hand a fresh dict down via next_func(**kwargs);
+                # honour it instead of silently rebuilding the original arguments.
+                arguments.update(args)
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
@@ -2341,6 +2345,10 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
+            if args:
+                # A tool hook may hand a fresh dict down via next_func(**kwargs);
+                # honour it instead of silently rebuilding the original arguments.
+                arguments.update(args)
 
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
@@ -2357,6 +2365,10 @@ class FunctionCall(BaseModel):
             arguments = entrypoint_args.copy()
             if self.arguments is not None:
                 arguments.update(self.arguments)
+            if args:
+                # A tool hook may hand a fresh dict down via next_func(**kwargs);
+                # honour it instead of silently rebuilding the original arguments.
+                arguments.update(args)
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:

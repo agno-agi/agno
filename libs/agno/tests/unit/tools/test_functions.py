@@ -582,6 +582,45 @@ def test_function_call_with_tool_hooks():
     assert hook_calls[1][2] == "processed-value1"
 
 
+def test_tool_hook_new_dict_kwargs_reach_entrypoint():
+    """A hook that passes a fresh dict to the next function must not be dropped."""
+
+    def injecting_hook(function_name: str, function_call: Callable, arguments: dict[str, Any]):
+        return function_call(**arguments, injected="via-kwargs")
+
+    @tool(tool_hooks=[injecting_hook])
+    def test_func(param1: str, injected: str = "default") -> str:
+        return f"processed-{param1}-{injected}"
+
+    test_func.process_entrypoint()
+
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+
+    result = call.execute()
+    assert result.status == "success"
+    assert result.result == "processed-value1-via-kwargs"
+
+
+@pytest.mark.asyncio
+async def test_tool_hook_async_new_dict_kwargs_reach_entrypoint():
+    """Async twin: a fresh-dict next_func(**kwargs) call must reach the entrypoint."""
+
+    def injecting_hook(function_name: str, function_call: Callable, arguments: dict[str, Any]):
+        return function_call(**arguments, injected="via-kwargs")
+
+    @tool(tool_hooks=[injecting_hook])
+    async def test_func(param1: str, injected: str = "default") -> str:
+        return f"processed-{param1}-{injected}"
+
+    test_func.process_entrypoint()
+
+    call = FunctionCall(function=test_func, arguments={"param1": "value1"})
+
+    result = await call.aexecute()
+    assert result.status == "success"
+    assert result.result == "processed-value1-via-kwargs"
+
+
 @pytest.mark.asyncio
 async def test_function_call_async_execution():
     """Test async function call execution."""
