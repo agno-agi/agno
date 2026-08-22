@@ -14,11 +14,14 @@ from agno.tools.function import Function
 from agno.utils.callables import (
     aclear_callable_cache,
     ainvoke_callable_factory,
+    ainvoke_callable_with_kwargs,
     aresolve_callable_tools,
+    build_injected_kwargs,
     clear_callable_cache,
     get_resolved_knowledge,
     get_resolved_tools,
     invoke_callable_factory,
+    invoke_callable_with_kwargs,
     is_callable_factory,
     resolve_callable_knowledge,
     resolve_callable_tools,
@@ -841,3 +844,81 @@ class TestAgentDeepCopyCallable:
         # Bound methods are transient, so compare identity via the receiver
         assert getattr(copied.tools, "__self__", None) is holder
         assert copied.tools() == [_dummy_tool]
+
+
+# ---------------------------------------------------------------------------
+# build_injected_kwargs
+# ---------------------------------------------------------------------------
+
+
+class TestBuildInjectedKwargs:
+    def test_injects_matching_params(self):
+        def fn(a, b):
+            return a + b
+
+        available = {"a": 1, "b": 2, "c": 3}
+        assert build_injected_kwargs(fn, available) == {"a": 1, "b": 2}
+
+    def test_skips_nonexistent_params(self):
+        def fn(x):
+            return x
+
+        available = {"x": 10, "y": 20}
+        assert build_injected_kwargs(fn, available) == {"x": 10}
+
+    def test_empty_when_no_overlap(self):
+        def fn(a):
+            return a
+
+        available = {"b": 1}
+        assert build_injected_kwargs(fn, available) == {}
+
+    def test_ignores_return_annotation(self):
+        def fn(x) -> int:
+            return x
+
+        available = {"x": 42, "return": 99}
+        assert build_injected_kwargs(fn, available) == {"x": 42}
+
+
+# ---------------------------------------------------------------------------
+# invoke_callable_with_kwargs
+# ---------------------------------------------------------------------------
+
+
+class TestInvokeCallableWithKwargs:
+    def test_invokes_sync_function(self):
+        def fn(x, y):
+            return x * y
+
+        assert invoke_callable_with_kwargs(fn, {"x": 3, "y": 4}) == 12
+
+    def test_raises_on_coroutine_result(self):
+        async def fn():
+            return 1
+
+        with pytest.raises(RuntimeError, match="returned an awaitable in sync mode"):
+            invoke_callable_with_kwargs(fn, {})
+
+
+# ---------------------------------------------------------------------------
+# ainvoke_callable_with_kwargs
+# ---------------------------------------------------------------------------
+
+
+class TestAinvokeCallableWithKwargs:
+    @pytest.mark.asyncio
+    async def test_invokes_async_function(self):
+        async def fn(x):
+            return x + 1
+
+        result = await ainvoke_callable_with_kwargs(fn, {"x": 5})
+        assert result == 6
+
+    @pytest.mark.asyncio
+    async def test_invokes_sync_function(self):
+        def fn(x):
+            return x + 1
+
+        result = await ainvoke_callable_with_kwargs(fn, {"x": 5})
+        assert result == 6
