@@ -1372,12 +1372,18 @@ class AgentOS:
         user_isolation = middleware_kwargs.get("user_isolation", False)
 
         jwt_configured = bool(
-            verification_keys or jwks_file or getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
+            verification_keys
+            or jwks_file
+            or getenv("JWT_VERIFICATION_KEY")
+            or getenv("JWT_JWKS_FILE")
+            or middleware_kwargs.get("validate") is False
         )
         # Fail fast at app construction (not on the first request) if RBAC was asked for
         # with no way to verify a JWT: otherwise every JWT and anonymous request would fall
         # through unauthenticated, silently serving an OPEN instance. AuthMiddleware enforces
         # the same invariant as a backstop for the manual add_middleware path.
+        # ``validate=False`` is an explicit opt-out (JWT verified upstream), so it counts as
+        # configured even without a local verification key.
         if self.authorization and not jwt_configured:
             raise ValueError(
                 "AgentOS(authorization=True) requires a JWT verification key: set JWT_VERIFICATION_KEY or "
@@ -1389,12 +1395,22 @@ class AgentOS:
 
         # A JWT validator on app.state is only meaningful (and only constructible --
         # it requires a key) when JWT is actually configured. WebSocket JWT auth reads it.
+        # With validate=False, the validator can be constructed without keys.
         if jwt_configured:
-            fastapi_app.state.jwt_validator = JWTValidator(
-                verification_keys=verification_keys,
-                jwks_file=jwks_file,
-                algorithm=algorithm,
-            )
+            validator_kwargs: Dict[str, Any] = {
+                "verification_keys": verification_keys,
+                "jwks_file": jwks_file,
+                "algorithm": algorithm,
+            }
+            if "validate" in middleware_kwargs:
+                validator_kwargs["validate"] = middleware_kwargs["validate"]
+            if "scopes_claim" in middleware_kwargs:
+                validator_kwargs["scopes_claim"] = middleware_kwargs["scopes_claim"]
+            if "user_id_claim" in middleware_kwargs:
+                validator_kwargs["user_id_claim"] = middleware_kwargs["user_id_claim"]
+            if "session_id_claim" in middleware_kwargs:
+                validator_kwargs["session_id_claim"] = middleware_kwargs["session_id_claim"]
+            fastapi_app.state.jwt_validator = JWTValidator(**validator_kwargs)
         # Expose audience config + admin scope on app.state so WebSocket auth
         # (which does not flow through HTTP middleware) can honour them.
         fastapi_app.state.jwt_verify_audience = verify_audience
