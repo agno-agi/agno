@@ -11,7 +11,6 @@ from fastapi import (
 
 from agno import __version__ as agno_version
 from agno.agent.factory import AgentFactory
-from agno.agent.protocol import AgentProtocol
 from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import (
     get_authentication_dependency,
@@ -240,8 +239,6 @@ def get_base_router(
         if os.agents:
             for agent in os.agents:
                 if isinstance(agent, AgentFactory):
-                    continue
-                if isinstance(agent, AgentProtocol):
                     continue
                 model = cast(Model, agent.model)
                 if model and model.id is not None and model.provider is not None:
