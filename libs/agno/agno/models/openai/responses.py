@@ -1268,7 +1268,6 @@ class OpenAIResponses(Model):
             ModelResponse: Parsed response delta
         """
         model_response = ModelResponse()
-
         # 1. Add response ID
         if stream_event.type == "response.created":
             if stream_event.response.id:
@@ -1308,9 +1307,34 @@ class OpenAIResponses(Model):
             if self.reasoning is not None and self.reasoning_summary is None:
                 model_response.reasoning_content = stream_event.delta
 
-        # 3.1 Stream reasoning summary deltas
+        # 3.1 Stream reasoning summary part boundaries and deltas
+        elif stream_event.type == "response.reasoning_summary_part.added":
+            model_response.provider_data = {
+                "reasoning_summary_event": "part_added",
+                "reasoning_summary_index": getattr(stream_event, "summary_index", 0),
+                "reasoning_summary_part_text": getattr(getattr(stream_event, "part", None), "text", ""),
+            }
+
         elif stream_event.type == "response.reasoning_summary_text.delta":
             model_response.reasoning_content = stream_event.delta
+            model_response.provider_data = {
+                "reasoning_summary_event": "text_delta",
+                "reasoning_summary_index": getattr(stream_event, "summary_index", 0),
+            }
+
+        elif stream_event.type == "response.reasoning_summary_text.done":
+            model_response.provider_data = {
+                "reasoning_summary_event": "text_done",
+                "reasoning_summary_index": getattr(stream_event, "summary_index", 0),
+                "reasoning_summary_text": getattr(stream_event, "text", ""),
+            }
+
+        elif stream_event.type == "response.reasoning_summary_part.done":
+            model_response.provider_data = {
+                "reasoning_summary_event": "part_done",
+                "reasoning_summary_index": getattr(stream_event, "summary_index", 0),
+                "reasoning_summary_part_text": getattr(getattr(stream_event, "part", None), "text", ""),
+            }
 
         # 4. Add tool calls information
 
