@@ -117,6 +117,11 @@ class Team:
     delegate_to_all_members: bool = False
     # Set to false if you want to send the run input directly to the member agents
     determine_input_for_members: bool = True
+    # If True, use non-empty tool results when an immediate member or sub-Team
+    # returns no usable text. If False, return a generic no-response diagnostic.
+    # Applies only to non-streaming delegation at this Team boundary; configure
+    # nested Teams independently.
+    use_member_tool_results_as_fallback: bool = True
     # Maximum number of iterations for autonomous task loop (mode=tasks)
     max_iterations: int = 10
 
@@ -471,6 +476,7 @@ class Team:
         mode: Optional[TeamMode] = None,
         respond_directly: bool = False,
         determine_input_for_members: bool = True,
+        use_member_tool_results_as_fallback: bool = True,
         delegate_to_all_members: bool = False,
         max_iterations: int = 10,
         user_id: Optional[str] = None,
@@ -590,6 +596,7 @@ class Team:
             mode=mode,
             respond_directly=respond_directly,
             determine_input_for_members=determine_input_for_members,
+            use_member_tool_results_as_fallback=use_member_tool_results_as_fallback,
             delegate_to_all_members=delegate_to_all_members,
             max_iterations=max_iterations,
             user_id=user_id,

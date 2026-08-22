@@ -75,6 +75,7 @@ def __init__(
     mode: Optional["TeamMode"] = None,
     respond_directly: bool = False,
     determine_input_for_members: bool = True,
+    use_member_tool_results_as_fallback: bool = True,
     delegate_to_all_members: bool = False,
     max_iterations: int = 10,
     user_id: Optional[str] = None,
@@ -202,6 +203,7 @@ def __init__(
 
     team.respond_directly = respond_directly
     team.determine_input_for_members = determine_input_for_members
+    team.use_member_tool_results_as_fallback = use_member_tool_results_as_fallback
     team.delegate_to_all_members = delegate_to_all_members
     team.max_iterations = max_iterations
 
