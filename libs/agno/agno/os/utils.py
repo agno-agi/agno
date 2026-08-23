@@ -1,7 +1,7 @@
 import json
 from datetime import date, datetime, time, timezone
 from os import getenv
-from typing import Any, Callable, Dict, List, Optional, Sequence, Set, Tuple, Type, Union
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Set, Tuple, Type, Union
 
 from fastapi import FastAPI, HTTPException, Request, UploadFile
 from fastapi.routing import APIRoute, APIRouter
@@ -1373,6 +1373,50 @@ def update_cors_middleware(app: FastAPI, new_origins: list):
     )
 
 
+def iter_effective_routes(routes: Sequence[Any], prefix: str = "") -> Iterator[Tuple[str, APIRoute]]:
+    """Yield (full_path, route) for every APIRoute, descending into included routers.
+
+    On FastAPI 0.137 an included router is a path-less wrapper holding its routes inside.
+    Descend into those wrappers and compound any include-time prefix so each route's full
+    path is reported, not just the leaf defined on its own router.
+    """
+    for route in routes:
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None and hasattr(included_router, "routes"):
+            include_context = getattr(route, "include_context", None)
+            nested_prefix = prefix + (getattr(include_context, "prefix", "") or "")
+            yield from iter_effective_routes(included_router.routes, nested_prefix)
+        elif isinstance(route, APIRoute):
+            yield prefix + route.path, route
+
+
+def remove_routes_by_methods(
+    routes: List[Any], conflicting_methods: Dict[str, Set[str]], prefix: str = ""
+) -> List[Any]:
+    """Drop routes whose full path serves a conflicting method, descending into included routers.
+
+    Returns the filtered top-level list; the routes of any included router are filtered in place.
+    """
+    kept_routes: List[Any] = []
+    for route in routes:
+        included_router = getattr(route, "original_router", None)
+        if included_router is not None and hasattr(included_router, "routes"):
+            include_context = getattr(route, "include_context", None)
+            nested_prefix = prefix + (getattr(include_context, "prefix", "") or "")
+            included_router.routes = remove_routes_by_methods(
+                included_router.routes, conflicting_methods, nested_prefix
+            )
+            kept_routes.append(route)
+        elif isinstance(route, APIRoute):
+            methods = conflicting_methods.get(prefix + route.path)
+            if methods and set(route.methods or []) & methods:
+                continue
+            kept_routes.append(route)
+        else:
+            kept_routes.append(route)
+    return kept_routes
+
+
 def flatten_routes(routes: Sequence[Any]) -> List[Any]:
     """Expand included routers into their underlying routes.
 
@@ -1403,14 +1447,12 @@ def get_existing_route_paths(fastapi_app: FastAPI) -> Dict[str, List[str]]:
         Dict[str, List[str]]: Dictionary mapping paths to list of HTTP methods
     """
     existing_paths: Dict[str, Any] = {}
-    for route in fastapi_app.routes:
-        if isinstance(route, APIRoute):
-            path = route.path
-            methods = list(route.methods) if route.methods else []
-            if path in existing_paths:
-                existing_paths[path].extend(methods)
-            else:
-                existing_paths[path] = methods
+    for path, route in iter_effective_routes(fastapi_app.routes):
+        methods = list(route.methods) if route.methods else []
+        if path in existing_paths:
+            existing_paths[path].extend(methods)
+        else:
+            existing_paths[path] = methods
     return existing_paths
 
 
