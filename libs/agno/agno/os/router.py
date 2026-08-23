@@ -63,6 +63,21 @@ if TYPE_CHECKING:
     from agno.os.app import AgentOS
 
 
+def _model_from_available_model(model_reference: str) -> Optional[Model]:
+    model_reference = model_reference.strip()
+    if not model_reference:
+        return None
+
+    provider, separator, model_id = model_reference.partition(":")
+    if separator:
+        model_id = model_id.strip()
+        if not model_id:
+            return None
+        return Model(id=model_id, provider=provider.strip() or None)
+
+    return Model(id=model_reference)
+
+
 def get_base_router(
     os: "AgentOS",
     settings: AgnoAPISettings = AgnoAPISettings(),
@@ -235,6 +250,14 @@ def get_base_router(
     async def get_models() -> List[Model]:
         """Return the list of all models used by agents and teams in the contextual OS"""
         unique_models = {}
+
+        if os.config and os.config.available_models:
+            for model_reference in os.config.available_models:
+                model = _model_from_available_model(model_reference)
+                if model and model.id is not None:
+                    key = (model.id, model.provider)
+                    if key not in unique_models:
+                        unique_models[key] = model
 
         # Collect models from local agents
         if os.agents:
