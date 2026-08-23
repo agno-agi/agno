@@ -370,3 +370,23 @@ def get_conversation_text(messages: Sequence[Message]) -> str:
             if content and content.strip():
                 parts.append(f"Assistant: {content}")
     return "\n".join(parts)
+
+
+def render_instructions(instructions: List[str]) -> str:
+    """Render an instruction list into the body of a system message section.
+
+    A multi-line instruction cannot be a list item: its own column-0 bullets and
+    paragraph breaks would render as siblings of the item wrapping it rather than as
+    its content. Multi-line entries are joined as blocks and only single-line entries
+    are bulleted, so a long authored instruction survives sitting next to short ones.
+    """
+    if len(instructions) == 1:
+        return instructions[0]
+
+    def _is_block(instruction: str) -> bool:
+        # Strip first: a trailing newline does not make a one-line instruction a block.
+        return "\n" in instruction.strip()
+
+    if not any(_is_block(_upi) for _upi in instructions):
+        return "\n".join(f"- {_upi.strip()}" for _upi in instructions)
+    return "\n\n".join(_upi if _is_block(_upi) else f"- {_upi.strip()}" for _upi in instructions)

@@ -689,11 +689,10 @@ def _get_delegate_task_function(
 
     def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
-        You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
         Args:
-            member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-            task (str): A clear and concise description of the task the member should achieve.
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
@@ -870,11 +869,10 @@ def _get_delegate_task_function(
         member_id: str, task: str
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
-        You must provide a clear and concise description of the task the member should achieve AND the expected output.
 
         Args:
-            member_id (str): The ID of the member to delegate the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.
-            task (str): A clear and concise description of the task the member should achieve.
+            member_id (str): The ID of the member to delegate the task to, exactly as it appears in <team_members>.
+            task (str): A clear and concise description of the task the member should achieve, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
@@ -1052,11 +1050,11 @@ def _get_delegate_task_function(
     # When the task should be delegated to all members
     def delegate_task_to_members(task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """
-        Use this function to delegate a task to all the member agents and return a response.
-        You must provide a clear and concise description of the task the member should achieve AND the expected output.
+        Use this function to send one task to every member agent and return their responses.
+        One call reaches all members; do not call it once per member.
 
         Args:
-            task (str): A clear and concise description of the task to send to member agents.
+            task (str): A clear and concise description of the task to send to member agents, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
@@ -1220,11 +1218,11 @@ def _get_delegate_task_function(
 
     # When the task should be delegated to all members
     async def adelegate_task_to_members(task: str) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
-        """Use this function to delegate a task to all the member agents and return a response.
-        You must provide a clear and concise description of the task to send to member agents.
+        """Use this function to send one task to every member agent and return their responses.
+        One call reaches all members; do not call it once per member.
 
         Args:
-            task (str): A clear and concise description of the task to send to member agents.
+            task (str): A clear and concise description of the task to send to member agents, including what a good result looks like.
         Returns:
             str: The result of the delegated task.
         """
