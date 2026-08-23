@@ -6876,6 +6876,10 @@ def continue_run_dispatch(
     session_id = run_response.session_id if run_response else session_id
     run_id_resolved: str = run_response.run_id if run_response else run_id  # type: ignore
 
+    # Restore identity from the paused/continued run when the caller omits user_id=
+    if not user_id and run_response is not None:
+        user_id = run_response.user_id
+
     session_id, user_id = _initialize_session(team, session_id=session_id, user_id=user_id)
 
     # Initialize the Team
@@ -6909,6 +6913,8 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if run_context.user_id is None and user_id is not None:
+        run_context.user_id = user_id
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
     elif run_context.dependencies is None:
@@ -8446,6 +8452,10 @@ def acontinue_run_dispatch(  # type: ignore
     session_id_resolved = run_response.session_id if run_response else session_id
     run_id_resolved: str = run_response.run_id if run_response else run_id  # type: ignore
 
+    # Restore identity from the paused/continued run when the caller omits user_id=
+    if not user_id and run_response is not None:
+        user_id = run_response.user_id
+
     session_id_resolved, user_id = _initialize_session(team, session_id=session_id_resolved, user_id=user_id)
 
     # Initialize the Team
@@ -8472,6 +8482,8 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if run_context.user_id is None and user_id is not None:
+        run_context.user_id = user_id
     if dependencies is not None:
         run_context.dependencies = opts.dependencies
     elif run_context.dependencies is None:

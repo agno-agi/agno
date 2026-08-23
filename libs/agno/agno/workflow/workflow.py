@@ -276,6 +276,18 @@ def _find_paused_executor_run(
     )
 
 
+def _resolve_continue_user_id(
+    paused_run_response: Any,
+    workflow_run_response: "WorkflowRunOutput",
+) -> Optional[str]:
+    """Resolve user_id to forward when continuing a paused executor run.
+
+    Nested executor runs sometimes persist without user_id even when the workflow
+    run had one, so fall back to the workflow run's user_id.
+    """
+    return getattr(paused_run_response, "user_id", None) or getattr(workflow_run_response, "user_id", None)
+
+
 def _apply_requirements_to_run_response(run_response: Any, requirements: list) -> None:
     """Apply resolved requirements to a paused run_response before continuing.
 
@@ -6633,6 +6645,7 @@ class Workflow:
         # Call executor's continue_run with the stored run_response
         continued_response = executor.continue_run(
             run_response=paused_run_response,
+            user_id=_resolve_continue_user_id(paused_run_response, workflow_run_response),
         )
 
         # Store executor response for potential chained HITL
@@ -6692,6 +6705,7 @@ class Workflow:
         # Call executor's continue_run with the stored run_response (streaming).
         response_stream = executor.continue_run(
             run_response=paused_run_response,
+            user_id=_resolve_continue_user_id(paused_run_response, workflow_run_response),
             stream=True,
             stream_events=True,
             yield_run_output=True,
@@ -6781,6 +6795,7 @@ class Workflow:
         # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
         response_stream = executor.acontinue_run(
             run_response=paused_run_response,
+            user_id=_resolve_continue_user_id(paused_run_response, workflow_run_response),
             stream=True,
             stream_events=True,
             yield_run_output=True,
@@ -6864,6 +6879,7 @@ class Workflow:
         # Call executor's acontinue_run with the stored run_response
         continued_response = await executor.acontinue_run(
             run_response=paused_run_response,
+            user_id=_resolve_continue_user_id(paused_run_response, workflow_run_response),
         )
 
         # Store executor response for potential chained HITL

@@ -3321,6 +3321,11 @@ def continue_run_dispatch(
     session_id = run_response.session_id if run_response else session_id
     run_id: str = run_response.run_id if run_response else run_id  # type: ignore
 
+    # Restore identity from the paused/continued run when the caller omits user_id=
+    # (e.g. Agent.continue_run(run_response=paused) or workflow executor HITL routing).
+    if not user_id and run_response is not None:
+        user_id = run_response.user_id
+
     session_id, user_id = initialize_session(
         agent,
         session_id=session_id,
@@ -3357,6 +3362,8 @@ def continue_run_dispatch(
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if run_context.user_id is None and user_id is not None:
+        run_context.user_id = user_id
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
@@ -3412,6 +3419,12 @@ def continue_run_dispatch(
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
         if run_response.status == RunStatus.cancelled:
             raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+
+        # run_response was not available before initialize_session; restore identity now.
+        if not user_id and run_response.user_id:
+            user_id = run_response.user_id
+            if run_context.user_id is None:
+                run_context.user_id = user_id
 
         continue_index = _resolve_continue_from(
             run_response,
@@ -4192,6 +4205,11 @@ def acontinue_run_dispatch(  # type: ignore
     session_id = run_response.session_id if run_response else session_id
     run_id: str = run_response.run_id if run_response else run_id  # type: ignore
 
+    # Restore identity from the paused/continued run when the caller omits user_id=
+    # (e.g. Agent.acontinue_run(run_response=paused) or workflow executor HITL routing).
+    if not user_id and run_response is not None:
+        user_id = run_response.user_id
+
     session_id, user_id = initialize_session(
         agent,
         session_id=session_id,
@@ -4237,6 +4255,8 @@ def acontinue_run_dispatch(  # type: ignore
         knowledge_filters=opts.knowledge_filters,
         metadata=opts.metadata,
     )
+    if run_context.user_id is None and user_id is not None:
+        run_context.user_id = user_id
     # Apply options with precedence: explicit args > existing run_context > resolved defaults.
     opts.apply_to_context(
         run_context,
