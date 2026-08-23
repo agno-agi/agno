@@ -8,8 +8,10 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.base import ComponentType as DbComponentType
 from agno.db.utils import DB_TABLE_NAME_KEYS
 from agno.os.auth import get_authentication_dependency
+from agno.os.routers.components.codegen import generate_component_code
 from agno.os.schema import (
     BadRequestResponse,
+    ComponentCodeResponse,
     ComponentConfigResponse,
     ComponentCreate,
     ComponentResponse,
@@ -319,6 +321,48 @@ def attach_routes(
             raise
         except Exception as e:
             log_error(f"Error getting component: {str(e)}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+
+    @router.get(
+        "/components/{component_id}/code",
+        response_model=ComponentCodeResponse,
+        response_model_exclude_none=True,
+        status_code=200,
+        operation_id="get_component_code",
+        summary="Export Component Code",
+        description="Generate a local Python project from a versioned agent, team, or workflow component.",
+    )
+    async def get_component_code(
+        component_id: str = Path(description="Component ID"),
+        version: Optional[int] = Query(None, ge=1, description="Config version. Uses current when omitted."),
+        code_format: str = Query("python", alias="format", description="Export format. Currently only python."),
+        include_dependencies: bool = Query(
+            True,
+            description="Include agents, teams, and workflows referenced by this component.",
+        ),
+    ) -> ComponentCodeResponse:
+        if code_format != "python":
+            raise HTTPException(status_code=400, detail="Unsupported code format. Use 'python'.")
+
+        try:
+            component = db.get_component(component_id)
+            if component is None:
+                raise HTTPException(status_code=404, detail=f"Component {component_id} not found")
+
+            code = generate_component_code(
+                db=db,
+                registry=registry,
+                component_id=component_id,
+                version=version,
+                include_dependencies=include_dependencies,
+            )
+            return ComponentCodeResponse(**code)
+        except HTTPException:
+            raise
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e))
+        except Exception as e:
+            log_error(f"Error exporting component code: {str(e)}")
             raise HTTPException(status_code=500, detail="Internal server error")
 
     @router.patch(
