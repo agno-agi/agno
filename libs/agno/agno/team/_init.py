@@ -487,6 +487,9 @@ def _set_telemetry(team: "Team") -> None:
 def _initialize_member(team: "Team", member: Union["Team", Agent], debug_mode: Optional[bool] = None) -> None:
     from agno.team.team import Team
 
+    if team.workflow_id is not None:
+        member.workflow_id = team.workflow_id
+
     # Set debug mode for all members
     if debug_mode:
         member.debug_mode = True

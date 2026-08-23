@@ -119,7 +119,7 @@ from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
 from agno.workflow.router import Router
-from agno.workflow.step import Step, UnresolvableCallableError
+from agno.workflow.step import Step, UnresolvableCallableError, _set_workflow_id_on_executor
 from agno.workflow.steps import Steps
 from agno.workflow.types import (
     StepInput,
@@ -10360,25 +10360,37 @@ class Workflow:
 
         return self._get_session_metrics(session=session)
 
-    def update_agents_and_teams_session_info(self):
-        """Update agents and teams with workflow session information"""
+    def update_agents_and_teams_session_info(self) -> None:
+        """Update agents and teams with workflow session information."""
         log_debug("Updating agents and teams with session information")
-        # Initialize steps - only if steps is iterable (not callable)
+
+        def update_executor(executor: Any) -> None:
+            _set_workflow_id_on_executor(executor, self.id)
+
+        def update_step(step: Any) -> None:
+            if isinstance(step, (Agent, Team)):
+                update_executor(step)
+                return
+
+            if isinstance(step, Step):
+                update_executor(step.active_executor)
+                return
+
+            if isinstance(step, (list, tuple)):
+                for nested_step in step:
+                    update_step(nested_step)
+                return
+
+            if isinstance(step, (Steps, Loop, Parallel, Condition, Router)):
+                for attr_name in ("steps", "else_steps", "choices"):
+                    for nested_step in getattr(step, attr_name, None) or []:
+                        update_step(nested_step)
+
+        # Initialize steps only when they are configured statically.
         if self.steps and not callable(self.steps):
             steps_list = self.steps.steps if isinstance(self.steps, Steps) else self.steps
             for step in steps_list:
-                # TODO: Handle properly steps inside other primitives
-                if isinstance(step, Step):
-                    active_executor = step.active_executor
-
-                    if hasattr(active_executor, "workflow_id"):
-                        active_executor.workflow_id = self.id
-
-                    # If it's a team, update all members
-                    if hasattr(active_executor, "members"):
-                        for member in active_executor.members:  # type: ignore
-                            if hasattr(member, "workflow_id"):
-                                member.workflow_id = self.id
+                update_step(step)
 
     def propagate_run_hooks_in_background(self, run_in_background: bool = True) -> None:
         """
