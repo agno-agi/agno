@@ -839,3 +839,456 @@ def test_empty_exclude_patterns_opts_out():
         result = json.loads(ws.list_files(pattern="**/*.py"))
         paths = [e["path"] for e in result["files"]]
         assert any(".venv" in p for p in paths)
+
+
+# ------------------------------------------------------------------
+# Exclude enforcement: excluded paths are refused by name, not just hidden
+# ------------------------------------------------------------------
+
+
+def _secrets_repo(tmp_dir: str) -> Path:
+    """A fixture repo with a live-looking .env, a local.env, a .git dir, and one ordinary file."""
+    base = Path(tmp_dir).resolve()
+    (base / ".env").write_text("OPENAI_API_KEY=sk-live-secret\n")
+    (base / "local.env").write_text("OPENAI_API_KEY=sk-local-secret\n")
+    (base / ".git").mkdir()
+    (base / ".git" / "config").write_text("[core]\n")
+    (base / "app.py").write_text("print('app')\n")
+    return base
+
+
+def _fs_is_case_insensitive(base: Path) -> bool:
+    probe = base / "CaseProbe.txt"
+    probe.write_text("x")
+    try:
+        return (base / "caseprobe.TXT").exists()
+    finally:
+        probe.unlink()
+
+
+def test_read_file_refuses_excluded_path():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir)
+        out = ws.read_file(".env")
+        assert out == "Error: path is excluded from this workspace: .env"
+        assert "sk-live-secret" not in out
+        assert ws.read_file(".git/config") == "Error: path is excluded from this workspace: .git/config"
+        # Unexcluded files still read normally.
+        assert "print('app')" in ws.read_file("app.py")
+
+
+def test_default_workspace_cannot_read_env_in_fixture_repo():
+    """Regression: the default configuration must not return a repo's .env."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir)
+        assert "OPENAI_API_KEY" not in ws.read_file(".env")
+        assert "OPENAI_API_KEY" not in ws.read_file("./.env")
+        assert "OPENAI_API_KEY" not in ws.read_file("app.py/../.env")
+        listed = [e["path"] for e in json.loads(ws.list_files())["files"]]
+        assert ".env" not in listed
+        assert "local.env" not in listed
+        assert json.loads(ws.search_content("OPENAI_API_KEY"))["matches_found"] == 0
+        assert "sk-local-secret" not in ws.read_file("local.env")
+        # The file itself is untouched.
+        assert (base / ".env").read_text() == "OPENAI_API_KEY=sk-live-secret\n"
+
+
+def test_read_file_refusal_does_not_reveal_existence():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        missing = ws.read_file(".env")
+        (Path(tmp_dir) / ".env").write_text("X=1")
+        present = ws.read_file(".env")
+        assert missing == present == "Error: path is excluded from this workspace: .env"
+
+
+def test_read_file_refused_path_is_not_marked_as_read():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        ws.read_file(".env")
+        assert (base / ".env") not in ws._read_paths
+
+
+def test_write_file_refuses_excluded_path():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.write_file(".env", "X=1") == "Error: path is excluded from this workspace: .env"
+        assert (base / ".env").read_text() == "OPENAI_API_KEY=sk-live-secret\n"
+        assert ws.write_file(".env.local", "X=1") == "Error: path is excluded from this workspace: .env.local"
+        assert not (base / ".env.local").exists()
+        assert ws.write_file(".git/hooks/pre-commit", "#!/bin/sh") == (
+            "Error: path is excluded from this workspace: .git/hooks/pre-commit"
+        )
+        assert not (base / ".git" / "hooks").exists()
+
+
+def test_edit_file_refuses_excluded_path():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.edit_file(".env", "secret", "leak") == "Error: path is excluded from this workspace: .env"
+        assert (base / ".env").read_text() == "OPENAI_API_KEY=sk-live-secret\n"
+
+
+def test_delete_file_refuses_excluded_path():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.delete_file(".env") == "Error: path is excluded from this workspace: .env"
+        assert (base / ".env").exists()
+
+
+def test_move_file_refuses_excluded_src():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.move_file(".env", "env.txt") == "Error: src is excluded from this workspace: .env"
+        assert (base / ".env").exists()
+        assert not (base / "env.txt").exists()
+        # The laundered name never appears in listings.
+        assert "env.txt" not in [e["path"] for e in json.loads(ws.list_files())["files"]]
+
+
+def test_move_file_refuses_excluded_dst():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.move_file("app.py", ".env.bak") == "Error: dst is excluded from this workspace: .env.bak"
+        assert (base / "app.py").exists()
+        assert not (base / ".env.bak").exists()
+        assert ws.move_file("app.py", "build/app.py") == "Error: dst is excluded from this workspace: build/app.py"
+        assert not (base / "build").exists()
+
+
+def test_move_file_unexcluded_to_unexcluded_still_works():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.move_file("app.py", "src/main.py") == "Moved app.py -> src/main.py"
+        assert (base / "src" / "main.py").read_text() == "print('app')\n"
+
+
+def test_list_files_refuses_excluded_directory():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir)
+        assert ws.list_files(".git") == "Error: directory is excluded from this workspace: .git"
+        assert ws.list_files(".git", recursive=True) == "Error: directory is excluded from this workspace: .git"
+
+
+def test_search_content_refuses_excluded_directory():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir)
+        assert ws.search_content("core", directory=".git") == "Error: directory is excluded from this workspace: .git"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_excluded_path_behind_symlink_is_refused():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        (base / "link.txt").symlink_to(base / ".env")
+        out = ws.read_file("link.txt")
+        assert out == "Error: path is excluded from this workspace: link.txt"
+        assert "sk-live-secret" not in out
+        assert ws.write_file("link.txt", "X=1") == "Error: path is excluded from this workspace: link.txt"
+        assert ws.edit_file("link.txt", "secret", "x") == "Error: path is excluded from this workspace: link.txt"
+        assert ws.move_file("link.txt", "copy.txt") == "Error: src is excluded from this workspace: link.txt"
+        assert (
+            ws.move_file("app.py", "link.txt", overwrite=True) == "Error: dst is excluded from this workspace: link.txt"
+        )
+        assert ws.delete_file("link.txt") == "Error: path is excluded from this workspace: link.txt"
+        assert (base / ".env").read_text() == "OPENAI_API_KEY=sk-live-secret\n"
+        assert (base / "app.py").exists()
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_symlink_aliases_are_hidden_from_listing_and_search():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        (base / "link.txt").symlink_to(base / ".env")
+        (base / "gl").symlink_to(base / ".git")
+        ws = Workspace(tmp_dir)
+        listed = [e["path"] for e in json.loads(ws.list_files())["files"]]
+        assert "link.txt" not in listed
+        assert "gl" not in listed
+        assert [e["path"] for e in json.loads(ws.list_files(recursive=True))["files"]] == ["app.py"]
+        assert json.loads(ws.list_files(pattern="gl/*"))["files"] == []
+        assert json.loads(ws.list_files(pattern="*.txt"))["files"] == []
+        assert json.loads(ws.search_content("OPENAI_API_KEY"))["matches_found"] == 0
+        assert ws.read_file("gl/config") == "Error: path is excluded from this workspace: gl/config"
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_excluded_name_linking_to_unexcluded_file_is_refused():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        (base / ".env.link").symlink_to(base / "app.py")
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.read_file(".env.link") == "Error: path is excluded from this workspace: .env.link"
+        assert ws.write_file(".env.link", "Z") == "Error: path is excluded from this workspace: .env.link"
+        assert (base / "app.py").read_text() == "print('app')\n"
+        assert ".env.link" not in [e["path"] for e in json.loads(ws.list_files())["files"]]
+
+
+def test_case_variant_never_leaks_on_any_filesystem():
+    """A case variant never reads, edits, moves, or deletes the excluded file.
+
+    On a case-insensitive filesystem the variant is refused; on a case-sensitive one it
+    names a different, absent file.
+    """
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        (base / "sub").mkdir()
+        (base / "sub" / ".env").write_text("SUB_SECRET=1\n")
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        for typed in (".ENV", ".Env", ".GIT/config", "sub/.ENV", "SUB/.env", "LOCAL.ENV"):
+            out = ws.read_file(typed)
+            assert out.startswith("Error: "), typed
+            assert "secret" not in out.lower() and "[core]" not in out, typed
+        assert ws.edit_file(".ENV", "secret", "x").startswith("Error: ")
+        assert ws.move_file(".ENV", "env.txt").startswith("Error: ")
+        assert ws.delete_file(".ENV").startswith("Error: ")
+        assert ws.list_files(".GIT").startswith("Error: ")
+        assert ws.search_content("core", directory=".GIT").startswith("Error: ")
+        if _fs_is_case_insensitive(base):
+            assert ws.write_file(".ENV", "PWNED=1") == "Error: path is excluded from this workspace: .ENV"
+        else:
+            assert ws.write_file(".ENV", "PWNED=1") == "Wrote 7 chars to .ENV"
+            assert (base / ".ENV").read_text() == "PWNED=1"
+        assert (base / ".env").read_text() == "OPENAI_API_KEY=sk-live-secret\n"
+        assert (base / "sub" / ".env").read_text() == "SUB_SECRET=1\n"
+        assert not (base / "env.txt").exists()
+
+
+def test_case_variant_returns_exclusion_error_on_case_insensitive_fs():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        if not _fs_is_case_insensitive(base):
+            pytest.skip("needs a case-insensitive filesystem")
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+        assert ws.read_file(".ENV") == "Error: path is excluded from this workspace: .ENV"
+        assert ws.read_file(".GIT/config") == "Error: path is excluded from this workspace: .GIT/config"
+        assert ws.write_file(".ENV", "PWNED=1") == "Error: path is excluded from this workspace: .ENV"
+        assert ws.move_file(".ENV", "env.txt") == "Error: src is excluded from this workspace: .ENV"
+        assert ws.list_files(".GIT") == "Error: directory is excluded from this workspace: .GIT"
+        # A file stored in upper case is the same name to this filesystem.
+        (base / "BUILD").write_text("bazel")
+        assert ws.read_file("BUILD") == "Error: path is excluded from this workspace: BUILD"
+        assert "BUILD" not in [e["path"] for e in json.loads(ws.list_files())["files"]]
+        # allow_paths entries match the stored file whatever case the caller types.
+        ws2 = Workspace(tmp_dir, allow_paths=["local.env"])
+        assert "sk-local-secret" in ws2.read_file("LOCAL.ENV")
+
+
+def test_case_sensitive_fs_matches_patterns_exactly():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        if _fs_is_case_insensitive(base):
+            pytest.skip("needs a case-sensitive filesystem")
+        (base / "BUILD").write_text("bazel")
+        ws = Workspace(tmp_dir)
+        assert "bazel" in ws.read_file("BUILD")
+        assert "BUILD" in [e["path"] for e in json.loads(ws.list_files())["files"]]
+        assert ws.read_file(".ENV") == "Error: file not found: .ENV"
+
+
+def test_case_folding_when_root_is_detected_case_insensitive(monkeypatch):
+    """Pins the folded match on every platform by forcing the filesystem probe."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        (base / "BUILD").write_text("bazel")
+        (base / "infra").mkdir()
+        (base / "infra" / ".env").write_text("INFRA=1")
+        monkeypatch.setattr("agno.tools.workspace._is_case_insensitive_fs", lambda root: True)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS, allow_paths=["infra/.env"])
+        assert ws.read_file(".ENV") == "Error: path is excluded from this workspace: .ENV"
+        assert ws.write_file(".ENV", "PWNED=1") == "Error: path is excluded from this workspace: .ENV"
+        assert ws.list_files(".GIT") == "Error: directory is excluded from this workspace: .GIT"
+        assert ws.read_file("BUILD") == "Error: path is excluded from this workspace: BUILD"
+        assert "BUILD" not in [e["path"] for e in json.loads(ws.list_files())["files"]]
+        # allow_paths compare case-insensitively too: the variant passes the boundary
+        # (and reads the file where the filesystem really is case-insensitive).
+        out = ws.read_file("INFRA/.ENV")
+        assert not out.startswith("Error: path is excluded")
+        assert "INFRA=1" in out or out == "Error: file not found: INFRA/.ENV"
+        assert "INFRA=1" in ws.read_file("infra/.env")
+
+
+def test_case_folding_off_when_root_is_detected_case_sensitive(monkeypatch):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        (base / "BUILD").write_text("bazel")
+        monkeypatch.setattr("agno.tools.workspace._is_case_insensitive_fs", lambda root: False)
+        ws = Workspace(tmp_dir)
+        assert "bazel" in ws.read_file("BUILD")
+        assert ws.read_file(".env") == "Error: path is excluded from this workspace: .env"
+
+
+# ------------------------------------------------------------------
+# allow_paths: named exceptions to the exclude boundary
+# ------------------------------------------------------------------
+
+
+def test_allow_paths_restores_access_for_named_path_only():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS, allow_paths=[".env.example"])
+        assert ws.write_file(".env.example", "OPENAI_API_KEY=\n") == "Wrote 16 chars to .env.example"
+        assert (base / ".env.example").read_text() == "OPENAI_API_KEY=\n"
+        assert "OPENAI_API_KEY=" in ws.read_file(".env.example")
+        # .env matches the same pattern and stays refused.
+        assert ws.read_file(".env") == "Error: path is excluded from this workspace: .env"
+        assert ws.read_file(".git/config") == "Error: path is excluded from this workspace: .git/config"
+
+
+def test_allow_paths_entry_is_visible_in_listing_and_search():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _secrets_repo(tmp_dir)
+        # local.env matches the default "*.env" pattern and has a searchable text suffix.
+        ws = Workspace(tmp_dir, allow_paths=["local.env"])
+        paths = [e["path"] for e in json.loads(ws.list_files())["files"]]
+        assert "local.env" in paths
+        assert ".env" not in paths
+        hits = json.loads(ws.search_content("OPENAI_API_KEY"))
+        assert [h["file"] for h in hits["files"]] == ["local.env"]
+
+
+def test_allow_paths_directory_covers_children():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        (base / "build").mkdir()
+        (base / "build" / "index.html").write_text("<html>")
+        (base / "dist").mkdir()
+        (base / "dist" / "bundle.js").write_text("x")
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS, allow_paths=["build"])
+        assert "<html>" in ws.read_file("build/index.html")
+        assert ws.write_file("build/new.txt", "n") == "Wrote 1 chars to build/new.txt"
+        paths = [e["path"] for e in json.loads(ws.list_files("build"))["files"]]
+        assert "build/index.html" in paths
+        assert ws.read_file("dist/bundle.js") == "Error: path is excluded from this workspace: dist/bundle.js"
+
+
+def test_allow_paths_entry_must_stay_inside_root():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with pytest.raises(ValueError, match="allow_paths"):
+            Workspace(tmp_dir, allow_paths=["../outside"])
+        with pytest.raises(ValueError, match="allow_paths"):
+            Workspace(tmp_dir, allow_paths=[""])
+
+
+def test_allow_paths_rejects_non_list():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with pytest.raises(TypeError, match="allow_paths"):
+            Workspace(tmp_dir, allow_paths=".env.example")  # type: ignore[arg-type]
+
+
+def test_allow_paths_entry_naming_root_is_rejected():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for entry in (".", "./", "sub/.."):
+            with pytest.raises(ValueError, match="names the workspace root"):
+                Workspace(tmp_dir, allow_paths=[entry])
+
+
+def test_allow_paths_directory_entry_keeps_patterns_beneath_it():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        (base / "infra").mkdir()
+        (base / "infra" / "main.tf").write_text("tf")
+        (base / "infra" / ".env").write_text("INFRA_KEY=sk-infra\n")
+        (base / "infra" / "node_modules").mkdir()
+        (base / "infra" / "node_modules" / "m.js").write_text("m")
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS, allow_paths=["infra"])
+        assert "tf" in ws.read_file("infra/main.tf")
+        assert ws.read_file("infra/.env") == "Error: path is excluded from this workspace: infra/.env"
+        assert ws.read_file("infra/node_modules/m.js") == (
+            "Error: path is excluded from this workspace: infra/node_modules/m.js"
+        )
+        assert [e["path"] for e in json.loads(ws.list_files("infra"))["files"]] == ["infra/main.tf"]
+        # The nested file can be named explicitly.
+        ws2 = Workspace(tmp_dir, allow_paths=["infra/.env"])
+        assert "INFRA_KEY" in ws2.read_file("infra/.env")
+
+
+@pytest.mark.skipif(sys.platform == "win32", reason="POSIX symlinks require admin on Windows")
+def test_allow_paths_entry_that_is_a_symlink_works_as_written_and_resolved():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        (base / "out").mkdir()
+        (base / "out" / "index.html").write_text("<html>")
+        (base / "build").symlink_to(base / "out")
+        ws = Workspace(tmp_dir, allow_paths=["build"])
+        assert "<html>" in ws.read_file("build/index.html")
+        assert "<html>" in ws.read_file("out/index.html")
+        listed = [e["path"] for e in json.loads(ws.list_files())["files"]]
+        assert "build" in listed and "out" in listed
+        # An allowed file reached through a symlinked parent directory is allowed.
+        (base / "infra").mkdir()
+        (base / "infra" / ".env").write_text("INFRA=1")
+        (base / "lnk").symlink_to(base / "infra")
+        ws2 = Workspace(tmp_dir, allow_paths=["infra/.env"])
+        assert "INFRA=1" in ws2.read_file("lnk/.env")
+        assert ws2.read_file("lnk/../.env") == "Error: path is excluded from this workspace: lnk/../.env"
+
+
+def test_allowed_target_reached_through_dot_dot_is_allowed():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = _secrets_repo(tmp_dir)
+        (base / "sub").mkdir()
+        (base / ".env.example").write_text("OPENAI_API_KEY=\n")
+        ws = Workspace(tmp_dir, allow_paths=[".env.example"])
+        assert "OPENAI_API_KEY=" in ws.read_file("sub/../.env.example")
+        assert "print('app')" in ws.read_file("build/../app.py")
+        assert ws.read_file("sub/../.env") == "Error: path is excluded from this workspace: sub/../.env"
+
+
+def test_allow_paths_accepts_path_objects():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, allow_paths=[Path("local.env")])  # type: ignore[list-item]
+        assert "sk-local-secret" in ws.read_file("local.env")
+        with pytest.raises(ValueError, match="allow_paths"):
+            Workspace(tmp_dir, allow_paths=[42])  # type: ignore[list-item]
+
+
+def test_exclude_patterns_generator_is_materialized():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir, exclude_patterns=(p for p in [".env*"]))  # type: ignore[arg-type]
+        assert ws.exclude_patterns == [".env*"]
+        assert ws.read_file(".env") == "Error: path is excluded from this workspace: .env"
+
+
+def test_allow_paths_is_read_live():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        _secrets_repo(tmp_dir)
+        ws = Workspace(tmp_dir)
+        assert ws.read_file("local.env") == "Error: path is excluded from this workspace: local.env"
+        ws.allow_paths.append("local.env")
+        assert "sk-local-secret" in ws.read_file("local.env")
+        ws.allow_paths = []
+        assert ws.read_file("local.env") == "Error: path is excluded from this workspace: local.env"
+
+
+def test_exclude_pattern_with_path_separator_is_rejected():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for pattern in ("dist/", "config/secrets.yaml", "**/secrets.yaml", "config\\secrets.yaml"):
+            with pytest.raises(ValueError, match="path separator"):
+                Workspace(tmp_dir, exclude_patterns=[pattern])
+
+
+def test_allow_paths_does_not_cover_siblings_or_parents():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        (base / ".venv" / "lib").mkdir(parents=True)
+        (base / ".venv" / "lib" / "ok.py").write_text("ok")
+        (base / ".venv" / "pyvenv.cfg").write_text("home = x")
+        ws = Workspace(tmp_dir, allow_paths=[".venv/lib/ok.py"])
+        assert "ok" in ws.read_file(".venv/lib/ok.py")
+        assert ws.read_file(".venv/pyvenv.cfg") == "Error: path is excluded from this workspace: .venv/pyvenv.cfg"
+        assert ws.list_files(".venv") == "Error: directory is excluded from this workspace: .venv"
