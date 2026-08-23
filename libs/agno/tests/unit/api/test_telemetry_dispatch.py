@@ -335,6 +335,8 @@ def test_unusable_telemetry_timeouts_fall_back_instead_of_failing(monkeypatch):
 
 
 def test_unknown_api_runtime_falls_back_to_prd(monkeypatch):
+    monkeypatch.delenv("AGNO_TELEMETRY_TIMEOUT", raising=False)
+    monkeypatch.delenv("AGNO_TELEMETRY_SHUTDOWN_TIMEOUT", raising=False)
     monkeypatch.setenv("AGNO_API_RUNTIME", "bogus")
 
     with patch("agno.api.settings.log_warning") as warn:
@@ -343,6 +345,24 @@ def test_unknown_api_runtime_falls_back_to_prd(monkeypatch):
     assert settings.api_runtime == "prd"
     assert settings.api_url == "https://os-api.agno.com"
     warn.assert_called_once()
+
+
+def test_alpha_features_and_runtime_tolerate_unusable_values(monkeypatch):
+    monkeypatch.delenv("AGNO_TELEMETRY_TIMEOUT", raising=False)
+    monkeypatch.delenv("AGNO_TELEMETRY_SHUTDOWN_TIMEOUT", raising=False)
+
+    with patch("agno.api.settings.log_warning") as warn:
+        monkeypatch.setenv("AGNO_ALPHA_FEATURES", "abc")
+        assert AgnoAPISettings().alpha_features is False
+        monkeypatch.setenv("AGNO_ALPHA_FEATURES", "yes")
+        assert AgnoAPISettings().alpha_features is True
+        monkeypatch.setenv("AGNO_ALPHA_FEATURES", "")
+        assert AgnoAPISettings().alpha_features is False
+        monkeypatch.delenv("AGNO_ALPHA_FEATURES")
+        monkeypatch.setenv("AGNO_API_RUNTIME", " Dev ")
+        assert AgnoAPISettings().api_url == "http://localhost:7070"
+
+    assert warn.call_count == 1
 
 
 def test_sdk_version_is_computed_once():
@@ -410,6 +430,70 @@ def test_close_is_a_no_op_once_the_flush_has_finished():
     assert time.monotonic() - start < 0.2
 
 
+def test_close_deadline_holds_while_a_post_is_stuck_in_thread_start(monkeypatch):
+    # post() holds the state lock across Thread.start(); on a loaded machine
+    # that can take a long time. close() must not wait behind it past its window.
+    original_start = threading.Thread.start
+
+    def slow_start(self):
+        if self.name == "agno-telemetry":
+            time.sleep(0.6)
+        return original_start(self)
+
+    monkeypatch.setattr(threading.Thread, "start", slow_start)
+
+    class Client:
+        def post(self, route, json):
+            class Response:
+                status_code = 200
+
+            return Response()
+
+        def close(self):
+            pass
+
+    dispatcher = _TelemetryDispatcher(Client, register_at_fork=False)
+    poster = threading.Thread(target=dispatcher.post, args=("/telemetry/test", {"run_id": "run"}), daemon=True)
+    poster.start()
+    time.sleep(0.1)  # the poster now holds dispatcher._lock inside Thread.start()
+    assert dispatcher._lock.locked()
+
+    start = time.monotonic()
+    dispatcher.close(0.05)
+    elapsed = time.monotonic() - start
+
+    assert elapsed < 0.3, f"close() waited {elapsed:.2f}s behind a post stuck in Thread.start()"
+    assert not dispatcher._accepting
+    poster.join(2)
+    dispatcher.close(1.0)
+
+
+def test_eval_telemetry_helpers_never_raise_when_building_the_payload_fails():
+    from agno.eval.utils import async_log_eval_telemetry, log_eval_telemetry
+
+    def explode():
+        raise RuntimeError("telemetry data broken")
+
+    log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, get_data=explode)
+    asyncio.run(async_log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, get_data=explode))
+
+
+def test_eval_run_completes_when_its_telemetry_data_cannot_be_built(monkeypatch):
+    from agno.eval.performance import PerformanceEval
+
+    monkeypatch.delenv("AGNO_TELEMETRY", raising=False)
+    posted = []
+    monkeypatch.setattr(api, "post_in_background", lambda route, payload: posted.append(route))
+
+    evaluation = PerformanceEval(func=lambda: 1, num_iterations=1, warmup_runs=0, telemetry=True)
+    monkeypatch.setattr(evaluation, "_get_telemetry_data", lambda: (_ for _ in ()).throw(RuntimeError("broken")))
+
+    result = evaluation.run(print_summary=False, print_results=False)
+
+    assert result is not None and len(result.run_times) == 1
+    assert posted == []
+
+
 @pytest.mark.parametrize("module", ["agno.api.agent", "agno.api.team", "agno.api.workflow", "agno.api.evals"])
 def test_run_telemetry_helpers_never_raise_when_the_api_module_is_unimportable(monkeypatch, module):
     from agno.agent import Agent
@@ -437,8 +521,8 @@ def test_run_telemetry_helpers_never_raise_when_the_api_module_is_unimportable(m
         workflow._log_workflow_telemetry(session_id="s", run_id="r")
         asyncio.run(workflow._alog_workflow_telemetry(session_id="s", run_id="r"))
     else:
-        log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, data={})
-        asyncio.run(async_log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, data={}))
+        log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, get_data=dict)
+        asyncio.run(async_log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, get_data=dict))
 
 
 def test_changed_pid_is_reset_before_acquiring_inherited_lock(dispatcher_factory):
@@ -1047,7 +1131,7 @@ assert (TELEMETRY_TIMEOUT, TELEMETRY_SHUTDOWN_TIMEOUT) == (5.0, 2.0), (TELEMETRY
 
 class Client:
     def post(self, route, json):
-        os.write(1, b'D')
+        os.write(1, b'<delivered:' + json['run_id'].encode() + b'>')
         class Response:
             status_code = 200
         return Response()
@@ -1056,7 +1140,7 @@ class Client:
         pass
 
 api._dispatcher._client_factory = Client
-api.post_in_background('/telemetry/test', {'run_id': 'run'})
+api.post_in_background('/telemetry/test', {'run_id': 'run-7f3a'})
 """
     env = subprocess_env()
     env["AGNO_TELEMETRY_TIMEOUT"] = "abc"
@@ -1064,15 +1148,16 @@ api.post_in_background('/telemetry/test', {'run_id': 'run'})
 
     result = subprocess.run([sys.executable, "-c", script], check=True, timeout=8, env=env, capture_output=True)
 
-    assert b"D" in result.stdout
+    assert b"<delivered:run-7f3a>" in result.stdout
 
 
 MULTIPROCESSING_CHILD_SCRIPT = """
 import multiprocessing
+import multiprocessing.util  # imported before agno: an import-time registration in the parent would be possible
 import sys
 import time
 
-from agno.api.api import Api, _TelemetryDispatcher
+from agno.api.api import api
 
 
 def child(conn):
@@ -1094,8 +1179,12 @@ def child(conn):
         def close(self):
             pass
 
-    dispatcher = _TelemetryDispatcher(Client, register_at_fork=False)
-    Api(dispatcher).post_in_background("/telemetry/test", {"session_id": "child"})
+    # The process-wide dispatcher, as production code uses it. fork and
+    # forkserver children clear multiprocessing's finalizer registry before
+    # this runs, so only a registration made when the child's worker starts
+    # can flush it.
+    api._dispatcher._client_factory = Client
+    api.post_in_background("/telemetry/test", {"session_id": "child"})
     # Return at once. The worker has not sent anything yet; delivery depends on
     # the flush multiprocessing runs before it exits the child with os._exit.
 
@@ -1122,7 +1211,8 @@ if __name__ == "__main__":
 def test_multiprocessing_children_flush_queued_events_before_exit(tmp_path, method):
     # fork and forkserver children exit through os._exit without running atexit;
     # the dispatcher's multiprocessing finalizer gives them the same bounded
-    # flush. spawn children run atexit anyway; included to pin parity.
+    # flush. spawn children run the same finalizer from BaseProcess._bootstrap
+    # (and atexit on top); included to pin parity across start methods.
     script = tmp_path / "mp_child.py"
     script.write_text(MULTIPROCESSING_CHILD_SCRIPT)
 
@@ -1208,3 +1298,74 @@ finally:
 assert os.waitstatus_to_exitcode(status) == 0
 """
     subprocess.run([sys.executable, "-c", script], check=True, timeout=8, env=subprocess_env())
+
+
+IMPORT_TIME_POST_SCRIPT = """
+import multiprocessing
+import os
+import sys
+import time
+
+from agno.api.api import api
+
+RESULTS = os.environ["RESULTS_FILE"]
+
+
+class Client:
+    def __init__(self):
+        time.sleep(0.1)
+
+    def post(self, route, json):
+        with open(RESULTS, "a") as f:
+            f.write(json["session_id"] + "\\n")
+
+        class Response:
+            status_code = 200
+
+        return Response()
+
+    def close(self):
+        pass
+
+
+api._dispatcher._client_factory = Client
+# Posted at import, outside the __main__ guard: this runs in the parent and
+# again in every forkserver/spawn child while the main module is re-imported,
+# i.e. before multiprocessing clears the child's finalizer registry.
+where = "parent" if multiprocessing.current_process().name == "MainProcess" else "child"
+api.post_in_background("/telemetry/test", {"session_id": "import:" + where})
+
+
+def child():
+    api.post_in_background("/telemetry/test", {"session_id": "run:child"})
+
+
+if __name__ == "__main__":
+    context = multiprocessing.get_context(sys.argv[1])
+    process = context.Process(target=child)
+    process.start()
+    process.join(20)
+    print("EXIT", process.exitcode, flush=True)
+"""
+
+
+@pytest.mark.parametrize("method", multiprocessing.get_all_start_methods())
+def test_child_that_posts_while_its_main_module_is_imported_still_flushes(tmp_path, method):
+    # A forkserver child starts its worker during the re-import of the main
+    # module, before BaseProcess._bootstrap clears the finalizer registry; the
+    # after-fork hook has to register the flush again or the child loses both
+    # its import-time and run-time events.
+    script = tmp_path / "import_post.py"
+    script.write_text(IMPORT_TIME_POST_SCRIPT)
+    results = tmp_path / "results.txt"
+    env = subprocess_env()
+    env["RESULTS_FILE"] = str(results)
+
+    completed = subprocess.run(
+        [sys.executable, str(script), method], check=True, timeout=60, env=env, capture_output=True, text=True
+    )
+
+    assert "EXIT 0" in completed.stdout, (completed.stdout, completed.stderr[-800:])
+    delivered = set(results.read_text().split()) if results.exists() else set()
+    expected = {"import:parent", "run:child"} if method == "fork" else {"import:parent", "import:child", "run:child"}
+    assert delivered == expected, (delivered, completed.stderr[-800:])

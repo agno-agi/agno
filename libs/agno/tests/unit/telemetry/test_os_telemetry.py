@@ -1,3 +1,4 @@
+import sys
 from contextlib import asynccontextmanager
 from unittest.mock import patch
 
@@ -73,3 +74,13 @@ def test_os_telemetry_failure_does_not_stop_the_app_from_starting():
             assert client.get("/health").status_code == 200
 
         mock_log.assert_called_once()
+
+
+def test_os_telemetry_import_failure_does_not_stop_the_app_from_starting(monkeypatch):
+    # The lifespan imports the telemetry client lazily; an unimportable module
+    # (what a broken settings import looks like) must not abort startup.
+    monkeypatch.setitem(sys.modules, "agno.api.os", None)
+    app = AgentOS(id="test", agents=[Agent(telemetry=False)]).get_app()
+
+    with TestClient(app) as client:
+        assert client.get("/health").status_code == 200

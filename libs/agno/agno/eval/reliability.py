@@ -341,7 +341,7 @@ class ReliabilityEval:
             )
 
         if self.telemetry:
-            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.RELIABILITY, data=self._get_telemetry_data())
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.RELIABILITY, get_data=self._get_telemetry_data)
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
@@ -416,7 +416,7 @@ class ReliabilityEval:
 
         if self.telemetry:
             await async_log_eval_telemetry(
-                run_id=self.eval_id, eval_type=EvalType.RELIABILITY, data=self._get_telemetry_data()
+                run_id=self.eval_id, eval_type=EvalType.RELIABILITY, get_data=self._get_telemetry_data
             )
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")

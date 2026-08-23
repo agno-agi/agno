@@ -67,6 +67,18 @@ class AgnoAPISettings(BaseSettings):
 
     model_config = SettingsConfigDict(env_prefix="AGNO_")
 
+    @field_validator("alpha_features", mode="before")
+    def coerce_alpha_features(cls, v: Any) -> bool:
+        """An unparsable AGNO_ALPHA_FEATURES must not fail the import either; anything but a true-ish value is off."""
+        if isinstance(v, bool):
+            return v
+        text = str(v).strip().lower() if v is not None else ""
+        if text in ("1", "true", "yes", "on"):
+            return True
+        if text not in ("", "0", "false", "no", "off"):
+            log_warning(f"Ignoring AGNO_ALPHA_FEATURES={v!r}: expected a boolean, using False")
+        return False
+
     @field_validator("telemetry_timeout", mode="before")
     def coerce_telemetry_timeout(cls, v: Any) -> float:
         return _coerce_timeout("AGNO_TELEMETRY_TIMEOUT", v, 5.0, zero_allowed=False)
@@ -80,7 +92,7 @@ class AgnoAPISettings(BaseSettings):
         """Validate api_runtime; an unknown value falls back to production rather than failing import."""
 
         valid_api_runtimes = ["dev", "stg", "prd"]
-        runtime = str(v).lower() if v is not None else ""
+        runtime = str(v).strip().lower() if v is not None else ""
         if runtime not in valid_api_runtimes:
             log_warning(f"Ignoring AGNO_API_RUNTIME={v!r}: expected one of {valid_api_runtimes}, using prd")
             return "prd"

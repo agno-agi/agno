@@ -569,7 +569,9 @@ class AgentAsJudgeEval(BaseEval):
         self._log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
-            log_eval_telemetry(run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result))
+            log_eval_telemetry(
+                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, get_data=lambda: self._get_telemetry_data(result)
+            )
 
         return result
 
@@ -668,7 +670,7 @@ class AgentAsJudgeEval(BaseEval):
 
         if self.telemetry:
             await async_log_eval_telemetry(
-                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
+                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, get_data=lambda: self._get_telemetry_data(result)
             )
 
         return result
@@ -736,7 +738,9 @@ class AgentAsJudgeEval(BaseEval):
         self._log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
-            log_eval_telemetry(run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result))
+            log_eval_telemetry(
+                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, get_data=lambda: self._get_telemetry_data(result)
+            )
 
         return result
 
@@ -804,7 +808,7 @@ class AgentAsJudgeEval(BaseEval):
 
         if self.telemetry:
             await async_log_eval_telemetry(
-                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
+                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, get_data=lambda: self._get_telemetry_data(result)
             )
 
         return result

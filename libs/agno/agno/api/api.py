@@ -56,7 +56,11 @@ class _TelemetryDispatcher:
     ``multiprocessing`` children leave through ``os._exit`` without running
     ``atexit``, so the same flush is also registered as a ``multiprocessing``
     exit finalizer in any process that starts a worker while ``multiprocessing``
-    is in use.
+    is in use. That covers children that exit normally (``Process.run``
+    returning or raising, ``Pool.close()`` + ``join()``,
+    ``ProcessPoolExecutor`` shutdown); ``Pool.terminate()`` (which the
+    ``with Pool()`` idiom calls) kills workers with a signal and nothing can
+    flush there.
     """
 
     def __init__(
@@ -80,8 +84,10 @@ class _TelemetryDispatcher:
         # Set once close() has finished its flush in this process; later calls
         # (atexit plus a multiprocessing finalizer) return without waiting again.
         self._closed = False
-        # PID in which the multiprocessing exit finalizer was registered.
+        # PID in which the multiprocessing exit finalizer was registered, and
+        # whether this process registered the multiprocessing after-fork hook.
         self._finalizer_pid: Optional[int] = None
+        self._after_fork_hook_registered = False
 
         if register_at_fork and hasattr(os, "register_at_fork"):
             ref = weakref.ref(self)
@@ -131,9 +137,15 @@ class _TelemetryDispatcher:
         event already in flight can outlive this call, but its worker remains a
         daemon and closes the shared client when the request returns. Once a
         close has finished in this process, later calls return immediately.
+
+        The deadline applies to every wait in here, the lifecycle locks
+        included: a concurrent ``post`` holds the state lock across
+        ``Thread.start()``, which can take a long time on a loaded machine, and
+        shutdown must not wait behind it past the window.
         """
         if flush_timeout is None:
             flush_timeout = TELEMETRY_SHUTDOWN_TIMEOUT
+        deadline = time.monotonic() + max(0.0, flush_timeout)
         # A hook-bypassing child may have inherited a held close lock. Reset
         # process state before acquiring any lifecycle lock from the parent.
         try:
@@ -146,19 +158,28 @@ class _TelemetryDispatcher:
             # behind another closer that is itself waiting for this request.
             current_worker = threading.current_thread()
             if self._worker is current_worker:
-                with self._lock:
+                if not self._acquire_before(self._lock, deadline):
+                    return
+                try:
                     self._accepting = False
                     queue = self._queue
-                self._enqueue_stop(queue, current_worker)
+                finally:
+                    self._lock.release()
+                self._enqueue_stop(queue, current_worker, deadline)
                 return
 
-            deadline = time.monotonic() + max(0.0, flush_timeout)
-            remaining = deadline - time.monotonic()
-            acquired = self._close_lock.acquire(timeout=remaining) if remaining > 0 else self._close_lock.acquire(False)
-            if not acquired:
+            if not self._acquire_before(self._close_lock, deadline):
                 return
             try:
-                with self._lock:
+                if self._closed:
+                    # The closer this call waited behind already finished.
+                    return
+                if not self._acquire_before(self._lock, deadline):
+                    # A post is mid worker start. Stop accepting and leave; the
+                    # daemon worker cannot hold process exit open.
+                    self._accepting = False
+                    return
+                try:
                     self._accepting = False
                     if self._queue.unfinished_tasks and (self._worker is None or not self._worker.is_alive()):
                         try:
@@ -169,6 +190,8 @@ class _TelemetryDispatcher:
                             pass
                     worker = self._worker
                     queue = self._queue
+                finally:
+                    self._lock.release()
 
                 if worker is None:
                     self._discard_pending(queue)
@@ -184,7 +207,7 @@ class _TelemetryDispatcher:
                 if queue.unfinished_tasks:
                     self._discard_pending(queue)
 
-                self._enqueue_stop(queue, worker)
+                self._enqueue_stop(queue, worker, deadline)
                 remaining = deadline - time.monotonic()
                 if remaining > 0:
                     worker.join(remaining)
@@ -193,6 +216,14 @@ class _TelemetryDispatcher:
                 self._close_lock.release()
         except Exception as e:
             log_debug(f"Could not close telemetry dispatcher: {type(e).__name__}")
+
+    @staticmethod
+    def _acquire_before(lock: threading.Lock, deadline: float) -> bool:
+        """Acquire ``lock`` without waiting past ``deadline``."""
+        remaining = deadline - time.monotonic()
+        if remaining > 0:
+            return lock.acquire(timeout=remaining)
+        return lock.acquire(blocking=False)
 
     def _ensure_process_state(self) -> None:
         # Bind the old lock before checking the PID. Concurrent callers that
@@ -226,15 +257,18 @@ class _TelemetryDispatcher:
     def _register_multiprocessing_finalizer(self) -> None:
         """Flush at multiprocessing child exit, which never runs ``atexit``.
 
-        Children started by ``multiprocessing`` (fork and forkserver start
-        methods) leave through ``os._exit`` after running ``multiprocessing``'s
-        exit finalizers, so the ``atexit`` flush registered at import never
-        runs there and the daemon worker would be killed with the event still
-        queued. Registering ``close`` as a finalizer gives such children the
-        same bounded flush the parent gets. This has to happen after the worker
-        starts in the current process: ``BaseProcess._bootstrap`` clears the
-        finalizer registry in every child before user code runs, so an
-        import-time registration is lost. Processes that never imported
+        Children started by ``multiprocessing`` leave through ``os._exit`` after
+        running ``multiprocessing``'s exit finalizers, so the ``atexit`` flush
+        registered at import never runs there and the daemon worker would be
+        killed with the event still queued. Registering ``close`` as a
+        finalizer gives such children the same bounded flush the parent gets.
+        This has to happen after the worker starts in the current process:
+        fork and forkserver children clear the finalizer registry in
+        ``BaseProcess._bootstrap`` before user code runs (spawn children start
+        from a fresh interpreter), so an import-time registration is lost. A
+        forkserver child can also start its worker while the parent module is
+        being re-imported, before that clear; the after-fork hook registered
+        here re-registers in that case. Processes that never imported
         ``multiprocessing.util`` keep the ``atexit`` path alone.
         """
         if self._finalizer_pid == os.getpid():
@@ -251,10 +285,20 @@ class _TelemetryDispatcher:
 
         try:
             util.Finalize(None, _close_at_exit, exitpriority=0)
+            if not self._after_fork_hook_registered:
+                util.register_after_fork(self, _TelemetryDispatcher._reregister_after_multiprocessing_fork)
+                self._after_fork_hook_registered = True
         except Exception as e:
             log_debug(f"Could not register telemetry exit finalizer: {type(e).__name__}")
             return
         self._finalizer_pid = os.getpid()
+
+    def _reregister_after_multiprocessing_fork(self) -> None:
+        """Runs in a fork or forkserver child right after its finalizer registry was cleared."""
+        self._finalizer_pid = None
+        worker = self._worker
+        if worker is not None and worker.is_alive():
+            self._register_multiprocessing_finalizer()
 
     def _reset_after_fork(self, *, replace_fallback_lock: bool = True) -> None:
         # Defensive recovery for an unsupported post-telemetry fork: fresh
@@ -273,6 +317,8 @@ class _TelemetryDispatcher:
         self._stop_enqueued = False
         self._closed = False
         self._finalizer_pid = None
+        # The after-fork registry is inherited by fork children; registering
+        # again there is harmless because the finalizer is gated by PID.
         # Publish the new PID last so other callers cannot observe partially
         # initialized child state.
         self._pid = os.getpid()
@@ -326,8 +372,11 @@ class _TelemetryDispatcher:
                     # retired queue and cannot affect delivery.
                     self._stop_enqueued = False
 
-    def _enqueue_stop(self, queue: "Queue[object]", worker: threading.Thread) -> None:
-        with self._lock:
+    def _enqueue_stop(self, queue: "Queue[object]", worker: threading.Thread, deadline: float) -> None:
+        if not self._acquire_before(self._lock, deadline):
+            # Past the window: the worker stays a daemon and dies with the process.
+            return
+        try:
             if self._stop_enqueued or not worker.is_alive():
                 return
             try:
@@ -338,6 +387,8 @@ class _TelemetryDispatcher:
                 self._discard_pending(queue)
                 queue.put_nowait(_STOP)
             self._stop_enqueued = True
+        finally:
+            self._lock.release()
 
 
 _telemetry_dispatcher = _TelemetryDispatcher()
@@ -358,9 +409,10 @@ class Api:
     POSIX applications must create forked workers before posting telemetry or
     use a spawn-based process start method. Forking after this dispatcher starts
     its background thread is unsupported because live threads and HTTP/TLS
-    resources cannot be inherited safely. ``multiprocessing`` children get the
-    same bounded exit flush as the parent through a ``multiprocessing`` exit
-    finalizer, since they exit without running ``atexit``.
+    resources cannot be inherited safely. ``multiprocessing`` children that exit
+    normally get the same bounded exit flush as the parent through a
+    ``multiprocessing`` exit finalizer, since they exit without running
+    ``atexit``; workers killed by ``Pool.terminate()`` cannot flush.
     """
 
     def __init__(self, dispatcher: _TelemetryDispatcher = _telemetry_dispatcher) -> None:

@@ -624,7 +624,7 @@ class PerformanceEval:
             )
 
         if self.telemetry:
-            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data())
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data)
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
@@ -764,7 +764,7 @@ class PerformanceEval:
 
         if self.telemetry:
             await async_log_eval_telemetry(
-                run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
+                run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data
             )
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")

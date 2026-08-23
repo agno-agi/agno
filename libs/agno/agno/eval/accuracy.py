@@ -492,7 +492,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, data=self._get_telemetry_data())
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data)
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
@@ -630,7 +630,9 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            await async_log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY)
+            await async_log_eval_telemetry(
+                run_id=self.eval_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data
+            )
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
@@ -745,7 +747,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 )
 
         if self.telemetry:
-            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, data=self._get_telemetry_data())
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data)
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
