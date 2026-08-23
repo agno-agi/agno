@@ -10,7 +10,14 @@ from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
 from agno.eval.base import BaseEval
-from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
+from agno.eval.utils import (
+    async_log_eval,
+    async_log_eval_telemetry,
+    log_eval_run,
+    log_eval_telemetry,
+    spinner_live,
+    store_result_in_file,
+)
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.run.agent import RunInput, RunOutput
@@ -562,13 +569,7 @@ class AgentAsJudgeEval(BaseEval):
         self._log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
-
-            create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
-                )
-            )
+            log_eval_telemetry(run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result))
 
         return result
 
@@ -666,12 +667,8 @@ class AgentAsJudgeEval(BaseEval):
         await self._async_log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
-
-            await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
-                )
+            await async_log_eval_telemetry(
+                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
             )
 
         return result
@@ -739,13 +736,7 @@ class AgentAsJudgeEval(BaseEval):
         self._log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
-
-            create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
-                )
-            )
+            log_eval_telemetry(run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result))
 
         return result
 
@@ -812,12 +803,8 @@ class AgentAsJudgeEval(BaseEval):
         await self._async_log_eval_to_db(run_id=run_id, result=result, model_id=model_id, model_provider=model_provider)
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
-
-            await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
-                )
+            await async_log_eval_telemetry(
+                run_id=run_id, eval_type=EvalType.AGENT_AS_JUDGE, data=self._get_telemetry_data(result)
             )
 
         return result

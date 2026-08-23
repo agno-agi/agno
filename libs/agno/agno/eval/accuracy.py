@@ -9,7 +9,14 @@ from pydantic import BaseModel, Field
 from agno.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
+from agno.eval.utils import (
+    async_log_eval,
+    async_log_eval_telemetry,
+    log_eval_run,
+    log_eval_telemetry,
+    spinner_live,
+    store_result_in_file,
+)
 from agno.exceptions import EvalError
 from agno.models.base import Model
 from agno.team.team import Team
@@ -485,15 +492,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
-
-            create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
-                    eval_type=EvalType.ACCURACY,
-                    data=self._get_telemetry_data(),
-                ),
-            )
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, data=self._get_telemetry_data())
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
@@ -631,11 +630,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
-
-            await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(run_id=self.eval_id, eval_type=EvalType.ACCURACY),
-            )
+            await async_log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY)
 
         logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
         return self.result
@@ -750,15 +745,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
-
-            create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
-                    eval_type=EvalType.ACCURACY,
-                    data=self._get_telemetry_data(),
-                ),
-            )
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, data=self._get_telemetry_data())
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result

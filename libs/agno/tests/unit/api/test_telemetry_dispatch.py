@@ -1,7 +1,10 @@
 """Tests for the background telemetry dispatcher (Api.post_in_background)."""
 
+import asyncio
 import gc
+import importlib.metadata
 import json
+import multiprocessing
 import os
 import subprocess
 import sys
@@ -32,8 +35,9 @@ from agno.api.schemas.agent import AgentRunCreate
 from agno.api.schemas.evals import EvalRunCreate
 from agno.api.schemas.os import OSLaunch
 from agno.api.schemas.team import TeamRunCreate
+from agno.api.schemas.utils import get_sdk_version
 from agno.api.schemas.workflows import WorkflowRunCreate
-from agno.api.settings import AgnoAPISettings
+from agno.api.settings import MAX_TELEMETRY_TIMEOUT_SECONDS, AgnoAPISettings
 from agno.api.team import acreate_team_run, create_team_run
 from agno.api.workflow import acreate_workflow_run, create_workflow_run
 from agno.db.schemas.evals import EvalType
@@ -44,6 +48,21 @@ def wait_for_drain(dispatcher: _TelemetryDispatcher, timeout: float = 5.0) -> No
     while dispatcher._queue.unfinished_tasks and time.monotonic() < deadline:
         time.sleep(0.01)
     assert not dispatcher._queue.unfinished_tasks, "telemetry queue did not drain in time"
+
+
+def subprocess_env() -> dict:
+    """Environment for the subprocess-based tests.
+
+    The package root goes first on PYTHONPATH, and the telemetry timeout
+    variables are removed so a developer or CI shell that exports them cannot
+    change the windows these tests assert on.
+    """
+    env = os.environ.copy()
+    env.pop("AGNO_TELEMETRY_TIMEOUT", None)
+    env.pop("AGNO_TELEMETRY_SHUTDOWN_TIMEOUT", None)
+    package_root = str(Path(__file__).resolve().parents[3])
+    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+    return env
 
 
 @pytest.fixture
@@ -284,11 +303,142 @@ def test_telemetry_timeouts_are_env_tunable(monkeypatch):
     assert settings.telemetry_shutdown_timeout == 0.0
 
 
-def test_negative_telemetry_timeouts_clamp_to_zero():
-    settings = AgnoAPISettings(telemetry_timeout=-1, telemetry_shutdown_timeout=-0.5)
+def test_unusable_telemetry_timeouts_fall_back_instead_of_failing(monkeypatch):
+    # A zero or negative request timeout fails every request, so it falls back to
+    # the default; a negative shutdown timeout clamps to the documented 0 (skip
+    # the flush). Non-numeric, empty and non-finite values never break import.
+    with patch("agno.api.settings.log_warning") as warn:
+        settings = AgnoAPISettings(telemetry_timeout=-1, telemetry_shutdown_timeout=-0.5)
+        assert (settings.telemetry_timeout, settings.telemetry_shutdown_timeout) == (5.0, 0.0)
 
-    assert settings.telemetry_timeout == 0.0
-    assert settings.telemetry_shutdown_timeout == 0.0
+        assert AgnoAPISettings(telemetry_timeout=0).telemetry_timeout == 5.0
+        assert AgnoAPISettings(telemetry_timeout=float("nan")).telemetry_timeout == 5.0
+        assert AgnoAPISettings(telemetry_timeout=float("inf")).telemetry_timeout == 5.0
+        assert AgnoAPISettings(telemetry_shutdown_timeout=float("inf")).telemetry_shutdown_timeout == 2.0
+        assert AgnoAPISettings(telemetry_timeout=1e10).telemetry_timeout == MAX_TELEMETRY_TIMEOUT_SECONDS
+        assert (
+            AgnoAPISettings(telemetry_shutdown_timeout=1e10).telemetry_shutdown_timeout == MAX_TELEMETRY_TIMEOUT_SECONDS
+        )
+
+        monkeypatch.setenv("AGNO_TELEMETRY_TIMEOUT", "abc")
+        monkeypatch.setenv("AGNO_TELEMETRY_SHUTDOWN_TIMEOUT", "")
+        settings = AgnoAPISettings()
+        assert (settings.telemetry_timeout, settings.telemetry_shutdown_timeout) == (5.0, 2.0)
+
+        monkeypatch.setenv("AGNO_TELEMETRY_TIMEOUT", " 1.5 ")
+        monkeypatch.setenv("AGNO_TELEMETRY_SHUTDOWN_TIMEOUT", "0")
+        settings = AgnoAPISettings()
+        assert (settings.telemetry_timeout, settings.telemetry_shutdown_timeout) == (1.5, 0.0)
+
+    assert warn.call_count >= 7
+    assert all("AGNO_TELEMETRY" in str(call.args[0]) for call in warn.call_args_list)
+
+
+def test_unknown_api_runtime_falls_back_to_prd(monkeypatch):
+    monkeypatch.setenv("AGNO_API_RUNTIME", "bogus")
+
+    with patch("agno.api.settings.log_warning") as warn:
+        settings = AgnoAPISettings()
+
+    assert settings.api_runtime == "prd"
+    assert settings.api_url == "https://os-api.agno.com"
+    warn.assert_called_once()
+
+
+def test_sdk_version_is_computed_once():
+    get_sdk_version.cache_clear()
+    real_version = importlib.metadata.version
+    calls = []
+
+    def counting_version(name):
+        calls.append(name)
+        return real_version(name)
+
+    with patch("importlib.metadata.version", counting_version):
+        first = get_sdk_version()
+        second = get_sdk_version()
+        assert AgentRunCreate(session_id="s").sdk_version == first
+
+    assert first == second == real_version("agno")
+    assert calls == ["agno"]
+
+
+def test_close_default_flush_timeout_is_read_at_call_time(monkeypatch):
+    started = threading.Event()
+
+    class BlockingClient:
+        def post(self, route, json):
+            started.set()
+            time.sleep(5)
+
+        def close(self):
+            pass
+
+    dispatcher = _TelemetryDispatcher(BlockingClient, register_at_fork=False)
+    dispatcher.post("/telemetry/test", {"run_id": "run"})
+    assert started.wait(2)
+
+    monkeypatch.setattr("agno.api.api.TELEMETRY_SHUTDOWN_TIMEOUT", 0.0)
+    start = time.monotonic()
+    dispatcher.close()
+
+    assert time.monotonic() - start < 0.5
+    assert not dispatcher._accepting
+
+
+def test_close_is_a_no_op_once_the_flush_has_finished():
+    started = threading.Event()
+
+    class BlockingClient:
+        def post(self, route, json):
+            started.set()
+            time.sleep(5)
+
+        def close(self):
+            pass
+
+    dispatcher = _TelemetryDispatcher(BlockingClient, register_at_fork=False)
+    dispatcher.post("/telemetry/test", {"run_id": "run"})
+    assert started.wait(2)
+    dispatcher.close(0.2)
+    assert dispatcher._closed
+
+    # atexit and a multiprocessing finalizer can both call close(); the second
+    # must not wait another full window on the still-blocked worker.
+    start = time.monotonic()
+    dispatcher.close(5.0)
+    assert time.monotonic() - start < 0.2
+
+
+@pytest.mark.parametrize("module", ["agno.api.agent", "agno.api.team", "agno.api.workflow", "agno.api.evals"])
+def test_run_telemetry_helpers_never_raise_when_the_api_module_is_unimportable(monkeypatch, module):
+    from agno.agent import Agent
+    from agno.agent._telemetry import alog_agent_telemetry, log_agent_telemetry
+    from agno.eval.utils import async_log_eval_telemetry, log_eval_telemetry
+    from agno.team import Team
+    from agno.team._telemetry import alog_team_telemetry, log_team_telemetry
+    from agno.workflow import Workflow
+
+    monkeypatch.delenv("AGNO_TELEMETRY", raising=False)
+    # A None entry makes `from module import name` raise ImportError, the same
+    # failure a broken settings import produces on the first telemetry event.
+    monkeypatch.setitem(sys.modules, module, None)
+
+    if module == "agno.api.agent":
+        agent = Agent()
+        log_agent_telemetry(agent, session_id="s", run_id="r")
+        asyncio.run(alog_agent_telemetry(agent, session_id="s", run_id="r"))
+    elif module == "agno.api.team":
+        team = Team(members=[Agent()])
+        log_team_telemetry(team, session_id="s", run_id="r")
+        asyncio.run(alog_team_telemetry(team, session_id="s", run_id="r"))
+    elif module == "agno.api.workflow":
+        workflow = Workflow()
+        workflow._log_workflow_telemetry(session_id="s", run_id="r")
+        asyncio.run(workflow._alog_workflow_telemetry(session_id="s", run_id="r"))
+    else:
+        log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, data={})
+        asyncio.run(async_log_eval_telemetry(run_id="r", eval_type=EvalType.ACCURACY, data={}))
 
 
 def test_changed_pid_is_reset_before_acquiring_inherited_lock(dispatcher_factory):
@@ -712,9 +862,7 @@ assert len(constructed) == 1, constructed
 assert sum(t.name == 'agno-telemetry' and t.is_alive() for t in threading.enumerate()) == 1
 dispatcher.close(0.5)
 """
-    env = os.environ.copy()
-    package_root = str(Path(__file__).resolve().parents[3])
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+    env = subprocess_env()
 
     subprocess.run([sys.executable, "-c", script], check=True, timeout=8, env=env)
 
@@ -740,9 +888,7 @@ class Client:
 api._dispatcher._client_factory = Client
 api.post_in_background('/telemetry/test', {'run_id': 'run'})
 """
-    env = os.environ.copy()
-    package_root = str(Path(__file__).resolve().parents[3])
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+    env = subprocess_env()
 
     result = subprocess.run([sys.executable, "-c", script], check=True, timeout=5, env=env, capture_output=True)
 
@@ -770,9 +916,7 @@ api._dispatcher._client_factory = BlockingClient
 api.post_in_background('/telemetry/test', {'run_id': 'run'})
 assert started.wait(2)
 """
-    env = os.environ.copy()
-    package_root = str(Path(__file__).resolve().parents[3])
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+    env = subprocess_env()
 
     start = time.monotonic()
     subprocess.run([sys.executable, "-c", script], check=True, timeout=6, env=env)
@@ -803,9 +947,7 @@ api._dispatcher._client_factory = BlockingClient
 api.post_in_background('/telemetry/test', {'run_id': 'run'})
 assert started.wait(2)
 """
-    env = os.environ.copy()
-    package_root = str(Path(__file__).resolve().parents[3])
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+    env = subprocess_env()
     env["AGNO_TELEMETRY_SHUTDOWN_TIMEOUT"] = "0"
 
     start = time.monotonic()
@@ -886,8 +1028,183 @@ assert not [
     if issubclass(warning.category, DeprecationWarning) and "multi-threaded" in str(warning.message)
 ]
 """
-    env = os.environ.copy()
-    package_root = str(Path(__file__).resolve().parents[3])
-    env["PYTHONPATH"] = os.pathsep.join(filter(None, (package_root, env.get("PYTHONPATH"))))
+    env = subprocess_env()
 
     subprocess.run([sys.executable, "-c", script], check=True, timeout=8, env=env)
+
+
+def test_malformed_telemetry_env_is_ignored_end_to_end():
+    # An unparsable or empty value in a deployment's environment must leave the
+    # defaults in place and deliver; it used to fail the settings import, which
+    # surfaced as an error status on every run.
+    script = """
+import os
+import time
+
+from agno.api.api import TELEMETRY_SHUTDOWN_TIMEOUT, TELEMETRY_TIMEOUT, api
+
+assert (TELEMETRY_TIMEOUT, TELEMETRY_SHUTDOWN_TIMEOUT) == (5.0, 2.0), (TELEMETRY_TIMEOUT, TELEMETRY_SHUTDOWN_TIMEOUT)
+
+class Client:
+    def post(self, route, json):
+        os.write(1, b'D')
+        class Response:
+            status_code = 200
+        return Response()
+
+    def close(self):
+        pass
+
+api._dispatcher._client_factory = Client
+api.post_in_background('/telemetry/test', {'run_id': 'run'})
+"""
+    env = subprocess_env()
+    env["AGNO_TELEMETRY_TIMEOUT"] = "abc"
+    env["AGNO_TELEMETRY_SHUTDOWN_TIMEOUT"] = ""
+
+    result = subprocess.run([sys.executable, "-c", script], check=True, timeout=8, env=env, capture_output=True)
+
+    assert b"D" in result.stdout
+
+
+MULTIPROCESSING_CHILD_SCRIPT = """
+import multiprocessing
+import sys
+import time
+
+from agno.api.api import Api, _TelemetryDispatcher
+
+
+def child(conn):
+    class Client:
+        def __init__(self):
+            # The real client takes tens of milliseconds to build (TLS context);
+            # without that delay the worker can win the race against os._exit
+            # and the test would pass without any exit flush.
+            time.sleep(0.1)
+
+        def post(self, route, json):
+            conn.send(json["session_id"])
+
+            class Response:
+                status_code = 200
+
+            return Response()
+
+        def close(self):
+            pass
+
+    dispatcher = _TelemetryDispatcher(Client, register_at_fork=False)
+    Api(dispatcher).post_in_background("/telemetry/test", {"session_id": "child"})
+    # Return at once. The worker has not sent anything yet; delivery depends on
+    # the flush multiprocessing runs before it exits the child with os._exit.
+
+
+if __name__ == "__main__":
+    method = sys.argv[1]
+    context = multiprocessing.get_context(method)
+    parent_conn, child_conn = context.Pipe(duplex=False)
+    process = context.Process(target=child, args=(child_conn,))
+    process.start()
+    child_conn.close()
+    process.join(20)
+    delivered = []
+    while parent_conn.poll(1.0):
+        try:
+            delivered.append(parent_conn.recv())
+        except EOFError:
+            break
+    print("EXIT", process.exitcode, "DELIVERED", delivered, flush=True)
+"""
+
+
+@pytest.mark.parametrize("method", multiprocessing.get_all_start_methods())
+def test_multiprocessing_children_flush_queued_events_before_exit(tmp_path, method):
+    # fork and forkserver children exit through os._exit without running atexit;
+    # the dispatcher's multiprocessing finalizer gives them the same bounded
+    # flush. spawn children run atexit anyway; included to pin parity.
+    script = tmp_path / "mp_child.py"
+    script.write_text(MULTIPROCESSING_CHILD_SCRIPT)
+
+    result = subprocess.run(
+        [sys.executable, str(script), method],
+        check=True,
+        timeout=60,
+        env=subprocess_env(),
+        capture_output=True,
+        text=True,
+    )
+
+    assert "EXIT 0 DELIVERED ['child']" in result.stdout, (result.stdout, result.stderr[-800:])
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="fork is not available on this platform")
+def test_fork_after_first_event_resets_child_dispatcher_state():
+    # Forking after the worker started is unsupported for the inherited client,
+    # but the at-fork reset must still give the child fresh state that delivers
+    # through a new worker. Fresh interpreter so pytest's threads stay out of it.
+    script = """
+import os
+import time
+import warnings
+
+from agno.api.api import Api, _TelemetryDispatcher
+
+requests = []
+constructed = []
+
+class Client:
+    def __init__(self):
+        constructed.append(self)
+
+    def post(self, route, json):
+        requests.append(json["session_id"])
+
+        class Response:
+            status_code = 200
+
+        return Response()
+
+    def close(self):
+        pass
+
+dispatcher = _TelemetryDispatcher(Client, register_at_fork=True)
+instance = Api(dispatcher)
+instance.post_in_background("/telemetry/test", {"session_id": "parent"})
+deadline = time.monotonic() + 2
+while dispatcher._queue.unfinished_tasks and time.monotonic() < deadline:
+    time.sleep(0.01)
+assert requests == ["parent"] and dispatcher._worker is not None and dispatcher._worker.is_alive()
+
+read_fd, write_fd = os.pipe()
+with warnings.catch_warnings():
+    # The parent is multi-threaded on purpose here; CPython's fork warning is expected.
+    warnings.simplefilter("ignore", DeprecationWarning)
+    pid = os.fork()
+
+if pid == 0:
+    try:
+        fresh = (
+            dispatcher._worker is None
+            and dispatcher._client is None
+            and dispatcher._queue.qsize() == 0
+            and dispatcher._pid == os.getpid()
+        )
+        instance.post_in_background("/telemetry/test", {"session_id": "child"})
+        deadline = time.monotonic() + 2
+        while dispatcher._queue.unfinished_tasks and time.monotonic() < deadline:
+            time.sleep(0.01)
+        delivered = requests == ["parent", "child"] and len(constructed) == 2
+        os.write(write_fd, b"1" if fresh and delivered else b"0")
+    finally:
+        os._exit(0)
+
+os.close(write_fd)
+try:
+    assert os.read(read_fd, 1) == b"1"
+finally:
+    os.close(read_fd)
+    _, status = os.waitpid(pid, 0)
+assert os.waitstatus_to_exitcode(status) == 0
+"""
+    subprocess.run([sys.executable, "-c", script], check=True, timeout=8, env=subprocess_env())

@@ -1,5 +1,6 @@
 import atexit
 import os
+import sys
 import threading
 import time
 import weakref
@@ -18,6 +19,8 @@ from agno.utils.log import log_debug
 TELEMETRY_QUEUE_SIZE = 2000
 # Both are read once at import from AGNO_TELEMETRY_TIMEOUT and
 # AGNO_TELEMETRY_SHUTDOWN_TIMEOUT (see AgnoAPISettings); defaults 5s and 2s.
+# The client factory and close() read these module attributes when they run,
+# so a later assignment here is honored by the next client or close().
 TELEMETRY_TIMEOUT = agno_api_settings.telemetry_timeout
 TELEMETRY_SHUTDOWN_TIMEOUT = agno_api_settings.telemetry_shutdown_timeout
 
@@ -48,6 +51,12 @@ class _TelemetryDispatcher:
     or created with a spawn-based start method. A live dispatcher owns a thread
     and may own HTTP/TLS resources that cannot be inherited safely across
     ``fork()``.
+
+    Process exit flushes queued events for a bounded time through ``atexit``.
+    ``multiprocessing`` children leave through ``os._exit`` without running
+    ``atexit``, so the same flush is also registered as a ``multiprocessing``
+    exit finalizer in any process that starts a worker while ``multiprocessing``
+    is in use.
     """
 
     def __init__(
@@ -68,6 +77,11 @@ class _TelemetryDispatcher:
         self._pid = os.getpid()
         self._accepting = True
         self._stop_enqueued = False
+        # Set once close() has finished its flush in this process; later calls
+        # (atexit plus a multiprocessing finalizer) return without waiting again.
+        self._closed = False
+        # PID in which the multiprocessing exit finalizer was registered.
+        self._finalizer_pid: Optional[int] = None
 
         if register_at_fork and hasattr(os, "register_at_fork"):
             ref = weakref.ref(self)
@@ -109,17 +123,23 @@ class _TelemetryDispatcher:
         except Exception as e:
             log_debug(f"Could not queue telemetry event for {route}: {type(e).__name__}")
 
-    def close(self, flush_timeout: float = TELEMETRY_SHUTDOWN_TIMEOUT) -> None:
+    def close(self, flush_timeout: Optional[float] = None) -> None:
         """Request shutdown and wait at most ``flush_timeout`` seconds.
 
-        Pending events are given that bounded window to finish. An event already
-        in flight can outlive this call, but its worker remains a daemon and
-        closes the shared client when the request returns.
+        ``None`` means the module's ``TELEMETRY_SHUTDOWN_TIMEOUT`` as it is when
+        this runs. Pending events are given that bounded window to finish. An
+        event already in flight can outlive this call, but its worker remains a
+        daemon and closes the shared client when the request returns. Once a
+        close has finished in this process, later calls return immediately.
         """
+        if flush_timeout is None:
+            flush_timeout = TELEMETRY_SHUTDOWN_TIMEOUT
         # A hook-bypassing child may have inherited a held close lock. Reset
         # process state before acquiring any lifecycle lock from the parent.
         try:
             self._ensure_process_state()
+            if self._closed:
+                return
 
             # A client or transport callback can request shutdown from inside
             # the worker. Bypass the close-serialization lock so it cannot wait
@@ -152,6 +172,7 @@ class _TelemetryDispatcher:
 
                 if worker is None:
                     self._discard_pending(queue)
+                    self._closed = True
                     return
 
                 while queue.unfinished_tasks and time.monotonic() < deadline:
@@ -167,6 +188,7 @@ class _TelemetryDispatcher:
                 remaining = deadline - time.monotonic()
                 if remaining > 0:
                     worker.join(remaining)
+                self._closed = True
             finally:
                 self._close_lock.release()
         except Exception as e:
@@ -199,6 +221,40 @@ class _TelemetryDispatcher:
         except Exception:
             self._worker = None
             raise
+        self._register_multiprocessing_finalizer()
+
+    def _register_multiprocessing_finalizer(self) -> None:
+        """Flush at multiprocessing child exit, which never runs ``atexit``.
+
+        Children started by ``multiprocessing`` (fork and forkserver start
+        methods) leave through ``os._exit`` after running ``multiprocessing``'s
+        exit finalizers, so the ``atexit`` flush registered at import never
+        runs there and the daemon worker would be killed with the event still
+        queued. Registering ``close`` as a finalizer gives such children the
+        same bounded flush the parent gets. This has to happen after the worker
+        starts in the current process: ``BaseProcess._bootstrap`` clears the
+        finalizer registry in every child before user code runs, so an
+        import-time registration is lost. Processes that never imported
+        ``multiprocessing.util`` keep the ``atexit`` path alone.
+        """
+        if self._finalizer_pid == os.getpid():
+            return
+        util = sys.modules.get("multiprocessing.util")
+        if util is None:
+            return
+        ref = weakref.ref(self)
+
+        def _close_at_exit() -> None:
+            instance = ref()
+            if instance is not None:
+                instance.close()
+
+        try:
+            util.Finalize(None, _close_at_exit, exitpriority=0)
+        except Exception as e:
+            log_debug(f"Could not register telemetry exit finalizer: {type(e).__name__}")
+            return
+        self._finalizer_pid = os.getpid()
 
     def _reset_after_fork(self, *, replace_fallback_lock: bool = True) -> None:
         # Defensive recovery for an unsupported post-telemetry fork: fresh
@@ -215,6 +271,8 @@ class _TelemetryDispatcher:
         self._close_lock = threading.Lock()
         self._accepting = True
         self._stop_enqueued = False
+        self._closed = False
+        self._finalizer_pid = None
         # Publish the new PID last so other callers cannot observe partially
         # initialized child state.
         self._pid = os.getpid()
@@ -300,7 +358,9 @@ class Api:
     POSIX applications must create forked workers before posting telemetry or
     use a spawn-based process start method. Forking after this dispatcher starts
     its background thread is unsupported because live threads and HTTP/TLS
-    resources cannot be inherited safely.
+    resources cannot be inherited safely. ``multiprocessing`` children get the
+    same bounded exit flush as the parent through a ``multiprocessing`` exit
+    finalizer, since they exit without running ``atexit``.
     """
 
     def __init__(self, dispatcher: _TelemetryDispatcher = _telemetry_dispatcher) -> None:

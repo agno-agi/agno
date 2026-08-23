@@ -117,10 +117,17 @@ async def http_client_lifespan(_):
 
 @asynccontextmanager
 async def agent_os_telemetry_lifespan(_, agent_os: "AgentOS"):
-    """Emit launch telemetry after the serving worker has started."""
-    from agno.api.os import OSLaunch, log_os_telemetry
+    """Emit launch telemetry after the serving worker has started.
 
-    log_os_telemetry(launch=OSLaunch(os_id=agent_os.id, data=agent_os._get_telemetry_data()))
+    Best-effort: a telemetry failure (including a failed import of the
+    telemetry client) must not stop the server from starting.
+    """
+    try:
+        from agno.api.os import OSLaunch, log_os_telemetry
+
+        log_os_telemetry(launch=OSLaunch(os_id=agent_os.id, data=agent_os._get_telemetry_data()))
+    except Exception as e:
+        log_debug(f"Could not send AgentOS launch telemetry: {type(e).__name__}")
     yield
 
 

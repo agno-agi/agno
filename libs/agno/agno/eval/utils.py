@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING, Any, Callable, Optional, Union
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalRunRecord, EvalType
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 
 if TYPE_CHECKING:
     from rich.console import Console
@@ -193,6 +193,30 @@ async def async_log_eval(
     except Exception as e:
         # A failed write means eval history silently stops persisting - warn, don't debug-log.
         log_warning(f"Could not log eval run: {e}")
+
+
+def log_eval_telemetry(*, run_id: str, eval_type: EvalType, data: Optional[dict] = None) -> None:
+    """Queue an eval telemetry event; never raises.
+
+    Everything telemetry needs, the import included, stays inside the try: a
+    telemetry failure must never change the outcome of an eval.
+    """
+    try:
+        from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
+
+        create_eval_run_telemetry(eval_run=EvalRunCreate(run_id=run_id, eval_type=eval_type, data=data))
+    except Exception as e:
+        log_debug(f"Could not create eval run telemetry event: {type(e).__name__}")
+
+
+async def async_log_eval_telemetry(*, run_id: str, eval_type: EvalType, data: Optional[dict] = None) -> None:
+    """Async pair of ``log_eval_telemetry``; never raises."""
+    try:
+        from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
+
+        await async_create_eval_run_telemetry(eval_run=EvalRunCreate(run_id=run_id, eval_type=eval_type, data=data))
+    except Exception as e:
+        log_debug(f"Could not create eval run telemetry event: {type(e).__name__}")
 
 
 def store_result_in_file(

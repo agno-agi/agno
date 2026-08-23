@@ -61,3 +61,15 @@ def test_disabled_os_telemetry_stays_silent_during_app_lifespan():
             pass
 
         mock_log.assert_not_called()
+
+
+def test_os_telemetry_failure_does_not_stop_the_app_from_starting():
+    # The launch event is best-effort: a failing telemetry client (including a
+    # failed import of it) must not abort the ASGI lifespan.
+    with patch("agno.api.os.log_os_telemetry", side_effect=RuntimeError("telemetry down")) as mock_log:
+        app = AgentOS(id="test", agents=[Agent(telemetry=False)]).get_app()
+
+        with TestClient(app) as client:
+            assert client.get("/health").status_code == 200
+
+        mock_log.assert_called_once()

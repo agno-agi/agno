@@ -12,7 +12,14 @@ if TYPE_CHECKING:
 
 from agno.agent import RunOutput
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
+from agno.eval.utils import (
+    async_log_eval,
+    async_log_eval_telemetry,
+    log_eval_run,
+    log_eval_telemetry,
+    spinner_live,
+    store_result_in_file,
+)
 from agno.utils.log import logger
 
 
@@ -334,15 +341,7 @@ class ReliabilityEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
-
-            create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
-                    eval_type=EvalType.RELIABILITY,
-                    data=self._get_telemetry_data(),
-                ),
-            )
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.RELIABILITY, data=self._get_telemetry_data())
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
@@ -416,14 +415,8 @@ class ReliabilityEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
-
-            await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id,
-                    eval_type=EvalType.RELIABILITY,
-                    data=self._get_telemetry_data(),
-                ),
+            await async_log_eval_telemetry(
+                run_id=self.eval_id, eval_type=EvalType.RELIABILITY, data=self._get_telemetry_data()
             )
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
