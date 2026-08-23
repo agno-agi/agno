@@ -6076,3 +6076,231 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+# ---------------------------------------------------------------------------
+# Overlapping continues of one paused run
+#
+# Regression for: https://github.com/agno-agi/agno/issues/9448
+#
+# Two concurrent continues of the same paused team run both used to bind the
+# payload and execute the approval-gated tool. Exactly one continue may claim
+# the in-place resume; the other raises RunNotContinuableError and must not
+# execute the tool. Sequential continues of a completed run still auto-fork
+# instead of refusing.
+# ---------------------------------------------------------------------------
+
+
+def _agate_first_n_calls(orig, n: int = 2):
+    calls = 0
+    lock = asyncio.Lock()
+    barrier = asyncio.Barrier(n)
+
+    async def gated(*args: Any, **kwargs: Any):
+        nonlocal calls
+        result = await orig(*args, **kwargs)
+        wait = False
+        async with lock:
+            if calls < n:
+                calls += 1
+                wait = True
+        if wait:
+            await barrier.wait()
+        return result
+
+    return gated
+
+
+def _split_continue_outcomes(results: List[Any]) -> Tuple[List[Any], List[BaseException]]:
+    oks = [r for r in results if not isinstance(r, BaseException)]
+    errors = [r for r in results if isinstance(r, BaseException)]
+    return oks, errors
+
+
+@pytest.mark.asyncio
+async def test_overlapping_async_continues_execute_gated_tool_once(tmp_path):
+    """Two concurrent acontinue_run calls on one paused run: one executes, one refuses."""
+    from agno.team._run import _asetup_session
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "overlap_acontinue.db")
+    session_id = "s-overlap-acontinue"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    payload = _wire_requirements(run1.requirements)
+    team = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+
+    with patch("agno.team._run._asetup_session", new=_agate_first_n_calls(_asetup_session)):
+        results = await asyncio.gather(
+            team.acontinue_run(run_id=run1.run_id, session_id=session_id, requirements=payload),
+            team.acontinue_run(run_id=run1.run_id, session_id=session_id, requirements=payload),
+            return_exceptions=True,
+        )
+
+    oks, errors = _split_continue_outcomes(list(results))
+    assert len(oks) == 1, f"expected one winner, got {results!r}"
+    assert len(errors) == 1
+    assert isinstance(errors[0], RunNotContinuableError)
+    assert _EXECUTED == ["a@example.com"]
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert stored.status == RunStatus.completed
+    assert oks[0].status == RunStatus.completed
+    assert oks[0].run_id == run1.run_id
+
+
+@pytest.mark.asyncio
+async def test_overlapping_async_stream_continues_execute_gated_tool_once(tmp_path):
+    from agno.team._run import _asetup_session
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "overlap_stream.db")
+    session_id = "s-overlap-stream"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    payload = _wire_requirements(run1.requirements)
+    team = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+
+    async def _consume() -> Any:
+        last = None
+        async for event in team.acontinue_run(
+            run_id=run1.run_id,
+            session_id=session_id,
+            requirements=payload,
+            stream=True,
+            stream_events=True,
+        ):
+            last = event
+        return last
+
+    with patch("agno.team._run._asetup_session", new=_agate_first_n_calls(_asetup_session)):
+        results = await asyncio.gather(_consume(), _consume(), return_exceptions=True)
+
+    oks, errors = _split_continue_outcomes(list(results))
+    assert len(oks) == 1, f"expected one winner, got {results!r}"
+    assert len(errors) == 1
+    assert isinstance(errors[0], RunNotContinuableError)
+    assert _EXECUTED == ["a@example.com"]
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert stored.status == RunStatus.completed
+
+
+def test_paused_continue_claim_refuses_a_second_holder():
+    """The in-process claim is what continue_run_dispatch uses; sqlite is not
+    thread-safe enough to race two continue_run calls on one connection."""
+    from agno.team._run import _PausedContinueClaim
+
+    first = _PausedContinueClaim("s-claim", "run-claim")
+    second = _PausedContinueClaim("s-claim", "run-claim")
+    first.acquire_or_refuse()
+    with pytest.raises(RunNotContinuableError, match="already claimed"):
+        second.acquire_or_refuse()
+    first.release()
+    second.acquire_or_refuse()
+    second.release()
+
+
+def test_paused_continue_claim_nested_same_token_survives_background_wrapper():
+    from agno.team._run import _PausedContinueClaim
+
+    claim = _PausedContinueClaim("s-nested", "run-nested")
+    claim.acquire_or_refuse()
+    claim.acquire_or_refuse()
+    claim.release()
+    other = _PausedContinueClaim("s-nested", "run-nested")
+    other.acquire_or_refuse()
+    other.release()
+
+
+def test_sync_continue_refuses_when_another_continue_holds_the_claim(tmp_path):
+    from agno.team._run import _PausedContinueClaim
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "held_claim_sync.db")
+    session_id = "s-held-claim-sync"
+
+    run1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    holder = _PausedContinueClaim(session_id, run1.run_id)
+    holder.acquire_or_refuse()
+    try:
+        team = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+        with pytest.raises(RunNotContinuableError, match="already claimed"):
+            team.continue_run(
+                run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+            )
+        assert _EXECUTED == []
+        stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+        assert stored.status == RunStatus.paused
+    finally:
+        holder.release()
+
+
+@pytest.mark.asyncio
+async def test_overlapping_background_continues_execute_gated_tool_once(tmp_path):
+    from agno.team._storage import _aread_or_create_session
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "overlap_bg.db")
+    session_id = "s-overlap-bg"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    payload = _wire_requirements(run1.requirements)
+    team = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+
+    async def _consume_bg() -> None:
+        async for _ in team.acontinue_run(
+            run_id=run1.run_id,
+            session_id=session_id,
+            requirements=payload,
+            stream=True,
+            stream_events=True,
+            background=True,
+        ):
+            pass
+
+    with patch(
+        "agno.team._storage._aread_or_create_session",
+        new=_agate_first_n_calls(_aread_or_create_session),
+    ):
+        results = await asyncio.gather(_consume_bg(), _consume_bg(), return_exceptions=True)
+    await _drain_background_tasks()
+
+    oks, errors = _split_continue_outcomes(list(results))
+    assert len(oks) == 1, f"expected one winner, got {results!r}"
+    assert len(errors) == 1
+    assert isinstance(errors[0], RunNotContinuableError)
+    assert _EXECUTED == ["a@example.com"]
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id][0]
+    assert stored.status == RunStatus.completed
+
+
+@pytest.mark.asyncio
+async def test_sequential_continues_after_completion_do_not_reexecute_the_gated_tool(tmp_path):
+    """Sequential continues of a completed run auto-fork; the gated tool stays once."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "sequential_continue.db")
+    session_id = "s-sequential-continue"
+
+    run1 = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert run1.is_paused
+    payload = _wire_requirements(run1.requirements)
+    team = _build_flat_team(SqliteDb(db_file=db_file), resuming=True)
+
+    run2 = await team.acontinue_run(run_id=run1.run_id, session_id=session_id, requirements=payload)
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+    run3 = await team.acontinue_run(run_id=run1.run_id, session_id=session_id, requirements=payload)
+    assert _EXECUTED == ["a@example.com"], "a sequential continue of a completed run must not re-fire the gated tool"
+    assert run3.run_id != run1.run_id
