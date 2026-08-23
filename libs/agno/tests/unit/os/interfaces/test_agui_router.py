@@ -4,6 +4,7 @@ import pytest
 
 pytest.importorskip("ag_ui", reason="ag_ui not installed")
 
+from ag_ui.core import EventType
 from ag_ui.core.types import Tool as AGUITool
 
 from agno.os.interfaces.agui.router import run_entity
@@ -31,6 +32,12 @@ class CaptureKwargsEntity:
         self.captured_kwargs = kwargs
         self.arun_called = True
         return
+        yield
+
+
+class ErrorEntity:
+    async def arun(self, **kwargs):
+        raise RuntimeError("provider unavailable")
         yield
 
 
@@ -150,3 +157,14 @@ async def test_run_entity_fresh_run_calls_arun():
         pass
 
     assert fake_entity.arun_called is True
+
+
+@pytest.mark.asyncio
+async def test_run_entity_emits_error_when_provider_call_fails():
+    events = []
+
+    async for event in run_entity(ErrorEntity(), FakeRunInput()):
+        events.append(event)
+
+    assert [event.type for event in events] == [EventType.RUN_STARTED, EventType.RUN_ERROR]
+    assert events[-1].message == "provider unavailable"
