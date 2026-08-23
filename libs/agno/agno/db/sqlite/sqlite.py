@@ -54,8 +54,9 @@ from agno.utils.string import generate_id
 try:
     from sqlalchemy import Column, MetaData, String, Table, func, or_, select, text
     from sqlalchemy.dialects import sqlite
-    from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.engine import Engine, create_engine, make_url
     from sqlalchemy.orm import scoped_session, sessionmaker
+    from sqlalchemy.pool import StaticPool
     from sqlalchemy.schema import ForeignKey, Index, UniqueConstraint
 except ImportError:
     raise ImportError("`sqlalchemy` not installed. Please install it using `pip install sqlalchemy`")
@@ -164,7 +165,13 @@ class SqliteDb(BaseDb):
         _engine: Optional[Engine] = db_engine
         if _engine is None:
             if db_url is not None:
-                _engine = create_engine(db_url)
+                url = make_url(db_url)
+                if url.database in (None, "", ":memory:") or url.query.get("mode") == "memory":
+                    # An in-memory SQLite database lives in one connection. StaticPool keeps
+                    # that connection visible when sync database work is offloaded to a thread.
+                    _engine = create_engine(db_url, connect_args={"check_same_thread": False}, poolclass=StaticPool)
+                else:
+                    _engine = create_engine(db_url)
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
