@@ -46,6 +46,7 @@ registry = Registry(
 agent = Agent(
     id="registry-agent",
     model=Claude(id="claude-sonnet-4-5"),
+    instructions=" you are registry agent, you are responsible for managing the registry of the agentos.",
     db=db,
 )
 

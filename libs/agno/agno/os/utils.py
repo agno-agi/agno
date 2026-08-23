@@ -2035,6 +2035,84 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 # ---------------------------------------------------------------------------
 
 
+def _apply_agno_api_key(entity: Any, agno_api_key: Optional[str]) -> None:
+    """Set a per-run Agno API key on a resolved Agent/Team, but only when its model is an
+    Agno gateway model. No-op otherwise, so a caller-supplied key can never override another
+    provider's auth. The entity is a fresh per-request copy, so this is isolation-safe, and the
+    key never persists (Model.to_dict does not serialize api_key).
+    """
+    if not agno_api_key:
+        return
+    import copy
+
+    from agno.models.agno import Agno
+
+    model = getattr(entity, "model", None)
+    if isinstance(model, Agno):
+        # The fresh agent shares the registered agent's model instance (deep_copy shares
+        # heavy resources like the model). Copy the model before setting the key so the
+        # per-run credential never leaks to the shared instance or to concurrent requests.
+        fresh_model = copy.copy(model)
+        fresh_model.api_key = agno_api_key
+        entity.model = fresh_model
+
+
+def _apply_model_override(entity: Any, model_override: Optional[str]) -> None:
+    """Override the model for a single run, resolved from a "<provider>:<model_id>" string
+    (e.g. "agno:openai/gpt-5.4"). No-op when empty or for remote entities. Replaces the model
+    on the fresh per-request copy with a NEW instance, so it is isolation-safe (the registered
+    agent/team keeps its own model). A malformed string raises HTTP 400.
+    """
+    if not model_override:
+        return
+    if isinstance(entity, (Agent, Team)):
+        from agno.models.utils import get_model
+
+        try:
+            entity.model = get_model(model_override)
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=f"Invalid model override {model_override!r}: {e}")
+
+
+def parse_gateway_tools(value: Optional[str]) -> Optional[List[str]]:
+    """Parse and validate per-run Agno Gateway tool names from multipart form data."""
+    if value is None:
+        return None
+
+    try:
+        tool_names = json.loads(value)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid JSON in gateway_tools field")
+
+    if not isinstance(tool_names, list) or any(
+        not isinstance(tool_name, str) or not tool_name.strip() for tool_name in tool_names
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="gateway_tools must be a JSON array of non-empty tool names",
+        )
+    return tool_names
+
+
+def _apply_gateway_tools(
+    entity: Any,
+    gateway_tools: Optional[List[str]],
+    agno_api_key: Optional[str],
+) -> None:
+    """Add selected hosted Agno tools to a fresh Agent or Team for one run."""
+    if not gateway_tools or not isinstance(entity, (Agent, Team)):
+        return
+    if not agno_api_key:
+        raise HTTPException(status_code=401, detail="Agno Gateway tools require a run credential")
+
+    from agno.tools.agno import AgnoTools
+
+    try:
+        entity.add_tool(AgnoTools(include_tools=gateway_tools, api_key=agno_api_key))
+    except RuntimeError as e:
+        raise HTTPException(status_code=400, detail=f"Unable to add Agno Gateway tools: {e}")
+
+
 async def resolve_agent(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]],
@@ -2045,6 +2123,9 @@ async def resolve_agent(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    agno_api_key: Optional[str] = None,
+    model_override: Optional[str] = None,
+    gateway_tools: Optional[List[str]] = None,
     strict: bool = True,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
@@ -2089,6 +2170,9 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    _apply_model_override(agent, model_override)
+    _apply_agno_api_key(agent, agno_api_key)
+    _apply_gateway_tools(agent, gateway_tools, agno_api_key)
     return agent
 
 
@@ -2102,6 +2186,9 @@ async def resolve_team(
     user_id: Optional[str] = None,
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
+    agno_api_key: Optional[str] = None,
+    model_override: Optional[str] = None,
+    gateway_tools: Optional[List[str]] = None,
     strict: bool = True,
 ) -> Union[Team, RemoteTeam]:
     """Resolve a team by ID with proper error handling for both factory and non-factory paths.
@@ -2143,6 +2230,9 @@ async def resolve_team(
 
     if team is None:
         raise HTTPException(status_code=404, detail="Team not found")
+    _apply_model_override(team, model_override)
+    _apply_agno_api_key(team, agno_api_key)
+    _apply_gateway_tools(team, gateway_tools, agno_api_key)
     return team
 
 
