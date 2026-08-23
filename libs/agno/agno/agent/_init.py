@@ -17,6 +17,7 @@ from typing import (
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.tools.runtime_registry import ToolRegistry
 
 from agno.compression.manager import CompressionManager
 from agno.culture.manager import CultureManager
@@ -294,6 +295,11 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
 
 def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
     from agno.utils.callables import is_callable_factory
+    from agno.tools.runtime_registry import ToolRegistry
+
+    if isinstance(agent.tools, ToolRegistry):
+        agent.tools.register(tool)
+        return
 
     if is_callable_factory(agent.tools, excluded_types=(Toolkit, Function)):
         raise RuntimeError(
@@ -304,8 +310,17 @@ def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> No
     agent.tools.append(tool)  # type: ignore[union-attr]
 
 
-def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:
+def set_tools(
+    agent: Agent,
+    tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable, "ToolRegistry"],
+) -> None:
     from agno.utils.callables import is_callable_factory
+    from agno.tools.runtime_registry import ToolRegistry
+
+    if isinstance(tools, ToolRegistry):
+        agent.tools = tools
+        agent._callable_tools_cache.clear()
+        return
 
     if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
         agent.tools = tools  # type: ignore[assignment]
@@ -316,8 +331,11 @@ def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Funct
 
 async def connect_mcp_tools(agent: Agent) -> None:
     """Connect the MCP tools to the agent."""
-    if agent.tools and isinstance(agent.tools, list):
-        for tool in agent.tools:
+    from agno.tools.runtime_registry import ToolRegistry
+
+    tools = agent.tools.snapshot().tools if isinstance(agent.tools, ToolRegistry) else agent.tools
+    if tools and isinstance(tools, (list, tuple)):
+        for tool in tools:
             # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
             if (
                 hasattr(type(tool), "__mro__")
@@ -344,8 +362,11 @@ async def disconnect_mcp_tools(agent: Agent) -> None:
 
 def connect_connectable_tools(agent: Agent) -> None:
     """Connect tools that require connection management (e.g., database connections)."""
-    if agent.tools and isinstance(agent.tools, list):
-        for tool in agent.tools:
+    from agno.tools.runtime_registry import ToolRegistry
+
+    tools = agent.tools.snapshot().tools if isinstance(agent.tools, ToolRegistry) else agent.tools
+    if tools and isinstance(tools, (list, tuple)):
+        for tool in tools:
             if (
                 hasattr(tool, "requires_connect")
                 and tool.requires_connect  # type: ignore
