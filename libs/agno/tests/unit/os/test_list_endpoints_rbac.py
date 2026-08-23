@@ -47,14 +47,19 @@ def harness(tmp_path, monkeypatch):
     # The DB hands back one out-of-scope component per type
     monkeypatch.setattr(
         "agno.agent.agent.get_agents",
-        lambda db, registry=None, exclude_component_ids=None: [Agent(id="db-agent", name="DB Agent")],
+        lambda db, registry=None, exclude_component_ids=None, user_id=None: [Agent(id="db-agent", name="DB Agent")],
     )
     monkeypatch.setattr(
         "agno.team.team.get_teams",
-        lambda db, registry=None, exclude_component_ids=None: [Team(id="db-team", name="DB Team", members=[])],
+        lambda db, registry=None, exclude_component_ids=None, user_id=None: [
+            Team(id="db-team", name="DB Team", members=[])
+        ],
     )
     monkeypatch.setattr(
-        "agno.workflow.workflow.get_workflows", lambda db, registry=None: [Workflow(id="db-wf", name="DB WF", steps=[])]
+        "agno.workflow.workflow.get_workflows",
+        lambda db, registry=None, exclude_component_ids=None, user_id=None: [
+            Workflow(id="db-wf", name="DB WF", steps=[])
+        ],
     )
     return SimpleNamespace(client=TestClient(app, raise_server_exceptions=False))
 

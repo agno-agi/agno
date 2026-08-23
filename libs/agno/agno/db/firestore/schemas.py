@@ -157,19 +157,16 @@ METRICS_COLLECTION_SCHEMA = [
     {"key": "id", "unique": True},
     {"key": "date"},
     {"key": "aggregation_period"},
+    # Rows with no owner use the empty-string sentinel so they fit the compound unique key below
+    {"key": "user_id"},
     {"key": "created_at"},
     {"key": "updated_at"},
     # Composite index for metrics uniqueness (same as MongoDB)
-    {"key": [("date", "ASCENDING"), ("aggregation_period", "ASCENDING")], "collection_group": False, "unique": True},
-]
-
-CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA = [
-    {"key": "id", "unique": True},
-    {"key": "name"},
-    {"key": "agent_id"},
-    {"key": "team_id"},
-    {"key": "created_at"},
-    {"key": "updated_at"},
+    {
+        "key": [("user_id", "ASCENDING"), ("date", "ASCENDING"), ("aggregation_period", "ASCENDING")],
+        "collection_group": False,
+        "unique": True,
+    },
 ]
 
 TRACE_COLLECTION_SCHEMA = [
@@ -220,7 +217,6 @@ def get_collection_indexes(collection_type: str) -> List[Dict[str, Any]]:
         "metrics": METRICS_COLLECTION_SCHEMA,
         "evals": EVAL_COLLECTION_SCHEMA,
         "knowledge": KNOWLEDGE_COLLECTION_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_COLLECTION_SCHEMA,
         "traces": TRACE_COLLECTION_SCHEMA,
         "spans": SPAN_COLLECTION_SCHEMA,
     }

@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.exceptions import AgnoError
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import apply_scope_to_kwargs, get_scoped_user_id
@@ -33,7 +34,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
+from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_team_by_id
 from agno.remote.base import RemoteDb
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning
@@ -281,6 +282,10 @@ def attach_routes(
                 await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
             else:
                 db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -346,6 +351,10 @@ def attach_routes(
                 )
             else:
                 eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope)
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
@@ -418,6 +427,9 @@ def attach_routes(
                 table=table,
                 headers=headers,
             )
+
+        # Resolved before the run: get_scoped_user_id raises 403 and the eval below makes real model calls.
+        creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
 
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
@@ -524,7 +536,6 @@ def attach_routes(
         # already persisted, so a backend that can't stamp the owner (e.g. a
         # custom Db without update_eval_run_user_id) must not fail the request.
         if eval_run is not None:
-            creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
             if creator_user_id is not None:
                 try:
                     if isinstance(db, AsyncBaseDb):

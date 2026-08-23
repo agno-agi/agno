@@ -4,6 +4,7 @@ from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List
 from uuid import uuid4
 
 from agno.exceptions import RunCancelledException
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -27,7 +28,6 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
-    warn_session_state_param_deprecated,
 )
 
 WorkflowSteps = List[
@@ -545,16 +545,12 @@ class Router:
         # Handle callable selector
         if callable(self.selector):
             has_run_context = run_context is not None and self._selector_has_run_context_param()
-            has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
             if has_run_context:
                 kwargs["run_context"] = run_context
-            if has_session_state:
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -589,16 +585,12 @@ class Router:
         # Handle callable selector
         if callable(self.selector):
             has_run_context = run_context is not None and self._selector_has_run_context_param()
-            has_session_state = session_state is not None and self._selector_has_session_state_param()
             has_step_choices = self._selector_has_step_choices_param()
 
             # Build kwargs based on what parameters the selector accepts
             kwargs: Dict[str, Any] = {}
             if has_run_context:
                 kwargs["run_context"] = run_context
-            if has_session_state:
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.selector, "Router selector functions")
             if has_step_choices:
                 kwargs["step_choices"] = self.steps
 
@@ -610,17 +602,6 @@ class Router:
             return self._resolve_selector_result(result)
 
         return []
-
-    def _selector_has_session_state_param(self) -> bool:
-        """Check if the selector function has a session_state parameter."""
-        if not callable(self.selector):
-            return False
-
-        try:
-            sig = inspect.signature(self.selector)
-            return "session_state" in sig.parameters
-        except Exception:
-            return False
 
     def _selector_has_run_context_param(self) -> bool:
         """Check if the selector function has a run_context parameter."""
@@ -642,6 +623,7 @@ class Router:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -686,6 +668,7 @@ class Router:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -784,6 +767,7 @@ class Router:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -859,6 +843,7 @@ class Router:
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=router_step_id,
@@ -969,6 +954,7 @@ class Router:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -1016,6 +1002,7 @@ class Router:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -1117,6 +1104,7 @@ class Router:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -1196,6 +1184,7 @@ class Router:
                     workflow_run_response=workflow_run_response,
                     step_index=step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=router_step_id,

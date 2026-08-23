@@ -1,8 +1,9 @@
 from __future__ import annotations
 
+import asyncio
 import contextvars
 import inspect
-from copy import deepcopy
+from copy import copy, deepcopy
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union, cast
 from uuid import uuid4
@@ -14,8 +15,9 @@ from agno.agent import Agent
 from agno.db.base import BaseDb
 from agno.exceptions import RunCancelledException
 from agno.media import Audio, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.metrics import RunMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.registry import Registry
 from agno.run import RunContext
 from agno.run.agent import (
@@ -64,7 +66,6 @@ from agno.workflow.types import (
     StepRequirement,
     StepType,
     UserInputField,
-    warn_session_state_param_deprecated,
 )
 
 if TYPE_CHECKING:
@@ -102,6 +103,12 @@ def _is_team_instance(candidate: Any) -> bool:
     from agno.team.team import Team
 
     return isinstance(candidate, Team)
+
+
+def _is_workflow_instance(candidate: Any) -> bool:
+    from agno.workflow.workflow import Workflow
+
+    return isinstance(candidate, Workflow)
 
 
 class UnresolvableCallableError(RuntimeError):
@@ -406,9 +413,17 @@ class Step:
 
             if agent is None and db is not None and agent_id is not None:
                 from agno.agent.agent import get_agent_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    agent = get_agent_by_id(db=db, id=agent_id, version=pinned, registry=registry, strict=strict)
+                    agent = get_agent_by_id(
+                        db=db,
+                        id=agent_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -428,7 +443,9 @@ class Step:
                         f"Step '{config.get('name')}' pins agent '{agent_id}' at version {pinned}, which "
                         "was not found in the db; loading the agent's current version instead."
                     )
-                    agent = get_agent_by_id(db=db, id=agent_id, registry=registry, strict=False)
+                    agent = get_agent_by_id(
+                        db=db, id=agent_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined agent.
             if agent is None and pinned is not None and registry and agent_id:
@@ -503,9 +520,17 @@ class Step:
 
             if team is None and db is not None and team_id is not None:
                 from agno.team.team import get_team_by_id
+                from agno.utils.component_scope import get_component_owner_scope
 
                 try:
-                    team = get_team_by_id(db=db, id=team_id, version=pinned, registry=registry, strict=strict)
+                    team = get_team_by_id(
+                        db=db,
+                        id=team_id,
+                        version=pinned,
+                        registry=registry,
+                        strict=strict,
+                        user_id=get_component_owner_scope(),
+                    )
                 except ComponentRehydrationError as step_member_error:
                     if pinned is not None:
                         raise ComponentPinError(
@@ -525,7 +550,9 @@ class Step:
                         f"Step '{config.get('name')}' pins team '{team_id}' at version {pinned}, which "
                         "was not found in the db; loading the team's current version instead."
                     )
-                    team = get_team_by_id(db=db, id=team_id, registry=registry, strict=False)
+                    team = get_team_by_id(
+                        db=db, id=team_id, registry=registry, strict=False, user_id=get_component_owner_scope()
+                    )
 
             # A pinned lenient load may still fall back to a code-defined team.
             if team is None and pinned is not None and registry and team_id:
@@ -552,36 +579,126 @@ class Step:
                 executor = _unresolvable_ref_placeholder(config, "team", team_id)
 
         # --- Handle Workflow reconstruction ---
-        # TODO: Add workflow support to Registry (get_workflow method) for full reconstruction.
-        # Currently, nested workflow steps cannot be fully reconstructed from serialized form
-        # because the Registry does not track workflows. This only affects resumption of
-        # paused workflows that contain nested workflow steps.
-        if "workflow_id" in config and config["workflow_id"]:
-            workflow_id = config.get("workflow_id")
+        # Nested workflows resolve from the registry only: they have no
+        # db-load tier yet, because loading a stored workflow from inside a
+        # step would recurse through from_dict and needs its own cycle guard
+        # before it can be safe.
+        if (
+            "workflow_id" in config
+            and config["workflow_id"]
+            and (agent is not None or team is not None or executor is not None or config.get("executor_ref"))
+        ):
+            # A well-formed step config carries exactly one executor key. On a
+            # malformed one the non-workflow executor wins - the pre-registry
+            # behavior, where this branch only produced a placeholder that the
+            # later executor_ref assignment overwrote - so degraded configs
+            # stay loadable leniently instead of failing Step's
+            # one-executor check.
+            # agent and team are checked too, not just executor: the branches
+            # above set those on SUCCESS and only touch executor when they
+            # fall back to a placeholder, so a resolvable agent_id alongside
+            # workflow_id would otherwise slip past into the registry tier and
+            # reach Step with two executors.
             if strict:
                 raise ComponentRehydrationError(
-                    f"Step '{config.get('name')}' references nested workflow '{workflow_id}', which "
-                    "cannot be reconstructed yet (the registry does not track workflows). Pass "
-                    "strict=False to load it with a non-executable placeholder."
+                    f"Step '{config.get('name')}' carries workflow_id '{config.get('workflow_id')}' alongside "
+                    "another executor reference; fix the config to exactly one executor."
                 )
             log_warning(
-                f"Cannot reconstruct nested workflow '{workflow_id}' for step '{config.get('name')}' "
-                f"(workflow registry support not yet implemented). "
-                f"Using placeholder executor."
+                f"Step '{config.get('name')}' carries workflow_id '{config.get('workflow_id')}' alongside "
+                "another executor reference; ignoring the workflow half."
             )
+        elif "workflow_id" in config and config["workflow_id"]:
+            workflow_id = config.get("workflow_id")
+            if registry and workflow_id:
+                registry_workflow = registry.get_workflow(workflow_id)
+                if registry_workflow is not None:
+                    # A saved parent records the version its child was bound at,
+                    # and the agent and team tiers above load exactly that
+                    # version. This tier cannot: a nested workflow resolves from
+                    # the registry only, so what runs is whatever the process
+                    # defines under that id today. Say so, because the pin is
+                    # right there in the row and the divergence is otherwise
+                    # invisible. Refusing instead is not the alternative it
+                    # looks like - a save always writes this pin, so refusing on
+                    # its presence refuses every stored nested workflow.
+                    pinned_workflow_version = _pinned_version(workflow_id, "step_workflow")
+                    if pinned_workflow_version is not None:
+                        log_warning(
+                            f"Step '{config.get('name')}' pins workflow '{workflow_id}' at version "
+                            f"{pinned_workflow_version}, but a nested workflow resolves from the registry "
+                            "only; running the registered workflow instead of the pinned version."
+                        )
+                    try:
+                        # Deep copy to isolate mutable state between concurrent requests
+                        workflow = registry_workflow.deep_copy()
+                        if strict and workflow is registry_workflow:
+                            raise ComponentRehydrationError(
+                                f"Registry workflow '{workflow_id}' deep_copy returned the shared "
+                                "instance; a strict load requires an isolated copy."
+                            )
+                        if strict and not _is_workflow_instance(workflow):
+                            raise ComponentRehydrationError(
+                                f"Registry workflow '{workflow_id}' deep_copy returned a "
+                                f"{type(workflow).__name__}, not a Workflow; a strict load refuses it."
+                            )
+                        if strict:
+                            from agno.utils.copies import workflow_copy_divergence
 
-            # Create a placeholder executor so validation doesn't crash.
-            # The step won't be re-executable until Registry supports workflows.
-            def _placeholder(step_input: StepInput) -> StepOutput:
-                raise UnresolvableCallableError(
-                    f"Nested workflow '{workflow_id}' cannot be re-executed (not yet "
-                    "reconstructable). Load the parent strictly for a typed refusal instead."
+                            # Catches a copy that lost the work: its id, its
+                            # name, a step's own configuration, and the steps
+                            # themselves when the original's steps are a plain
+                            # list. Step ids are stripped first - deep_copy
+                            # mints a fresh one per step, so the agent/team
+                            # tiers' plain serialization compare would refuse
+                            # every workflow. A step that only references a
+                            # child records just that child's id, so the
+                            # child's own internals are not compared.
+                            divergence = workflow_copy_divergence(registry_workflow, workflow)
+                            if divergence is not None:
+                                raise ComponentRehydrationError(
+                                    f"Registry workflow '{workflow_id}' deep_copy lost state: {divergence}. "
+                                    "A strict load refuses a copy that does not serialize like its "
+                                    "original; give the subclass a faithful deep_copy."
+                                )
+                    except ComponentRehydrationError:
+                        raise
+                    except Exception as e:
+                        if strict:
+                            raise ComponentRehydrationError(
+                                f"Registry workflow '{workflow_id}' could not be copied (deep_copy "
+                                f"failed: {e}); a strict load refuses the shared registry instance."
+                            ) from e
+                        log_warning(
+                            f"deep_copy() failed for registry workflow '{workflow_id}', using shared instance: {e}",
+                        )
+
+                        workflow = registry_workflow
+
+            if workflow is None:
+                if strict:
+                    raise ComponentRehydrationError(
+                        f"Step '{config.get('name')}' references nested workflow '{workflow_id}', which "
+                        "was not found in the registry (nested workflows do not load from the db). "
+                        "Register the workflow, or pass strict=False to load it with a "
+                        "non-executable placeholder."
+                    )
+                log_warning(
+                    f"Could not resolve nested workflow '{workflow_id}' from the registry for step "
+                    f"'{config.get('name')}'. Using placeholder executor."
                 )
 
-            _placeholder.__name__ = str(workflow_id)
-            _placeholder.__qualname__ = str(workflow_id)
-            _placeholder.__agno_unresolved__ = {"workflow_id": workflow_id}  # type: ignore[attr-defined]
-            executor = _placeholder
+                # Create a placeholder executor so validation doesn't crash.
+                def _placeholder(step_input: StepInput) -> StepOutput:
+                    raise UnresolvableCallableError(
+                        f"Nested workflow '{workflow_id}' is not registered, so it cannot be "
+                        "re-executed. Load the parent strictly for a typed refusal instead."
+                    )
+
+                _placeholder.__name__ = str(workflow_id)
+                _placeholder.__qualname__ = str(workflow_id)
+                _placeholder.__agno_unresolved__ = {"workflow_id": workflow_id}  # type: ignore[attr-defined]
+                executor = _placeholder
 
         # --- Handle Executor reconstruction ---
         if "executor_ref" in config and config["executor_ref"]:
@@ -880,17 +997,13 @@ class Step:
         self,
         func: Callable,
         step_input: StepInput,
-        session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Call custom function with session_state support if the function accepts it"""
+        """Call custom function, passing run_context if the function accepts it"""
 
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         return func(step_input, **kwargs)
 
@@ -898,17 +1011,13 @@ class Step:
         self,
         func: Callable,
         step_input: StepInput,
-        session_state: Optional[Dict[str, Any]] = None,
         run_context: Optional[RunContext] = None,
     ) -> Any:
-        """Call custom async function with session_state support if the function accepts it"""
+        """Call custom async function, passing run_context if the function accepts it"""
 
         kwargs: Dict[str, Any] = {}
         if run_context is not None and self._function_has_run_context_param():
             kwargs["run_context"] = run_context
-        if session_state is not None and self._function_has_session_state_param():
-            kwargs["session_state"] = session_state
-            warn_session_state_param_deprecated(func, "custom function steps")
 
         if _is_async_generator_function(func):
             return func(step_input, **kwargs)
@@ -924,6 +1033,7 @@ class Step:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -933,6 +1043,9 @@ class Step:
     ) -> StepOutput:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         log_debug(f"Executing step: {self.name}")
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -953,6 +1066,7 @@ class Step:
         for attempt in range(self.max_retries + 1):
             try:
                 response: Union[RunOutput, TeamRunOutput, StepOutput]
+                self._rehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
                         raise ValueError("Cannot use async function with synchronous execution")
@@ -963,7 +1077,6 @@ class Step:
                             for chunk in self._call_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,  # type: ignore[arg-type]
                                 run_context,
                             ):  # type: ignore
                                 if isinstance(chunk, (BaseRunOutputEvent)):
@@ -1005,11 +1118,10 @@ class Step:
                         else:
                             response = StepOutput(content=content)
                     else:
-                        # Execute function with signature inspection for session_state support
+                        # Execute function with signature inspection for run_context support
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
 
@@ -1099,7 +1211,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             run_context=run_context,
                             run_id=executor_run_id,
@@ -1130,10 +1242,12 @@ class Step:
                         response = self._execute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             background_tasks=background_tasks,
                         )
 
@@ -1177,17 +1291,6 @@ class Step:
         try:
             sig = inspect.signature(self.active_executor)  # type: ignore
             return "run_context" in sig.parameters
-        except Exception:
-            return False
-
-    def _function_has_session_state_param(self) -> bool:
-        """Check if the custom function has a session_state parameter"""
-        if self._executor_type != "function":
-            return False
-
-        try:
-            sig = inspect.signature(self.active_executor)  # type: ignore
-            return "session_state" in sig.parameters
         except Exception:
             return False
 
@@ -1251,6 +1354,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -1260,6 +1364,9 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1295,6 +1402,7 @@ class Step:
                 log_debug(f"Step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
                 final_response = None
 
+                self._rehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     log_debug(f"Executing function executor for step: {self.name}")
                     if _is_async_callable(self.active_executor) or _is_async_generator_function(self.active_executor):
@@ -1306,7 +1414,6 @@ class Step:
                             iterator = self._call_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
                             for event in iterator:  # type: ignore
@@ -1349,7 +1456,6 @@ class Step:
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
 
@@ -1438,7 +1544,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,  # Send a copy to the executor
                             stream=True,
                             stream_events=stream_events,
@@ -1490,10 +1596,12 @@ class Step:
                         for event in self._execute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             stream_events=stream_events,
                             background_tasks=background_tasks,
                         ):
@@ -1575,6 +1683,7 @@ class Step:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -1585,6 +1694,9 @@ class Step:
         """Execute the step with StepInput, returning final StepOutput (non-streaming)"""
         logger.info(f"Executing async step (non-streaming): {self.name}")
         log_debug(f"Executor type: {self._executor_type}")
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1604,6 +1716,7 @@ class Step:
         # Execute with retries
         for attempt in range(self.max_retries + 1):
             try:
+                await self._arehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     if _is_generator_function(self.active_executor) or _is_async_generator_function(
                         self.active_executor
@@ -1615,7 +1728,6 @@ class Step:
                                 iterator = self._call_custom_function(
                                     self.active_executor,
                                     step_input,
-                                    session_state_copy,
                                     run_context,
                                 )
                                 for chunk in iterator:  # type: ignore
@@ -1643,7 +1755,6 @@ class Step:
                                     iterator = await self._acall_custom_function(
                                         self.active_executor,
                                         step_input,
-                                        session_state_copy,
                                         run_context,
                                     )
                                     async for chunk in iterator:  # type: ignore
@@ -1683,14 +1794,12 @@ class Step:
                             result = await self._acall_custom_function(
                                 self.active_executor,
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
                         else:
                             result = self._call_custom_function(
                                 self.active_executor,  # type: ignore[arg-type]
                                 step_input,
-                                session_state_copy,
                                 run_context,
                             )
 
@@ -1722,12 +1831,20 @@ class Step:
                             use_team_logger()
 
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
+                            await asyncio.to_thread(self._convert_image_artifacts_to_images, step_input.images)
+                            if step_input.images
+                            else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
+                            await asyncio.to_thread(self._convert_video_artifacts_to_videos, step_input.videos)
+                            if step_input.videos
+                            else None
                         )
-                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        audios = (
+                            await asyncio.to_thread(self._convert_audio_artifacts_to_audio, step_input.audio)
+                            if step_input.audio
+                            else None
+                        )
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -1781,7 +1898,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             run_context=run_context,
                             run_id=executor_run_id,
@@ -1812,10 +1929,12 @@ class Step:
                         response = await self._aexecute_nested_workflow(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             background_tasks=background_tasks,
                         )
 
@@ -1863,6 +1982,7 @@ class Step:
         session_state: Optional[Dict[str, Any]] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional["WorkflowSession"] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -1872,6 +1992,9 @@ class Step:
         add_session_state_to_context: Optional[bool] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
         """Execute the step with event-driven streaming support"""
+
+        # Shallow-copy run_context so options resolved here don't leak into the next step
+        run_context = copy(run_context) if run_context is not None else None
 
         if step_input.previous_step_outputs:
             step_input.previous_step_content = step_input.get_last_step_content()
@@ -1907,6 +2030,7 @@ class Step:
                 log_debug(f"Async step {self.name} streaming attempt {attempt + 1}/{self.max_retries + 1}")
                 final_response = None
 
+                await self._arehydrate_step_input_media(step_input, self._resolve_media_storage(workflow_media_storage))
                 if self._executor_type == "function":
                     log_debug(f"Executing async function executor for step: {self.name}")
 
@@ -1917,7 +2041,6 @@ class Step:
                         iterator = await self._acall_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         async for event in iterator:  # type: ignore
@@ -1953,7 +2076,6 @@ class Step:
                         result = await self._acall_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         if isinstance(result, StepOutput):
@@ -1968,7 +2090,6 @@ class Step:
                         iterator = self._call_custom_function(
                             self.active_executor,
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         for event in iterator:  # type: ignore
@@ -2007,7 +2128,6 @@ class Step:
                         result = self._call_custom_function(
                             self.active_executor,  # type: ignore[arg-type]
                             step_input,
-                            session_state_copy,
                             run_context,
                         )
                         if isinstance(result, StepOutput):
@@ -2035,12 +2155,20 @@ class Step:
                             use_team_logger()
 
                         images = (
-                            self._convert_image_artifacts_to_images(step_input.images) if step_input.images else None
+                            await asyncio.to_thread(self._convert_image_artifacts_to_images, step_input.images)
+                            if step_input.images
+                            else None
                         )
                         videos = (
-                            self._convert_video_artifacts_to_videos(step_input.videos) if step_input.videos else None
+                            await asyncio.to_thread(self._convert_video_artifacts_to_videos, step_input.videos)
+                            if step_input.videos
+                            else None
                         )
-                        audios = self._convert_audio_artifacts_to_audio(step_input.audio) if step_input.audio else None
+                        audios = (
+                            await asyncio.to_thread(self._convert_audio_artifacts_to_audio, step_input.audio)
+                            if step_input.audio
+                            else None
+                        )
 
                         kwargs: Dict[str, Any] = {}
                         if isinstance(self.active_executor, Team):
@@ -2094,7 +2222,7 @@ class Step:
                             audio=audios,
                             files=step_input.files,
                             session_id=session_id,
-                            user_id=user_id,
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             session_state=session_state_copy,
                             stream=True,
                             stream_events=stream_events,
@@ -2146,10 +2274,12 @@ class Step:
                         async for event in self._aexecute_nested_workflow_stream(
                             step_input=step_input,
                             session_id=session_id,
-                            user_id=user_id,
+                            # Workflow.run takes no run_context, so the owner travels as an argument
+                            user_id=run_context.user_id if run_context is not None else user_id,
                             workflow_run_response=workflow_run_response,
                             session_state=session_state_copy,
                             store_executor_outputs=store_executor_outputs,
+                            workflow_media_storage=workflow_media_storage,
                             stream_events=stream_events,
                             background_tasks=background_tasks,
                         ):
@@ -2308,7 +2438,7 @@ class Step:
             log_warning(f"Step '{self.name}': executor produced no response to store")
             return
         if self._executor_type in ["agent", "team"]:
-            # propogate the workflow run id as parent run id to the executor response
+            # propagate the workflow run id as parent run id to the executor response
             executor_run_response.parent_run_id = workflow_run_response.run_id
             executor_run_response.workflow_step_id = self.step_id
 
@@ -2486,10 +2616,36 @@ class Step:
         """Convert AudioArtifact objects to Audio objects"""
         audios = []
         for audio_artifact in audio_artifacts:
-            if audio_artifact.url:
-                audios.append(Audio(url=audio_artifact.url))
+            # An offloaded audio carries only its reference, so that is checked first.
+            if audio_artifact.media_reference is not None:
+                audios.append(
+                    Audio(
+                        content=audio_artifact.content,
+                        media_reference=audio_artifact.media_reference,
+                        url=audio_artifact.url,
+                        id=audio_artifact.id,
+                        format=audio_artifact.format,
+                        mime_type=audio_artifact.mime_type,
+                    )
+                )
+            elif audio_artifact.url:
+                audios.append(
+                    Audio(
+                        url=audio_artifact.url,
+                        id=audio_artifact.id,
+                        format=audio_artifact.format,
+                        mime_type=audio_artifact.mime_type,
+                    )
+                )
             elif audio_artifact.content:
-                audios.append(Audio(content=audio_artifact.content))
+                audios.append(
+                    Audio(
+                        content=audio_artifact.content,
+                        id=audio_artifact.id,
+                        format=audio_artifact.format,
+                        mime_type=audio_artifact.mime_type,
+                    )
+                )
             else:
                 logger.warning(f"Skipping AudioArtifact with no URL or content: {audio_artifact}")
                 continue
@@ -2545,6 +2701,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute a nested workflow as a step (non-streaming)"""
@@ -2570,6 +2727,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 background_tasks=background_tasks,
             )
         finally:
@@ -2583,6 +2741,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Inner implementation of sync non-streaming nested workflow execution"""
@@ -2595,6 +2754,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow: {self.workflow.name}")
+        self._rehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -2661,6 +2821,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2687,6 +2848,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 stream_events=stream_events,
                 background_tasks=background_tasks,
             )
@@ -2701,6 +2863,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> Iterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2715,6 +2878,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow (streaming): {self.workflow.name}")
+        self._rehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -2814,6 +2978,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Execute a nested workflow as a step asynchronously (non-streaming)"""
@@ -2839,6 +3004,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 background_tasks=background_tasks,
             )
         finally:
@@ -2852,6 +3018,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Inner implementation of async non-streaming nested workflow execution"""
@@ -2864,6 +3031,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow (async): {self.workflow.name}")
+        await self._arehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -2930,6 +3098,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2956,6 +3125,7 @@ class Step:
                 workflow_run_response=workflow_run_response,
                 session_state=session_state,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
                 stream_events=stream_events,
                 background_tasks=background_tasks,
             ):
@@ -2971,6 +3141,7 @@ class Step:
         workflow_run_response: Optional["WorkflowRunOutput"] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         stream_events: bool = False,
         background_tasks: Optional[Any] = None,
     ) -> AsyncIterator[Union[WorkflowRunOutputEvent, StepOutput]]:
@@ -2985,6 +3156,7 @@ class Step:
         message = self._prepare_message(step_input.input, step_input.previous_step_outputs)
 
         log_debug(f"Executing nested workflow (async streaming): {self.workflow.name}")
+        await self._arehydrate_step_input_media(step_input, workflow_media_storage)
 
         nested_run_id = str(uuid4())
         if workflow_run_response is not None and workflow_run_response.run_id:
@@ -3076,6 +3248,110 @@ class Step:
             steps=nested_steps if nested_steps else None,
         )
 
+    def _resolve_media_storage(
+        self, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+    ) -> Optional[Union[MediaStorage, AsyncMediaStorage]]:
+        """The executor's own backend, falling back to the workflow's.
+
+        Fallback, never override: an executor configured with its own backend has stated where its
+        objects belong. Resolved per execution because the executor is shared across workflows.
+        """
+        return getattr(self.active_executor, "media_storage", None) or workflow_media_storage
+
+    @staticmethod
+    def _step_input_media(step_input: StepInput) -> List[Any]:
+        """Every media kind a step receives, files included."""
+        media: List[Any] = []
+        for field_name in ("images", "videos", "audio", "files"):
+            media.extend(getattr(step_input, field_name, None) or [])
+        return media
+
+    def _requires_media_bytes(self) -> bool:
+        """Whether this executor needs the bytes rather than a url it can fetch.
+
+        A function reads ``content`` directly. A nested workflow runs with its own
+        ``media_storage`` — usually unset — so its inner steps cannot read the object back.
+        """
+        return self._executor_type in ["function", "workflow"]
+
+    def _rehydrate_step_input_media(
+        self, step_input: StepInput, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+    ) -> None:
+        """Read offloaded media back so the executor receives bytes, not an empty pointer."""
+        if workflow_media_storage is None:
+            return
+        for media in self._step_input_media(step_input):
+            self._rehydrate(media, workflow_media_storage, require_bytes=self._requires_media_bytes())
+
+    async def _arehydrate_step_input_media(
+        self, step_input: StepInput, workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]]
+    ) -> None:
+        """Async variant of :meth:`_rehydrate_step_input_media`."""
+        if workflow_media_storage is None:
+            return
+        for media in self._step_input_media(step_input):
+            await self._arehydrate(media, workflow_media_storage, require_bytes=self._requires_media_bytes())
+
+    @staticmethod
+    def _rehydrate(
+        media: Any,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]],
+        require_bytes: bool = False,
+    ) -> None:
+        """Read an offloaded object's bytes back so the executor can actually see it.
+
+        A durable url is enough for a model executor, which fetches it; ``require_bytes`` is for a
+        function executor, which reads ``content`` and cannot follow a link.
+        """
+        if media_storage is None or media.media_reference is None or media.content is not None:
+            return
+        if media.url and not require_bytes:
+            return
+
+        from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import reference_matches_storage
+
+        # An async backend on a sync run is a configuration error, not something to fall back from.
+        if isinstance(media_storage, AsyncMediaStorage):
+            raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+        if not reference_matches_storage(media.media_reference, media_storage):
+            log_warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            return
+
+        try:
+            media.content = media_storage.download(media.media_reference.storage_key)
+        except Exception as e:
+            log_warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+
+    @staticmethod
+    async def _arehydrate(
+        media: Any,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]],
+        require_bytes: bool = False,
+    ) -> None:
+        """Async variant of :meth:`_rehydrate`."""
+        if media_storage is None or media.media_reference is None or media.content is not None:
+            return
+        if media.url and not require_bytes:
+            return
+
+        from agno.media.storage.base import AsyncMediaStorage
+        from agno.utils.media_offload import reference_matches_storage
+
+        if not reference_matches_storage(media.media_reference, media_storage):
+            log_warning(f"Media {getattr(media, 'id', '?')} was stored on another backend, skipping")
+            return
+
+        try:
+            key = media.media_reference.storage_key
+            if isinstance(media_storage, AsyncMediaStorage):
+                media.content = await media_storage.download(key)
+            else:
+                media.content = await asyncio.to_thread(media_storage.download, key)
+        except Exception as e:
+            log_warning(f"Could not read stored media {getattr(media, 'id', '?')} back: {e}")
+
     def _convert_image_artifacts_to_images(self, image_artifacts: List[Image]) -> List[Image]:
         """
         Convert ImageArtifact objects to Image objects with proper content handling.
@@ -3092,12 +3368,30 @@ class Step:
         images = []
         for i, img_artifact in enumerate(image_artifacts):
             # Create Image object with proper data from ImageArtifact
-            if img_artifact.url:
-                images.append(Image(url=img_artifact.url))
+            # An offloaded image carries only its reference, so that is checked first.
+            if img_artifact.media_reference is not None:
+                images.append(
+                    Image(
+                        content=img_artifact.content,
+                        media_reference=img_artifact.media_reference,
+                        url=img_artifact.url,
+                        id=img_artifact.id,
+                        format=img_artifact.format,
+                        mime_type=img_artifact.mime_type,
+                    )
+                )
+
+            elif img_artifact.url:
+                images.append(Image(url=img_artifact.url, id=img_artifact.id, mime_type=img_artifact.mime_type))
 
             elif img_artifact.filepath:
-                # Pass through filepath-based images directly
-                image_kwargs: Dict[str, Any] = {"filepath": img_artifact.filepath}
+                # Pass through filepath-based images directly. id and mime_type carry over: Image() mints
+                # a fresh uuid when id is None, which re-stores identical bytes under a new key.
+                image_kwargs: Dict[str, Any] = {
+                    "filepath": img_artifact.filepath,
+                    "id": img_artifact.id,
+                    "mime_type": img_artifact.mime_type,
+                }
                 if img_artifact.format:
                     image_kwargs["format"] = img_artifact.format
                 if img_artifact.mime_type:
@@ -3123,7 +3417,11 @@ class Step:
                         actual_image_bytes = img_artifact.content
 
                     # Create Image object with proper format
-                    image_kwargs = {"content": actual_image_bytes}
+                    image_kwargs = {
+                        "content": actual_image_bytes,
+                        "id": img_artifact.id,
+                        "mime_type": img_artifact.mime_type,
+                    }
                     if img_artifact.mime_type:
                         # Convert mime_type to format (e.g., "image/png" -> "png")
                         if "/" in img_artifact.mime_type:
@@ -3157,14 +3455,48 @@ class Step:
         videos = []
         for i, video_artifact in enumerate(video_artifacts):
             # Create Video object with proper data from VideoArtifact
-            if video_artifact.url:
-                videos.append(Video(url=video_artifact.url))
+            # An offloaded video carries only its reference, so that is checked first.
+            if video_artifact.media_reference is not None:
+                videos.append(
+                    Video(
+                        content=video_artifact.content,
+                        media_reference=video_artifact.media_reference,
+                        url=video_artifact.url,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
+
+            elif video_artifact.url:
+                videos.append(
+                    Video(
+                        url=video_artifact.url,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
 
             elif video_artifact.filepath:
-                videos.append(Video(filepath=video_artifact.filepath))
+                videos.append(
+                    Video(
+                        filepath=video_artifact.filepath,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
 
             elif video_artifact.content:
-                videos.append(Video(content=video_artifact.content))
+                videos.append(
+                    Video(
+                        content=video_artifact.content,
+                        id=video_artifact.id,
+                        format=video_artifact.format,
+                        mime_type=video_artifact.mime_type,
+                    )
+                )
 
             else:
                 # Skip videos that have neither URL, filepath, nor content

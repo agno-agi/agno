@@ -12,7 +12,7 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
 from agno.os.scopes import (
     AgentOSScope,
     check_route_scopes,
@@ -28,10 +28,6 @@ if TYPE_CHECKING:
     from jwt import PyJWK
 
     from agno.os.service_accounts import ServiceAccountVerifier
-
-# The user_id the internal scheduler token authenticates as. Reserved: a JWT must never
-# be allowed to claim it (see is_reserved_principal).
-INTERNAL_SCHEDULER_USER_ID = "__scheduler__"
 
 # Private request.state marker set only by this middleware once it has decided a request's
 # auth. The mount short-circuit reads THIS, not the public request.state.authenticated
@@ -385,12 +381,7 @@ def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
     WebSocket config resolution) must use this predicate to tell a JWT-validating
     instance from the plain auth layer, so the two checks cannot drift.
     """
-    return bool(
-        kwargs.get("verification_keys")
-        or kwargs.get("jwks_file")
-        or kwargs.get("secret_key")
-        or kwargs.get("validate") is False
-    )
+    return bool(kwargs.get("verification_keys") or kwargs.get("jwks_file") or kwargs.get("validate") is False)
 
 
 def build_jwt_middleware_kwargs(

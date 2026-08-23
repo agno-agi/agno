@@ -36,13 +36,16 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from os import getenv
 from textwrap import dedent
-from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, Callable, Dict, Iterator, List, Optional, Sequence, Tuple, Union
 from weakref import WeakKeyDictionary
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.schemas import EntityMemory
 from agno.learn.stores.protocol import LearningStore
-from agno.learn.utils import build_learning_id, values_match_query
+from agno.learn.utils import (
+    build_learning_id,
+    values_match_query,
+)
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -147,10 +150,11 @@ def _message_terms(message: str, max_terms: int = 8) -> List[str]:
     return terms
 
 
-# The DB key is entity_{namespace}_{entity_type}_{entity_id}, so type drift
-# splits entities exactly like name drift: "person" on Monday and "people" on
-# Friday is two Sarahs. Fold case and singularize against this canonical list;
-# anything else passes through lowercased.
+# The DB key is entity_{namespace}_{entity_type}_{entity_id} (with a digest of
+# the user id after "user" for that namespace), so type drift splits entities
+# exactly like name drift: "person" on Monday and "people" on Friday is two
+# Sarahs. Fold case and singularize against this canonical list; anything else
+# passes through lowercased.
 _CANONICAL_ENTITY_TYPES = frozenset({"person", "project", "company", "system", "product"})
 # The placeholder link_entities mints for an endpoint it has never been told
 # about; it is the one type that merges into a real one.
@@ -159,7 +163,13 @@ _IRREGULAR_ENTITY_TYPES = {"people": "person", "persons": "person", "companies":
 
 
 def _normalize_entity_type(entity_type: Optional[str]) -> Optional[str]:
-    if entity_type is None or not entity_type.strip():
+    # entity_type also arrives from a row's stored content, which is arbitrary
+    # JSON over the REST create route, so it is not always a string here.
+    if entity_type is None:
+        return None
+    if not isinstance(entity_type, str):
+        entity_type = str(entity_type)
+    if not entity_type.strip():
         return entity_type
     normalized = re.sub(r"\s+", "_", entity_type.strip().lower())
     if normalized in _CANONICAL_ENTITY_TYPES:
@@ -1602,7 +1612,9 @@ class EntityMemoryStore(LearningStore):
             # A minimal entity created by link_entities acquires its real type;
             # the row key embeds the type, so the old row must be replaced.
             if entity_obj.entity_type == _UNKNOWN_ENTITY_TYPE and normalized_type != _UNKNOWN_ENTITY_TYPE:
-                stale_row_key = self._build_entity_db_id(entity_obj.entity_id, entity_obj.entity_type, namespace)
+                stale_row_key = self._build_entity_db_id(
+                    entity_obj.entity_id, entity_obj.entity_type, namespace, user_id=user_id
+                )
                 entity_obj.entity_type = normalized_type
 
             # Remember the name variant this write arrived under, bounded so the
@@ -2078,7 +2090,9 @@ class EntityMemoryStore(LearningStore):
             if not saved:
                 return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
             if detached is not None:
-                self._detach_far_edge(entity_obj=entity_obj, edge=detached)
+                self._detach_far_edge(
+                    entity_obj=entity_obj, edge=detached, user_id=user_id, namespace=effective_namespace
+                )
             self.entity_updated = True
         return result
 
@@ -2123,7 +2137,9 @@ class EntityMemoryStore(LearningStore):
                 if not saved:
                     return f"Failed to update {entity_obj.entity_type}/{entity_obj.entity_id}."
                 if detached is not None:
-                    await self._adetach_far_edge(entity_obj=entity_obj, edge=detached)
+                    await self._adetach_far_edge(
+                        entity_obj=entity_obj, edge=detached, user_id=user_id, namespace=effective_namespace
+                    )
                 self.entity_updated = True
         return result
 
@@ -2454,17 +2470,22 @@ class EntityMemoryStore(LearningStore):
             return None
         return kept
 
-    def _detach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
+    def _detach_far_edge(
+        self, entity_obj: EntityMemory, edge: Dict[str, Any], user_id: Optional[str], namespace: str
+    ) -> None:
         """Drop the reciprocal edge, so the graph does not go one-sided.
 
         Best effort: a far end that cannot be loaded or saved leaves a dangling
         incoming edge, which renders as a name and misleads nobody.
+
+        user_id and namespace are the run's values: under the "user" namespace
+        they are part of the far row's key, and a legacy row's content-recorded
+        user can differ from the row's owner.
         """
-        namespace = entity_obj.namespace or self.config.namespace
         far = self.get(
             entity_id=str(edge.get("entity_id", "")),
             entity_type=str(edge.get("entity_type", "")),
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             namespace=namespace,
         )
         if far is None:
@@ -2476,23 +2497,24 @@ class EntityMemoryStore(LearningStore):
         far.updated_at = _utc_now_iso()
         self._save_entity(
             entity=far,
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             agent_id=entity_obj.agent_id,
             team_id=entity_obj.team_id,
             namespace=namespace,
         )
 
-    async def _adetach_far_edge(self, entity_obj: EntityMemory, edge: Dict[str, Any]) -> None:
+    async def _adetach_far_edge(
+        self, entity_obj: EntityMemory, edge: Dict[str, Any], user_id: Optional[str], namespace: str
+    ) -> None:
         """Async version of _detach_far_edge.
 
         The sync helpers no-op against an AsyncBaseDb, which left the far end
         holding an edge the near end had already dropped.
         """
-        namespace = entity_obj.namespace or self.config.namespace
         far = await self.aget(
             entity_id=str(edge.get("entity_id", "")),
             entity_type=str(edge.get("entity_type", "")),
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             namespace=namespace,
         )
         if far is None:
@@ -2504,7 +2526,7 @@ class EntityMemoryStore(LearningStore):
         far.updated_at = _utc_now_iso()
         await self._asave_entity(
             entity=far,
-            user_id=entity_obj.user_id,
+            user_id=user_id,
             agent_id=entity_obj.agent_id,
             team_id=entity_obj.team_id,
             namespace=namespace,
@@ -2881,6 +2903,9 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.get: namespace='user' requires user_id")
+            return None
 
         try:
             result = db.get_learning(
@@ -2912,6 +2937,9 @@ class EntityMemoryStore(LearningStore):
             return None
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.aget: namespace='user' requires user_id")
+            return None
 
         try:
             if isinstance(self.db, AsyncBaseDb):
@@ -3088,7 +3116,12 @@ class EntityMemoryStore(LearningStore):
             merged.append(entity)
         return merged[:limit]
 
-    def _parse_rows(self, rows: List[Dict[str, Any]], limit: int, include_archived: bool) -> List[EntityMemory]:
+    def _parse_rows(
+        self,
+        rows: List[Dict[str, Any]],
+        limit: int,
+        include_archived: bool,
+    ) -> List[EntityMemory]:
         entities: List[EntityMemory] = []
         for row in rows:
             entity = self.schema.from_dict(row.get("content"))
@@ -3237,7 +3270,12 @@ class EntityMemoryStore(LearningStore):
                         limit=fetch,
                     )
                 rows = rows or []
-                entities = self._filter_rows_by_query(rows, query=query, limit=limit, include_archived=include_archived)
+                entities = self._filter_rows_by_query(
+                    rows,
+                    query=query,
+                    limit=limit,
+                    include_archived=include_archived,
+                )
                 if len(entities) >= limit or len(rows) < fetch:
                     break
         except NotImplementedError:
@@ -3318,7 +3356,12 @@ class EntityMemoryStore(LearningStore):
         except Exception as e:
             log_debug(f"EntityMemoryStore._search_client_side failed: {e}")
             return []
-        return self._filter_rows_by_query(results or [], query=query, limit=limit, include_archived=include_archived)
+        return self._filter_rows_by_query(
+            results or [],
+            query=query,
+            limit=limit,
+            include_archived=include_archived,
+        )
 
     async def _asearch_client_side(
         self,
@@ -3350,10 +3393,19 @@ class EntityMemoryStore(LearningStore):
         except Exception as e:
             log_debug(f"EntityMemoryStore._asearch_client_side failed: {e}")
             return []
-        return self._filter_rows_by_query(results or [], query=query, limit=limit, include_archived=include_archived)
+        return self._filter_rows_by_query(
+            results or [],
+            query=query,
+            limit=limit,
+            include_archived=include_archived,
+        )
 
     def _filter_rows_by_query(
-        self, rows: List[Dict[str, Any]], query: str, limit: int, include_archived: bool
+        self,
+        rows: List[Dict[str, Any]],
+        query: str,
+        limit: int,
+        include_archived: bool,
     ) -> List[EntityMemory]:
         entities: List[EntityMemory] = []
         for row in rows:
@@ -3390,15 +3442,29 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> bool:
-        """Hard-delete an entity from the store (data API - not exposed as a tool)."""
+        """Hard-delete an entity from the store (data API - not exposed as a tool).
+
+        Under namespace "user", user_id names whose entity to delete; without it
+        the call is refused rather than allowed to touch another user's row. It is
+        keyword-only because get() places user_id third, and a positional user id
+        here would silently be read as a namespace.
+        """
         db = self._sync_db()
         if db is None:
             return False
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.delete: namespace='user' requires user_id")
+            return False
+        row_id = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            return False
         try:
-            return bool(db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)))
+            return bool(db.delete_learning(id=row_id))
         except Exception as e:
             log_debug(f"EntityMemoryStore.delete failed: {e}")
             return False
@@ -3408,22 +3474,24 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: Optional[str] = None,
+        *,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Async version of delete."""
         if not self.db:
             return False
 
         effective_namespace = namespace or self.config.namespace
+        if effective_namespace == "user" and not user_id:
+            log_warning("EntityMemoryStore.adelete: namespace='user' requires user_id")
+            return False
+        row_id = self._build_entity_db_id(entity_id, entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            return False
         try:
             if isinstance(self.db, AsyncBaseDb):
-                return bool(
-                    await self.db.delete_learning(
-                        id=self._build_entity_db_id(entity_id, entity_type, effective_namespace)
-                    )
-                )
-            return bool(
-                self.db.delete_learning(id=self._build_entity_db_id(entity_id, entity_type, effective_namespace))
-            )
+                return bool(await self.db.delete_learning(id=row_id))
+            return bool(self.db.delete_learning(id=row_id))
         except Exception as e:
             log_debug(f"EntityMemoryStore.adelete failed: {e}")
             return False
@@ -3446,6 +3514,10 @@ class EntityMemoryStore(LearningStore):
             return False
 
         effective_namespace = namespace or self.config.namespace
+        row_id = self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            log_warning("EntityMemoryStore._save_entity: namespace='user' requires user_id; nothing was saved")
+            return False
 
         try:
             content = entity.to_dict()
@@ -3453,7 +3525,7 @@ class EntityMemoryStore(LearningStore):
                 return False
 
             db.upsert_learning(
-                id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                id=row_id,
                 learning_type=self.learning_type,
                 entity_id=entity.entity_id,
                 entity_type=entity.entity_type,
@@ -3483,6 +3555,10 @@ class EntityMemoryStore(LearningStore):
             return False
 
         effective_namespace = namespace or self.config.namespace
+        row_id = self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace, user_id=user_id)
+        if row_id is None:
+            log_warning("EntityMemoryStore._asave_entity: namespace='user' requires user_id; nothing was saved")
+            return False
 
         try:
             content = entity.to_dict()
@@ -3491,7 +3567,7 @@ class EntityMemoryStore(LearningStore):
 
             if isinstance(self.db, AsyncBaseDb):
                 await self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=row_id,
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3503,7 +3579,7 @@ class EntityMemoryStore(LearningStore):
                 )
             else:
                 self.db.upsert_learning(
-                    id=self._build_entity_db_id(entity.entity_id, entity.entity_type, effective_namespace),
+                    id=row_id,
                     learning_type=self.learning_type,
                     entity_id=entity.entity_id,
                     entity_type=entity.entity_type,
@@ -3529,11 +3605,16 @@ class EntityMemoryStore(LearningStore):
         entity_id: str,
         entity_type: str,
         namespace: str,
-    ) -> str:
-        """Build unique DB ID for entity."""
-        return cast(
-            str,
-            build_learning_id("entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace),
+        user_id: Optional[str] = None,
+    ) -> Optional[str]:
+        """Build unique DB ID for entity.
+
+        Under namespace "user" the id embeds the user, so user_id is required
+        there; returns None when it is missing, and callers must refuse the
+        operation rather than let a None id reach the database.
+        """
+        return build_learning_id(
+            "entity_memory", entity_id=entity_id, entity_type=entity_type, namespace=namespace, user_id=user_id
         )
 
     def _format_entity_basic(self, entity: Any) -> str:

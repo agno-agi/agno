@@ -790,7 +790,7 @@ class SortOrder(str, Enum):
 
 
 class PaginationInfo(BaseModel):
-    page: int = Field(0, description="Current page number (0-indexed)", ge=0)
+    page: int = Field(0, description="Current page number (1-indexed)", ge=0)
     limit: int = Field(20, description="Number of items per page", ge=1)
     total_pages: int = Field(0, description="Total number of pages", ge=0)
     total_count: int = Field(0, description="Total count of items", ge=0)
@@ -808,6 +808,18 @@ class ComponentType(str, Enum):
     AGENT = "agent"
     TEAM = "team"
     WORKFLOW = "workflow"
+
+
+class ComponentGuard(BaseModel):
+    """Optional compare-and-set guard for component writes.
+
+    When present, each non-None field is checked against the stored state and
+    the write is rejected with 409 on mismatch. None fields skip that half of
+    the check; omitting the guard keeps the write last-writer-wins.
+    """
+
+    latest_version: Optional[int] = Field(None, description="Expected latest config version")
+    current_version: Optional[int] = Field(None, description="Expected current (published) version")
 
 
 class ComponentCreate(BaseModel):
@@ -830,11 +842,14 @@ class ComponentResponse(BaseModel):
     component_id: str
     component_type: ComponentType
     name: Optional[str] = None
+    user_id: Optional[str] = None
     description: Optional[str] = None
     current_version: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
     updated_at: Optional[int] = None
+    # Set only on archived (soft-deleted) rows, so a mixed list can label them.
+    deleted_at: Optional[int] = None
 
 
 class ConfigCreate(BaseModel):
@@ -845,6 +860,7 @@ class ConfigCreate(BaseModel):
     notes: Optional[str] = Field(None, description="Optional notes")
     links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
     set_current: bool = Field(True, description="Set as current version")
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class ComponentConfigResponse(BaseModel):
@@ -864,6 +880,7 @@ class ComponentUpdate(BaseModel):
     component_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     current_version: Optional[int] = None
+    guard: Optional[ComponentGuard] = None
 
 
 class ConfigUpdate(BaseModel):
@@ -872,6 +889,24 @@ class ConfigUpdate(BaseModel):
     stage: Optional[str] = None
     notes: Optional[str] = None
     links: Optional[List[Dict[str, Any]]] = None
+    guard: Optional[ComponentGuard] = None
+
+
+class SetCurrentRequest(BaseModel):
+    """Body for set-current. Optional: an empty POST keeps working."""
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
+
+
+class ComponentDeleteRequest(BaseModel):
+    """Body for delete. Optional: a bodyless DELETE keeps working.
+
+    Delete also accepts the guard as an ``expected_current_version`` query
+    param; this shape exists so the guard reads the same as on every other
+    guarded component route instead of being silently ignored here.
+    """
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class RegistryResourceType(str, Enum):
@@ -885,9 +920,11 @@ class RegistryResourceType(str, Enum):
     FUNCTION = "function"
     AGENT = "agent"
     TEAM = "team"
+    WORKFLOW = "workflow"
     KNOWLEDGE = "knowledge"
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
+    LEARNING = "learning"
 
 
 class CallableMetadata(BaseModel):

@@ -1,7 +1,107 @@
+"""Schemas and shared constants for the scheduler.
+
+The constants live here rather than in ``agno.os`` because ``agno[scheduler]`` does not depend on fastapi.
+"""
+
+import re
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
 from agno.utils.dttm import now_epoch_s, to_epoch_s
+
+# Header the executor stamps with the schedule's owner, so routes scope the call to the owner
+# instead of the caller. Only honoured once the internal service token has authenticated the caller.
+SCHEDULE_OWNER_HEADER: str = "X-Schedule-Owner"
+
+# The user_id the internal scheduler token authenticates as. Reserved: a JWT may never claim it
+# (see ``is_reserved_principal``) and it may not own a schedule.
+INTERNAL_SCHEDULER_USER_ID: str = "__scheduler__"
+
+# Matches a run endpoint and captures resource type + ID. ``\Z`` rather than ``$`` so a trailing
+# newline can't slip past the run-endpoint check.
+RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?\Z")
+
+
+def build_run_endpoint(target_type: str, target_id: str) -> str:
+    """Build the canonical run endpoint for a component.
+
+    The single builder for every surface that constructs or compares a run
+    endpoint, so builder and parser cannot drift: ``RUN_ENDPOINT_RE`` accepts an
+    optional trailing slash, and a hand-built ``f"/{type}s/{id}/runs"`` compared
+    with ``==`` silently misses those rows. Callers matching a stored endpoint
+    must normalise it the same way - see ``match_run_endpoint``.
+    """
+    return f"/{target_type}s/{target_id}/runs"
+
+
+def match_run_endpoint(endpoint: str, target_type: str, target_id: str) -> bool:
+    """True when ``endpoint`` addresses that component's run route.
+
+    Tolerates the trailing slash ``RUN_ENDPOINT_RE`` accepts, so a schedule
+    stored as ``/agents/x/runs/`` is still recognised as targeting agent ``x``.
+    """
+    return endpoint.rstrip("/") == build_run_endpoint(target_type, target_id)
+
+
+# Marker for builder-managed schedules; generic surfaces may filter on it.
+STUDIO_SCHEDULE_MANAGED_BY = "studio"
+
+# Run-metadata key recording which component version a run was started with.
+# Written by the run-start routes when the caller pins a version explicitly
+# (draft preview); read back by the lifecycle routes so a paused/completed run
+# continues on the SAME version instead of whatever is current by then.
+COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
+
+
+def strip_reserved_run_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """A component's stored metadata without the keys the runtime owns.
+
+    ``agno_component_version`` records which version a run actually started
+    with, and the lifecycle routes trust it to continue a run on that same
+    version. Component metadata is merged OVER call-site metadata, so a stored
+    config carrying this key would both forge a stamp onto runs that were never
+    pinned and overwrite the one the route just wrote. Configs are user-supplied
+    and round-trip through the catalog, so the key is stripped where it enters
+    the object rather than trusted not to be there.
+    """
+    if not isinstance(metadata, dict) or COMPONENT_VERSION_METADATA_KEY not in metadata:
+        return metadata
+    cleaned = {key: value for key, value in metadata.items() if key != COMPONENT_VERSION_METADATA_KEY}
+    return cleaned or None
+
+
+# The columns a generic update_schedule may write. Everything else - ownership,
+# provenance, trigger and lock state - moves only through dedicated primitives,
+# so a name-keyed upsert can never repoint who a schedule belongs to or which
+# runs wrote it. user_id stays a WHERE filter in the adapters, never a SET
+# column, which is why it is not in this set.
+SCHEDULE_MUTABLE_COLUMNS = frozenset(
+    {
+        "name",
+        "description",
+        "method",
+        "endpoint",
+        "payload",
+        "cron_expr",
+        "timezone",
+        "timeout_seconds",
+        "max_retries",
+        "retry_delay_seconds",
+        "enabled",
+        "next_run_at",
+        "disabled_reason",
+    }
+)
+
+
+def validate_schedule_update(kwargs: dict) -> None:
+    """Refuse update_schedule writes outside the mutable column set."""
+    rejected = sorted(set(kwargs) - SCHEDULE_MUTABLE_COLUMNS)
+    if rejected:
+        raise ValueError(
+            f"update_schedule cannot modify {rejected}: only {sorted(SCHEDULE_MUTABLE_COLUMNS)} are mutable; "
+            "ownership, provenance, trigger and lock state move only through their dedicated APIs"
+        )
 
 
 @dataclass
@@ -23,6 +123,23 @@ class Schedule:
     next_run_at: Optional[int] = None
     locked_by: Optional[str] = None
     locked_at: Optional[int] = None
+    # Owner of this schedule, from the JWT sub when ``user_isolation`` is on. ``None`` for
+    # system-created ones. Routes scope on this column; the executor poller fires across all users.
+    user_id: Optional[str] = None
+    # Which control plane manages this row: "studio" for builder-created
+    # schedules, None for generic/code-registered ones. Provenance columns
+    # record the exact component target and the runs that wrote the row, so
+    # an operator can always answer "who scheduled this, at what".
+    managed_by: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    created_by_run_id: Optional[str] = None
+    created_by_session_id: Optional[str] = None
+    updated_by_run_id: Optional[str] = None
+    updated_by_session_id: Optional[str] = None
+    # Why the schedule is disabled, when the system did it (for example
+    # "target_archived:agent:analyst-v2-5"). Cleared by enable.
+    disabled_reason: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
@@ -53,6 +170,15 @@ class Schedule:
             "next_run_at": self.next_run_at,
             "locked_by": self.locked_by,
             "locked_at": self.locked_at,
+            "user_id": self.user_id,
+            "managed_by": self.managed_by,
+            "target_type": self.target_type,
+            "target_id": self.target_id,
+            "created_by_run_id": self.created_by_run_id,
+            "created_by_session_id": self.created_by_session_id,
+            "updated_by_run_id": self.updated_by_run_id,
+            "updated_by_session_id": self.updated_by_session_id,
+            "disabled_reason": self.disabled_reason,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -76,6 +202,15 @@ class Schedule:
             "next_run_at",
             "locked_by",
             "locked_at",
+            "user_id",
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+            "disabled_reason",
             "created_at",
             "updated_at",
         }
@@ -100,6 +235,9 @@ class ScheduleRun:
     input: Optional[Dict[str, Any]] = None
     output: Optional[Dict[str, Any]] = None
     requirements: Optional[List[Dict[str, Any]]] = None
+    # Denormalised from the parent ``Schedule.user_id`` so the runs router can scope by owner
+    # without a JOIN. Populated by the executor when it creates the run.
+    user_id: Optional[str] = None
     created_at: Optional[int] = None
 
     def __post_init__(self) -> None:
@@ -125,6 +263,7 @@ class ScheduleRun:
             "input": self.input,
             "output": self.output,
             "requirements": self.requirements,
+            "user_id": self.user_id,
             "created_at": self.created_at,
         }
 
@@ -145,6 +284,7 @@ class ScheduleRun:
             "input",
             "output",
             "requirements",
+            "user_id",
             "created_at",
         }
         filtered = {k: v for k, v in data.items() if k in valid_keys}

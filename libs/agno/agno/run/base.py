@@ -1,3 +1,4 @@
+from copy import copy
 from dataclasses import asdict, dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
@@ -6,8 +7,8 @@ from pydantic import BaseModel
 
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message, MessageReferences
-from agno.models.metrics import RunMetrics
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
 
@@ -72,36 +73,44 @@ class _EventIndexCarrier:
 
 @dataclass
 class BaseRunOutputEvent(_EventIndexCarrier):
+    # Fields hand-serialized in to_dict below (when the subclass has them);
+    # nulled on a shallow copy before asdict so their deep recursive
+    # serialization never runs only to be discarded.
+    _HAND_SERIALIZED_FIELDS = (
+        "tools",
+        "tool",
+        "metadata",
+        "image",
+        "images",
+        "videos",
+        "audio",
+        "response_audio",
+        "citations",
+        "member_responses",
+        "reasoning_messages",
+        "reasoning_steps",
+        "references",
+        "additional_input",
+        "session_summary",
+        "metrics",
+        "run_input",
+        "requirements",
+        "tasks",
+        "memories",
+        "followups",
+    )
+
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "tools",
-                "tool",
-                "metadata",
-                "image",
-                "images",
-                "videos",
-                "audio",
-                "response_audio",
-                "citations",
-                "member_responses",
-                "reasoning_messages",
-                "reasoning_steps",
-                "references",
-                "additional_input",
-                "session_summary",
-                "metrics",
-                "run_input",
-                "requirements",
-                "tasks",
-                "memories",
-                "followups",
-            ]
-        }
+        light_copy = copy(self)
+        for field_name in self._HAND_SERIALIZED_FIELDS:
+            if hasattr(light_copy, field_name):
+                setattr(light_copy, field_name, None)
+        light_content = getattr(light_copy, "content", None)
+        if light_content and isinstance(light_content, BaseModel):
+            # Re-serialized below via model_dump under the same truthiness
+            # condition; asdict would deep-copy it here for nothing
+            setattr(light_copy, "content", None)
+        _dict = {k: v for k, v in asdict(light_copy).items() if v is not None}
 
         # Not a dataclass field (3.9-compatible class attribute - see its
         # declaration), so asdict() misses it: carry it explicitly

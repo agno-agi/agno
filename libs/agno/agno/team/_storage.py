@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
     from agno.team.team import Team
 
@@ -20,7 +21,13 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
+from agno.agent._storage import (
+    is_auto_generated_memory_manager_id,
+    resolve_learning_reference,
+    resolve_memory_manager_reference,
+)
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
@@ -55,6 +62,30 @@ from agno.utils.string import generate_id_from_name
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
+
+
+def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
+    """The offload_tool_results setting as it is stored: True, False, or the ResultStore settings."""
+    from agno.offload.store import ResultStore
+
+    if value is True or value is False:
+        return value
+    if isinstance(value, ResultStore):
+        return value.to_dict()
+    raise TypeError(
+        "offload_tool_results must be True, False, None or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+    )
+
+
+def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
+    """The offload_tool_results setting from a stored config: unset, True, False, or a ResultStore."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        from agno.offload.store import ResultStore
+
+        return ResultStore.from_dict(value)
+    return bool(value)
 
 
 def get_run_output(
@@ -294,12 +325,9 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
     from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
-    if (
-        team._cached_session is not None
-        and team._cached_session.session_id == session_id
-        and (user_id is None or team._cached_session.user_id == user_id)
-    ):
-        return team._cached_session
+    cached_session = team._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     team_session = None
@@ -349,7 +377,7 @@ def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
-        team._cached_session = team_session
+        team._set_cached_session(team_session)
 
     return team_session
 
@@ -367,12 +395,9 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
     from agno.team._telemetry import get_team_data
 
     # Return existing session if we have one
-    if (
-        team._cached_session is not None
-        and team._cached_session.session_id == session_id
-        and (user_id is None or team._cached_session.user_id == user_id)
-    ):
-        return team._cached_session
+    cached_session = team._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     team_session = None
@@ -430,7 +455,7 @@ async def _aread_or_create_session(team: "Team", session_id: str, user_id: Optio
 
     # Cache the session if relevant
     if team_session is not None and team.cache_session:
-        team._cached_session = team_session
+        team._set_cached_session(team_session)
 
     return team_session
 
@@ -698,9 +723,24 @@ def to_dict(team: "Team") -> Dict[str, Any]:
         config["parse_response"] = team.parse_response
 
     # --- Memory settings ---
-    # TODO: implement memory manager serialization
-    # if team.memory_manager is not None:
-    #     config["memory_manager"] = team.memory_manager.to_dict()
+    # Stored as a registry reference by id, like knowledge: the manager holds
+    # a model and callables, so the config names it and the registry supplies
+    # the live object on load. An auto-generated id is minted fresh every
+    # process, so it can never resolve in a new one: writing it would poison
+    # every future strict load. Only a stable, user-assigned id is referenced.
+    if team.memory_manager is not None:
+        memory_manager_id = getattr(team.memory_manager, "id", None)
+        if memory_manager_id and not is_auto_generated_memory_manager_id(memory_manager_id):
+            config["memory_manager"] = {"registry_id": memory_manager_id}
+        elif team.enable_agentic_memory or team.update_memory_on_run:
+            # The default manager initialize_team builds; it rebuilds itself
+            # from these flags on load, so there is nothing to reference.
+            log_debug("Team memory_manager has an auto-generated id; not saved, the default rebuilds on load.")
+        else:
+            log_warning(
+                "Team memory_manager has no stable id, so it cannot be referenced across processes and will "
+                "not be saved. Give the manager an explicit id and register it in the registry to keep it."
+            )
     if team.enable_agentic_memory:
         config["enable_agentic_memory"] = team.enable_agentic_memory
     if team.update_memory_on_run:
@@ -716,11 +756,19 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     #     config["session_summary_manager"] = team.session_summary_manager.to_dict()
 
     # --- Learning settings ---
+    # A named machine is a registry resource: stored as a reference by name,
+    # like knowledge, and resolved from the registry on load. Its config is
+    # never inlined, so a stored component cannot carry learning the deployer
+    # did not declare. An unnamed machine belongs to this component and is
+    # inlined in full.
     if team.learning is not None:
+        learning_name = getattr(team.learning, "name", None)
         if team.learning is True:
             config["learning"] = True
         elif team.learning is False:
             config["learning"] = False
+        elif isinstance(learning_name, str) and learning_name:
+            config["learning"] = {"name": learning_name}
         elif hasattr(team.learning, "to_dict"):
             config["learning"] = team.learning.to_dict()
         else:
@@ -751,13 +799,15 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     # --- Compression settings ---
     if team.compress_tool_results:
         config["compress_tool_results"] = team.compress_tool_results
+
+    # --- Result offloading settings ---
+    if team.offload_tool_results is not None:
+        config["offload_tool_results"] = _offload_to_config(team.offload_tool_results)
     # TODO: implement compression manager serialization
     # if team.compression_manager is not None:
     #     config["compression_manager"] = team.compression_manager.to_dict()
 
     # --- Reasoning settings ---
-    if team.reasoning:
-        config["reasoning"] = team.reasoning
     if team.reasoning_model is not None:
         # Mirrors the agent side. from_dict does not read this back yet
         # (#9452), so it is not round-tripped -- but without it the field is
@@ -767,10 +817,6 @@ def to_dict(team: "Team") -> Dict[str, Any]:
             config["reasoning_model"] = team.reasoning_model.to_dict()
         else:
             config["reasoning_model"] = str(team.reasoning_model)
-    if team.reasoning_min_steps != 1:  # default is 1
-        config["reasoning_min_steps"] = team.reasoning_min_steps
-    if team.reasoning_max_steps != 10:  # default is 10
-        config["reasoning_max_steps"] = team.reasoning_max_steps
 
     # --- Streaming settings ---
     if team.stream is not None:
@@ -819,7 +865,10 @@ def _deserialize_learning(value: Any) -> Any:
     if isinstance(value, dict):
         from agno.learn.machine import LearningMachine
 
-        return LearningMachine.from_dict(value)
+        # An inline machine belongs to this component: a name on it is dropped
+        # so the rebuilt machine keeps round-tripping inline instead of being
+        # re-saved as a reference to a machine no registry declares.
+        return LearningMachine.from_dict({key: item for key, item in value.items() if key != "name"})
     return value
 
 
@@ -922,6 +971,11 @@ def from_dict(
     members: Optional[List[Union[Agent, "Team"]]] = None
     from agno.agent import get_agent_by_id
     from agno.team import get_team_by_id
+    from agno.utils.component_scope import get_component_owner_scope
+
+    # Resolve DB-backed members as the component owner when a scope is set, so a stored
+    # reference to another user's private component is not rehydrated here.
+    owner_user_id = get_component_owner_scope()
 
     # Member versions pinned by this team version's links (written by save()).
     pinned_versions: Dict[str, Optional[int]] = {}
@@ -950,6 +1004,7 @@ def from_dict(
                             db=db,
                             version=pinned,
                             registry=registry,
+                            user_id=owner_user_id,
                             strict=strict,
                         )
                         if db is not None
@@ -979,7 +1034,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        agent = get_agent_by_id(id=agent_id, db=db, registry=registry, strict=False)
+                        agent = get_agent_by_id(
+                            id=agent_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined agent registered in the registry.
                 # These are legitimately not persisted as DB components (e.g. agents
                 # passed to AgentOS(agents=[...])), so a DB lookup returns nothing.
@@ -1013,6 +1070,7 @@ def from_dict(
                             db=db,
                             version=pinned,
                             registry=registry,
+                            user_id=owner_user_id,
                             strict=strict,
                         )
                         if db is not None
@@ -1042,7 +1100,9 @@ def from_dict(
                         "was not found in the db; loading the member's current version instead."
                     )
                     if db is not None:
-                        nested_team = get_team_by_id(id=team_id, db=db, registry=registry, strict=False)
+                        nested_team = get_team_by_id(
+                            id=team_id, db=db, registry=registry, strict=False, user_id=owner_user_id
+                        )
                 # Fall back to a code-defined team registered in the registry.
                 # Deep copy so the shared registry singleton isn't mutated on run.
                 if nested_team is None and registry is not None:
@@ -1074,13 +1134,8 @@ def from_dict(
                 log_warning(f"Team member of unknown type skipped: {member_type!r}")
 
     # --- Handle reasoning_model reconstruction ---
-    # TODO: implement reasoning model deserialization
-    # if "reasoning_model" in config:
-    #     model_data = config["reasoning_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["reasoning_model"] = get_model(model_data)
+    if config.get("reasoning_model") is not None:
+        config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -1185,10 +1240,7 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    # TODO: implement memory manager deserialization
-    # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-    #     from agno.memory import MemoryManager
-    #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+    resolve_memory_manager_reference(config, registry, strict, component_label)
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
@@ -1226,21 +1278,11 @@ def from_dict(
     #     from agno.compression.manager import CompressionManager
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
-    if "search_session_history" in config:
-        log_debug("'search_session_history' has been deprecated. Use 'search_past_sessions' instead.")
-        config.pop("search_session_history", None)
-
-    if "num_history_sessions" in config:
-        log_debug("'num_history_sessions' has been deprecated. Use 'num_past_sessions_to_search' instead.")
-        config.pop("num_history_sessions", None)
-
-    if "enable_user_memories" in config:
-        log_debug("'enable_user_memories' has been deprecated. Use 'update_memory_on_run' instead.")
-        config.pop("enable_user_memories", None)
-
-    if "num_past_session_runs" in config:
-        log_debug("'num_past_session_runs' has been deprecated. Use 'num_past_session_runs_in_search' instead.")
-        config.pop("num_past_session_runs", None)
+    # --- Handle Learning reconstruction ---
+    # A named machine is stored as a reference and resolved from the registry
+    # here; an inline machine config is rebuilt by _deserialize_learning in
+    # the constructor call below.
+    resolve_learning_reference(config, registry, strict, component_label)
 
     team = cast(
         "Team",
@@ -1322,7 +1364,7 @@ def from_dict(
             use_json_mode=config.get("use_json_mode", False),
             parse_response=config.get("parse_response", True),
             # --- Memory settings ---
-            # memory_manager=config.get("memory_manager"),  # TODO
+            memory_manager=config.get("memory_manager"),
             enable_agentic_memory=config.get("enable_agentic_memory", False),
             update_memory_on_run=config.get("update_memory_on_run", False),
             add_memories_to_context=config.get("add_memories_to_context"),
@@ -1340,11 +1382,10 @@ def from_dict(
             # --- Compression settings ---
             compress_tool_results=config.get("compress_tool_results", False),
             # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Result offloading settings ---
+            offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
             # --- Reasoning settings ---
-            reasoning=config.get("reasoning", False),
-            # reasoning_model=config.get("reasoning_model"),  # TODO
-            reasoning_min_steps=config.get("reasoning_min_steps", 1),
-            reasoning_max_steps=config.get("reasoning_max_steps", 10),
+            reasoning_model=config.get("reasoning_model"),
             # --- Streaming settings ---
             stream=config.get("stream"),
             stream_events=config.get("stream_events"),
@@ -1361,7 +1402,7 @@ def from_dict(
             delay_between_retries=config.get("delay_between_retries", 1),
             exponential_backoff=config.get("exponential_backoff", False),
             # --- Metadata ---
-            metadata=config.get("metadata"),
+            metadata=strip_reserved_run_metadata(config.get("metadata")),
             # --- Debug and telemetry settings ---
             debug_mode=config.get("debug_mode", False),
             debug_level=config.get("debug_level", 1),
@@ -1552,6 +1593,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional["Team"]:
     """
     Load a team by id, with hydrated members.
@@ -1567,6 +1609,15 @@ def load(
     Returns:
         The team loaded from the database with hydrated members, or None if not found.
     """
+    if published_only and version is None and label is None:
+        # Dispatch semantics on demand: resolve strictly through the live
+        # pointer instead of the current-or-latest-draft read fallback.
+        component_row = db.get_component(component_id=id)
+        current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+        if current_version is None:
+            return None
+        version = current_version
+
     # Use graph to load team + all members in a single DB call
     graph = db.load_component_graph(id, version=version, label=label)
     if graph is None:
@@ -1580,6 +1631,7 @@ def delete(
     *,
     db: Optional["BaseDb"] = None,
     hard_delete: bool = False,
+    require_no_dependents: bool = True,
 ) -> bool:
     """
     Delete the team component.
@@ -1587,9 +1639,17 @@ def delete(
     Args:
         db: The database to delete the component from.
         hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse when another component pins this one.
+            The default protects a composition from losing a member it cannot
+            rebuild; pass False to delete anyway and leave those parents
+            pointing at nothing.
 
     Returns:
-        True if the component was deleted, False otherwise.
+        True if the component was deleted, False if there was nothing to delete.
+
+    Raises:
+        ComponentDependencyError: If another component pins this one and
+            require_no_dependents is True.
     """
     db_ = db or team.db
     if not db_:
@@ -1599,7 +1659,9 @@ def delete(
     if team.id is None:
         raise ValueError("Cannot delete team without an id")
 
-    return db_.delete_component(component_id=team.id, hard_delete=hard_delete)
+    return db_.delete_component(
+        component_id=team.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+    )
 
 
 def get_session_metrics(team: "Team", session_id: Optional[str] = None):

@@ -110,6 +110,12 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": String, "nullable": True},
+    # Uploader. NULL means shared: visible to every user.
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "__composite_indexes__": [
+        # Covers the list query, WHERE (user_id = :uid OR user_id IS NULL) AND linked_to = :name.
+        {"name": "ix_knowledge_user_linked_to", "columns": ["user_id", "linked_to"]},
+    ],
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -125,28 +131,18 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSONB, "nullable": False, "default": {}},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": String, "nullable": False},
+    # Owner of this bucket. Empty string for no owner, since Postgres treats NULLs as distinct and the
+    # unique constraint below would not hold. get_metrics maps it back to None.
+    "user_id": {"type": String, "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
+            "name": "uq_metrics_user_date_period",
+            "columns": ["user_id", "date", "aggregation_period"],
         }
     ],
-}
-
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "name": {"type": String, "nullable": False, "index": True},
-    "summary": {"type": Text, "nullable": True},
-    "content": {"type": JSONB, "nullable": True},
-    "metadata": {"type": JSONB, "nullable": True},
-    "input": {"type": Text, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
 }
 
 VERSIONS_TABLE_SCHEMA = {
@@ -208,6 +204,7 @@ COMPONENT_TABLE_SCHEMA = {
     "component_id": {"type": String, "primary_key": True},
     "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
     "name": {"type": String, "nullable": True, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "description": {"type": Text, "nullable": True},
     "current_version": {"type": Integer, "nullable": True, "index": True},
     "metadata": {"type": JSONB, "nullable": True},
@@ -282,10 +279,31 @@ SCHEDULE_TABLE_SCHEMA = {
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
+    # Which control plane manages this row ("studio" for builder-created ones)
+    # plus the exact component target and writing-run provenance. Nullable so
+    # legacy rows need only the ALTERs in the v3 migration.
+    "managed_by": {"type": String, "nullable": True, "index": True},
+    "target_type": {"type": String, "nullable": True},
+    "target_id": {"type": String, "nullable": True, "index": True},
+    "created_by_run_id": {"type": String, "nullable": True},
+    "created_by_session_id": {"type": String, "nullable": True},
+    "updated_by_run_id": {"type": String, "nullable": True},
+    "updated_by_session_id": {"type": String, "nullable": True},
+    "disabled_reason": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+        {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
+    ],
+    # Names are unique per owner. The router's check-then-insert races under
+    # concurrent creates, so the DB backs it with two partial unique indexes
+    # (NULLs are distinct in a plain unique constraint, and SQLite cannot drop
+    # a table-level constraint, so named partial indexes cover both buckets).
+    "_partial_unique_indexes": [
+        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "user_id IS NOT NULL"},
+        {"name": "uq_unowned_name", "columns": ["name"], "where": "user_id IS NULL"},
     ],
 }
 
@@ -314,8 +332,36 @@ def _get_schedule_runs_table_schema(
         "input": {"type": JSONB, "nullable": True},
         "output": {"type": JSONB, "nullable": True},
         "requirements": {"type": JSONB, "nullable": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
+
+
+TOOL_RESULTS_TABLE_SCHEMA = {
+    "result_id": {"type": String, "primary_key": True, "nullable": False},
+    "namespace": {"type": String, "nullable": False},
+    "path": {"type": String, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    "run_id": {"type": String, "nullable": False},
+    "tool_call_id": {"type": String, "nullable": False},
+    "tool_name": {"type": String, "nullable": False},
+    "args_hash": {"type": String, "nullable": False},
+    "content_type": {"type": String, "nullable": False},
+    "size_bytes": {"type": BigInteger, "nullable": False},
+    "line_count": {"type": BigInteger, "nullable": False},
+    "preview": {"type": Text, "nullable": False},
+    "user_id": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "expires_at": {"type": BigInteger, "nullable": True, "index": True},
+    "_unique_constraints": [
+        # Two result ids must never point at one payload.
+        {"name": "uq_tool_results_namespace_path", "columns": ["namespace", "path"]},
+    ],
+    "__composite_indexes__": [
+        # Session cleanup and the newest-first listing.
+        {"name": "session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
 
 
 JOBS_TABLE_SCHEMA = {
@@ -470,7 +516,6 @@ def get_table_schema_definition(
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "components": COMPONENT_TABLE_SCHEMA,
@@ -479,6 +524,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "jobs": JOBS_TABLE_SCHEMA,
+        "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

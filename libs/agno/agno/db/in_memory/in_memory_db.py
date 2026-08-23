@@ -8,16 +8,19 @@ from agno.db.base import BaseDb, SessionType
 from agno.db.in_memory.utils import (
     apply_sorting,
     calculate_date_metrics,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
-from agno.db.utils import deserialize_session, deserialize_sessions, filter_context_runs
+from agno.db.utils import (
+    deserialize_session,
+    deserialize_sessions,
+    drop_legacy_metrics,
+    filter_context_runs,
+    metrics_starting_date_from_records,
+)
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -30,13 +33,13 @@ class InMemoryDb(BaseDb):
         """Interface for in-memory storage."""
         super().__init__()
 
-        # Initialize in-memory storage dictionaries
-        self._sessions: List[Dict[str, Any]] = []
+        # Initialize in-memory storage. Sessions are keyed by session_id so
+        # id lookups (get/upsert/delete) stay O(1) as the store grows.
+        self._sessions: Dict[str, Dict[str, Any]] = {}
         self._memories: List[Dict[str, Any]] = []
         self._metrics: List[Dict[str, Any]] = []
         self._eval_runs: List[Dict[str, Any]] = []
         self._knowledge: List[Dict[str, Any]] = []
-        self._cultural_knowledge: List[Dict[str, Any]] = []
         self._schema_versions: Dict[str, str] = {}
 
     def table_exists(self, table_name: str) -> bool:
@@ -70,14 +73,9 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            original_count = len(self._sessions)
-            self._sessions = [
-                s
-                for s in self._sessions
-                if not (s.get("session_id") == session_id and (user_id is None or s.get("user_id") == user_id))
-            ]
-
-            if len(self._sessions) < original_count:
+            session = self._sessions.get(session_id)
+            if session is not None and (user_id is None or session.get("user_id") == user_id):
+                del self._sessions[session_id]
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
             else:
@@ -99,11 +97,10 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs during deletion.
         """
         try:
-            self._sessions = [
-                s
-                for s in self._sessions
-                if not (s.get("session_id") in session_ids and (user_id is None or s.get("user_id") == user_id))
-            ]
+            for session_id in session_ids:
+                session = self._sessions.get(session_id)
+                if session is not None and (user_id is None or session.get("user_id") == user_id):
+                    del self._sessions[session_id]
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -135,26 +132,23 @@ class InMemoryDb(BaseDb):
             Exception: If an error occurs while reading the session.
         """
         try:
-            for session_data in self._sessions:
-                if session_data.get("session_id") == session_id:
-                    if user_id is not None and session_data.get("user_id") != user_id:
-                        continue
+            session_data = self._sessions.get(session_id)
+            if session_data is None:
+                return None
+            if user_id is not None and session_data.get("user_id") != user_id:
+                return None
 
-                    session_data_copy = deepcopy(session_data)
+            session_data_copy = deepcopy(session_data)
 
-                    if runs_limit is not None:
-                        # No query engine to push "last N" down: filter+slice in memory to
-                        # match the SQL fast path (drop member/skip-status runs, then last N).
-                        session_data_copy["runs"] = filter_context_runs(session_data_copy.get("runs") or [])[
-                            -runs_limit:
-                        ]
+            if runs_limit is not None:
+                # No query engine to push "last N" down: filter+slice in memory to
+                # match the SQL fast path (drop member/skip-status runs, then last N).
+                session_data_copy["runs"] = filter_context_runs(session_data_copy.get("runs") or [])[-runs_limit:]
 
-                    if not deserialize:
-                        return session_data_copy
+            if not deserialize:
+                return session_data_copy
 
-                    return deserialize_session(session_type, session_data_copy)
-
-            return None
+            return deserialize_session(session_type, session_data_copy)
 
         except Exception as e:
             import traceback
@@ -204,7 +198,7 @@ class InMemoryDb(BaseDb):
         try:
             # Apply filters
             filtered_sessions = []
-            for session_data in self._sessions:
+            for session_data in self._sessions.values():
                 if user_id is not None and session_data.get("user_id") != user_id:
                     continue
                 if component_id is not None:
@@ -272,29 +266,26 @@ class InMemoryDb(BaseDb):
         deserialize: Optional[bool] = True,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
-            for i, session in enumerate(self._sessions):
-                if session.get("session_id") != session_id:
-                    continue
-                if session_type is not None and session.get("session_type") != session_type.value:
-                    continue
-                if user_id is not None and session.get("user_id") != user_id:
-                    continue
-                # Update session name in session_data
-                if "session_data" not in session or session["session_data"] is None:
-                    session["session_data"] = {}
-                session["session_data"]["session_name"] = session_name
+            session = self._sessions.get(session_id)
+            if session is None:
+                return None
+            if session_type is not None and session.get("session_type") != session_type.value:
+                return None
+            if user_id is not None and session.get("user_id") != user_id:
+                return None
 
-                self._sessions[i] = session
+            # Update session name in session_data
+            if "session_data" not in session or session["session_data"] is None:
+                session["session_data"] = {}
+            session["session_data"]["session_name"] = session_name
 
-                log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
+            log_debug(f"Renamed session with id '{session_id}' to '{session_name}'")
 
-                session_copy = deepcopy(session)
-                if not deserialize:
-                    return session_copy
+            session_copy = deepcopy(session)
+            if not deserialize:
+                return session_copy
 
-                return deserialize_session(session_type, session_copy)
-
-            return None
+            return deserialize_session(session_type, session_copy)
 
         except Exception as e:
             log_error(f"Exception renaming session: {str(e)}")
@@ -304,7 +295,11 @@ class InMemoryDb(BaseDb):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         try:
-            session_dict = session.to_dict()
+            # Serialize without runs: the runs list on the stored row is
+            # maintained incrementally by upsert_run, and re-serializing every
+            # run here would make each save cost grow with session length
+            # (the SQL adapters already serialize with include_runs=False).
+            session_dict = session.to_dict(include_runs=False)
 
             # Add session_type based on session instance type
             if isinstance(session, AgentSession):
@@ -314,26 +309,39 @@ class InMemoryDb(BaseDb):
             elif isinstance(session, WorkflowSession):
                 session_dict["session_type"] = SessionType.WORKFLOW.value
 
-            # Find existing session to update
-            session_updated = False
-            for i, existing_session in enumerate(self._sessions):
-                if existing_session.get("session_id") == session_dict.get("session_id") and self._matches_session_key(
-                    existing_session, session
-                ):
-                    existing_uid = existing_session.get("user_id")
-                    if existing_uid is not None and existing_uid != session_dict.get("user_id"):
-                        return None
-                    session_dict["updated_at"] = int(time.time())
-                    self._sessions[i] = deepcopy(session_dict)
-                    session_updated = True
-                    break
-
-            if not session_updated:
+            session_id = session_dict["session_id"]
+            existing_session = self._sessions.get(session_id)
+            if existing_session is not None:
+                # Owner guard, mirroring the SQL adapters' ON CONFLICT ... WHERE
+                # clause: an owned session is only writable by its owner; an
+                # unowned session can be claimed by anyone.
+                existing_uid = existing_session.get("user_id")
+                if existing_uid is not None and existing_uid != session_dict.get("user_id"):
+                    return None
+                session_dict["updated_at"] = int(time.time())
+                # A session-row update must never drop runs written by
+                # upsert_run: carry the stored list forward. The list is
+                # already owned by the store, so it needs no copy.
+                runs_for_store = existing_session.get("runs")
+            else:
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
-                self._sessions.append(deepcopy(session_dict))
+                # First insert: serialize whatever runs the incoming session
+                # carries, once (bulk import and restore callers never call
+                # upsert_run). to_dict output is freshly built, so it needs
+                # no defensive copy.
+                incoming_runs = session.runs
+                runs_for_store = (
+                    [run.to_dict() if hasattr(run, "to_dict") else deepcopy(run) for run in incoming_runs]
+                    if incoming_runs
+                    else None
+                )
 
-            session_dict_copy = deepcopy(session_dict)
+            stored_session = deepcopy(session_dict)
+            stored_session["runs"] = runs_for_store
+            self._sessions[session_id] = stored_session
+
+            session_dict_copy = deepcopy(stored_session)
             if not deserialize:
                 return session_dict_copy
 
@@ -347,16 +355,6 @@ class InMemoryDb(BaseDb):
         except Exception as e:
             log_error(f"Exception upserting session: {str(e)}")
             raise e
-
-    def _matches_session_key(self, existing_session: Dict[str, Any], session: Session) -> bool:
-        """Check if existing session matches the key for the session type."""
-        if isinstance(session, AgentSession):
-            return existing_session.get("agent_id") == session.agent_id
-        elif isinstance(session, TeamSession):
-            return existing_session.get("team_id") == session.team_id
-        elif isinstance(session, WorkflowSession):
-            return existing_session.get("workflow_id") == session.workflow_id
-        return False
 
     def upsert_sessions(
         self, sessions: List[Session], deserialize: Optional[bool] = True, preserve_updated_at: bool = False
@@ -402,7 +400,7 @@ class InMemoryDb(BaseDb):
     def _iter_session_runs(self) -> List[Tuple[Dict[str, Any], Dict[str, Any]]]:
         """Yield (session_dict, run_dict) pairs across all in-memory sessions."""
         pairs: List[Tuple[Dict[str, Any], Dict[str, Any]]] = []
-        for session in self._sessions:
+        for session in self._sessions.values():
             for run in session.get("runs") or []:
                 if isinstance(run, dict):
                     pairs.append((session, run))
@@ -494,28 +492,29 @@ class InMemoryDb(BaseDb):
             if run_id is None:
                 raise ValueError("Run must have a run_id")
 
-            for session in self._sessions:
-                if session.get("session_id") != session_id:
-                    continue
-                runs = session.setdefault("runs", [])
-                for i, existing in enumerate(runs):
-                    existing_id = (
-                        existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
-                    )
-                    if existing_id == run_id:
-                        # Preserve original run_index on update (matches SQL adapters)
-                        if isinstance(existing, dict) and "run_index" in existing:
-                            run_dict["run_index"] = existing["run_index"]
-                        runs[i] = run_dict
-                        break
-                else:
-                    if run_index is not None and "run_index" not in run_dict:
-                        run_dict["run_index"] = run_index
-                    runs.append(run_dict)
-                session["updated_at"] = int(time.time())
+            session = self._sessions.get(session_id)
+            if session is None:
+                log_debug(f"upsert_run: session {session_id} not found; skipping")
                 return
 
-            log_debug(f"upsert_run: session {session_id} not found; skipping")
+            # The stored row holds "runs": None until the first run lands
+            runs = session.get("runs") or []
+            session["runs"] = runs
+            for i, existing in enumerate(runs):
+                existing_id = (
+                    existing.get("run_id") if isinstance(existing, dict) else getattr(existing, "run_id", None)
+                )
+                if existing_id == run_id:
+                    # Preserve original run_index on update (matches SQL adapters)
+                    if isinstance(existing, dict) and "run_index" in existing:
+                        run_dict["run_index"] = existing["run_index"]
+                    runs[i] = run_dict
+                    break
+            else:
+                if run_index is not None and "run_index" not in run_dict:
+                    run_dict["run_index"] = run_index
+                runs.append(run_dict)
+            session["updated_at"] = int(time.time())
         except Exception as e:
             log_error(f"Error upserting run: {str(e)}")
             raise e
@@ -523,7 +522,7 @@ class InMemoryDb(BaseDb):
     def delete_run(self, run_id: str) -> bool:
         """Remove a run from its session by run_id."""
         try:
-            for session in self._sessions:
+            for session in self._sessions.values():
                 runs = session.get("runs") or []
                 new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") == run_id)]
                 if len(new_runs) != len(runs):
@@ -541,7 +540,7 @@ class InMemoryDb(BaseDb):
             return
         wanted = set(run_ids)
         try:
-            for session in self._sessions:
+            for session in self._sessions.values():
                 runs = session.get("runs") or []
                 new_runs = [r for r in runs if not (isinstance(r, dict) and r.get("run_id") in wanted)]
                 if len(new_runs) != len(runs):
@@ -868,9 +867,13 @@ class InMemoryDb(BaseDb):
                 log_info("Metrics already calculated for all relevant dates.")
                 return None
 
-            start_timestamp = int(datetime.combine(dates_to_process[0], datetime.min.time()).timestamp())
+            start_timestamp = int(
+                datetime.combine(dates_to_process[0], datetime.min.time()).replace(tzinfo=timezone.utc).timestamp()
+            )
             end_timestamp = int(
-                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time()).timestamp()
+                datetime.combine(dates_to_process[-1] + timedelta(days=1), datetime.min.time())
+                .replace(tzinfo=timezone.utc)
+                .timestamp()
             )
 
             sessions = self._get_all_sessions_for_metrics_calculation(start_timestamp, end_timestamp)
@@ -891,24 +894,24 @@ class InMemoryDb(BaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
+                # One metrics record per user_id: upsert each by (user_id, date, aggregation_period)
+                for metrics_record in calculate_date_metrics(date_to_process, sessions_for_date):
+                    existing_record_idx = None
+                    for i, existing_metric in enumerate(self._metrics):
+                        if (
+                            existing_metric.get("user_id") == metrics_record["user_id"]
+                            and existing_metric.get("date") == str(date_to_process)
+                            and existing_metric.get("aggregation_period") == "daily"
+                        ):
+                            existing_record_idx = i
+                            break
 
-                # Upsert metrics record
-                existing_record_idx = None
-                for i, existing_metric in enumerate(self._metrics):
-                    if (
-                        existing_metric.get("date") == str(date_to_process)
-                        and existing_metric.get("aggregation_period") == "daily"
-                    ):
-                        existing_record_idx = i
-                        break
+                    if existing_record_idx is not None:
+                        self._metrics[existing_record_idx] = metrics_record
+                    else:
+                        self._metrics.append(metrics_record)
 
-                if existing_record_idx is not None:
-                    self._metrics[existing_record_idx] = metrics_record
-                else:
-                    self._metrics.append(metrics_record)
-
-                results.append(metrics_record)
+                    results.append(metrics_record)
 
             log_debug("Updated metrics calculations")
 
@@ -920,21 +923,14 @@ class InMemoryDb(BaseDb):
 
     def _get_metrics_calculation_starting_date(self, metrics: List[Dict[str, Any]]) -> Optional[date]:
         """Get the first date for which metrics calculation is needed."""
-        if metrics:
-            # Sort by date in descending order
-            sorted_metrics = sorted(metrics, key=lambda x: x.get("date", ""), reverse=True)
-            latest_metric = sorted_metrics[0]
-
-            if latest_metric.get("completed", False):
-                latest_date = datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
-                return latest_date + timedelta(days=1)
-            else:
-                return datetime.strptime(latest_metric["date"], "%Y-%m-%d").date()
+        resume_date = metrics_starting_date_from_records(metrics)
+        if resume_date is not None:
+            return resume_date
 
         # No metrics records. Return the date of the first recorded session.
         if self._sessions:
             # Sort by created_at
-            sorted_sessions = sorted(self._sessions, key=lambda x: x.get("created_at", 0))
+            sorted_sessions = sorted(self._sessions.values(), key=lambda x: x.get("created_at", 0))
             first_session_date = sorted_sessions[0]["created_at"]
             return datetime.fromtimestamp(first_session_date, tz=timezone.utc).date()
 
@@ -946,7 +942,7 @@ class InMemoryDb(BaseDb):
         """Get all sessions for metrics calculation."""
         try:
             filtered_sessions = []
-            for session in self._sessions:
+            for session in self._sessions.values():
                 created_at = session.get("created_at", 0)
                 if start_timestamp is not None and created_at < start_timestamp:
                     continue
@@ -973,21 +969,36 @@ class InMemoryDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
-        """Get all metrics matching the given date range."""
+        """Get all metrics matching the given date range.
+
+        Args:
+            starting_date (Optional[date]): The starting date to filter metrics by.
+            ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): The ID of the user. If provided, only returns that user's records.
+        """
         try:
+            metrics = drop_legacy_metrics(self._metrics) if user_id is None else self._metrics
+
             filtered_metrics = []
             latest_updated_at = None
 
-            for metric in self._metrics:
+            for metric in metrics:
                 metric_date = datetime.strptime(metric.get("date", ""), "%Y-%m-%d").date()
 
                 if starting_date and metric_date < starting_date:
                     continue
                 if ending_date and metric_date > ending_date:
                     continue
+                if user_id is not None and metric.get("user_id") != user_id:
+                    continue
 
-                filtered_metrics.append(deepcopy(metric))
+                row = deepcopy(metric)
+                # Unowned sessions are bucketed under "": surface them as None
+                if row.get("user_id") == "":
+                    row["user_id"] = None
+                filtered_metrics.append(row)
 
                 updated_at = metric.get("updated_at")
                 if updated_at and (latest_updated_at is None or updated_at > latest_updated_at):
@@ -1001,27 +1012,42 @@ class InMemoryDb(BaseDb):
 
     # -- Knowledge methods --
 
-    def delete_knowledge_content(self, id: str):
+    @staticmethod
+    def _knowledge_item_is_visible(item: Dict[str, Any], user_id: Optional[str]) -> bool:
+        if user_id is None:
+            return True
+        owner = item.get("user_id")
+        return owner is None or owner == user_id
+
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from in-memory storage.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): The ID of the user. If provided, only deletes rows owned by this user.
+                Unowned rows are shared content and are never deleted by a scoped call.
 
         Raises:
             Exception: If an error occurs during deletion.
         """
         try:
-            self._knowledge = [item for item in self._knowledge if item.get("id") != id]
+            self._knowledge = [
+                item
+                for item in self._knowledge
+                if not (item.get("id") == id and (user_id is None or item.get("user_id") == user_id))
+            ]
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from in-memory storage.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this
+                user or unowned (shared) rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1031,7 +1057,7 @@ class InMemoryDb(BaseDb):
         """
         try:
             for item in self._knowledge:
-                if item.get("id") == id:
+                if item.get("id") == id and self._knowledge_item_is_visible(item, user_id):
                     return KnowledgeRow.model_validate(item)
 
             return None
@@ -1047,6 +1073,7 @@ class InMemoryDb(BaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from in-memory storage.
 
@@ -1056,6 +1083,8 @@ class InMemoryDb(BaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): The ID of the user. If provided, only returns rows owned by this
+                user or unowned (shared) rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1069,6 +1098,10 @@ class InMemoryDb(BaseDb):
             # Apply linked_to filter if provided
             if linked_to is not None:
                 knowledge_items = [item for item in knowledge_items if item.get("linked_to") == linked_to]
+
+            # Apply user_id filter if provided
+            if user_id is not None:
+                knowledge_items = [item for item in knowledge_items if self._knowledge_item_is_visible(item, user_id)]
 
             total_count = len(knowledge_items)
 
@@ -1107,6 +1140,9 @@ class InMemoryDb(BaseDb):
             item_updated = False
             for i, existing_item in enumerate(self._knowledge):
                 if existing_item.get("id") == knowledge_row.id:
+                    # A scoped write must not overwrite an item it does not own
+                    if knowledge_row.user_id is not None and existing_item.get("user_id") != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
                     self._knowledge[i] = knowledge_dict
                     item_updated = True
                     break
@@ -1289,120 +1325,6 @@ class InMemoryDb(BaseDb):
 
         except Exception as e:
             log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
-            raise e
-
-    # -- Culture methods --
-
-    def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from in-memory storage."""
-        try:
-            self._cultural_knowledge = []
-        except Exception as e:
-            log_error(f"Error clearing cultural knowledge: {str(e)}")
-            raise e
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural knowledge entry from in-memory storage."""
-        try:
-            self._cultural_knowledge = [ck for ck in self._cultural_knowledge if ck.get("id") != id]
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural knowledge entry from in-memory storage."""
-        try:
-            for ck_data in self._cultural_knowledge:
-                if ck_data.get("id") == id:
-                    ck_data_copy = deepcopy(ck_data)
-                    if not deserialize:
-                        return ck_data_copy
-                    return deserialize_cultural_knowledge_from_db(ck_data_copy)
-            return None
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge from in-memory storage."""
-        try:
-            filtered_ck = []
-            for ck_data in self._cultural_knowledge:
-                if name and ck_data.get("name") != name:
-                    continue
-                if agent_id and ck_data.get("agent_id") != agent_id:
-                    continue
-                if team_id and ck_data.get("team_id") != team_id:
-                    continue
-                filtered_ck.append(ck_data)
-
-            # Apply sorting
-            if sort_by:
-                filtered_ck = apply_sorting(filtered_ck, sort_by, sort_order)
-
-            total_count = len(filtered_ck)
-
-            # Apply pagination
-            if limit and page:
-                start = (page - 1) * limit
-                filtered_ck = filtered_ck[start : start + limit]
-            elif limit:
-                filtered_ck = filtered_ck[:limit]
-
-            if not deserialize:
-                return [deepcopy(ck) for ck in filtered_ck], total_count
-
-            return [deserialize_cultural_knowledge_from_db(deepcopy(ck)) for ck in filtered_ck]
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural knowledge entry into in-memory storage."""
-        try:
-            if not cultural_knowledge.id:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the item dict with serialized content
-            ck_dict = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            # Remove existing entry with same id
-            self._cultural_knowledge = [ck for ck in self._cultural_knowledge if ck.get("id") != cultural_knowledge.id]
-
-            # Add new entry
-            self._cultural_knowledge.append(ck_dict)
-
-            return self.get_cultural_knowledge(cultural_knowledge.id, deserialize=deserialize)
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
             raise e
 
     # --- Traces ---

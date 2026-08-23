@@ -19,7 +19,7 @@ Typical use:
 Mount it INSTEAD of StudioTools, not beside it. StudioTools embeds this same
 toolkit and already exposes list_agents/list_teams/list_workflows/run_agent,
 plus run_team and run_workflow once teams or workflows are enabled (an explicit
-agents_list enables both), and agno's tool namespace is flat: co-mounting
+include_agents enables both), and agno's tool namespace is flat: co-mounting
 collapses the overlapping names to
 whichever toolkit the tools list holds first, and a warning names the skipped
 one. Two runners scoped to different component lists collapse the same way, so
@@ -86,8 +86,8 @@ Semantics:
       you cannot run. Code-defined components arrive through the registry,
       which is passed so persisted components can rehydrate rather than to
       grant the runner the run of the application, so dispatching them is
-      opt-in via include_all_components. An explicit agents_list/teams_list/
-      workflows_list is itself the allowlist and always runs. 'total' reports
+      opt-in via include_all_components. An explicit include_agents/include_teams/
+      include_workflows is itself the allowlist and always runs. 'total' reports
       the full DB count, so a capped list is visible as capped.
 
 StudioTools embeds this toolkit for its own run_* tools and delegates its
@@ -99,7 +99,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
 
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.run import RunContext
@@ -167,6 +167,15 @@ class ComponentNotDispatchableError(StudioRunnerError, RuntimeError):
     Code-defined components reach the runner through the registry, which is
     passed so persisted components can rehydrate. Running them is opt-in
     (``include_all_components``)."""
+
+
+class ComponentNotPublishedError(ComponentNotDispatchableError):
+    """The identifier names a stored component with no published version.
+
+    Drafts are inert on dispatch surfaces: a
+    draft runs only through an explicit-version preview. Subclasses
+    ComponentNotDispatchableError so existing handlers keep working; kept
+    distinct so callers can map it to its own error code."""
 
 
 class DispatchCopyError(StudioRunnerError, RuntimeError):
@@ -239,9 +248,9 @@ class StudioRunnerTools(Toolkit):
         self,
         registry: Optional["Registry"] = None,
         db: Optional["BaseDb"] = None,
-        agents_list: Optional[List["Agent"]] = None,
-        teams_list: Optional[List["Team"]] = None,
-        workflows_list: Optional[List["Workflow"]] = None,
+        include_agents: Optional[List["Agent"]] = None,
+        include_teams: Optional[List["Team"]] = None,
+        include_workflows: Optional[List["Workflow"]] = None,
         agents: bool = True,
         teams: bool = True,
         workflows: bool = True,
@@ -251,12 +260,15 @@ class StudioRunnerTools(Toolkit):
         **kwargs: Any,
     ):
         self.registry = registry
-        self.db: Optional["BaseDb"] = (
-            db if db is not None else (registry.dbs[0] if registry is not None and registry.dbs else None)
-        )
-        self.agents_list = agents_list
-        self.teams_list = teams_list
-        self.workflows_list = workflows_list
+        # The explicit db wins; otherwise the registry's is adopted lazily on
+        # first access (see the db property). An __init__ snapshot would be
+        # wrong for the zero-config wiring: these toolkits are constructed
+        # before AgentOS, and AgentOS fills registry.dbs only afterwards, so
+        # snapshotting leaves every db-backed tool dark forever.
+        self._db: Optional["BaseDb"] = db
+        self.include_agents = include_agents
+        self.include_teams = include_teams
+        self.include_workflows = include_workflows
         self.enable_agents = agents
         self.enable_teams = teams
         self.enable_workflows = workflows
@@ -310,36 +322,53 @@ class StudioRunnerTools(Toolkit):
     # builder and the runner resolve components one way.
     # ------------------------------------------------------------------
 
+    @property
+    def db(self) -> Optional["BaseDb"]:
+        if self._db is not None or self.registry is None:
+            return self._db
+        # Resolved on every access, never memoized - see the twin on
+        # StudioTools: a read taken before AgentOS declares its catalog db
+        # would otherwise pin this toolkit to the wrong db permanently.
+        return self.registry.resolve_component_db()
+
+    @db.setter
+    def db(self, value: Optional["BaseDb"]) -> None:
+        self._db = value
+
     def _iter_agents(self, for_dispatch: bool = False) -> List["Agent"]:
         """Code-defined agents: passed-in list, else registry.
 
         The registry half is opt-in for dispatch (``include_all_components``).
         A registry is passed so persisted components can rehydrate their tools
         and members, which is not the same as consenting to run every agent the
-        application happens to define. An explicit ``agents_list`` is itself the
+        application happens to define. An explicit ``include_agents`` is itself the
         allowlist and always runs. ``list_*`` report exactly this admitted set
         alongside the database, so what can be run can be found.
         Lookups that are not dispatch (get, edit, members, steps) see the full
         set either way."""
-        if self.agents_list is not None:
-            return list(self.agents_list)
+        if self.include_agents is not None:
+            return list(self.include_agents)
         if for_dispatch and not self.include_all_components:
             return []
         return list(self.registry.agents) if self.registry is not None else []
 
     def _iter_teams(self, for_dispatch: bool = False) -> List["Team"]:
         """Code-defined teams: passed-in list, else registry (see _iter_agents)."""
-        if self.teams_list is not None:
-            return list(self.teams_list)
+        if self.include_teams is not None:
+            return list(self.include_teams)
         if for_dispatch and not self.include_all_components:
             return []
         return list(self.registry.teams) if self.registry is not None else []
 
     def _iter_workflows(self, for_dispatch: bool = False) -> List["Workflow"]:
-        """Code-defined workflows. Always an explicit list, so never gated."""
-        return list(self.workflows_list) if self.workflows_list is not None else []
+        """Code-defined workflows: passed-in list, else registry (see _iter_agents)."""
+        if self.include_workflows is not None:
+            return list(self.include_workflows)
+        if for_dispatch and not self.include_all_components:
+            return []
+        return list(self.registry.workflows) if self.registry is not None else []
 
-    def _find_agent(self, agent_id: str, for_dispatch: bool = False) -> Optional["Agent"]:
+    def _find_agent(self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None) -> Optional["Agent"]:
         """Lookup order: code-defined exact id, DB exact id, code-defined display
         name, DB display name (ambiguous -> AmbiguousComponentNameError), then
         the identifier's slug as an id. Exact ids always win over names.
@@ -347,76 +376,90 @@ class StudioRunnerTools(Toolkit):
         Split into an exact tier and a name tier so cross-type callers
         (StudioTools._resolve_members) can try exact ids across both types
         before any name matching."""
-        agent = self._find_agent_by_exact_id(agent_id, for_dispatch=for_dispatch)
+        agent = self._find_agent_by_exact_id(agent_id, for_dispatch=for_dispatch, actor=actor)
         if agent is not None:
             return agent
-        if self._db_component_exists("agent", agent_id):
+        if self._db_component_exists("agent", agent_id, actor=actor):
             # The id names a stored component whose config is missing or broken;
             # never reinterpret an exact id as a display name.
             return None
-        return self._find_agent_by_name(agent_id, for_dispatch=for_dispatch)
+        return self._find_agent_by_name(agent_id, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_agent_by_exact_id(self, agent_id: str, for_dispatch: bool = False) -> Optional["Agent"]:
+    def _find_agent_by_exact_id(
+        self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional["Agent"]:
         for a in self._iter_agents(for_dispatch=for_dispatch):
             if getattr(a, "id", None) == agent_id:
                 return a
-        return self._load_agent_from_db(agent_id, for_dispatch=for_dispatch)
+        return self._load_agent_from_db(agent_id, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_agent_by_name(self, agent_id: str, for_dispatch: bool = False) -> Optional["Agent"]:
+    def _find_agent_by_name(
+        self, agent_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional["Agent"]:
         named_agents = [a for a in self._iter_agents(for_dispatch=for_dispatch) if getattr(a, "name", None) == agent_id]
         if len(named_agents) > 1:
             raise AmbiguousComponentNameError("agent", agent_id, [str(getattr(a, "id", "")) for a in named_agents])
         if named_agents:
             return named_agents[0]
-        resolved = self._resolve_db_id_by_name_or_slug("agent", agent_id)
+        resolved = self._resolve_db_id_by_name_or_slug("agent", agent_id, actor=actor)
         if resolved is None:
             return None
         if for_dispatch:
             self._refuse_if_shadowed("agent", resolved, agent_id)
-        return self._load_agent_from_db(resolved, for_dispatch=for_dispatch)
+        return self._load_agent_from_db(resolved, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_team(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
-        team = self._find_team_by_exact_id(team_id, for_dispatch=for_dispatch)
+    def _find_team(self, team_id: str, for_dispatch: bool = False, actor: Optional[str] = None) -> Optional["Team"]:
+        team = self._find_team_by_exact_id(team_id, for_dispatch=for_dispatch, actor=actor)
         if team is not None:
             return team
-        if self._db_component_exists("team", team_id):
+        if self._db_component_exists("team", team_id, actor=actor):
             return None
-        return self._find_team_by_name(team_id, for_dispatch=for_dispatch)
+        return self._find_team_by_name(team_id, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_team_by_exact_id(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
+    def _find_team_by_exact_id(
+        self, team_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional["Team"]:
         for t in self._iter_teams(for_dispatch=for_dispatch):
             if getattr(t, "id", None) == team_id:
                 return t
-        return self._load_team_from_db(team_id, for_dispatch=for_dispatch)
+        return self._load_team_from_db(team_id, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_team_by_name(self, team_id: str, for_dispatch: bool = False) -> Optional["Team"]:
+    def _find_team_by_name(
+        self, team_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional["Team"]:
         named_teams = [t for t in self._iter_teams(for_dispatch=for_dispatch) if getattr(t, "name", None) == team_id]
         if len(named_teams) > 1:
             raise AmbiguousComponentNameError("team", team_id, [str(getattr(t, "id", "")) for t in named_teams])
         if named_teams:
             return named_teams[0]
-        resolved = self._resolve_db_id_by_name_or_slug("team", team_id)
+        resolved = self._resolve_db_id_by_name_or_slug("team", team_id, actor=actor)
         if resolved is None:
             return None
         if for_dispatch:
             self._refuse_if_shadowed("team", resolved, team_id)
-        return self._load_team_from_db(resolved, for_dispatch=for_dispatch)
+        return self._load_team_from_db(resolved, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_workflow(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
-        wf = self._find_workflow_by_exact_id(workflow_id, for_dispatch=for_dispatch)
+    def _find_workflow(
+        self, workflow_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional["Workflow"]:
+        wf = self._find_workflow_by_exact_id(workflow_id, for_dispatch=for_dispatch, actor=actor)
         if wf is not None:
             return wf
-        if self._db_component_exists("workflow", workflow_id):
+        if self._db_component_exists("workflow", workflow_id, actor=actor):
             return None
-        return self._find_workflow_by_name(workflow_id, for_dispatch=for_dispatch)
+        return self._find_workflow_by_name(workflow_id, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_workflow_by_exact_id(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
+    def _find_workflow_by_exact_id(
+        self, workflow_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional["Workflow"]:
         for w in self._iter_workflows(for_dispatch=for_dispatch):
             if getattr(w, "id", None) == workflow_id:
                 return w
-        return self._load_workflow_from_db(workflow_id, for_dispatch=for_dispatch)
+        return self._load_workflow_from_db(workflow_id, for_dispatch=for_dispatch, actor=actor)
 
-    def _find_workflow_by_name(self, workflow_id: str, for_dispatch: bool = False) -> Optional["Workflow"]:
+    def _find_workflow_by_name(
+        self, workflow_id: str, for_dispatch: bool = False, actor: Optional[str] = None
+    ) -> Optional["Workflow"]:
         named_workflows = [
             w for w in self._iter_workflows(for_dispatch=for_dispatch) if getattr(w, "name", None) == workflow_id
         ]
@@ -426,12 +469,12 @@ class StudioRunnerTools(Toolkit):
             )
         if named_workflows:
             return named_workflows[0]
-        resolved = self._resolve_db_id_by_name_or_slug("workflow", workflow_id)
+        resolved = self._resolve_db_id_by_name_or_slug("workflow", workflow_id, actor=actor)
         if resolved is None:
             return None
         if for_dispatch:
             self._refuse_if_shadowed("workflow", resolved, workflow_id)
-        return self._load_workflow_from_db(resolved, for_dispatch=for_dispatch)
+        return self._load_workflow_from_db(resolved, for_dispatch=for_dispatch, actor=actor)
 
     # run_* execute code-defined components on a fresh copy, so per-run
     # mutation never bleeds across callers. DB-loaded components are
@@ -763,14 +806,47 @@ class StudioRunnerTools(Toolkit):
             "or run the code-defined one by its id."
         )
 
-    def _refuse_if_only_reachable_with_include_all(self, component_type: str, identifier: str) -> None:
+    def _refuse_if_stored_draft_only(self, component_type: str, identifier: str, actor: Optional[str] = None) -> None:
+        """A stored component with no published version is not a registry
+        problem: drafts are inert on dispatch surfaces.
+        Diagnose it first, or the include-all message below blames the
+        registry for a component that only needs publishing."""
+        if self.db is None:
+            return
+        from agno.db.base import ComponentType
+
+        resolved = identifier if self._db_component_exists(component_type, identifier, actor=actor) else None
+        if resolved is None:
+            try:
+                resolved = self._resolve_db_id_by_name_or_slug(component_type, identifier, actor=actor)
+            except AmbiguousComponentNameError:
+                raise
+            except Exception:
+                return
+        if resolved is None:
+            return
+        try:
+            row = self.db.get_component(resolved, component_type=ComponentType(component_type), user_id=actor)
+        except NotImplementedError:
+            return
+        if row is not None and row.get("current_version") is None:
+            raise ComponentNotPublishedError(
+                f"{component_type.capitalize()} '{resolved}' exists but has no published version, and drafts "
+                "do not run on dispatch surfaces. Publish it (publish_component), or preview the draft by "
+                "running it with an explicit version."
+            )
+
+    def _refuse_if_only_reachable_with_include_all(
+        self, component_type: str, identifier: str, actor: Optional[str] = None
+    ) -> None:
         """Turn "not found" into the real reason when the identifier does name a
         component, but one this runner may not dispatch."""
+        self._refuse_if_stored_draft_only(component_type, identifier, actor=actor)
         if self.include_all_components:
             return
         finder = {"agent": self._find_agent, "team": self._find_team, "workflow": self._find_workflow}[component_type]
         try:
-            if finder(identifier) is None:
+            if finder(identifier, actor=actor) is None:
                 return
         except AmbiguousComponentNameError:
             # The identifier is ambiguous, not undispatchable; let the caller say so.
@@ -783,10 +859,10 @@ class StudioRunnerTools(Toolkit):
             "the component in the database."
         )
 
-    def _agent_for_run(self, agent_id: str) -> Optional["Agent"]:
-        agent = self._find_agent(agent_id, for_dispatch=True)
+    def _agent_for_run(self, agent_id: str, actor: Optional[str] = None) -> Optional["Agent"]:
+        agent = self._find_agent(agent_id, for_dispatch=True, actor=actor)
         if agent is None:
-            self._refuse_if_only_reachable_with_include_all("agent", agent_id)
+            self._refuse_if_only_reachable_with_include_all("agent", agent_id, actor=actor)
             return None
         # Whatever applies however the component was resolved goes ABOVE the
         # branch. Below one of these returns it runs for half the callers, which
@@ -799,10 +875,10 @@ class StudioRunnerTools(Toolkit):
         self._warn_if_model_rebuilt(agent, "agent", agent_id)
         return agent
 
-    def _team_for_run(self, team_id: str) -> Optional["Team"]:
-        team = self._find_team(team_id, for_dispatch=True)
+    def _team_for_run(self, team_id: str, actor: Optional[str] = None) -> Optional["Team"]:
+        team = self._find_team(team_id, for_dispatch=True, actor=actor)
         if team is None:
-            self._refuse_if_only_reachable_with_include_all("team", team_id)
+            self._refuse_if_only_reachable_with_include_all("team", team_id, actor=actor)
             return None
         self._require_inspectable_depth(team, "team", team_id)
         self._warn_if_unverifiable_factory(team, "team", team_id)
@@ -815,10 +891,10 @@ class StudioRunnerTools(Toolkit):
         self._warn_if_model_rebuilt(team, "team", team_id)
         return team
 
-    def _workflow_for_run(self, workflow_id: str) -> Optional["Workflow"]:
-        wf = self._find_workflow(workflow_id, for_dispatch=True)
+    def _workflow_for_run(self, workflow_id: str, actor: Optional[str] = None) -> Optional["Workflow"]:
+        wf = self._find_workflow(workflow_id, for_dispatch=True, actor=actor)
         if wf is None:
-            self._refuse_if_only_reachable_with_include_all("workflow", workflow_id)
+            self._refuse_if_only_reachable_with_include_all("workflow", workflow_id, actor=actor)
             return None
         self._require_inspectable_depth(wf, "workflow", workflow_id)
         self._warn_if_unverifiable_factory(wf, "workflow", workflow_id)
@@ -827,34 +903,43 @@ class StudioRunnerTools(Toolkit):
         self._require_isolated_steps(wf, workflow_id)
         return wf
 
-    def _db_component_exists(self, component_type: str, component_id: str) -> bool:
+    def _db_component_exists(self, component_type: str, component_id: str, actor: Optional[str] = None) -> bool:
         if self.db is None:
             return False
         from agno.db.base import ComponentType
 
         try:
-            return self.db.get_component(component_id, component_type=ComponentType(component_type)) is not None
+            return (
+                self.db.get_component(component_id, component_type=ComponentType(component_type), user_id=actor)
+                is not None
+            )
         except NotImplementedError:
             return False
 
-    def _resolve_db_id_by_name(self, component_type: str, name: str) -> Optional[str]:
+    def _resolve_db_id_by_name(self, component_type: str, name: str, actor: Optional[str] = None) -> Optional[str]:
         """Id of the DB component of this type whose display name matches exactly.
 
         Pages through the full components table so a match beyond the first page
         is never silently missed; only runs after the exact-id lookup missed.
-        Raises AmbiguousComponentNameError when several components share the name.
+
+        Published components are platform-visible, so one display name can now
+        match rows belonging to different owners. The caller's own component
+        wins outright -- "my radar" means mine, and another user publishing a
+        radar must not change what my name resolves to. Ambiguity that survives
+        that is still refused with the candidates rather than silently picked.
         """
         if self.db is None:
             return None
         from agno.db.base import ComponentType
 
         matches: List[str] = []
+        owned: List[str] = []
         offset = 0
         component_type_enum = ComponentType(component_type)
         while True:
             try:
                 rows, total = self.db.list_components(
-                    component_type=component_type_enum, limit=_NAME_LOOKUP_PAGE, offset=offset
+                    component_type=component_type_enum, limit=_NAME_LOOKUP_PAGE, offset=offset, user_id=actor
                 )
             except NotImplementedError:
                 # Not every db adapter implements component storage; degrade to
@@ -862,21 +947,33 @@ class StudioRunnerTools(Toolkit):
                 return None
             if not rows:
                 break
-            matches.extend(str(r["component_id"]) for r in rows if r.get("name") == name and r.get("component_id"))
+            for r in rows:
+                component_id = r.get("component_id")
+                if r.get("name") != name or not component_id:
+                    continue
+                matches.append(str(component_id))
+                if actor is not None and r.get("user_id") == actor:
+                    owned.append(str(component_id))
             offset += len(rows)
             if offset >= total:
                 break
-        if len(matches) > 1:
-            raise AmbiguousComponentNameError(component_type, name, matches)
-        return matches[0] if matches else None
+        # One of my own settles it, however many other owners published the name.
+        if len(owned) == 1:
+            return owned[0]
+        candidates = owned or matches
+        if len(candidates) > 1:
+            raise AmbiguousComponentNameError(component_type, name, candidates)
+        return candidates[0] if candidates else None
 
-    def _resolve_db_id_by_name_or_slug(self, component_type: str, identifier: str) -> Optional[str]:
+    def _resolve_db_id_by_name_or_slug(
+        self, component_type: str, identifier: str, actor: Optional[str] = None
+    ) -> Optional[str]:
         """DB id for a non-id identifier: display name first, then its slug."""
-        resolved = self._resolve_db_id_by_name(component_type, identifier)
+        resolved = self._resolve_db_id_by_name(component_type, identifier, actor=actor)
         if resolved is not None:
             return resolved
         slug = _slugify(identifier)
-        if slug != identifier and self._db_component_exists(component_type, slug):
+        if slug != identifier and self._db_component_exists(component_type, slug, actor=actor):
             return slug
         return None
 
@@ -1515,12 +1612,14 @@ class StudioRunnerTools(Toolkit):
         capability: the alternative is a successful answer computed some other
         way, which is the failure this toolkit exists to prevent. Reads and
         edits still load the component, so it stays inspectable."""
-        declared = [field for field in ("reasoning_model", "parser_model", "output_model") if config.get(field)]
+        # reasoning_model reconstructs through the registry now; the other two
+        # model roles still do not, so they keep the honest refusal.
+        declared = [field for field in ("parser_model", "output_model") if config.get(field)]
         if not declared:
             return
         raise ComponentNotDispatchableError(
             f"{component_type.capitalize()} '{component_id}' declares {', '.join(declared)}, which the framework "
-            "does not reconstruct (#9452), so the run would answer through a different pipeline than it was "
+            "does not reconstruct, so the run would answer through a different pipeline than it was "
             "configured for. Remove the declaration, or run it as a code-defined component."
         )
 
@@ -1597,15 +1696,20 @@ class StudioRunnerTools(Toolkit):
             "declares."
         )
 
-    @staticmethod
-    def _require_reconstructable_steps(config: Dict[str, Any], workflow_id: str) -> None:
-        """Refuse to dispatch a stored workflow whose step targets another workflow.
+    def _require_reconstructable_steps(self, config: Dict[str, Any], workflow_id: str) -> None:
+        """Refuse to dispatch a stored workflow whose step targets a workflow this
+        runner cannot supply.
 
-        A nested workflow serializes as ``workflow_id`` alone, and Step.from_dict
-        cannot rebuild one: it installs a placeholder that returns an unsuccessful
-        StepOutput. A failed step does not fail its workflow, so the parent run
-        would report COMPLETED while the child never executed. Reads and edits
-        load the same workflow without this check, so the step stays
+        A nested workflow serializes as ``workflow_id`` alone and resolves from
+        the registry only: there is no db-load tier, because loading a stored
+        workflow from inside a step would recurse through from_dict and needs its
+        own cycle guard before it can be safe. An id the registry cannot supply
+        has nothing to rebuild from, so the strict load a dispatch performs
+        refuses it anyway. This guard answers that case first, and answers it
+        about the workflow the caller actually dispatched, with the remedy that
+        applies; the rebuild error it pre-empts names only the step that failed
+        and offers a strict=False flag no caller of this toolkit can set. Reads
+        and edits load the same workflow without this check, so the step stays
         inspectable."""
         nested: List[str] = []
 
@@ -1625,12 +1729,20 @@ class StudioRunnerTools(Toolkit):
                 walk(value.get(branch))
 
         walk(config.get("steps"))
+        # Only the ids the registry cannot supply are a refusal. The check
+        # deliberately asks the registry directly rather than the dispatch
+        # lookup: include_all_components gates DIRECT dispatch by id, not nested
+        # references, and a stored parent already dispatches a registry-only
+        # agent under that flag. Routing this through the dispatch lookup would
+        # split the two apart.
+        nested = [wid for wid in nested if self.registry is None or self.registry.get_workflow(wid) is None]
         if nested:
             raise ComponentNotDispatchableError(
-                f"Workflow '{workflow_id}' has a step targeting workflow "
-                f"'{', '.join(sorted(set(nested)))}', which the runner cannot reconstruct; it would report "
-                "success without running that step. Inline the nested workflow's steps into this one, or "
-                "dispatch it separately."
+                f"Workflow '{workflow_id}' has a step targeting workflow '{', '.join(sorted(set(nested)))}', "
+                "which is not in this runner's registry, so the step cannot be reconstructed and the "
+                "dispatch load refuses it. Add that workflow to the registry (Registry(workflows=[...])) "
+                "-- storing it in the database is not enough, a nested step resolves from the registry "
+                "only -- or inline its steps into this one and dispatch it separately."
             )
 
     @staticmethod
@@ -1664,7 +1776,7 @@ class StudioRunnerTools(Toolkit):
         """The shared singletons a rebuild can hand back instead of a copy."""
         if self.registry is None:
             return []
-        return list(self.registry.agents or []) + list(self.registry.teams or [])
+        return list(self.registry.agents or []) + list(self.registry.teams or []) + list(self.registry.workflows or [])
 
     @staticmethod
     def _shared_registry_instance(node: Any, shared: List[Any], depth: int = 0) -> Optional[Any]:
@@ -1723,8 +1835,10 @@ class StudioRunnerTools(Toolkit):
 
         Step.from_dict keeps the shared registry agent/team when its deep_copy
         raises; dispatching that instance would let per-run mutation cross
-        callers. Reads and edits load the same workflow without this check, so
-        the offending step stays inspectable and editable."""
+        callers. Each step node is judged both as an executor holder and as an
+        executor itself, because a step list accepts a bare component. Reads and
+        edits load the same workflow without this check, so the offending step
+        stays inspectable and editable."""
         shared = self._registry_instances()
         if not shared:
             return
@@ -1732,8 +1846,42 @@ class StudioRunnerTools(Toolkit):
         def shared_within(node: Any, depth: int = 0) -> Optional[Any]:
             return StudioRunnerTools._shared_registry_instance(node, shared, depth)
 
+        seen: Set[int] = set()
+
+        def child_steps(value: Any) -> List[Any]:
+            """A step list, however it is spelled.
+
+            A steps= value may be a plain list or a single container object
+            (Steps, Loop, Parallel, Condition, Router) holding one. Reading
+            only the list spelling would walk past a whole subtree, which is
+            the same leak this check exists to refuse."""
+            if isinstance(value, (list, tuple)):
+                return list(value)
+            inner = getattr(value, "steps", None) if value is not None else None
+            return list(inner) if isinstance(inner, (list, tuple)) else []
+
         def walk(item: Any) -> None:
-            for attr in ("agent", "team"):
+            if id(item) in seen:
+                return
+            seen.add(id(item))
+            # A step list may hold a bare agent, team or workflow instead of a
+            # Step wrapper. Then the node IS the executor, and reading only
+            # .agent/.team/.workflow finds nothing to judge. Judging at depth 0
+            # is what makes this bite: the "no deep_copy means shared by design"
+            # exemption applies to members found below a node, not to the node
+            # the search starts from.
+            leaked_item = shared_within(item)
+            if leaked_item is not None:
+                label = getattr(leaked_item, "id", None) or getattr(leaked_item, "name", None) or "?"
+                # The walk descends through members only, so a leak found below
+                # the node is a member of it however deep the nesting goes.
+                where = f"'{label}'" if leaked_item is item else f"a member below it, '{label}'"
+                raise DispatchCopyError(
+                    f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
+                    f"registry instance of {where}; the runner dispatches only isolated copies. Give the "
+                    "class a deep_copy that rebuilds it, or store the component in the database."
+                )
+            for attr in ("agent", "team", "workflow"):
                 executor = getattr(item, attr, None)
                 leaked = shared_within(executor)
                 if leaked is not None:
@@ -1741,7 +1889,7 @@ class StudioRunnerTools(Toolkit):
                         f"{attr} '{getattr(executor, 'id', None)}'"
                         if leaked is executor
                         else f"a member of {attr} '{getattr(executor, 'id', None)}', "
-                        f"'{getattr(leaked, 'id', None) or getattr(leaked, 'name', None)}'"
+                        f"'{getattr(leaked, 'id', None) or getattr(leaked, 'name', None) or '?'}'"
                     )
                     raise DispatchCopyError(
                         f"Workflow '{workflow_id}' step '{getattr(item, 'name', None)}' resolved to the shared "
@@ -1749,25 +1897,32 @@ class StudioRunnerTools(Toolkit):
                         "class a deep_copy that rebuilds it, or store the component in the database."
                     )
             for child_attr in ("steps", "else_steps", "choices"):
-                children = getattr(item, child_attr, None)
-                if isinstance(children, (list, tuple)):
-                    for child in children:
-                        walk(child)
+                for child in child_steps(getattr(item, child_attr, None)):
+                    walk(child)
+            # A nested workflow is walked as a node, not just as a step list:
+            # its own executors are one level further down, and a Workflow also
+            # carries a workflow-level agent. Without this the check stops at
+            # the nested workflow itself -- its copy is fresh, so nothing is
+            # reported, while the components inside it can still be the
+            # registry singletons the whole check exists to refuse.
+            nested = getattr(item, "workflow", None)
+            if nested is not None:
+                walk(nested)
 
-        steps = getattr(wf, "steps", None)
-        if isinstance(steps, (list, tuple)):
-            for step in steps:
-                walk(step)
+        for step in child_steps(getattr(wf, "steps", None)):
+            walk(step)
 
     def _load_agent_from_db(
-        self, agent_id: str, version: Optional[int] = None, for_dispatch: bool = False
+        self, agent_id: str, version: Optional[int] = None, for_dispatch: bool = False, actor: Optional[str] = None
     ) -> Optional["Agent"]:
         """Load an agent from DB via config + from_dict.
 
         Registry-backed references resolve at their current published version."""
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(agent_id, version=version, component_type=ComponentType.AGENT)
+        loaded = self._load_config_row_from_db(
+            agent_id, version=version, component_type=ComponentType.AGENT, published_only=for_dispatch, actor=actor
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1809,11 +1964,13 @@ class StudioRunnerTools(Toolkit):
         return agent
 
     def _load_team_from_db(
-        self, team_id: str, version: Optional[int] = None, for_dispatch: bool = False
+        self, team_id: str, version: Optional[int] = None, for_dispatch: bool = False, actor: Optional[str] = None
     ) -> Optional["Team"]:
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(team_id, version=version, component_type=ComponentType.TEAM)
+        loaded = self._load_config_row_from_db(
+            team_id, version=version, component_type=ComponentType.TEAM, published_only=for_dispatch, actor=actor
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1859,11 +2016,17 @@ class StudioRunnerTools(Toolkit):
         return team
 
     def _load_workflow_from_db(
-        self, workflow_id: str, version: Optional[int] = None, for_dispatch: bool = False
+        self, workflow_id: str, version: Optional[int] = None, for_dispatch: bool = False, actor: Optional[str] = None
     ) -> Optional["Workflow"]:
         from agno.db.base import ComponentType
 
-        loaded = self._load_config_row_from_db(workflow_id, version=version, component_type=ComponentType.WORKFLOW)
+        loaded = self._load_config_row_from_db(
+            workflow_id,
+            version=version,
+            component_type=ComponentType.WORKFLOW,
+            published_only=for_dispatch,
+            actor=actor,
+        )
         if loaded is None:
             return None
         config, resolved_version = loaded
@@ -1923,6 +2086,8 @@ class StudioRunnerTools(Toolkit):
         component_id: str,
         version: Optional[int] = None,
         component_type: Optional["ComponentType"] = None,
+        published_only: bool = False,
+        actor: Optional[str] = None,
     ) -> Optional[Tuple[Dict[str, Any], Optional[int]]]:
         """Load a component's config and its resolved version in one read.
 
@@ -1937,11 +2102,18 @@ class StudioRunnerTools(Toolkit):
         if self.db is None:
             return None
         try:
-            if (
-                component_type is not None
-                and self.db.get_component(component_id, component_type=component_type) is None
-            ):
+            component_row = self.db.get_component(component_id, component_type=component_type, user_id=actor)
+            if component_row is None and (component_type is not None or actor is not None):
+                # Absent, wrong type, or another owner's private row: all three
+                # answer the same not-found, so nothing is disclosed.
                 return None
+            if published_only and version is None:
+                # Dispatch resolves only a published version: a draft-only
+                # component is inspectable and editable, never runnable.
+                current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+                if current_version is None:
+                    return None
+                version = current_version
             row = self.db.get_config(component_id=component_id, version=version)
         except NotImplementedError:
             # Not every db adapter implements component storage; treat the
@@ -1975,9 +2147,13 @@ class StudioRunnerTools(Toolkit):
             return []
 
     def _list_db_component_rows(
-        self, component_type: str, limit: Optional[int] = None
+        self, component_type: str, limit: Optional[int] = None, user_id: Optional[str] = None
     ) -> Tuple[List[Dict[str, Any]], int]:
-        """Thin DB component summaries ({id, name, description}) plus the total count."""
+        """Thin DB component summaries ({id, name, description}) plus the total count.
+
+        ``user_id`` scopes the listing to that owner's components plus shared
+        (unowned) rows -- the same visibility the REST router gives a scoped
+        caller. ``None`` lists everything."""
         if self.db is None:
             return [], 0
         from agno.db.base import ComponentType
@@ -1986,21 +2162,31 @@ class StudioRunnerTools(Toolkit):
             rows, total = self.db.list_components(
                 component_type=ComponentType(component_type),
                 limit=limit if limit is not None else self.list_limit,
+                user_id=user_id,
             )
         except NotImplementedError:
             # Not every db adapter implements component storage; degrade to an
             # empty listing like the other db helpers here.
             return [], 0
-        return (
-            [{"id": r.get("component_id"), "name": r.get("name"), "description": r.get("description")} for r in rows],
-            total,
-        )
+        summaries = []
+        for r in rows:
+            entry: Dict[str, Any] = {
+                "id": r.get("component_id"),
+                "name": r.get("name"),
+                "description": r.get("description"),
+            }
+            # A caller following list-then-run needs the stage hint here, or
+            # the refusal it hits is its first sign the row was a draft.
+            if r.get("current_version") is None:
+                entry["status"] = "draft"
+            summaries.append(entry)
+        return summaries, total
 
     # ------------------------------------------------------------------
     # Discovery
     # ------------------------------------------------------------------
 
-    def list_agents(self) -> str:
+    def list_agents(self, _agno_run_context: Optional[RunContext] = None) -> str:
         """List agents this runner can run, newest first.
 
         Reports the components stored in the platform database, preceded by any
@@ -2008,14 +2194,16 @@ class StudioRunnerTools(Toolkit):
         registry under include_all_components). What can be run can be found.
 
         Returns:
-            str: JSON object with 'agents' (each {id, name, description}), 'count'
-                (returned) and 'total' (every component this runner can run;
-                total > count means the list is capped -- components beyond the
-                cap still run by exact id).
+            str: JSON object with 'agents' (each {id, name, description}; a row
+                with status 'draft' has no published version yet, so it will
+                not dispatch until published), 'count' (returned) and 'total'
+                (every component this runner can run; total > count means the
+                list is capped -- components beyond the cap still run by
+                exact id).
         """
-        return self._list_payload("agent", "agents")
+        return self._list_payload("agent", "agents", actor=getattr(_agno_run_context, "user_id", None))
 
-    def list_teams(self) -> str:
+    def list_teams(self, _agno_run_context: Optional[RunContext] = None) -> str:
         """List teams this runner can run, newest first.
 
         Reports the components stored in the platform database, preceded by any
@@ -2023,14 +2211,16 @@ class StudioRunnerTools(Toolkit):
         registry under include_all_components). What can be run can be found.
 
         Returns:
-            str: JSON object with 'teams' (each {id, name, description}), 'count'
-                (returned) and 'total' (every component this runner can run;
-                total > count means the list is capped -- components beyond the
-                cap still run by exact id).
+            str: JSON object with 'teams' (each {id, name, description}; a row
+                with status 'draft' has no published version yet, so it will
+                not dispatch until published), 'count' (returned) and 'total'
+                (every component this runner can run; total > count means the
+                list is capped -- components beyond the cap still run by
+                exact id).
         """
-        return self._list_payload("team", "teams")
+        return self._list_payload("team", "teams", actor=getattr(_agno_run_context, "user_id", None))
 
-    def list_workflows(self) -> str:
+    def list_workflows(self, _agno_run_context: Optional[RunContext] = None) -> str:
         """List workflows this runner can run, newest first.
 
         Reports the components stored in the platform database, preceded by any
@@ -2038,14 +2228,16 @@ class StudioRunnerTools(Toolkit):
         registry under include_all_components). What can be run can be found.
 
         Returns:
-            str: JSON object with 'workflows' (each {id, name, description}), 'count'
-                (returned) and 'total' (every component this runner can run;
-                total > count means the list is capped -- components beyond the
-                cap still run by exact id).
+            str: JSON object with 'workflows' (each {id, name, description}; a row
+                with status 'draft' has no published version yet, so it will
+                not dispatch until published), 'count' (returned) and 'total'
+                (every component this runner can run; total > count means the
+                list is capped -- components beyond the cap still run by
+                exact id).
         """
-        return self._list_payload("workflow", "workflows")
+        return self._list_payload("workflow", "workflows", actor=getattr(_agno_run_context, "user_id", None))
 
-    def _list_payload(self, component_type: str, key: str) -> str:
+    def _list_payload(self, component_type: str, key: str, actor: Optional[str] = None) -> str:
         admitted = self._admitted_code_components(component_type)
         if self.db is None:
             # A code allowlist runs without a database, so it has to be findable
@@ -2054,7 +2246,7 @@ class StudioRunnerTools(Toolkit):
                 return json.dumps({key: admitted, "count": len(admitted), "total": len(admitted)})
             return json.dumps({"error": "StudioRunnerTools has no db configured; cannot list components."})
         try:
-            items, total = self._list_db_component_rows(component_type)
+            items, total = self._list_db_component_rows(component_type, user_id=actor)
             # What dispatch admits is what discovery reports. The instructions
             # tell the caller to list first and run by id, so a component that
             # runs and cannot be found leaves it no way to reach it. Code
@@ -2122,7 +2314,7 @@ class StudioRunnerTools(Toolkit):
                 'content' and, when paused, 'requirements'.
         """
         try:
-            agent = self._agent_for_run(agent_id)
+            agent = self._agent_for_run(agent_id, actor=getattr(_agno_run_context, "user_id", None))
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2161,7 +2353,7 @@ class StudioRunnerTools(Toolkit):
                 'content' and, when paused, 'requirements'.
         """
         try:
-            team = self._team_for_run(team_id)
+            team = self._team_for_run(team_id, actor=getattr(_agno_run_context, "user_id", None))
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2200,7 +2392,7 @@ class StudioRunnerTools(Toolkit):
                 'content' and, when paused, 'requirements'.
         """
         try:
-            wf = self._workflow_for_run(workflow_id)
+            wf = self._workflow_for_run(workflow_id, actor=getattr(_agno_run_context, "user_id", None))
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2231,7 +2423,9 @@ class StudioRunnerTools(Toolkit):
         """
         # Resolution hits the DB synchronously; keep it off the event loop.
         try:
-            agent = await asyncio.to_thread(self._agent_for_run, agent_id)
+            agent = await asyncio.to_thread(
+                self._agent_for_run, agent_id, actor=getattr(_agno_run_context, "user_id", None)
+            )
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2261,7 +2455,9 @@ class StudioRunnerTools(Toolkit):
             message (str): The message to send.
         """
         try:
-            team = await asyncio.to_thread(self._team_for_run, team_id)
+            team = await asyncio.to_thread(
+                self._team_for_run, team_id, actor=getattr(_agno_run_context, "user_id", None)
+            )
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2293,7 +2489,9 @@ class StudioRunnerTools(Toolkit):
             message (str): Input to pass to the first step.
         """
         try:
-            wf = await asyncio.to_thread(self._workflow_for_run, workflow_id)
+            wf = await asyncio.to_thread(
+                self._workflow_for_run, workflow_id, actor=getattr(_agno_run_context, "user_id", None)
+            )
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2315,17 +2513,17 @@ class StudioRunnerTools(Toolkit):
             logger.exception("Failed to run workflow")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    async def alist_agents(self) -> str:
+    async def alist_agents(self, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of list_agents."""
-        return await asyncio.to_thread(self.list_agents)
+        return await asyncio.to_thread(self.list_agents, _agno_run_context=_agno_run_context)
 
-    async def alist_teams(self) -> str:
+    async def alist_teams(self, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of list_teams."""
-        return await asyncio.to_thread(self.list_teams)
+        return await asyncio.to_thread(self.list_teams, _agno_run_context=_agno_run_context)
 
-    async def alist_workflows(self) -> str:
+    async def alist_workflows(self, _agno_run_context: Optional[RunContext] = None) -> str:
         """Async variant of list_workflows."""
-        return await asyncio.to_thread(self.list_workflows)
+        return await asyncio.to_thread(self.list_workflows, _agno_run_context=_agno_run_context)
 
     # ------------------------------------------------------------------
     # Result shaping

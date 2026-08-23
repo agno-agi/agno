@@ -1112,7 +1112,7 @@ class QueueWorker:
             user_id=job.get("user_id"),
             expected_attempt=job.get("attempt"),
         )
-        if not fallback_allowed(result, job.get("attempt")):
+        if not fallback_allowed(result):
             # UPDATED, STALE_ATTEMPT (a newer attempt owns the row) or
             # TERMINAL_REFUSED (completed/cancelled wins) - all final; the
             # unfenced fallback below must not run. Returned AS-IS: the
@@ -1169,14 +1169,9 @@ class QueueWorker:
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
-                if component._has_async_db():
-                    await component.asave_run(
-                        run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id")
-                    )
-                    await component.asave_session(session=workflow_session)
-                else:
-                    component.save_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
-                    component.save_session(session=workflow_session)
+                # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
+                await component.asave_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
+                await component.asave_session(session=workflow_session)
         return RunPersistOutcome.UPDATED
 
     def _retry_delay(self, attempt: int) -> int:
@@ -1257,7 +1252,7 @@ class QueueWorker:
             if result is RunPersistOutcome.UPDATED:
                 log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")
                 return
-            if not fallback_allowed(result, job.get("attempt")):
+            if not fallback_allowed(result):
                 # STALE_ATTEMPT/TERMINAL_REFUSED: final - nothing to restore
                 # over (and nothing was restored, so no success log)
                 return
@@ -1270,12 +1265,8 @@ class QueueWorker:
             if workflow_run is not None and getattr(workflow_run, "status", None) == RunStatus.error:
                 workflow_run.status = RunStatus.paused
                 workflow_session.upsert_run(run=workflow_run)
-                if component._has_async_db():
-                    await component.asave_run(
-                        run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id")
-                    )
-                else:
-                    component.save_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
+                # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
+                await component.asave_run(run=workflow_run, session_id=job["session_id"], user_id=job.get("user_id"))
                 log_info(f"Job queue: restored run row {job['id']} ERROR -> PAUSED for continuation re-drive")
         except Exception as e:
             log_warning(f"Job queue: could not restore paused run row for continuation {job.get('id')}: {e}")
@@ -2222,10 +2213,8 @@ async def aprepare_queued_run(
         # Session row first, then the run row with its resolved index: the
         # workflow's own combined persist helper (FK-safe on v3 - a bare
         # asave_run against a missing session row is rejected and only logged)
-        if component._has_async_db():
-            await component._apersist_session_and_run(workflow_session, workflow_run_early)
-        else:
-            component._persist_session_and_run(workflow_session, workflow_run_early)
+        # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
+        await component._apersist_session_and_run(workflow_session, workflow_run_early)
     else:
         raise ValueError(f"Unknown component type: {component_type}")
 

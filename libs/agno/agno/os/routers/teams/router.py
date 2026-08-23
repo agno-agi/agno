@@ -29,6 +29,7 @@ from agno.exceptions import (
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
@@ -66,12 +67,15 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     afinalize_continue_stream,
+    allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    parse_files_metadata,
     process_audio,
     process_document,
     process_image,
@@ -80,6 +84,8 @@ from agno.os.utils import (
     replayed_payload_to_sse,
     resolve_team,
     sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
 )
 from agno.registry import Registry
 from agno.run.agent import RunOutput
@@ -617,6 +623,9 @@ def get_team_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
+        files_metadata: Optional[str] = Form(
+            None, description="JSON array of per-file metadata objects, matched to files[] by position"
+        ),
         version: Optional[int] = Form(None, description="Team version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
@@ -628,15 +637,22 @@ def get_team_router(
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
+        files_metadata_list = parse_files_metadata(files_metadata)
+
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
+        state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id and user_id != request.state.user_id:
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # Scheduler executor: the sentinel is the caller, not the owner. Keep the form-field
+            # ``user_id``, which the executor leaves unset for an unowned schedule.
+            pass
+        elif state_user_id is not None:
+            if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
-            user_id = request.state.user_id
+            user_id = state_user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -676,6 +692,11 @@ def get_team_router(
             factory_input=factory_input,
         )
 
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
+
         # Member HITL needs member runs embedded on the team run (member_responses).
         # Without this, API continue cannot reliably reload member tool state from the DB.
         if not isinstance(team, RemoteTeam):
@@ -693,25 +714,26 @@ def get_team_router(
         document_files: List[FileMedia] = []
 
         if files:
-            for file in files:
+            for idx, file in enumerate(files):
+                file_meta = files_metadata_list[idx] if idx < len(files_metadata_list) else None
                 file_category = classify_upload_file(file)
                 if file_category == "image":
                     try:
-                        base64_image = process_image(file)
+                        base64_image = process_image(file, metadata=file_meta)
                         base64_images.append(base64_image)
                     except Exception:
                         logger.exception(f"Error processing image {file.filename}")
                         continue
                 elif file_category == "audio":
                     try:
-                        base64_audio = process_audio(file)
+                        base64_audio = process_audio(file, metadata=file_meta)
                         base64_audios.append(base64_audio)
                     except Exception:
                         logger.exception(f"Error processing audio {file.filename}")
                         continue
                 elif file_category == "video":
                     try:
-                        base64_video = process_video(file)
+                        base64_video = process_video(file, metadata=file_meta)
                         base64_videos.append(base64_video)
                     except Exception:
                         logger.exception(f"Error processing video {file.filename}")
@@ -720,7 +742,7 @@ def get_team_router(
                     # Agents parity: one unparseable document must not 500
                     # the whole submission - skip it, loudly
                     try:
-                        document_file = process_document(file)
+                        document_file = process_document(file, metadata=file_meta)
                         if document_file is not None:
                             document_files.append(document_file)
                     except Exception as e:
@@ -732,10 +754,22 @@ def get_team_router(
         # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when this team
         # is used as a remote member) with media from uploaded files.
         # Popped from kwargs since they are passed explicitly to the run methods below.
-        base64_images.extend(kwargs.pop("images", None) or [])
-        base64_audios.extend(kwargs.pop("audio", None) or [])
-        base64_videos.extend(kwargs.pop("videos", None) or [])
-        document_files.extend(kwargs.pop("files", None) or [])
+        for field, target in (
+            ("images", base64_images),
+            ("audio", base64_audios),
+            ("videos", base64_videos),
+            ("files", document_files),
+        ):
+            value = kwargs.pop(field, None)
+            # Falsy means "not sent": a FormData builder emits an empty part for an unset field.
+            if not value:
+                continue
+            if not isinstance(value, (list, tuple)):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{field}' must be a JSON array. Upload binary content via 'files'",
+                )
+            target.extend(value)
 
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
@@ -1099,11 +1133,20 @@ def get_team_router(
 
         try:
             team = get_team_by_id(
-                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1191,7 +1234,14 @@ def get_team_router(
             )
 
         team = get_team_by_id(
-            team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+            team_id=team_id,
+            teams=os.teams,
+            db=os.db,
+            registry=registry,
+            create_fresh=True,
+            user_id=get_scoped_user_id(request),
+            strict=False,
+            published_only=False,
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -1312,15 +1362,26 @@ def get_team_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    published_only=False,
+                )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1345,6 +1406,45 @@ def get_team_router(
                 component_type="teams",
                 component_id=team_id,
             )
+
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request and remote teams resolve remotely, so both are exempt.
+        if not factory and not isinstance(team, RemoteTeam):
+            stamped_run = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+            stamped_version = stamped_component_version(stamped_run)
+            if stamped_version is not None:
+                # Re-run the run-start preview gate before trusting the stamp:
+                # a stamp naming a draft version this caller may not preview
+                # must not resolve (defense against a forged/leaked stamp).
+                # Same 404 the run-start route raises, so a denial is
+                # indistinguishable from the component being absent.
+                if not allow_draft_preview(os.db, team_id, stamped_version, *draft_preview_identity(request)):
+                    raise HTTPException(status_code=404, detail="Team not found")
+                try:
+                    stamped_team = get_team_by_id(
+                        team_id=team_id,
+                        teams=os.teams,
+                        db=os.db,
+                        registry=registry,
+                        version=stamped_version,
+                        create_fresh=True,
+                        user_id=scoped_user_id,
+                        published_only=False,
+                    )
+                except ComponentRehydrationError as rehydration_error:
+                    raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+                if stamped_team is None or isinstance(stamped_team, RemoteTeam):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Team version {stamped_version} recorded on run {run_id} is no longer available",
+                    )
+                # Member HITL needs member runs embedded on the team run,
+                # exactly like the pre-stamp handle resolved above.
+                stamped_team.store_member_responses = True
+                team = stamped_team
 
         # Convert requirements dict to RunRequirement objects if provided
         updated_requirements = None
@@ -1606,11 +1706,20 @@ def get_team_router(
 
         try:
             team = get_team_by_id(
-                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1746,9 +1855,17 @@ def get_team_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
-            # Exclude teams whose IDs are owned by the registry
-            exclude_ids = registry.get_team_ids() if registry else None
-            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
+            # Exclude the ids this OS serves, which is what the code half
+            # above renders. The registry is a superset - it also carries
+            # rehydration context this route never lists - so subtracting it
+            # would drop a stored team with nothing left to list it back.
+            exclude_ids = {tid for t in os.teams or [] if (tid := getattr(t, "id", None)) is not None}
+            db_teams = get_teams(
+                db=os.db,
+                registry=registry,
+                exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
             if db_teams:
                 # Apply the same RBAC filtering to DB-loaded teams: without
                 # it, a caller whose scope excludes a team still saw its
@@ -1853,12 +1970,22 @@ def get_team_router(
             return TeamResponse.from_factory(factory)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            team = get_team_by_id(
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                published_only=False,
+            )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1896,15 +2023,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -1987,15 +2124,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -2048,15 +2195,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -2109,15 +2266,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):

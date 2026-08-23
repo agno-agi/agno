@@ -33,6 +33,7 @@ from agno.exceptions import (
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
@@ -70,12 +71,15 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
     afinalize_continue_stream,
+    allow_draft_preview,
     amark_continue_stream_running,
     classify_upload_file,
+    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_agent_by_id,
     get_request_kwargs,
+    parse_files_metadata,
     process_audio,
     process_document,
     process_image,
@@ -84,6 +88,8 @@ from agno.os.utils import (
     replayed_payload_to_sse,
     resolve_agent,
     sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
 )
 from agno.registry import Registry
 from agno.run.agent import RunErrorEvent, RunOutput
@@ -194,6 +200,7 @@ async def agent_resumable_response_streamer(
         kwargs["auth_token"] = auth_token
 
     try:
+        warned_not_resumable = False
         async for sse_data in agent.arun(
             input=message,
             session_id=session_id,
@@ -207,7 +214,23 @@ async def agent_resumable_response_streamer(
             background=True,
             **kwargs,
         ):
-            yield sse_data
+            if isinstance(sse_data, str):
+                yield sse_data
+            elif isinstance(sse_data, RunOutput):
+                # Terminal RunOutput is not an SSE event; skip it like the
+                # background producer does
+                continue
+            else:
+                # Agents without background support (e.g. external adapters)
+                # ignore background=True and yield raw events: format them so
+                # the stream works, though the run is not resumable.
+                if not warned_not_resumable:
+                    warned_not_resumable = True
+                    log_debug(
+                        f"Agent '{getattr(agent, 'id', None)}' does not support background execution; "
+                        "streaming inline (run is not resumable)."
+                    )
+                yield format_sse_event(sse_data)
     except (InputCheckError, OutputCheckError) as e:
         error_response = RunErrorEvent(
             content=str(e),
@@ -638,6 +661,9 @@ def get_agent_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
+        files_metadata: Optional[str] = Form(
+            None, description="JSON array of per-file metadata objects, matched to files[] by position"
+        ),
         # int like teams/workflows: component versions are integers, and the
         # old str declaration's bare int(version) cast 500ed on non-numeric
         # input where the siblings answer a clean 422
@@ -652,15 +678,22 @@ def get_agent_router(
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
 
+        files_metadata_list = parse_files_metadata(files_metadata)
+
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
+        state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id and user_id != request.state.user_id:
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # The sentinel identifies the caller, not the owner: keep the form-field ``user_id``
+            # the executor wrote, which is None for an unowned schedule.
+            pass
+        elif state_user_id is not None:
+            if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
-            user_id = request.state.user_id
+            user_id = state_user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -693,6 +726,11 @@ def get_agent_router(
             factory_input=factory_input,
         )
 
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
+
         if session_id is None or session_id == "":
             log_debug("Creating new session")
             session_id = str(uuid4())
@@ -703,18 +741,19 @@ def get_agent_router(
         input_files: List[FileMedia] = []
 
         if files:
-            for file in files:
+            for idx, file in enumerate(files):
+                file_meta = files_metadata_list[idx] if idx < len(files_metadata_list) else None
                 file_category = classify_upload_file(file)
                 if file_category == "image":
                     try:
-                        base64_image = process_image(file)
+                        base64_image = process_image(file, metadata=file_meta)
                         base64_images.append(base64_image)
                     except Exception as e:
                         log_error(f"Error processing image {file.filename}: {str(e)}")
                         continue
                 elif file_category == "audio":
                     try:
-                        audio = process_audio(file)
+                        audio = process_audio(file, metadata=file_meta)
                         base64_audios.append(audio)
                     except Exception as e:
                         log_error(
@@ -723,7 +762,7 @@ def get_agent_router(
                         continue
                 elif file_category == "video":
                     try:
-                        base64_video = process_video(file)
+                        base64_video = process_video(file, metadata=file_meta)
                         base64_videos.append(base64_video)
                     except Exception as e:
                         log_error(f"Error processing video {file.filename}: {str(e)}")
@@ -731,7 +770,7 @@ def get_agent_router(
                 elif file_category == "document":
                     # Process document files
                     try:
-                        input_file = process_document(file)
+                        input_file = process_document(file, metadata=file_meta)
                         if input_file is not None:
                             input_files.append(input_file)
                     except Exception as e:
@@ -743,10 +782,22 @@ def get_agent_router(
         # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when a team
         # delegates to this agent as a remote member) with media from uploaded files.
         # Popped from kwargs since they are passed explicitly to the run methods below.
-        base64_images.extend(kwargs.pop("images", None) or [])
-        base64_audios.extend(kwargs.pop("audio", None) or [])
-        base64_videos.extend(kwargs.pop("videos", None) or [])
-        input_files.extend(kwargs.pop("files", None) or [])
+        for field, target in (
+            ("images", base64_images),
+            ("audio", base64_audios),
+            ("videos", base64_videos),
+            ("files", input_files),
+        ):
+            value = kwargs.pop(field, None)
+            # Falsy means "not sent": a FormData builder emits an empty part for an unset field.
+            if not value:
+                continue
+            if not isinstance(value, (list, tuple)):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{field}' must be a JSON array. Upload binary content via 'files'",
+                )
+            target.extend(value)
 
         # Extract auth token for remote agents
         auth_token = get_auth_token_from_request(request)
@@ -1130,11 +1181,20 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1173,8 +1233,7 @@ def get_agent_router(
         summary="Continue Agent Run",
         description=(
             "Advance a persisted agent run from its current state. Dispatches on the body "
-            "shape and the persisted run state (see ADR-003 in "
-            "specs/agno/features/checkpointing/decisions.md).\n\n"
+            "shape and the persisted run state.\n\n"
             "**Variants:**\n"
             "- PAUSED + tools provided → apply HITL tool results, resume\n"
             "- PAUSED + resolved admin approval (empty tools) → apply resolution, resume\n"
@@ -1307,17 +1366,26 @@ def get_agent_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    published_only=False,
                 )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1344,6 +1412,42 @@ def get_agent_router(
                 component_type="agents",
                 component_id=agent_id,
             )
+
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request and remote agents resolve remotely, so both are exempt.
+        if not factory and not isinstance(agent, RemoteAgent):
+            stamped_run = await agent.aget_run_output(run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
+            stamped_version = stamped_component_version(stamped_run)
+            if stamped_version is not None:
+                # Re-run the run-start preview gate before trusting the stamp:
+                # a stamp naming a draft version this caller may not preview
+                # must not resolve (defense against a forged/leaked stamp).
+                # Same 404 the run-start route raises, so a denial is
+                # indistinguishable from the component being absent.
+                if not allow_draft_preview(os.db, agent_id, stamped_version, *draft_preview_identity(request)):
+                    raise HTTPException(status_code=404, detail="Agent not found")
+                try:
+                    stamped_agent = get_agent_by_id(
+                        agent_id=agent_id,
+                        agents=os.agents,
+                        db=os.db,
+                        registry=os.registry,
+                        version=stamped_version,
+                        create_fresh=True,
+                        user_id=scoped_user_id,
+                        published_only=False,
+                    )
+                except ComponentRehydrationError as rehydration_error:
+                    raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+                if stamped_agent is None:
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Agent version {stamped_version} recorded on run {run_id} is no longer available",
+                    )
+                agent = stamped_agent
 
         # No router-level status gate, deliberately: the continue dispatch
         # handles EVERY run state itself - COMPLETED forks as a follow-up,
@@ -1632,11 +1736,20 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1747,9 +1860,17 @@ def get_agent_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.agent.agent import get_agents
 
-            # Exclude agents whose IDs are owned by the registry
-            exclude_ids = registry.get_agent_ids() if registry else None
-            db_agents = get_agents(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
+            # Exclude the ids this OS serves, which is what the code half
+            # above renders. The registry is a superset - it also carries
+            # rehydration context this route never lists - so subtracting it
+            # would drop a stored agent with nothing left to list it back.
+            exclude_ids = {aid for a in os.agents or [] if (aid := getattr(a, "id", None)) is not None}
+            db_agents = get_agents(
+                db=os.db,
+                registry=registry,
+                exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
             if db_agents:
                 # Apply the same RBAC filtering to DB-loaded agents
                 if getattr(request.state, "authorization_enabled", False):
@@ -1807,13 +1928,21 @@ def get_agent_router(
 
         try:
             agent = get_agent_by_id(
-                agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                published_only=False,
             )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             log_error(f"Error resolving agent '{agent_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
 
@@ -1859,15 +1988,25 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):
@@ -1953,15 +2092,25 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):
@@ -2014,15 +2163,25 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):
@@ -2112,7 +2271,14 @@ def get_agent_router(
             )
 
         agent = get_agent_by_id(
-            agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+            agent_id=agent_id,
+            agents=os.agents,
+            db=os.db,
+            registry=os.registry,
+            create_fresh=True,
+            user_id=get_scoped_user_id(request),
+            strict=False,
+            published_only=False,
         )
         if agent is None:
             raise HTTPException(status_code=404, detail="Agent not found")
@@ -2166,15 +2332,25 @@ def get_agent_router(
                 os.agents,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 agent = get_agent_by_id(
-                    agent_id=agent_id, agents=os.agents, db=os.db, registry=os.registry, create_fresh=True, strict=False
+                    agent_id=agent_id,
+                    agents=os.agents,
+                    db=os.db,
+                    registry=os.registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 log_error(f"Error resolving agent '{agent_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving agent: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if agent is None:
                 raise HTTPException(status_code=404, detail="Agent not found")
             if isinstance(agent, RemoteAgent):
