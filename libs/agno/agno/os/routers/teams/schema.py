@@ -114,6 +114,7 @@ class TeamResponse(BaseModel):
             # Response settings defaults
             "parse_response": True,
             "use_json_mode": False,
+            "use_member_tool_results_as_fallback": True,
             # Streaming defaults
             "stream_events": False,
             "stream_member_events": False,
@@ -259,6 +260,7 @@ class TeamResponse(BaseModel):
             "parser_model_prompt": team.parser_model_prompt,
             "parse_response": team.parse_response,
             "use_json_mode": team.use_json_mode,
+            "use_member_tool_results_as_fallback": team.use_member_tool_results_as_fallback,
         }
 
         if team.parser_model:

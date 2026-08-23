@@ -1,4 +1,18 @@
-# Validation run 2026-02-15T00:39:12
+# Validation Log
+
+## Validation run 2026-08-21
+
+### use_member_tool_results_as_fallback.py
+
+**Status:** PASS (offline validation)
+
+**Description:** Compiled the cookbook and exercised its non-streaming delegation boundary with deterministic sync and async tests.
+
+**Result:** The example imports and compiles successfully. An offline scripted-model run verified that the tool-only member retains its stored result, fallback disabled returns a generic no-response diagnostic without exposing the raw payload, and fallback enabled returns the stringified tool result. The 75 focused regression cases pass for single-member and broadcast delegation, sync and async execution, default/enabled/disabled policy, empty/whitespace/`None` content, empty and non-string tool results, leader-visible tool messages, `respond_directly`, nested-Team policy, serialization, deep copy, and AgentOS exposure. Shared member-interaction rendering remains unchanged. A live OpenAI call was attempted previously but could not be used as validation because credentialed outbound execution was blocked by the test environment.
+
+---
+
+## Validation run 2026-02-15T00:39:12
 
 ## Pattern Check
 **Status:** PASS
@@ -110,4 +124,3 @@ DEBUG You coordinate a team of specialized AI agents to fulfill the user's
 **Result:** Timeout after 30s
 
 ---
-
