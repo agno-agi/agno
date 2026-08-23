@@ -163,6 +163,7 @@ class TestEmptyBodyResume:
             captured["run_id"] = run_response.run_id
             captured["forked_from_run_id"] = run_response.forked_from_run_id
             captured["forked_from_message_index"] = run_response.forked_from_message_index
+            captured["context_run_id"] = run_context.run_id
             return run_response
 
         monkeypatch.setattr(_run, "_continue_run", fake_continue_run)
@@ -176,6 +177,8 @@ class TestEmptyBodyResume:
 
         # New run_id (auto-fork)
         assert captured["run_id"] != "run-done"
+        assert captured["context_run_id"] == captured["run_id"]
+        assert captured["context_run_id"] != "run-done"
         # Lineage recorded
         assert captured["forked_from_run_id"] == "run-done"
         # Forked at end-of-messages (no truncation since no checkpoint specified)
@@ -468,6 +471,7 @@ class TestAsyncEmptyBodyResume:
         async def fake_acontinue_run(agent, session_id, run_context, run_response=None, **kw):
             captured["reached"] = True
             captured["run_response"] = run_response
+            captured["run_context"] = run_context
             if run_response is None:
                 # _acontinue_run resolves run_response from session if not provided;
                 # our test passes run_id only, so it'd hit this branch in reality.
@@ -1919,6 +1923,7 @@ class TestStreamingParity:
                     _maybe_append_input_message(run_response, inp, agent)
 
             captured["run_response"] = run_response
+            captured["run_context"] = run_context
             captured["kw"] = kw
             yield run_response
 
@@ -1943,6 +1948,7 @@ class TestStreamingParity:
 
         rr = captured["run_response"]
         assert rr.run_id != "run-S", "Fork must assign a new run_id on the streaming path"
+        assert captured["run_context"].run_id == rr.run_id
         assert rr.forked_from_run_id == "run-S"
         assert rr.forked_from_message_index == 2
         # Truncated to 2 messages (was 4)
