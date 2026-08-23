@@ -1744,6 +1744,32 @@ def test_strict_processing_does_not_require_an_injected_parameter():
     assert func.parameters["required"] == ["query"]
 
 
+def test_strict_processing_does_not_require_typed_framework_parameters():
+    """Dynamic framework parameters must remain optional in strict schemas."""
+
+    def fn(query: str, ctx: Optional[RunContext] = None) -> str:
+        return query
+
+    func = Function(
+        name="fn",
+        entrypoint=fn,
+        parameters={
+            "type": "object",
+            "properties": {
+                "query": {"type": "string"},
+                "ctx": {"type": "object"},
+            },
+            "required": ["query"],
+        },
+        skip_entrypoint_processing=True,
+    )
+    func._framework_params = {"ctx"}
+
+    func.process_schema_for_strict()
+
+    assert func.parameters["required"] == ["query"]
+
+
 # ----------------------------------------------------------------------
 # Regression: the guard must also engage on the from_callable path
 # (Agent(tools=[fn]) registers plain callables without process_entrypoint)

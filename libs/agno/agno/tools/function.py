@@ -1429,6 +1429,7 @@ class Function(BaseModel):
             if name not in ("return", "self")
             and name not in FRAMEWORK_INJECTED_PARAMS
             and name not in AGNO_INJECTED_PARAMS
+            and name not in (self._framework_params or set())
         ]
 
     @staticmethod
