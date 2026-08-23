@@ -4,6 +4,7 @@ import json
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from hashlib import md5
+from html import escape
 from pathlib import Path
 from time import sleep, time
 from types import AsyncGeneratorType, GeneratorType
@@ -80,6 +81,28 @@ class MessageData:
     response_provider_data: Optional[Dict[str, Any]] = None
 
     extra: Optional[Dict[str, Any]] = None
+
+
+def format_tool_result_content(
+    content: Optional[Union[List[Any], str]],
+    tool_name: str,
+    add_tool_result_boundaries: bool = False,
+    tool_result_max_length: Optional[int] = None,
+) -> Optional[Union[List[Any], str]]:
+    """Truncate and/or wrap a string tool result. Non-string results pass through untouched."""
+    if not isinstance(content, str):
+        return content
+
+    formatted_content = content
+    if tool_result_max_length and tool_result_max_length > 0 and len(content) > tool_result_max_length:
+        formatted_content = (
+            f"{content[:tool_result_max_length]}\n[Tool output truncated after {tool_result_max_length} characters.]"
+        )
+
+    if add_tool_result_boundaries:
+        return f'<tool_output name="{escape(tool_name, quote=True)}">{escape(formatted_content, quote=False)}</tool_output>'
+
+    return formatted_content
 
 
 def _log_messages(messages: List[Message]) -> None:
@@ -658,6 +681,8 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -753,6 +778,8 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    add_tool_result_boundaries=add_tool_result_boundaries,
+                    tool_result_max_length=tool_result_max_length,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -889,6 +916,8 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -975,6 +1004,8 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    add_tool_result_boundaries=add_tool_result_boundaries,
+                    tool_result_max_length=tool_result_max_length,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -1371,6 +1402,8 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1518,6 +1551,8 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    add_tool_result_boundaries=add_tool_result_boundaries,
+                    tool_result_max_length=tool_result_max_length,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -1650,6 +1685,8 @@ class Model(ABC):
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1797,6 +1834,8 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    add_tool_result_boundaries=add_tool_result_boundaries,
+                    tool_result_max_length=tool_result_max_length,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
@@ -2087,6 +2126,8 @@ class Model(ABC):
         output: Optional[Union[List[Any], str]] = None,
         timer: Optional[Timer] = None,
         function_execution_result: Optional[FunctionExecutionResult] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> Message:
         """Create a function call result message."""
         kwargs: Dict[str, Any] = {}
@@ -2105,9 +2146,16 @@ class Model(ABC):
             audios = function_execution_result.audios
             files = function_execution_result.files
 
+        content = format_tool_result_content(
+            content=output if success else function_call.error,
+            tool_name=function_call.function.name,
+            add_tool_result_boundaries=add_tool_result_boundaries,
+            tool_result_max_length=tool_result_max_length,
+        )
+
         return Message(
             role=self.tool_message_role,
-            content=output if success else function_call.error,
+            content=content,
             tool_call_id=function_call.call_id,
             tool_name=function_call.function.name,
             tool_args=function_call.arguments,
@@ -2135,6 +2183,8 @@ class Model(ABC):
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_input: Optional[List[Message]] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Start function call
         function_call_timer = Timer()
@@ -2281,10 +2331,21 @@ class Model(ABC):
             output=function_call_output,
             timer=function_call_timer,
             function_execution_result=function_execution_result,
+            add_tool_result_boundaries=add_tool_result_boundaries,
+            tool_result_max_length=tool_result_max_length,
         )
         # Override stop_after_tool_call if set by exception
         if stop_after_tool_call_from_exception:
             function_call_result.stop_after_tool_call = True
+
+        tool_execution_result = (
+            function_call_output
+            if function_call_success and isinstance(function_call_output, str)
+            else function_call.error
+            if not function_call_success and function_call.error is not None
+            else str(function_call_result.content)
+        )
+
         yield ModelResponse(
             content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
             tool_executions=[
@@ -2293,7 +2354,7 @@ class Model(ABC):
                     tool_name=function_call_result.tool_name,
                     tool_args=function_call_result.tool_args,
                     tool_call_error=function_call_result.tool_call_error,
-                    result=str(function_call_result.content),
+                    result=tool_execution_result,
                     stop_after_tool_call=function_call_result.stop_after_tool_call,
                     metrics=tool_metrics,
                 )
@@ -2317,6 +2378,8 @@ class Model(ABC):
         additional_input: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
@@ -2458,7 +2521,11 @@ class Model(ABC):
                 continue
 
             yield from self.run_function_call(
-                function_call=fc, function_call_results=function_call_results, additional_input=additional_input
+                function_call=fc,
+                function_call_results=function_call_results,
+                additional_input=additional_input,
+                add_tool_result_boundaries=add_tool_result_boundaries,
+                tool_result_max_length=tool_result_max_length,
             )
 
         # Add any additional messages at the end
@@ -2515,6 +2582,8 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
+        add_tool_result_boundaries: bool = False,
+        tool_result_max_length: Optional[int] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
@@ -2962,10 +3031,21 @@ class Model(ABC):
                 output=function_call_output,
                 timer=function_call_timer,
                 function_execution_result=function_execution_result,
+                add_tool_result_boundaries=add_tool_result_boundaries,
+                tool_result_max_length=tool_result_max_length,
             )
             # Override stop_after_tool_call if set by exception
             if stop_after_tool_call_from_exception:
                 function_call_result.stop_after_tool_call = True
+
+            tool_execution_result = (
+                function_call_output
+                if function_call_success and isinstance(function_call_output, str)
+                else function_call.error
+                if not function_call_success and function_call.error is not None
+                else str(function_call_result.content)
+            )
+
             yield ModelResponse(
                 content=f"{function_call.get_call_str()} completed in {function_call_timer.elapsed:.4f}s. ",
                 tool_executions=[
@@ -2974,7 +3054,7 @@ class Model(ABC):
                         tool_name=function_call_result.tool_name,
                         tool_args=function_call_result.tool_args,
                         tool_call_error=function_call_result.tool_call_error,
-                        result=str(function_call_result.content),
+                        result=tool_execution_result,
                         stop_after_tool_call=function_call_result.stop_after_tool_call,
                         metrics=tool_metrics,
                     )

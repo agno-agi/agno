@@ -384,6 +384,8 @@ def _run_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                add_tool_result_boundaries=team.add_tool_result_boundaries,
+                tool_result_max_length=team.tool_result_max_length,
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
                 ),
@@ -1221,6 +1223,8 @@ def _run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    add_tool_result_boundaries=team.add_tool_result_boundaries,
+                    tool_result_max_length=team.tool_result_max_length,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
@@ -2235,6 +2239,8 @@ async def _arun_tasks(
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
+                add_tool_result_boundaries=team.add_tool_result_boundaries,
+                tool_result_max_length=team.tool_result_max_length,
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
                 ),
@@ -3162,6 +3168,8 @@ async def _arun(
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    add_tool_result_boundaries=team.add_tool_result_boundaries,
+                    tool_result_max_length=team.tool_result_max_length,
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
                     ),
@@ -6429,6 +6437,8 @@ async def _ahandle_model_response_for_continue(
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
+        add_tool_result_boundaries=team.add_tool_result_boundaries,
+        tool_result_max_length=team.tool_result_max_length,
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
         ),
@@ -7640,6 +7650,8 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    add_tool_result_boundaries=team.add_tool_result_boundaries,
+                    tool_result_max_length=team.tool_result_max_length,
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
