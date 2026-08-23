@@ -1313,12 +1313,19 @@ def save(
         # Collect all links for members
         all_links: List[Dict[str, Any]] = []
 
+        def _save_member_if_changed(member: Union[Agent, "Team"]) -> Optional[int]:
+            if member.id is not None:
+                existing = db_.get_config(component_id=member.id)
+                if existing is not None and existing.get("config") == member.to_dict():
+                    return existing.get("version")
+            return member.save(db=db_, stage=stage, label=label, notes=notes)
+
         # Save each member (Agent or nested Team) and collect links
         # Only iterate if members is a static list (not a callable factory)
         members_list = team.members if isinstance(team.members, list) else []
         for position, member in enumerate(members_list):
             # Save member first - returns version
-            member_version = member.save(db=db_, stage=stage, label=label, notes=notes)
+            member_version = _save_member_if_changed(member)
 
             # Add link
             all_links.append(

@@ -1078,6 +1078,14 @@ class Workflow:
         # Collect all links
         all_links: List[Dict[str, Any]] = []
 
+        def _save_component_if_changed(component: Any) -> Optional[int]:
+            component_id = getattr(component, "id", None)
+            if component_id is not None:
+                existing = db_.get_config(component_id=component_id)
+                if existing is not None and existing.get("config") == component.to_dict():
+                    return existing.get("version")
+            return component.save(db=db_, stage=stage, label=label, notes=notes)
+
         def _save_step_agents(
             step: Any,
             position: int,
@@ -1088,25 +1096,20 @@ class Workflow:
             if isinstance(step, Step):
                 # Save agent if present
                 if step.agent and isinstance(step.agent, Agent):
-                    agent_version = step.agent.save(
-                        db=db_,
-                        stage=stage,
-                        label=label,
-                        notes=notes,
-                    )
+                    agent_version = _save_component_if_changed(step.agent)
                     if step.agent.id is not None and agent_version is not None:
                         saved_versions[step.agent.id] = agent_version
 
                 # Save team if present
                 if step.team and isinstance(step.team, Team):
-                    team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                    team_version = _save_component_if_changed(step.team)
                     if step.team.id is not None and team_version is not None:
                         saved_versions[step.team.id] = team_version
 
                 # Save nested workflow if present; without a saved version its
                 # step_workflow link cannot be written and the save would fail.
                 if step.workflow is not None and isinstance(step.workflow, Workflow):
-                    workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
+                    workflow_version = _save_component_if_changed(step.workflow)
                     if step.workflow.id is not None and workflow_version is not None:
                         saved_versions[step.workflow.id] = workflow_version
 

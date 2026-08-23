@@ -647,6 +647,20 @@ class TestTeamFromDict:
 
 
 class TestTeamSave:
+    def test_save_does_not_republish_unchanged_member(self, tmp_path):
+        member = Agent(id="member-agent", name="Member")
+        team = Team(id="parent-team", name="Parent", members=[member])
+        db = SqliteDb(db_file=str(tmp_path / "team_member_versions.db"))
+
+        assert team.save(db=db) == 1
+        assert team.save(db=db) == 2
+        assert db.get_component("member-agent")["current_version"] == 1
+
+        member.description = "changed"
+        assert team.save(db=db) == 3
+        assert db.get_component("member-agent")["current_version"] == 2
+        db.close()
+
     """Tests for Team.save() method."""
 
     def test_save_calls_upsert_component(self, basic_team, mock_db):
