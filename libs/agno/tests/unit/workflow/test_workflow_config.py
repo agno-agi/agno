@@ -17,8 +17,27 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agno.db.base import BaseDb, ComponentType
+from agno.agent import Agent
 from agno.registry import Registry
+from agno.team import Team
 from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
+
+
+@pytest.mark.parametrize(
+    "executor, reference_key, reference_id",
+    [
+        (Agent(id="step-agent", name="Step Agent"), "agent_id", "step-agent"),
+        (Team(id="step-team", name="Step Team", members=[]), "team_id", "step-team"),
+    ],
+)
+def test_to_dict_wraps_bare_agent_and_team_steps(executor, reference_key, reference_id):
+    config = Workflow(id="wf", steps=[executor]).to_dict()
+
+    assert config["steps"][0]["type"] == "Step"
+    assert config["steps"][0][reference_key] == reference_id
+    restored = Workflow.from_dict(config)
+    assert len(restored.steps) == 1
+
 
 # =============================================================================
 # Fixtures
