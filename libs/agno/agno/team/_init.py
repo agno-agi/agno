@@ -844,6 +844,11 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
             "`delegate_to_all_members` and `respond_directly` are both enabled. The task will be delegated to all members, but `respond_directly` will be disabled."
         )
         team.respond_directly = False
+        # The mode has to follow, or the prompt keeps describing route while the run
+        # holds the broadcast tool.
+        from agno.team.mode import TeamMode
+
+        team.mode = TeamMode.broadcast
 
     set_checkpoint(team)
 

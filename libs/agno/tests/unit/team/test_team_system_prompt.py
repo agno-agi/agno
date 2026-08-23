@@ -76,7 +76,8 @@ def test_every_tool_named_in_the_prompt_is_attached(mode):
     This is the check that would have caught the prompt drifting away from the tools
     its own mode attaches.
     """
-    team = _team(mode=mode)
+    # get_member_information_tool on, so the widened <team> window has something to check.
+    team = _team(mode=mode, get_member_information_tool=True)
     team.initialize_team()
     run_context = RunContext(session_state={}, run_id="r1", session_id="s1")
 
@@ -87,18 +88,54 @@ def test_every_tool_named_in_the_prompt_is_attached(mode):
         team_run_context={},
         session=_session(),
     )
-    attached = {getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None) for t in tools}
-    attached.discard(None)
+    attached = set()
+    for t in tools:
+        name = getattr(t, "name", None) or (t.get("name") if isinstance(t, dict) else None)
+        if not name:
+            continue
+        attached.add(name)
+        # Argument names are quoted in the prompt too, and drift the same way.
+        params = getattr(t, "parameters", None)
+        if isinstance(params, dict):
+            attached.update(params.get("properties", {}).keys())
 
+    # Scan the whole <team> block, not just <delegation>: the get_member_information
+    # sentence sits between the roster and the delegation block, and drifted there.
     content = team.get_system_message(session=_session()).content
-    delegation = content[content.index("<delegation>") : content.index("</delegation>")]
-    named = set(re.findall(r"`([a-z_][a-z0-9_]*)`", delegation))
-
-    # depends_on is a tool argument, not a tool.
-    named -= {"depends_on"}
+    block = content[content.index("<team>") : content.index("</team>")]
+    named = set(re.findall(r"`([a-z_][a-z0-9_]*)`", block))
 
     assert named, "the delegation block should name the tools it expects to be called"
-    assert named <= attached, f"{mode}: prompt names unattached tools {sorted(named - attached)}"
+    assert named <= attached, f"{mode}: prompt names unattached tools/args {sorted(named - attached)}"
+
+
+def test_get_member_information_is_named_only_where_it_is_attached():
+    """Tasks mode takes the task-tool branch, which never attaches it."""
+    for mode in MODES:
+        content = _team(mode=mode, get_member_information_tool=True).get_system_message(session=_session()).content
+        assert ("get_member_information" in content) is (mode != TeamMode.tasks.value)
+
+
+def test_conflicting_flags_render_the_mode_that_actually_runs():
+    """respond_directly + delegate_to_all_members resolves to broadcast, prompt included."""
+    team = _team(respond_directly=True, delegate_to_all_members=True)
+    team.initialize_team()
+    assert team.mode == TeamMode.broadcast
+
+    content = team.get_system_message(session=_session()).content
+    assert "broadcast mode" in content
+    assert "route mode" not in content
+    assert "`delegate_task_to_member`" not in content
+
+
+def test_member_isolation_claim_tracks_the_context_flags():
+    """The unconditional claim is false once the team forwards history or interactions."""
+    plain = _team().get_system_message(session=_session()).content
+    assert "Members do not see this conversation." in plain
+
+    sharing = _team(add_team_history_to_members=True).get_system_message(session=_session()).content
+    assert "Members do not see this conversation." not in sharing
+    assert "not the conversation itself" in sharing
 
 
 def test_member_ids_line_is_suppressed_for_broadcast():

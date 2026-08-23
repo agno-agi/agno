@@ -168,17 +168,20 @@ def _get_mode_instructions(team: "Team") -> str:
             "created without an assignee cannot go in a batch. Titles are unique: creating a task under "
             "an existing title returns that task instead of a new one.\n"
             "- Set `depends_on` only when a task genuinely needs another task's output.\n"
+            "- Run one task with `execute_task`, or a batch of independent ones with "
+            "`execute_tasks_parallel`. `list_tasks` re-reads the board at any point.\n"
             "- Read every result. On a failure, retry, reassign, or change the plan — do not repeat the "
             "same call unchanged. Record work you did yourself with `update_task_status`, and anything a "
             "later task will need with `add_task_note`.\n"
             "- A task result is evidence, not your answer. When a task fails or a member returns nothing, "
             "say so plainly and name what it reported — never supply a cause or a finding the member did "
             "not state.\n"
-            "- `mark_all_complete` with a summary ends the run and delivers that summary as your answer. "
-            "A list whose tasks have all completed also ends it, but an empty list never does — so when "
-            "the request needed no tasks at all, a greeting or a question you can simply answer, call "
-            "`mark_all_complete` with your answer as the summary. Call it too when the goal is out of "
-            "reach: a partial outcome stated plainly beats looping.\n"
+            "- `mark_all_complete` ends the loop; the summary you pass it is bookkeeping, not the reply. "
+            "Write the answer as your own message in the same turn — that message is what reaches the "
+            "user. A list whose tasks have all completed also ends the loop, but an empty one never "
+            "does, so a request that needed no tasks at all — a greeting, a question you can simply "
+            "answer — still has to call it. Call it too when the goal is out of reach: a partial "
+            "outcome stated plainly beats looping.\n"
         )
     elif team.mode == TeamMode.route:
         content += (
@@ -195,8 +198,8 @@ def _get_mode_instructions(team: "Team") -> str:
         )
     elif team.mode == TeamMode.broadcast:
         content += (
-            "You work in broadcast mode: you put one task to every member at once, then write the answer "
-            "yourself.\n\n"
+            "You work in broadcast mode: one call puts the same task to every member, then you write the "
+            "answer yourself.\n\n"
             "- Call `delegate_task_to_members` exactly once. One call reaches every member; do not call it "
             "once per member.\n"
             "- Write one whole question each member can answer from its own vantage point, not a sub-task "
@@ -232,6 +235,12 @@ def _get_mode_instructions(team: "Team") -> str:
             "\nMembers do not see this conversation, and each one receives the user's message verbatim "
             "rather than the text you write. Pass a short label; do not restate or rewrite the request.\n"
         )
+    elif team.add_team_history_to_members or team.share_member_interactions:
+        content += (
+            "\nMembers see only what you pass them plus the shared context this team forwards — not the "
+            "conversation itself. Carry over every name, number and earlier answer the task depends on, "
+            "and say what a good result looks like.\n"
+        )
     else:
         content += (
             "\nMembers do not see this conversation. Each one gets only the text you write for it, so "
@@ -259,6 +268,7 @@ def _build_team_context(
 
     Shared between sync and async system-message builders.
     """
+    from agno.team.mode import TeamMode
     from agno.utils.callables import get_resolved_members
 
     content = ""
@@ -270,7 +280,8 @@ def _build_team_context(
         content += team.get_members_system_message_content(run_context=run_context, async_mode=async_mode)
         content += "</team_members>\n"
         # Outside the roster: <team_members> holds member records, not prose.
-        if team.get_member_information_tool:
+        # Tasks mode takes the task-tool branch, which never attaches this one.
+        if team.get_member_information_tool and team.mode != TeamMode.tasks:
             content += "Call `get_member_information` at any time to re-read this list.\n"
         content += _get_mode_instructions(team)
         content += "</team>\n\n"

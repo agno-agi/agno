@@ -376,7 +376,7 @@ def _run_tasks(
                     role="user",
                     content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
                     "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
+                    "When the goal is met, write your answer and call `mark_all_complete`.",
                 )
                 accumulated_messages.append(state_message)
 
@@ -736,7 +736,7 @@ def _run_tasks_stream(
                     role="user",
                     content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
                     "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
+                    "When the goal is met, write your answer and call `mark_all_complete`.",
                 )
                 accumulated_messages.append(state_message)
 
@@ -2235,7 +2235,7 @@ async def _arun_tasks(
                     role="user",
                     content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
                     "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
+                    "When the goal is met, write your answer and call `mark_all_complete`.",
                 )
                 accumulated_messages.append(state_message)
 
@@ -2630,7 +2630,7 @@ async def _arun_tasks_stream(
                     role="user",
                     content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
                     "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When all tasks are done, call `mark_all_complete` with a summary.",
+                    "When the goal is met, write your answer and call `mark_all_complete`.",
                 )
                 accumulated_messages.append(state_message)
 

@@ -382,6 +382,11 @@ def render_instructions(instructions: List[str]) -> str:
     """
     if len(instructions) == 1:
         return instructions[0]
-    if all("\n" not in _upi for _upi in instructions):
-        return "\n".join(f"- {_upi}" for _upi in instructions)
-    return "\n\n".join(_upi if "\n" in _upi else f"- {_upi}" for _upi in instructions)
+
+    def _is_block(instruction: str) -> bool:
+        # Strip first: a trailing newline does not make a one-line instruction a block.
+        return "\n" in instruction.strip()
+
+    if not any(_is_block(_upi) for _upi in instructions):
+        return "\n".join(f"- {_upi.strip()}" for _upi in instructions)
+    return "\n\n".join(_upi if _is_block(_upi) else f"- {_upi.strip()}" for _upi in instructions)
