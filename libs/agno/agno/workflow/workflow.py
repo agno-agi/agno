@@ -295,6 +295,34 @@ def _apply_requirements_to_run_response(run_response: Any, requirements: list) -
         run_response.tools = updated_tools
 
 
+
+def _ensure_executor_approval_resolved(executor: Any, paused_run_response: Any, executor_run_id: Optional[str]) -> None:
+    """Block workflow continuation while a required admin approval is still pending.
+
+    Must run *before* ``_apply_requirements_to_run_response``: clients can submit
+    ``confirmed=true`` HITL payloads that would otherwise resume the executor
+    without an admin approval record being resolved.
+    """
+    from agno.run.approval import check_and_apply_approval_resolution
+
+    rid = executor_run_id or getattr(paused_run_response, "run_id", None)
+    if not rid:
+        return
+    check_and_apply_approval_resolution(getattr(executor, "db", None), rid, paused_run_response)
+
+
+async def _aensure_executor_approval_resolved(
+    executor: Any, paused_run_response: Any, executor_run_id: Optional[str]
+) -> None:
+    """Async variant of ``_ensure_executor_approval_resolved``."""
+    from agno.run.approval import acheck_and_apply_approval_resolution
+
+    rid = executor_run_id or getattr(paused_run_response, "run_id", None)
+    if not rid:
+        return
+    await acheck_and_apply_approval_resolution(getattr(executor, "db", None), rid, paused_run_response)
+
+
 def _create_skipped_step_output(
     step_name: str,
     step_id: str,
@@ -6627,6 +6655,9 @@ class Workflow:
                 else:
                     requirements.append(req_data)
 
+        # Admin-required approvals must be resolved before client HITL payloads apply.
+        _ensure_executor_approval_resolved(executor, paused_run_response, step_req.executor_run_id)
+
         # Apply resolved requirements to the paused run_response (update tool states)
         _apply_requirements_to_run_response(paused_run_response, requirements)
 
@@ -6687,6 +6718,7 @@ class Workflow:
 
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
+        _ensure_executor_approval_resolved(executor, paused_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
 
         # Call executor's continue_run with the stored run_response (streaming).
@@ -6775,6 +6807,7 @@ class Workflow:
 
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
+        await _aensure_executor_approval_resolved(executor, paused_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
 
         # Call executor's acontinue_run with the stored run_response (streaming).
@@ -6859,6 +6892,7 @@ class Workflow:
 
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
+        await _aensure_executor_approval_resolved(executor, paused_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
 
         # Call executor's acontinue_run with the stored run_response
