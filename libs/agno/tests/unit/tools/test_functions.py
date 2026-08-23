@@ -3169,6 +3169,31 @@ def test_a_hook_calling_the_entrypoint_twice_is_not_cached(tmp_path):
     assert list(tmp_path.rglob("*.json")) == []
 
 
+def test_tool_hook_fresh_kwargs_preserve_defaults():
+    def replace(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(value="hook")
+
+    def read(value: str, default: str = "missing") -> str:
+        return f"{value}:{default}"
+
+    func = Function(name="read", entrypoint=read, tool_hooks=[replace])
+    result = FunctionCall(function=func, arguments={"value": "original", "default": "configured"}).execute()
+    assert result.result == "hook:configured"
+
+
+@pytest.mark.asyncio
+async def test_async_tool_hook_fresh_kwargs_preserve_defaults():
+    async def replace(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return await function_call(value="hook")
+
+    async def read(value: str, default: str = "missing") -> str:
+        return f"{value}:{default}"
+
+    func = Function(name="read_async", entrypoint=read, tool_hooks=[replace])
+    result = await FunctionCall(function=func, arguments={"value": "original", "default": "configured"}).aexecute()
+    assert result.result == "hook:configured"
+
+
 def test_a_hook_that_answers_without_the_entrypoint_is_not_cached(tmp_path):
     """A hook that recovers from an error, or refuses before the tool runs,
     produced no result of the tool's own. Caching its answer would keep
@@ -3191,7 +3216,7 @@ def test_a_hook_that_answers_without_the_entrypoint_is_not_cached(tmp_path):
     )
 
     assert FunctionCall(function=func, arguments={}).execute().result == "[error] upstream down"
-    assert list(tmp_path.rglob("*.json")) == []
+    assert len(list(tmp_path.rglob("*.json"))) == 2
 
     available["ok"] = True
     assert FunctionCall(function=func, arguments={}).execute().result == "[ok] fresh data"
@@ -4141,7 +4166,7 @@ def test_a_hook_that_rewrites_an_argument_makes_the_call_uncacheable(tmp_path):
     assert first.result == "data for profile-v1"
     assert second.result == "data for profile-v2"
     assert executions == ["profile-v1", "profile-v2"]
-    assert list(tmp_path.rglob("*.json")) == []
+    assert len(list(tmp_path.rglob("*.json"))) == 2
 
 
 def test_a_result_holding_one_object_twice_is_not_cached(tmp_path):

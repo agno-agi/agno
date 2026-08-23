@@ -2043,12 +2043,24 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import iscoroutinefunction
 
+        def effective_args(args):
+            arguments = entrypoint_args.copy()
+            if self.arguments is not None:
+                arguments.update(self.arguments)
+            arguments.update(args or {})
+            return arguments
+
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function."""
-            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
+            arguments = effective_args(args)
+            self._effective_entrypoint_cache_key = (
+                cache_key
+                if arguments == getattr(self, "_initial_effective_entrypoint_args", arguments)
+                else self.function._get_cache_key(arguments)
+            )
+            if cached_result is not None and not self._moved_its_key(cache_key, arguments):
                 return _detached(cached_result)
-            arguments = entrypoint_args.copy()
-            arguments.update(args)
+            self._effective_entrypoint_args = arguments
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
@@ -2097,7 +2109,7 @@ class FunctionCall(BaseModel):
         """
         if cache_key is None:
             return False
-        return self.function._get_cache_key(entrypoint_args, self.arguments) != cache_key
+        return getattr(self, "_effective_entrypoint_cache_key", cache_key) != cache_key
 
     def _save_entrypoint_result(
         self, cache_key: str, cache_file: str, entrypoint_args: Dict[str, Any], raw_results: List[Any]
@@ -2137,13 +2149,9 @@ class FunctionCall(BaseModel):
         if isgenerator(result_to_cache) or isasyncgen(result_to_cache):
             return
 
-        if self._moved_its_key(cache_key, entrypoint_args):
-            log_debug(
-                f"Skipping cache for {self.function.name}: the call changed what it was asked, "
-                "so the result does not answer the question the key names"
-            )
-            return
-
+        effective_cache_key = getattr(self, "_effective_entrypoint_cache_key", cache_key)
+        if effective_cache_key != cache_key:
+            cache_file = self.function._get_cache_file_path(effective_cache_key)
         self.function._save_to_cache(cache_file, result_to_cache)
 
     def execute(self) -> FunctionExecutionResult:
@@ -2159,6 +2167,9 @@ class FunctionCall(BaseModel):
         # Sanitize before any hook runs, so a hook used as an authorization gate cannot
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
+        self._initial_effective_entrypoint_args = entrypoint_args.copy()
+        if self.arguments is not None:
+            self._initial_effective_entrypoint_args.update(self.arguments)
 
         # Execute pre-hook if it exists
         self._handle_pre_hook()
@@ -2333,12 +2344,24 @@ class FunctionCall(BaseModel):
         from functools import reduce
         from inspect import isasyncgenfunction, iscoroutinefunction
 
+        def effective_args(args):
+            arguments = entrypoint_args.copy()
+            if self.arguments is not None:
+                arguments.update(self.arguments)
+            arguments.update(args or {})
+            return arguments
+
         async def execute_entrypoint_async(name, func, args):
             """Execute the entrypoint function asynchronously."""
-            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
+            arguments = effective_args(args)
+            self._effective_entrypoint_cache_key = (
+                cache_key
+                if arguments == getattr(self, "_initial_effective_entrypoint_args", arguments)
+                else self.function._get_cache_key(arguments)
+            )
+            if cached_result is not None and not self._moved_its_key(cache_key, arguments):
                 return _detached(cached_result)
-            arguments = entrypoint_args.copy()
-            arguments.update(args)
+            self._effective_entrypoint_args = arguments
 
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
@@ -2350,10 +2373,15 @@ class FunctionCall(BaseModel):
 
         def execute_entrypoint(name, func, args):
             """Execute the entrypoint function synchronously."""
-            if cached_result is not None and not self._moved_its_key(cache_key, entrypoint_args):
+            arguments = effective_args(args)
+            self._effective_entrypoint_cache_key = (
+                cache_key
+                if arguments == getattr(self, "_initial_effective_entrypoint_args", arguments)
+                else self.function._get_cache_key(arguments)
+            )
+            if cached_result is not None and not self._moved_its_key(cache_key, arguments):
                 return _detached(cached_result)
-            arguments = entrypoint_args.copy()
-            arguments.update(args)
+            self._effective_entrypoint_args = arguments
             slot = _start_entrypoint_call(raw_results) if raw_results is not None else -1
             result = self.function.entrypoint(**arguments)  # type: ignore
             if raw_results is not None:
@@ -2410,6 +2438,9 @@ class FunctionCall(BaseModel):
         # Sanitize before any hook runs, so a hook used as an authorization gate cannot
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
+        self._initial_effective_entrypoint_args = entrypoint_args.copy()
+        if self.arguments is not None:
+            self._initial_effective_entrypoint_args.update(self.arguments)
 
         # Execute pre-hook if it exists
         if iscoroutinefunction(self.function.pre_hook):
