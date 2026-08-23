@@ -107,5 +107,5 @@ python cookbook/92_models/vllm/basic.py
 
 ### Embeddings
 
-- [vllm_embedder.py](../knowledge/embedders/vllm_embedder.py) - Local and remote embeddings
-- [vllm_embedder_batching.py](../knowledge/embedders/vllm_embedder_batching.py) - Batch processing
+- [vllm_embedder_local.py](../../07_knowledge/09_archive/embedders/vllm_embedder_local.py) - Local embeddings with standard and batching modes
+- [vllm_embedder_remote.py](../../07_knowledge/09_archive/embedders/vllm_embedder_remote.py) - Remote embeddings with optional batching
