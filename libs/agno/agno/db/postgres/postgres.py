@@ -20,6 +20,8 @@ from agno.db.base import (
     ComponentType,
     ComponentVersionConflictError,
     SessionType,
+    current_version_guard_clause,
+    current_version_matches,
     project_config_identity,
 )
 from agno.db.migrations.manager import MigrationManager
@@ -4458,7 +4460,9 @@ class PostgresDb(BaseDb):
                 if user_id is not None and row.user_id != user_id:
                     return False
                 component_type = str(row.component_type)
-                if expected_current_version is not None and row.current_version != expected_current_version:
+                if expected_current_version is not None and not current_version_matches(
+                    row.current_version, expected_current_version
+                ):
                     raise ComponentVersionConflictError(
                         f"Component {component_id} current version is {row.current_version}, "
                         f"expected {expected_current_version}"
@@ -4501,7 +4505,7 @@ class PostgresDb(BaseDb):
                         component_delete = component_delete.where(components_table.c.user_id == user_id)
                     if expected_current_version is not None:
                         component_delete = component_delete.where(
-                            components_table.c.current_version == expected_current_version
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
                         )
                     result = sess.execute(component_delete)
                     if result.rowcount == 0 and expected_current_version is not None:
@@ -4531,7 +4535,7 @@ class PostgresDb(BaseDb):
                         archive_update = archive_update.where(components_table.c.user_id == user_id)
                     if expected_current_version is not None:
                         archive_update = archive_update.where(
-                            components_table.c.current_version == expected_current_version
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
                         )
                     result = sess.execute(archive_update)
                     if result.rowcount == 0 and expected_current_version is not None:
@@ -5467,7 +5471,7 @@ class PostgresDb(BaseDb):
                         # UPDATE so two publishers expecting the same current
                         # version cannot both win.
                         projection_update = projection_update.where(
-                            components_table.c.current_version == expected_current_version
+                            current_version_guard_clause(components_table.c.current_version, expected_current_version)
                         )
                     projection_result = sess.execute(projection_update)
                     if projection_result.rowcount == 0:
@@ -5867,7 +5871,7 @@ class PostgresDb(BaseDb):
                             components_table.c.component_id == component_id
                         )
                     ).scalar()
-                    if pointer != expected_current_version:
+                    if not current_version_matches(pointer, expected_current_version):
                         raise ComponentVersionConflictError(
                             f"Component {component_id} current version is {pointer}, "
                             f"expected {expected_current_version}"
@@ -5895,7 +5899,7 @@ class PostgresDb(BaseDb):
                     pointer_update = pointer_update.where(components_table.c.user_id == user_id)
                 if expected_current_version is not None:
                     pointer_update = pointer_update.where(
-                        components_table.c.current_version == expected_current_version
+                        current_version_guard_clause(components_table.c.current_version, expected_current_version)
                     )
                 result = sess.execute(pointer_update)
 

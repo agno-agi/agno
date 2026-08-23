@@ -2998,7 +2998,10 @@ class StudioTools(Toolkit):
             component_id (str): Exact component id.
             version (Optional[int]): The draft to publish; omit for the latest draft.
             expected_current_version (Optional[int]): Compare-and-set guard on
-                the live pointer being replaced; omit to skip the check.
+                the live pointer being replaced; omit to skip the check. A
+                component that has never been published has no live pointer,
+                so on a first publish omit this or pass 0 ("nothing is live
+                yet"); any other value can never match.
 
         Returns:
             str: StudioResult JSON; data is {id, version}; status "published" or
@@ -3047,13 +3050,30 @@ class StudioTools(Toolkit):
             # no-op returns: a caller who guarded on a live version it no longer
             # holds must hear version_conflict, not a success envelope.
             if expected_current_version is not None:
+                from agno.db.base import current_version_matches
+
                 row = self.db.get_component(component_id) or {}
-                if row.get("current_version") != expected_current_version:
+                current_version = row.get("current_version")
+                if not current_version_matches(current_version, expected_current_version):
+                    if current_version is None:
+                        # A first publish has no live pointer, so no value but
+                        # 0 can ever match: this is not a conflict to retry
+                        # with a different number, and saying so is what
+                        # stops a model from looping on it.
+                        return error_result(
+                            "version_conflict",
+                            f"Cannot guard a first publish: '{component_id}' has no live version yet, so "
+                            f"expected_current_version={expected_current_version} has nothing to compare "
+                            f"against. Omit it, or pass 0 to assert that nothing is live, to publish v{target}.",
+                            retryable=False,
+                            current_version=None,
+                        )
                     return error_result(
                         "version_conflict",
-                        f"Current version is {row.get('current_version')}, expected {expected_current_version}.",
+                        f"Current version is {current_version}, expected {expected_current_version}. "
+                        "Re-read and retry.",
                         retryable=True,
-                        current_version=row.get("current_version"),
+                        current_version=current_version,
                     )
             if already_published:
                 # Nothing to write. The catalog row belongs to whichever version
@@ -3233,7 +3253,10 @@ class StudioTools(Toolkit):
         Args:
             component_id (str): Exact id of a stored component. Display names
                 do not resolve for destructive operations.
-            expected_current_version (Optional[int]): Compare-and-set guard.
+            expected_current_version (Optional[int]): Compare-and-set guard on
+                the live pointer; omit to skip the check. A component that has
+                never been published has no live pointer, so pass 0 ("nothing
+                is live") or omit it; any other value can never match.
 
         Returns:
             str: StudioResult JSON; data is {id}; warnings report side effects.
@@ -3273,6 +3296,22 @@ class StudioTools(Toolkit):
             if denied is not None:
                 return self._denied_error(denied)
             component_type = str(row.get("component_type"))
+            if expected_current_version is not None and row.get("current_version") is None:
+                from agno.db.base import expects_no_live_version
+
+                if not expects_no_live_version(expected_current_version):
+                    # Same dead end as a guarded first publish: no value but 0
+                    # can match a NULL live pointer, so this is terminal, not a
+                    # conflict to retry with a different number. The adapter's
+                    # own guard still rides the delete for the 0 case.
+                    return error_result(
+                        "version_conflict",
+                        f"Cannot guard this archive: '{component_id}' has no live version yet, so "
+                        f"expected_current_version={expected_current_version} has nothing to compare "
+                        f"against. Omit it, or pass 0 to assert that nothing is live.",
+                        retryable=False,
+                        current_version=None,
+                    )
             # The cascade runs inside delete_component, in the archive's own
             # transaction, and reports back what it silenced: the count is only
             # knowable there, because it counts the rows this archive flipped

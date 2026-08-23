@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -819,7 +819,19 @@ class ComponentGuard(BaseModel):
     """
 
     latest_version: Optional[int] = Field(None, description="Expected latest config version")
-    current_version: Optional[int] = Field(None, description="Expected current (published) version")
+    current_version: Optional[int] = Field(
+        None, description="Expected current (published) version; 0 expects the component to have none yet"
+    )
+
+    @field_validator("latest_version", "current_version", mode="before")
+    @classmethod
+    def _reject_boolean_versions(cls, value: Any) -> Any:
+        # Lax coercion would read JSON false as 0, and 0 now means "no live
+        # version": a boolean is not a version number, so it is refused rather
+        # than silently satisfying (or failing) the guard.
+        if isinstance(value, bool):
+            raise ValueError("version guards must be integers, not booleans")
+        return value
 
 
 class ComponentCreate(BaseModel):
