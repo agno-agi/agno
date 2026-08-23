@@ -819,7 +819,9 @@ class ComponentGuard(BaseModel):
     """
 
     latest_version: Optional[int] = Field(None, description="Expected latest config version")
-    current_version: Optional[int] = Field(None, description="Expected current (published) version")
+    current_version: Optional[int] = Field(
+        None, description="Expected current (published) version; 0 expects the component to have none yet"
+    )
 
 
 class ComponentCreate(BaseModel):

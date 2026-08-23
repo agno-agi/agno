@@ -169,6 +169,38 @@ class TestGuards:
             db.delete_component("comp-a", expected_current_version=9)
         assert db.delete_component("comp-a", expected_current_version=1) is True
 
+    def test_zero_expects_no_live_version_on_first_publish(self, db):
+        """A never-published component has a NULL live pointer, which no
+        integer equals; 0 spells "I expect nothing to be live" so a guarded
+        first publish is satisfiable - and refused once something is."""
+        _mk(db, stage="draft")
+        assert db.get_component("comp-a")["current_version"] is None
+        with pytest.raises(ComponentVersionConflictError):
+            db.upsert_config("comp-a", version=1, stage="published", expected_current_version=1)
+        assert db.get_component("comp-a")["current_version"] is None
+        row = db.upsert_config("comp-a", version=1, stage="published", expected_current_version=0)
+        assert row["stage"] == "published"
+        assert db.get_component("comp-a")["current_version"] == 1
+        # Now something is live: the same guard is a genuine conflict.
+        db.upsert_config("comp-a", config={"name": "v2"}, stage="draft")
+        with pytest.raises(ComponentVersionConflictError):
+            db.upsert_config("comp-a", version=2, stage="published", expected_current_version=0)
+        assert db.get_component("comp-a")["current_version"] == 1
+
+    def test_zero_expects_no_live_version_on_delete(self, db):
+        _mk(db, stage="draft")
+        with pytest.raises(ComponentVersionConflictError):
+            db.delete_component("comp-a", expected_current_version=1)
+        assert db.get_component("comp-a") is not None
+        assert db.delete_component("comp-a", expected_current_version=0) is True
+        assert db.get_component("comp-a") is None
+
+    def test_zero_conflicts_with_a_live_version_on_delete(self, db):
+        _mk(db)  # published: current is 1
+        with pytest.raises(ComponentVersionConflictError):
+            db.delete_component("comp-a", expected_current_version=0)
+        assert db.get_component("comp-a") is not None
+
 
 # ----------------------------------------------------------------------
 # Tombstones: numbers are never reused
@@ -683,6 +715,32 @@ class TestConcurrentCASWrites:
         assert outcomes == ["err", "ok"], results
         errs = [r[1] for r in results if r[0] == "err"]
         assert isinstance(errs[0], ComponentVersionConflictError)
+
+    def test_guarded_first_publish_race_has_one_winner(self, db):
+        """Two first publishers both expecting no live version (0): the guard
+        rides the UPDATE as IS NULL, so exactly one lands."""
+        from agno.db.base import ComponentType, ComponentVersionConflictError
+
+        cid = "first-publish-race"
+        db.create_component_with_config(
+            component_id=cid,
+            component_type=ComponentType.AGENT,
+            name=cid,
+            config={"name": cid, "instructions": "v1"},
+            stage="draft",
+        )
+        db.upsert_config(component_id=cid, config={"name": cid, "instructions": "v2"}, stage="draft")
+        assert db.get_component(cid)["current_version"] is None
+        results = self._race(
+            lambda: db.upsert_config(component_id=cid, version=1, stage="published", expected_current_version=0),
+            lambda: db.upsert_config(component_id=cid, version=2, stage="published", expected_current_version=0),
+        )
+        outcomes = sorted(r[0] for r in results)
+        assert outcomes == ["err", "ok"], results
+        errs = [r[1] for r in results if r[0] == "err"]
+        assert isinstance(errs[0], ComponentVersionConflictError)
+        winner = [r[1] for r in results if r[0] == "ok"][0]["version"]
+        assert db.get_component(cid)["current_version"] == winner
 
 
 class TestRestorePinnedChildren:

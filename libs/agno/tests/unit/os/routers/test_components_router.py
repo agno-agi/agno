@@ -999,6 +999,44 @@ class TestComponentGuards:
         assert response.status_code == 409
         mock_db.upsert_component.assert_not_called()
 
+    def test_update_component_guard_zero_matches_an_unpublished_component(self, client, mock_db):
+        """guard.current_version=0 expects no live version: on a component that
+        has never been published it matches (NULL pointer) and the write lands."""
+        component = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": None,
+            "created_at": 1234567890,
+        }
+        mock_db.get_component.return_value = component
+        mock_db.upsert_component.return_value = {**component, "name": "New Name"}
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 0}},
+        )
+
+        assert response.status_code == 200, response.text
+        mock_db.upsert_component.assert_called_once()
+
+    def test_update_component_guard_zero_conflicts_with_a_live_version(self, client, mock_db):
+        mock_db.get_component.return_value = {
+            "component_id": "agent-1",
+            "name": "Agent 1",
+            "component_type": "agent",
+            "current_version": 1,
+            "created_at": 1234567890,
+        }
+
+        response = client.patch(
+            "/components/agent-1",
+            json={"name": "New Name", "guard": {"current_version": 0}},
+        )
+
+        assert response.status_code == 409
+        mock_db.upsert_component.assert_not_called()
+
     def test_update_component_guard_match_succeeds(self, client, mock_db):
         """PATCH component with a matching guard.current_version writes normally."""
         component = {

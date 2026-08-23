@@ -14,6 +14,7 @@ from agno.db.base import (
     ComponentDraftRequiredError,
     ComponentLastConfigError,
     ComponentVersionConflictError,
+    current_version_matches,
     project_config_identity,
 )
 from agno.db.base import ComponentType as DbComponentType
@@ -936,7 +937,7 @@ def attach_routes(
             _reject_unsupported_guard(body.guard, "current_version")
             if body.guard is not None and body.guard.current_version is not None:
                 actual_current = existing.get("current_version")
-                if actual_current != body.guard.current_version:
+                if not current_version_matches(actual_current, body.guard.current_version):
                     raise HTTPException(
                         status_code=409,
                         detail=(

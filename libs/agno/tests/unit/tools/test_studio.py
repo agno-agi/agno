@@ -2254,6 +2254,53 @@ class TestVersioning:
         data = _data(studio.publish_component("tutor", expected_current_version=1))
         assert data["version"] == 2
 
+    def test_first_publish_guard_accepts_zero_as_no_live_version(self, studio):
+        """A component that has never been published has no live pointer; the
+        guard spelled as 0 asserts exactly that and the publish lands as v1."""
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        data = _data(studio.publish_component("tutor", version=1, expected_current_version=0))
+        assert data["version"] == 1
+        assert studio.db.get_component("tutor")["current_version"] == 1
+
+    def test_first_publish_guard_zero_is_a_real_guard(self, studio):
+        """0 is not "skip the check": once something is live it conflicts,
+        retryable like any other genuine version conflict."""
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.edit_agent("tutor", instructions="j")
+        error = _error(studio.publish_component("tutor", expected_current_version=0))
+        assert error["code"] == "version_conflict"
+        assert error["retryable"] is True
+        assert error["details"]["current_version"] == 1
+        assert studio.db.get_component("tutor")["current_version"] == 1
+
+    @pytest.mark.parametrize("expected", [1, -1, 7])
+    def test_first_publish_guard_with_unsatisfiable_value_is_not_retryable(self, studio, expected):
+        """No value but 0 can match a NULL live pointer, so the refusal is
+        terminal and the message names the remedy (omit, or pass 0) rather
+        than inviting a retry with a different number."""
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        error = _error(studio.publish_component("tutor", version=1, expected_current_version=expected))
+        assert error["code"] == "version_conflict"
+        assert error["retryable"] is False
+        assert error["details"]["current_version"] is None
+        assert "has no live version yet" in error["message"]
+        assert "pass 0" in error["message"]
+        assert "Omit it" in error["message"]
+        # Nothing was published: the draft is still the only version.
+        assert studio.db.get_component("tutor")["current_version"] is None
+
+    def test_first_publish_unguarded_still_publishes_v1(self, studio):
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        assert _data(studio.publish_component("tutor", expected_current_version=None))["version"] == 1
+
+    @pytest.mark.asyncio
+    async def test_first_publish_guard_async_twin(self, studio):
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        error = _error(await studio.apublish_component("tutor", version=1, expected_current_version=3))
+        assert error["retryable"] is False
+        data = _data(await studio.apublish_component("tutor", version=1, expected_current_version=0))
+        assert data["version"] == 1
+
     def test_set_current_version_rollback(self, studio):
         self._create_and_edit(studio)
         studio.publish_component("tutor")  # v2 published & current
