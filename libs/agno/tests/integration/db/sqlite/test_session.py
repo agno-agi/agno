@@ -998,3 +998,91 @@ def test_rename_session_without_type(
     assert result is not None
     assert isinstance(result, AgentSession)
     assert result.session_data.get("session_name") == "Renamed Session"
+
+
+def test_upsert_agent_session_without_timestamps(sqlite_db_real: SqliteDb):
+    """Minimal AgentSession upserts and receives default timestamps."""
+    result = sqlite_db_real.upsert_session(AgentSession(session_id="minimal_agent_session", agent_id="agent"))
+
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.created_at is not None
+    assert result.updated_at is not None
+    assert result.updated_at >= result.created_at
+
+
+def test_upsert_team_session_without_timestamps(sqlite_db_real: SqliteDb):
+    """Minimal TeamSession upserts and receives default timestamps."""
+    result = sqlite_db_real.upsert_session(TeamSession(session_id="minimal_team_session", team_id="team"))
+
+    assert result is not None
+    assert isinstance(result, TeamSession)
+    assert result.created_at is not None
+    assert result.updated_at is not None
+    assert result.updated_at >= result.created_at
+
+
+def test_upsert_session_preserves_explicit_updated_at(sqlite_db_real: SqliteDb):
+    """Explicit updated_at is stored as provided, not overwritten with created_at."""
+    result = sqlite_db_real.upsert_session(
+        AgentSession(session_id="explicit_timestamps_session", agent_id="agent", created_at=100, updated_at=200)
+    )
+
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.created_at == 100
+    assert result.updated_at == 200
+
+
+def test_upsert_session_preserves_zero_timestamps(sqlite_db_real: SqliteDb):
+    """An explicit epoch-0 timestamp is kept, not treated as missing."""
+    result = sqlite_db_real.upsert_session(
+        AgentSession(session_id="zero_timestamps_session", agent_id="agent", created_at=0, updated_at=0)
+    )
+
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.created_at == 0
+    assert result.updated_at == 0
+
+
+def test_upsert_sessions_bulk_without_timestamps(sqlite_db_real: SqliteDb):
+    """Bulk upsert fills missing timestamps for minimal sessions."""
+    results = sqlite_db_real.upsert_sessions(
+        [
+            AgentSession(session_id="bulk_minimal_agent_session", agent_id="agent"),
+            TeamSession(session_id="bulk_minimal_team_session", team_id="team"),
+        ]
+    )
+
+    assert len(results) == 2
+    results_by_id = {result.session_id: result for result in results}
+    for result in results_by_id.values():
+        assert result.created_at is not None
+        assert result.updated_at is not None
+        assert result.updated_at >= result.created_at
+
+
+async def test_upsert_agent_session_without_timestamps_async(async_shared_db):
+    """Minimal AgentSession upserts on the async db."""
+    result = await async_shared_db.upsert_session(
+        AgentSession(session_id="minimal_agent_session_async", agent_id="agent")
+    )
+
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.created_at is not None
+    assert result.updated_at is not None
+    assert result.updated_at >= result.created_at
+
+
+async def test_upsert_session_preserves_explicit_updated_at_async(async_shared_db):
+    """Explicit updated_at is preserved on the async db."""
+    result = await async_shared_db.upsert_session(
+        AgentSession(session_id="explicit_timestamps_session_async", agent_id="agent", created_at=100, updated_at=200)
+    )
+
+    assert result is not None
+    assert isinstance(result, AgentSession)
+    assert result.created_at == 100
+    assert result.updated_at == 200
