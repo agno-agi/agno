@@ -7,6 +7,15 @@ from agno.utils.log import log_debug
 
 RESERVED_AGNO_KEY = "_agno"
 
+# The name of the knowledge instance a document is linked to. Set authoritatively by
+# Knowledge to isolate search results between instances sharing a vector DB. Must never
+# be settable via user metadata, or a user could bridge that isolation.
+RESERVED_LINKED_TO_KEY = "linked_to"
+
+# Reserved metadata keys that are managed internally and must be stripped from
+# user-provided metadata before it reaches the vector DB as searchable fields.
+RESERVED_METADATA_KEYS = frozenset({RESERVED_AGNO_KEY, RESERVED_LINKED_TO_KEY})
+
 
 def merge_user_metadata(
     existing: Optional[Dict[str, Any]],
@@ -64,14 +73,15 @@ def get_agno_metadata(
 def strip_agno_metadata(
     metadata: Optional[Dict[str, Any]],
 ) -> Optional[Dict[str, Any]]:
-    """Return a copy of *metadata* without the reserved ``_agno`` key.
+    """Return a copy of *metadata* without any reserved keys (``_agno``, ``linked_to``).
 
-    Useful before sending metadata to the vector DB where only
-    user-defined fields should be searchable.
+    Reserved keys are managed internally by Knowledge. Stripping them here ensures
+    user-provided metadata cannot overwrite them when sent to the vector DB as filters,
+    which several adapters merge over document metadata.
     """
     if not metadata:
         return metadata
-    return {k: v for k, v in metadata.items() if k != RESERVED_AGNO_KEY}
+    return {k: v for k, v in metadata.items() if k not in RESERVED_METADATA_KEYS}
 
 
 def _get_chunker_class(strategy_type):

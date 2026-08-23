@@ -1624,6 +1624,9 @@ class Knowledge(RemoteKnowledge):
 
         # 8. Process each source separately if multiple sources exist
         if len(docs_by_source) > 1:
+            # Strip reserved keys (e.g. linked_to) so user metadata cannot override the
+            # authoritative isolation scope when adapters merge filters over document metadata.
+            safe_filters = strip_agno_metadata(content.metadata)
             for source_url, source_docs in docs_by_source.items():
                 # Compute per-document hash based on actual source URL
                 doc_hash = self._build_document_content_hash(source_docs[0], content)
@@ -1639,13 +1642,13 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        await self.vector_db.async_upsert(doc_hash, source_docs, content.metadata)
+                        await self.vector_db.async_upsert(doc_hash, source_docs, safe_filters)
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        await self.vector_db.async_insert(doc_hash, documents=source_docs, filters=safe_filters)
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -1779,6 +1782,9 @@ class Knowledge(RemoteKnowledge):
 
         # 8. Process each source separately if multiple sources exist
         if len(docs_by_source) > 1:
+            # Strip reserved keys (e.g. linked_to) so user metadata cannot override the
+            # authoritative isolation scope when adapters merge filters over document metadata.
+            safe_filters = strip_agno_metadata(content.metadata)
             for source_url, source_docs in docs_by_source.items():
                 # Compute per-document hash based on actual source URL
                 doc_hash = self._build_document_content_hash(source_docs[0], content)
@@ -1794,13 +1800,13 @@ class Knowledge(RemoteKnowledge):
                 # Insert with per-document hash
                 if self.vector_db.upsert_available() and upsert:
                     try:
-                        self.vector_db.upsert(doc_hash, source_docs, content.metadata)
+                        self.vector_db.upsert(doc_hash, source_docs, safe_filters)
                     except Exception as e:
                         log_error(f"Error upserting document from {source_url}: {str(e)}")
                         continue
                 else:
                     try:
-                        self.vector_db.insert(doc_hash, documents=source_docs, filters=content.metadata)
+                        self.vector_db.insert(doc_hash, documents=source_docs, filters=safe_filters)
                     except Exception as e:
                         log_error(f"Error inserting document from {source_url}: {str(e)}")
                         continue
@@ -2453,9 +2459,13 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
+        # Strip reserved keys (e.g. linked_to) so user metadata cannot override the
+        # authoritative isolation scope when adapters merge filters over document metadata.
+        safe_filters = strip_agno_metadata(content.metadata)
+
         if self.vector_db.upsert_available() and upsert:
             try:
-                await self.vector_db.async_upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                await self.vector_db.async_upsert(content.content_hash, read_documents, safe_filters)  # type: ignore[arg-type]
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2467,7 +2477,7 @@ class Knowledge(RemoteKnowledge):
                 await self.vector_db.async_insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
-                    filters=content.metadata,  # type: ignore[arg-type]
+                    filters=safe_filters,  # type: ignore[arg-type]
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
@@ -2492,9 +2502,13 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
+        # Strip reserved keys (e.g. linked_to) so user metadata cannot override the
+        # authoritative isolation scope when adapters merge filters over document metadata.
+        safe_filters = strip_agno_metadata(content.metadata)
+
         if self.vector_db.upsert_available() and upsert:
             try:
-                self.vector_db.upsert(content.content_hash, read_documents, content.metadata)  # type: ignore[arg-type]
+                self.vector_db.upsert(content.content_hash, read_documents, safe_filters)  # type: ignore[arg-type]
             except Exception as e:
                 log_error(f"Error upserting document: {str(e)}")
                 content.status = ContentStatus.FAILED
@@ -2506,7 +2520,7 @@ class Knowledge(RemoteKnowledge):
                 self.vector_db.insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
-                    filters=content.metadata,  # type: ignore[arg-type]
+                    filters=safe_filters,  # type: ignore[arg-type]
                 )
             except Exception as e:
                 log_error(f"Error inserting document: {str(e)}")
