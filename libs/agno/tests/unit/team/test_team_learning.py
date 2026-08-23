@@ -13,6 +13,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from agno.agent.agent import Agent
+from agno.knowledge.protocol import KnowledgeProtocol
 from agno.learn.config import LearnedKnowledgeConfig, LearningMode, UserMemoryConfig, UserProfileConfig
 from agno.learn.machine import LearningMachine
 from agno.run import RunContext
@@ -626,7 +627,7 @@ class TestLearningContextPosition:
 
     def test_learning_context_before_knowledge_context(self, mock_db, mock_model, member_agent):
         """Verify learning context appears before knowledge context when both enabled."""
-        mock_knowledge = MagicMock()
+        mock_knowledge = MagicMock(spec=KnowledgeProtocol)
         mock_knowledge.build_context = MagicMock(return_value="<knowledge_marker>KB Content</knowledge_marker>")
 
         team = Team(
