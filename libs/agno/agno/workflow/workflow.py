@@ -11317,9 +11317,11 @@ class Workflow:
         if not self.telemetry:
             return
 
-        from agno.api.workflow import WorkflowRunCreate, create_workflow_run
-
+        # Everything telemetry needs, the import included, stays inside the try:
+        # a telemetry failure must never change the outcome of the run.
         try:
+            from agno.api.workflow import WorkflowRunCreate, create_workflow_run
+
             create_workflow_run(
                 workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
             )
@@ -11333,9 +11335,9 @@ class Workflow:
         if not self.telemetry:
             return
 
-        from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
-
         try:
+            from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
+
             await acreate_workflow_run(
                 workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
             )

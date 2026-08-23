@@ -8,7 +8,14 @@ from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, log_eval_run, spinner_live, store_result_in_file
+from agno.eval.utils import (
+    async_log_eval,
+    async_log_eval_telemetry,
+    log_eval_run,
+    log_eval_telemetry,
+    spinner_live,
+    store_result_in_file,
+)
 from agno.utils.log import log_debug, set_log_level_to_debug, set_log_level_to_info
 from agno.utils.timer import Timer
 
@@ -617,13 +624,7 @@ class PerformanceEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, create_eval_run_telemetry
-
-            create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
-                ),
-            )
+            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data)
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
         return self.result
@@ -762,12 +763,8 @@ class PerformanceEval:
             )
 
         if self.telemetry:
-            from agno.api.evals import EvalRunCreate, async_create_eval_run_telemetry
-
-            await async_create_eval_run_telemetry(
-                eval_run=EvalRunCreate(
-                    run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, data=self._get_telemetry_data()
-                ),
+            await async_log_eval_telemetry(
+                run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data
             )
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")

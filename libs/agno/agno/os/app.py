@@ -117,6 +117,22 @@ async def http_client_lifespan(_):
     await aclose_default_clients()
 
 
+@asynccontextmanager
+async def agent_os_telemetry_lifespan(_, agent_os: "AgentOS"):
+    """Emit launch telemetry after the serving worker has started.
+
+    Best-effort: a telemetry failure (including a failed import of the
+    telemetry client) must not stop the server from starting.
+    """
+    try:
+        from agno.api.os import OSLaunch, log_os_telemetry
+
+        log_os_telemetry(launch=OSLaunch(os_id=agent_os.id, data=agent_os._get_telemetry_data()))
+    except Exception as e:
+        log_debug(f"Could not send AgentOS launch telemetry: {type(e).__name__}")
+    yield
+
+
 async def _drain_cancel_persist_tasks(timeout: float = 30.0) -> None:
     """Await in-flight cancel-persist writes before databases close on shutdown."""
     from agno.agent._run import _background_tasks as agent_tasks
@@ -504,11 +520,6 @@ class AgentOS:
 
         if self.tracing:
             self._setup_tracing()
-
-        if self.telemetry:
-            from agno.api.os import OSLaunch, log_os_telemetry
-
-            log_os_telemetry(launch=OSLaunch(os_id=self.id, data=self._get_telemetry_data()))
 
     @property
     def mcp_server(self) -> bool:
@@ -1279,6 +1290,11 @@ class AgentOS:
             if self.queue is not None and self.queue.durable:
                 lifespans.append(partial(queue_lifespan, agent_os=self))
 
+            # Launch telemetry starts here, after any pre-fork application
+            # construction and after substantive worker startup lifespans.
+            if self.telemetry:
+                lifespans.append(partial(agent_os_telemetry_lifespan, agent_os=self))
+
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)
 
@@ -1322,6 +1338,11 @@ class AgentOS:
             # The durable job queue worker (after db so tables exist)
             if self.queue is not None and self.queue.durable:
                 lifespans.append(partial(queue_lifespan, agent_os=self))
+
+            # Launch telemetry starts here, after any pre-fork application
+            # construction and after substantive worker startup lifespans.
+            if self.telemetry:
+                lifespans.append(partial(agent_os_telemetry_lifespan, agent_os=self))
 
             # The httpx client cleanup lifespan (should be last to close after other lifespans)
             lifespans.append(http_client_lifespan)

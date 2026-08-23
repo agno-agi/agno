@@ -41,9 +41,11 @@ def log_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[str] = N
     if not agent.telemetry:
         return
 
-    from agno.api.agent import AgentRunCreate, create_agent_run
-
+    # Everything telemetry needs, the import included, stays inside the try:
+    # a telemetry failure must never change the outcome of the run.
     try:
+        from agno.api.agent import AgentRunCreate, create_agent_run
+
         create_agent_run(
             run=AgentRunCreate(
                 session_id=session_id,
@@ -63,9 +65,9 @@ async def alog_agent_telemetry(agent: Agent, session_id: str, run_id: Optional[s
     if not agent.telemetry:
         return
 
-    from agno.api.agent import AgentRunCreate, acreate_agent_run
-
     try:
+        from agno.api.agent import AgentRunCreate, acreate_agent_run
+
         await acreate_agent_run(
             run=AgentRunCreate(
                 session_id=session_id,
