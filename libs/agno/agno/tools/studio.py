@@ -3253,7 +3253,10 @@ class StudioTools(Toolkit):
         Args:
             component_id (str): Exact id of a stored component. Display names
                 do not resolve for destructive operations.
-            expected_current_version (Optional[int]): Compare-and-set guard.
+            expected_current_version (Optional[int]): Compare-and-set guard on
+                the live pointer; omit to skip the check. A component that has
+                never been published has no live pointer, so pass 0 ("nothing
+                is live") or omit it; any other value can never match.
 
         Returns:
             str: StudioResult JSON; data is {id}; warnings report side effects.
@@ -3293,6 +3296,22 @@ class StudioTools(Toolkit):
             if denied is not None:
                 return self._denied_error(denied)
             component_type = str(row.get("component_type"))
+            if expected_current_version is not None and row.get("current_version") is None:
+                from agno.db.base import expects_no_live_version
+
+                if not expects_no_live_version(expected_current_version):
+                    # Same dead end as a guarded first publish: no value but 0
+                    # can match a NULL live pointer, so this is terminal, not a
+                    # conflict to retry with a different number. The adapter's
+                    # own guard still rides the delete for the 0 case.
+                    return error_result(
+                        "version_conflict",
+                        f"Cannot guard this archive: '{component_id}' has no live version yet, so "
+                        f"expected_current_version={expected_current_version} has nothing to compare "
+                        f"against. Omit it, or pass 0 to assert that nothing is live.",
+                        retryable=False,
+                        current_version=None,
+                    )
             # The cascade runs inside delete_component, in the archive's own
             # transaction, and reports back what it silenced: the count is only
             # knowable there, because it counts the rows this archive flipped

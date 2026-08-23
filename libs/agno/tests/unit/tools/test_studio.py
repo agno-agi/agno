@@ -2301,6 +2301,53 @@ class TestVersioning:
         data = _data(await studio.apublish_component("tutor", version=1, expected_current_version=0))
         assert data["version"] == 1
 
+    def test_no_live_version_sentinel_is_int_only(self):
+        from agno.db.base import current_version_matches, expects_no_live_version
+
+        assert expects_no_live_version(0) is True
+        assert expects_no_live_version(False) is False
+        assert expects_no_live_version(1) is False
+        assert current_version_matches(None, 0) is True
+        assert current_version_matches(None, False) is False
+        assert current_version_matches(1, True) is True  # unchanged lax behaviour, 1 == True
+
+    def test_first_publish_guard_bool_is_not_the_sentinel(self, studio):
+        """False == 0 in Python, but a boolean is not a version number: it
+        must not pass as "nothing is live" (it never matched before either)."""
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        error = _error(studio.publish_component("tutor", version=1, expected_current_version=False))
+        assert error["code"] == "version_conflict"
+        assert studio.db.get_component("tutor")["current_version"] is None
+
+    def test_archive_guard_on_unpublished_component(self, studio):
+        """archive_component takes the same guard and had the same dead end:
+        a non-zero value against a NULL pointer is terminal with the remedy,
+        0 archives, and neither path writes on refusal."""
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        error = _error(studio.archive_component("tutor", expected_current_version=1))
+        assert error["code"] == "version_conflict"
+        assert error["retryable"] is False
+        assert "pass 0" in error["message"]
+        assert studio.db.get_component("tutor") is not None
+        out = _loads(studio.archive_component("tutor", expected_current_version=0))
+        assert out["status"] == "archived"
+        assert studio.db.get_component("tutor") is None
+
+    @pytest.mark.asyncio
+    async def test_archive_guard_on_unpublished_component_async_twin(self, studio):
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        error = _error(await studio.aarchive_component("tutor", expected_current_version=2))
+        assert error["retryable"] is False
+        out = _loads(await studio.aarchive_component("tutor", expected_current_version=0))
+        assert out["status"] == "archived"
+
+    def test_archive_guard_on_published_component_is_a_real_conflict(self, studio):
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4", publish=True)
+        error = _error(studio.archive_component("tutor", expected_current_version=0))
+        assert error["code"] == "version_conflict"
+        assert error["retryable"] is True
+        assert studio.db.get_component("tutor") is not None
+
     def test_set_current_version_rollback(self, studio):
         self._create_and_edit(studio)
         studio.publish_component("tutor")  # v2 published & current

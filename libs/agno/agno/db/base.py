@@ -107,10 +107,18 @@ class ComponentVersionConflictError(ValueError):
 NO_LIVE_VERSION = 0
 
 
+def expects_no_live_version(expected: Any) -> bool:
+    """Whether an expected_current_version value is the "nothing is live"
+    spelling. Only the integer 0 qualifies: False compares equal to 0 in
+    Python and JSON guards can arrive as booleans through lax coercion, and a
+    boolean is not a version number, so it never names the sentinel."""
+    return not isinstance(expected, bool) and expected == NO_LIVE_VERSION
+
+
 def current_version_matches(current: Optional[int], expected: int) -> bool:
     """The Python half of the expected_current_version guard: does the stored
     live pointer satisfy the expectation? 0 expects no live version at all."""
-    if expected == NO_LIVE_VERSION:
+    if expects_no_live_version(expected):
         return current is None
     return current == expected
 
@@ -119,7 +127,7 @@ def current_version_guard_clause(current_version_column: Any, expected: int) -> 
     """The SQL half of the same guard: the predicate that rides the write, so
     that two writers expecting the same pointer cannot both win. Takes a
     SQLAlchemy column and returns the clause to put on the UPDATE/DELETE."""
-    if expected == NO_LIVE_VERSION:
+    if expects_no_live_version(expected):
         return current_version_column.is_(None)
     return current_version_column == expected
 
