@@ -933,7 +933,13 @@ class Workflow:
 
         # --- Steps ---
         if self.steps and isinstance(self.steps, list):
-            config["steps"] = [step.to_dict() for step in self.steps if hasattr(step, "to_dict")]
+            serialized_steps = []
+            for step in self.steps:
+                if hasattr(step, "to_dict"):
+                    serialized_steps.append(step.to_dict())
+                elif callable(step):
+                    serialized_steps.append(Step(executor=step).to_dict())
+            config["steps"] = serialized_steps
 
         return config
 

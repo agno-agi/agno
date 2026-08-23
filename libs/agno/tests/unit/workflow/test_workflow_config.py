@@ -20,6 +20,19 @@ from agno.db.base import BaseDb, ComponentType
 from agno.registry import Registry
 from agno.workflow.workflow import Workflow, get_workflow_by_id, get_workflows
 
+
+def test_to_dict_preserves_callable_workflow_step():
+    def enrich(step_input):
+        return step_input
+
+    config = Workflow(id="wf", steps=[enrich]).to_dict()
+
+    assert len(config["steps"]) == 1
+    assert config["steps"][0]["type"] == "Step"
+    assert config["steps"][0]["executor_ref"] == "enrich"
+    assert len(Workflow.from_dict(config).steps) == 1
+
+
 # =============================================================================
 # Fixtures
 # =============================================================================
