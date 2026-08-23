@@ -792,6 +792,11 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if not agent.telemetry:
         config["telemetry"] = agent.telemetry
 
+    # Lenient loads retain references that could not be rehydrated so a later
+    # load/save cycle does not turn a temporary registry miss into data loss.
+    for key, value in getattr(agent, "_unresolved_config", {}).items():
+        config.setdefault(key, value)
+
     return config
 
 
@@ -823,6 +828,7 @@ def from_dict(
     component_label = f"Agent '{data.get('id') or data.get('name') or '<unknown>'}'"
 
     config = data.copy()
+    unresolved_config: Dict[str, Any] = {}
 
     # --- Handle Model reconstruction ---
     if "model" in config:
@@ -869,6 +875,8 @@ def from_dict(
                     "toolkits before loading); a bare name-only reference cannot be resolved from "
                     "a registry and needs the component re-saved from code. Or pass strict=False."
                 )
+            if unresolved_tools:
+                unresolved_config["tools"] = data["tools"]
             config["tools"] = rehydrated_tools
         elif strict:
             # Provider-run dicts and external-execution tools need no registry;
@@ -891,6 +899,7 @@ def from_dict(
             ]
             if unresolved_tools:
                 log_warning(f"No registry provided; these tools cannot execute: {unresolved_tools}")
+                unresolved_config["tools"] = data["tools"]
             config["tools"] = rehydrated_tools
 
     # --- Handle DB reconstruction ---
@@ -917,6 +926,7 @@ def from_dict(
             )
         else:
             log_warning(f"Input schema {config['input_schema']} not found in registry, skipping.")
+            unresolved_config["input_schema"] = data["input_schema"]
             del config["input_schema"]
 
     if "output_schema" in config and isinstance(config["output_schema"], str):
@@ -931,6 +941,7 @@ def from_dict(
             )
         else:
             log_warning(f"Output schema {config['output_schema']} not found in registry, skipping.")
+            unresolved_config["output_schema"] = data["output_schema"]
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
@@ -973,6 +984,7 @@ def from_dict(
             )
         else:
             log_warning(f"Knowledge '{knowledge_name}' not found in registry, skipping.")
+            unresolved_config["knowledge"] = data["knowledge"]
             del config["knowledge"]
 
     # --- Handle CompressionManager reconstruction ---
@@ -991,7 +1003,7 @@ def from_dict(
     config.pop("team_id", None)
     config.pop("workflow_id", None)
 
-    return cls(
+    agent = cls(
         # --- Agent settings ---
         model=config.get("model"),
         name=config.get("name"),
@@ -1108,6 +1120,8 @@ def from_dict(
         debug_level=config.get("debug_level", 1),
         telemetry=config.get("telemetry", True),
     )
+    agent._unresolved_config = unresolved_config
+    return agent
 
 
 # ---------------------------------------------------------------------------

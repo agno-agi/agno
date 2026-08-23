@@ -593,7 +593,7 @@ class TestAgentKnowledgeRoundtrip:
         assert reconstructed.knowledge is None
 
     def test_from_dict_unresolved_knowledge_drops_gracefully_when_lenient(self):
-        """A reference not present in the registry is dropped with strict=False."""
+        """A reference not present in the registry is retained for a later save."""
         kb = self._make_knowledge("Docs KB")
         agent = Agent(id="kb-agent", knowledge=kb)
         config = agent.to_dict()
@@ -602,6 +602,24 @@ class TestAgentKnowledgeRoundtrip:
         reconstructed = Agent.from_dict(config, registry=Registry(), strict=False)
 
         assert reconstructed.knowledge is None
+        assert reconstructed.to_dict()["knowledge"] == {"name": "Docs KB"}
+
+    def test_lenient_load_save_preserves_unresolved_references(self):
+        config = {
+            "id": "degraded-agent",
+            "tools": [{"name": "missing_tool", "parameters": {"type": "object"}}],
+            "input_schema": "MissingInput",
+            "output_schema": "MissingOutput",
+            "knowledge": {"name": "MissingKnowledge"},
+        }
+
+        reconstructed = Agent.from_dict(config, registry=Registry(), strict=False)
+
+        saved = reconstructed.to_dict()
+        assert saved["tools"] == config["tools"]
+        assert saved["input_schema"] == config["input_schema"]
+        assert saved["output_schema"] == config["output_schema"]
+        assert saved["knowledge"] == config["knowledge"]
 
 
 # =============================================================================
