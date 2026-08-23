@@ -578,6 +578,14 @@ class StepOutput:
 
     steps: Optional[List["StepOutput"]] = None
 
+    # Conversational sticky step: False until the agent calls complete_step / goto.
+    # Transient — NOT required for serialization of completed runs.
+    # Default True so non-conversational steps are never treated as sticky-incomplete.
+    conversational_complete: bool = True
+    # Conversational goto: jump back to this completed host step and re-run it
+    goto_step: Optional[str] = None
+    goto_clear_keys: Optional[List[str]] = None
+
     # Loop iteration review: signals the workflow to pause for per-iteration review.
     # This is a transient flag — NOT serialized. It is cleared after the workflow
     # processes it.
@@ -766,10 +774,11 @@ class ExecutorType(str, Enum):
 
 
 class PauseKind(str, Enum):
-    """Kind of HITL pause currently active on a WorkflowRunOutput."""
+    """Kind of pause currently active on a WorkflowRunOutput."""
 
     STEP = "step"
     EXECUTOR = "executor"
+    CONVERSATIONAL = "conversational"
 
 
 @dataclass
@@ -874,6 +883,9 @@ class StepRequirement:
     executor_type: Optional[Union[ExecutorType, str]] = None  # "agent" or "team"
     # Session ID for the executor's session (needed for DB-based continue_run)
     executor_session_id: Optional[str] = None
+
+    # Conversational sticky step: waiting for the next user chat message
+    requires_conversational_input: bool = False
 
     # Post-execution output review fields
     requires_output_review: bool = False
@@ -1088,6 +1100,11 @@ class StepRequirement:
         return False
 
     @property
+    def needs_conversational_input(self) -> bool:
+        """Check if this requirement is waiting for the next conversational user message."""
+        return bool(self.requires_conversational_input)
+
+    @property
     def is_resolved(self) -> bool:
         """Check if this requirement has been resolved"""
         if self.requires_confirmation and self.confirmed is None:
@@ -1099,6 +1116,8 @@ class StepRequirement:
         if self.requires_route_selection and self.needs_route_selection:
             return False
         if self.requires_executor_input and self.needs_executor_resolution:
+            return False
+        if self.requires_conversational_input:
             return False
         return True
 
@@ -1155,6 +1174,9 @@ class StepRequirement:
                 self.executor_type.value if isinstance(self.executor_type, ExecutorType) else self.executor_type
             )
             result["executor_session_id"] = self.executor_session_id
+
+        if self.requires_conversational_input:
+            result["requires_conversational_input"] = True
 
         if self.step_output is not None:
             result["step_output"] = self.step_output.to_dict()
@@ -1215,6 +1237,7 @@ class StepRequirement:
             executor_run_id=data.get("executor_run_id"),
             executor_type=data.get("executor_type"),
             executor_session_id=data.get("executor_session_id"),
+            requires_conversational_input=data.get("requires_conversational_input", False),
             # Post-execution output review
             requires_output_review=data.get("requires_output_review", False),
             output_review_message=data.get("output_review_message"),
