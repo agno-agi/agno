@@ -405,6 +405,55 @@ def test_custom_event_subclass_serialization():
     assert restored_run_evt.data["title"] == "Test Chart"
 
 
+def test_custom_event_dynamic_fields_survive_serialization():
+    """Regression test for #7075: fields passed to CustomEvent's dynamic __init__ must
+    survive to_dict().
+
+    CustomEvent.__init__ only setattr'd the supplied kwargs, so declared dataclass fields
+    (created_at, agent_id, ...) were never initialized and asdict() raised AttributeError;
+    dynamic fields were invisible to asdict() regardless, since it only walks declared
+    fields. The subclass path is covered above and was unaffected because @dataclass
+    generates an __init__ for subclasses that declare their fields.
+    """
+    from agno.run.agent import CustomEvent
+
+    event = CustomEvent(event="CustomEvent", my_field="hello", my_data={"key": "value"})
+
+    assert event.my_field == "hello"
+    assert event.my_data == {"key": "value"}
+
+    event_dict = event.to_dict()
+
+    assert event_dict["my_field"] == "hello"
+    assert event_dict["my_data"] == {"key": "value"}
+    assert event_dict["event"] == "CustomEvent"
+    # declared fields must be initialized from their defaults, not left unset
+    assert "created_at" in event_dict
+
+
+def test_custom_event_dynamic_fields_round_trip():
+    """Dynamic fields must survive to_dict() -> from_dict(); from_dict already passed all
+    keys through for CustomEvent, so the loss was one-directional."""
+    from agno.run.agent import CustomEvent
+
+    restored = CustomEvent.from_dict(CustomEvent(event="CustomEvent", chart_type="bar", data={"x": 1}).to_dict())
+
+    assert restored.chart_type == "bar"
+    assert restored.data == {"x": 1}
+
+
+def test_custom_event_dynamic_fields_on_team_and_workflow():
+    """The team and workflow CustomEvent classes carry the same dynamic __init__ and were
+    confirmed to drop fields identically."""
+    from agno.run.team import CustomEvent as TeamCustomEvent
+    from agno.run.workflow import CustomEvent as WorkflowCustomEvent
+
+    for event_cls in (TeamCustomEvent, WorkflowCustomEvent):
+        event_dict = event_cls(event="CustomEvent", my_field="hello").to_dict()
+        assert event_dict["my_field"] == "hello", f"{event_cls.__module__} dropped my_field"
+        assert "created_at" in event_dict
+
+
 def test_team_custom_event_subclass_serialization():
     """Test that Team CustomEvent subclass properties are preserved during serialization."""
     from typing import Any, Dict
