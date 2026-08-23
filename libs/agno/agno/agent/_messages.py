@@ -40,7 +40,7 @@ from agno.utils.agent import (
 from agno.utils.common import is_typed_dict
 from agno.utils.knowledge import get_user_id_kwarg
 from agno.utils.log import log_debug, log_warning
-from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message
+from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
@@ -278,20 +278,11 @@ def get_system_message(
         system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
+        rendered = render_instructions(instructions)
         if agent.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+            system_message_content += f"<instructions>\n{rendered}\n</instructions>\n\n"
         else:
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
-            else:
-                system_message_content += instructions[0] + "\n\n"
+            system_message_content += rendered + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"
@@ -584,20 +575,11 @@ async def aget_system_message(
         system_message_content += f"\n<your_role>\n{agent.role}\n</your_role>\n\n"
     # 3.3.3 Then add instructions for the Agent
     if len(instructions) > 0:
+        rendered = render_instructions(instructions)
         if agent.use_instruction_tags:
-            system_message_content += "<instructions>"
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"\n- {_upi}"
-            else:
-                system_message_content += "\n" + instructions[0]
-            system_message_content += "\n</instructions>\n\n"
+            system_message_content += f"<instructions>\n{rendered}\n</instructions>\n\n"
         else:
-            if len(instructions) > 1:
-                for _upi in instructions:
-                    system_message_content += f"- {_upi}\n"
-            else:
-                system_message_content += instructions[0] + "\n\n"
+            system_message_content += rendered + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"
