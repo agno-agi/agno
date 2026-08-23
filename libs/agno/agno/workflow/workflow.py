@@ -933,7 +933,20 @@ class Workflow:
 
         # --- Steps ---
         if self.steps and isinstance(self.steps, list):
-            config["steps"] = [step.to_dict() for step in self.steps if hasattr(step, "to_dict")]
+            serialized_steps = []
+            for step in self.steps:
+                if isinstance(step, (Agent, Team)):
+                    # Agents and teams are valid executable workflow steps at
+                    # runtime, but their own config is not a Step config. Wrap
+                    # them so the persisted form can be read by _step_from_dict.
+                    serialized_steps.append(
+                        Step(name=getattr(step, "name", None), agent=step).to_dict()
+                        if isinstance(step, Agent)
+                        else Step(name=getattr(step, "name", None), team=step).to_dict()
+                    )
+                elif hasattr(step, "to_dict"):
+                    serialized_steps.append(step.to_dict())
+            config["steps"] = serialized_steps
 
         return config
 
