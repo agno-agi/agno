@@ -372,6 +372,11 @@ embedders = [
   # "agno[vllm]",  # Excluded: vllm has no CPU-only install path (uv backtracks to ancient sdists that require CUDA to build); keep the extra for direct installs on GPU hosts
 ]
 
+# Workflow visualization
+visualize = [
+  "Pillow"
+]
+
 # All libraries for testing
 tests = [
     "agno[a2a]",
@@ -413,6 +418,7 @@ integration-tests = [
 demo = [
     "agno[dev]",
     "agno[scheduler]",
+    "agno[visualize]",
     "anthropic",
     "chromadb",
     "ddgs",
