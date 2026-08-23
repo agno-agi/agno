@@ -16,6 +16,7 @@ from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
+from agno.vectordb.filter_validation import escape_milvus_string_value, validate_metadata_key
 from agno.vectordb.search import SearchType
 
 MILVUS_DISTANCE_MAP = {
@@ -1144,19 +1145,25 @@ class Milvus(VectorDb):
         return value
 
     def _build_expr(self, filters: Optional[Dict[str, Any]]) -> Optional[str]:
-        """Build Milvus expression from filters."""
+        """Build Milvus expression from filters.
+
+        Metadata keys are validated against a strict identifier charset and
+        string values are escaped, because the Milvus ``filter`` is a raw,
+        server-parsed expression string with no bind parameters (see #8823).
+        """
         if not filters:
             return None
 
         expressions = []
         for k, v in filters.items():
+            validate_metadata_key(k)
             if isinstance(v, (list, tuple)):
                 # For array values, use json_contains_any
                 values_str = json.dumps(v)
                 expr = f'json_contains_any(meta_data["{k}"], {values_str})'
             elif isinstance(v, str):
-                # For string values
-                expr = f'meta_data["{k}"] == "{v}"'
+                # For string values — escape so the value cannot break out of the literal
+                expr = f'meta_data["{k}"] == "{escape_milvus_string_value(v)}"'
             elif isinstance(v, bool):
                 # For boolean values
                 expr = f'meta_data["{k}"] == {str(v).lower()}'
@@ -1167,8 +1174,8 @@ class Milvus(VectorDb):
                 # For null values
                 expr = f'meta_data["{k}"] is null'
             else:
-                # For other types, convert to string
-                expr = f'meta_data["{k}"] == "{str(v)}"'
+                # For other types, convert to string and escape
+                expr = f'meta_data["{k}"] == "{escape_milvus_string_value(str(v))}"'
 
             expressions.append(expr)
 

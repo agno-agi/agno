@@ -735,3 +735,40 @@ def test_decode_json_field_helper():
     assert Milvus._decode_json_field(None, default={}) == {}
     assert Milvus._decode_json_field("", default={}) == {}
     assert Milvus._decode_json_field("not json", default={"fallback": True}) == {"fallback": True}
+
+
+# --- filter injection hardening (#8823) ---
+
+
+def test_build_expr_rejects_injected_key(milvus_db):
+    """A metadata key outside [A-Za-z0-9_] is rejected before building the expression."""
+    from agno.vectordb.filter_validation import InvalidMetadataKeyError
+
+    # The issue's Milvus value-injection vector relies on a benign key; ensure a
+    # malicious key is rejected outright.
+    with pytest.raises(InvalidMetadataKeyError):
+        milvus_db._build_expr({"x = 1 OR true //": "anything"})
+
+
+def test_build_expr_escapes_injected_string_value(milvus_db):
+    """The issue's value-injection PoC must not break out of the double-quoted literal."""
+    # PoC value: alpha" or meta_data["linked_to"] != "zzz or "z" == "
+    malicious = 'alpha" or meta_data["linked_to"] != "zzz or "z" == "'
+    expr = milvus_db._build_expr({"category": malicious})
+    assert expr is not None
+    # The literal must remain closed exactly once, on its own: the injected
+    # quotes are backslash-escaped and cannot terminate it.
+    assert expr.startswith('meta_data["category"] == "')
+    assert expr.endswith('"')
+    # No unescaped double quote in the value portion can form an early terminator:
+    # every quote between the opening and closing delimiter is preceded by a backslash.
+    value_part = expr[len('meta_data["category"] == "') : -1]
+    assert all(value_part[i - 1] == "\\" for i, c in enumerate(value_part) if c == '"')
+    # The injected OR/condition text is neutralized inside the literal, not parsed.
+    assert "or meta_data" in value_part  # present but inert (quoted)
+
+
+def test_build_expr_rejects_newline_in_value(milvus_db):
+    """Newlines in string values are rejected (they can terminate expressions early)."""
+    with pytest.raises(ValueError):
+        milvus_db._build_expr({"category": "a\nb"})
