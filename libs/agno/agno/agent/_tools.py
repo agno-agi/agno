@@ -580,11 +580,23 @@ def handle_external_execution_update(agent: Agent, run_messages: RunMessages, to
     agent.model = cast(Model, agent.model)
 
     if tool.result is not None:
-        for msg in run_messages.messages:
-            # Skip if the message is already in the run_messages
-            if msg.tool_call_id == tool.tool_call_id:
-                break
-        else:
+        # Tool call IDs can recur in history, so only deduplicate within the latest matching call.
+        latest_call_index = None
+        for index, msg in enumerate(run_messages.messages):
+            if any(tool_call.get("id") == tool.tool_call_id for tool_call in msg.tool_calls or []):
+                latest_call_index = index
+
+        search_start = latest_call_index + 1 if latest_call_index is not None else 0
+        existing_message = next(
+            (
+                msg
+                for msg in reversed(run_messages.messages[search_start:])
+                if msg.role == agent.model.tool_message_role and msg.tool_call_id == tool.tool_call_id
+            ),
+            None,
+        )
+
+        if existing_message is None:
             run_messages.messages.append(
                 Message(
                     role=agent.model.tool_message_role,
@@ -596,6 +608,12 @@ def handle_external_execution_update(agent: Agent, run_messages: RunMessages, to
                     stop_after_tool_call=tool.stop_after_tool_call,
                 )
             )
+        else:
+            existing_message.content = tool.result
+            existing_message.tool_name = tool.tool_name
+            existing_message.tool_args = tool.tool_args
+            existing_message.tool_call_error = tool.tool_call_error
+            existing_message.stop_after_tool_call = tool.stop_after_tool_call
         tool.external_execution_required = False
     else:
         raise ValueError(f"Tool {tool.tool_name} requires external execution, cannot continue run")
