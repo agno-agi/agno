@@ -1948,7 +1948,6 @@ class TestStreamingParity:
 
         rr = captured["run_response"]
         assert rr.run_id != "run-S", "Fork must assign a new run_id on the streaming path"
-        assert captured["run_context"].run_id == rr.run_id
         assert rr.forked_from_run_id == "run-S"
         assert rr.forked_from_message_index == 2
         # Truncated to 2 messages (was 4)
@@ -2090,6 +2089,7 @@ class TestStreamingRealBody:
         # run_response here and exit.
         async def fake_ahandle_stream(agent, *args, run_response=None, run_messages=None, run_context=None, **kw):
             observed["run_response"] = run_response
+            observed["run_context"] = run_context
             return
             yield  # make this an async generator
 
@@ -2136,6 +2136,7 @@ class TestStreamingRealBody:
         assert "run_response" in observed, "ahandle_model_response_stream was never reached"
         rr = observed["run_response"]
         assert rr.run_id != "run-real", "fork=True did not apply on the real streaming path"
+        assert observed["run_context"].run_id == rr.run_id
         assert rr.forked_from_run_id == "run-real"
         assert rr.forked_from_message_index == 1
         assert len(rr.messages or []) == 1
