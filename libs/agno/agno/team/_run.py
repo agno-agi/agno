@@ -6969,6 +6969,7 @@ def continue_run_dispatch(
     # rest of the dispatch operates on the new run with cloned members.
     _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
     run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
+    run_context.run_id = run_response.run_id
     if regenerate and original_run_id_for_lineage:
         run_response.regenerated_from = original_run_id_for_lineage
         if replace_original is not False and run_response.forked_from_run_id:
@@ -8655,6 +8656,7 @@ async def _acontinue_run(
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
                 run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
+                run_context.run_id = run_response.run_id
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
@@ -9124,6 +9126,7 @@ async def _acontinue_run_stream(
 
                 _did_snapshot_dispatch = fork or _will_truncate_team_run(run_response, continue_index)
                 run_response = _apply_continue_modifiers_team(run_response, fork, continue_index)
+                run_context.run_id = run_response.run_id
                 if regenerate and original_run_id_for_lineage:
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:

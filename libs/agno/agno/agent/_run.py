@@ -3395,6 +3395,7 @@ def continue_run_dispatch(
         # If regenerated_from lineage applies, record it before truncating.
         original_run_id_for_lineage = run_response.run_id if regenerate else None
         run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+        run_context.run_id = run_response.run_id
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
@@ -3450,6 +3451,7 @@ def continue_run_dispatch(
         # lookups (the fork inherits the original's resolved approval, if any).
         # ``run_response.run_id`` is what gets persisted as the new sibling run.
         run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+        run_context.run_id = run_response.run_id
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
@@ -4587,6 +4589,7 @@ async def _acontinue_run(
                         fork = True
                     original_run_id_for_lineage = run_response.run_id if regenerate else None
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_context.run_id = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -4634,6 +4637,7 @@ async def _acontinue_run(
                     # original run (used for HITL approval lookups); ``run_response.run_id``
                     # is the new UUID when fork=True.
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_context.run_id = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -5077,6 +5081,7 @@ async def _acontinue_run_stream(
                         fork = True
                     original_run_id_for_lineage = run_response.run_id if regenerate else None
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_context.run_id = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -5125,6 +5130,7 @@ async def _acontinue_run_stream(
                     # original run (used for HITL approval lookups); ``run_response.run_id``
                     # is the new UUID when fork=True.
                     run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_context.run_id = run_response.run_id
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
