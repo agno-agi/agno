@@ -1189,3 +1189,17 @@ async def test_acontinue_run_dispatch_skips_response_format_when_parser_model_se
     )
 
     assert captured["response_format"] is None
+def test_continue_dispatch_rebinds_run_context_after_fork():
+    """Every continue path must expose the forked run ID through RunContext."""
+    from pathlib import Path
+
+    repo_root = Path(__file__).parents[3]
+    agent_source = (repo_root / "agno" / "agent" / "_run.py").read_text(encoding="utf-8")
+    team_source = (repo_root / "agno" / "team" / "_run.py").read_text(encoding="utf-8")
+
+    assert agent_source.count("run_response = _apply_continue_modifiers(") == agent_source.count(
+        "run_context.run_id = run_response.run_id"
+    )
+    assert team_source.count("run_response = _apply_continue_modifiers_team(") == team_source.count(
+        "run_context.run_id = run_response.run_id"
+    )
