@@ -55,6 +55,8 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+    # In-memory access counts, flushed to DB during content updates
+    _access_counts: Dict[str, int] = None  # type: ignore
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -64,6 +66,59 @@ class Knowledge(RemoteKnowledge):
             self.vector_db.create()
 
         self.construct_readers()
+
+        if self._access_counts is None:
+            self._access_counts = {}
+
+    def _track_access(self, documents: List[Document]) -> None:
+        """Track access counts for documents in memory. Flushed on content updates."""
+        for doc in documents:
+            if doc.content_id:
+                self._access_counts[doc.content_id] = self._access_counts.get(doc.content_id, 0) + 1
+
+    def flush_access_counts(self) -> None:
+        """Flush all pending access counts to the database."""
+        if not self.contents_db or not self._access_counts:
+            return
+
+        if isinstance(self.contents_db, AsyncBaseDb):
+            raise ValueError("flush_access_counts() is not supported with async DB. Use aflush_access_counts().")
+
+        for content_id, count in list(self._access_counts.items()):
+            try:
+                content_row = self.contents_db.get_knowledge_content(content_id)
+                if content_row:
+                    current_count = content_row.access_count or 0
+                    content_row.access_count = current_count + count
+                    content_row.updated_at = int(time.time())
+                    self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+                    del self._access_counts[content_id]
+            except Exception as e:
+                log_debug(f"Failed to flush access count for {content_id}: {e}")
+
+    async def aflush_access_counts(self) -> None:
+        """Async version: Flush all pending access counts to the database."""
+        if not self.contents_db or not self._access_counts:
+            return
+
+        for content_id, count in list(self._access_counts.items()):
+            try:
+                if isinstance(self.contents_db, AsyncBaseDb):
+                    content_row = await self.contents_db.get_knowledge_content(content_id)
+                else:
+                    content_row = self.contents_db.get_knowledge_content(content_id)
+
+                if content_row:
+                    current_count = content_row.access_count or 0
+                    content_row.access_count = current_count + count
+                    content_row.updated_at = int(time.time())
+                    if isinstance(self.contents_db, AsyncBaseDb):
+                        await self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+                    else:
+                        self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
+                    del self._access_counts[content_id]
+            except Exception as e:
+                log_debug(f"Failed to flush access count for {content_id}: {e}")
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -542,7 +597,9 @@ class Knowledge(RemoteKnowledge):
 
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
-            return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+            results = self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+            self._track_access(results)
+            return results
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -583,10 +640,12 @@ class Knowledge(RemoteKnowledge):
             _max_results = max_results or self.max_results
             log_debug(f"Getting {_max_results} relevant documents for query: {query}")
             try:
-                return await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
+                results = await self.vector_db.async_search(query=query, limit=_max_results, filters=search_filters)
             except NotImplementedError:
                 log_info("Vector db does not support async search")
-                return self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+                results = self.vector_db.search(query=query, limit=_max_results, filters=search_filters)
+            self._track_access(results)
+            return results
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -2559,6 +2618,11 @@ class Knowledge(RemoteKnowledge):
                 content_row.external_id = self._ensure_string_field(
                     content.external_id, "content.external_id", default=""
                 )
+            # Apply pending access count if tracked
+            if content.id in self._access_counts:
+                current_count = content_row.access_count or 0
+                content_row.access_count = current_count + self._access_counts.pop(content.id)
+
             content_row.updated_at = int(time.time())
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
@@ -2606,6 +2670,11 @@ class Knowledge(RemoteKnowledge):
                 content_row.external_id = self._ensure_string_field(
                     content.external_id, "content.external_id", default=""
                 )
+
+            # Apply pending access count if tracked
+            if content.id in self._access_counts:
+                current_count = content_row.access_count or 0
+                content_row.access_count = current_count + self._access_counts.pop(content.id)
 
             content_row.updated_at = int(time.time())
             if isinstance(self.contents_db, AsyncBaseDb):
