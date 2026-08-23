@@ -282,6 +282,24 @@ class TestWorkflowFromDict:
 
 
 class TestWorkflowSave:
+    def test_save_does_not_republish_unchanged_step_agent(self, tmp_path):
+        from agno.agent.agent import Agent
+        from agno.db.sqlite import SqliteDb
+        from agno.workflow.step import Step
+
+        db = SqliteDb(db_file=str(tmp_path / "workflow_member_versions.db"))
+        agent = Agent(id="step-agent", name="Step Agent")
+        workflow = Workflow(id="wf-member", name="WF", steps=[Step(name="step", agent=agent)])
+
+        assert workflow.save(db=db) == 1
+        assert workflow.save(db=db) == 2
+        assert db.get_component("step-agent")["current_version"] == 1
+
+        agent.description = "changed"
+        assert workflow.save(db=db) == 3
+        assert db.get_component("step-agent")["current_version"] == 2
+        db.close()
+
     """Tests for Workflow.save() method."""
 
     def test_save_calls_upsert_component(self, basic_workflow, mock_db):
