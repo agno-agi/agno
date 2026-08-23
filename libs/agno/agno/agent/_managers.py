@@ -19,7 +19,7 @@ from agno.db.base import UserMemory
 from agno.db.schemas.culture import CulturalKnowledge
 from agno.models.message import Message
 from agno.run.messages import RunMessages
-from agno.session import AgentSession
+from agno.session import AgentSession, TeamSession
 from agno.utils.log import log_debug, log_warning
 
 # ---------------------------------------------------------------------------
@@ -539,5 +539,141 @@ def start_learning_future(
             user_id=user_id,
             run_context=run_context,
         )
+
+    return None
+
+
+# ---------------------------------------------------------------------------
+# Session summary
+# ---------------------------------------------------------------------------
+
+
+def make_session_summary(
+    agent: Agent,
+    session: AgentSession,
+) -> Optional[RunMetrics]:
+    """Create the session summary and persist it (runs in background thread).
+
+    Persists the summary itself because it runs after the run's session save:
+    the stored session is re-read and only its summary is updated, so runs
+    stored while the summary was generating are not overwritten. If a newer run
+    was stored meanwhile, this stale result is discarded — that run's own
+    summary supersedes it. A store landing between the re-read and this save
+    can still win the race — the same last-writer-wins exposure as every
+    session save.
+    """
+    from agno.agent import _session
+    from agno.metrics import RunMetrics
+
+    collector = RunMetrics()
+    if agent.session_summary_manager is None:
+        return collector
+    try:
+        latest_run_id = session.runs[-1].run_id if session.runs else None
+        summary = agent.session_summary_manager.create_session_summary(session=session, run_metrics=collector)
+        if summary is not None:
+            latest = _session.get_session(agent, session_id=session.session_id) or session
+            if isinstance(latest, (AgentSession, TeamSession)):
+                if latest.runs and latest.runs[-1].run_id != latest_run_id:
+                    log_debug("Skipping stale session summary: a newer run was stored meanwhile.")
+                    return collector
+                latest.summary = summary
+                _session.save_session(agent, session=latest)
+    except Exception as e:
+        log_warning(f"Error in session summary creation: {str(e)}")
+    return collector
+
+
+async def amake_session_summary(
+    agent: Agent,
+    session: AgentSession,
+) -> Optional[RunMetrics]:
+    """Create the session summary and persist it (runs in background task).
+
+    Persists the summary itself because it runs after the run's session save:
+    the stored session is re-read and only its summary is updated, so runs
+    stored while the summary was generating are not overwritten. If a newer run
+    was stored meanwhile, this stale result is discarded — that run's own
+    summary supersedes it. A store landing between the re-read and this save
+    can still win the race — the same last-writer-wins exposure as every
+    session save.
+    """
+    from agno.agent import _session
+    from agno.metrics import RunMetrics
+
+    collector = RunMetrics()
+    if agent.session_summary_manager is None:
+        return collector
+    try:
+        latest_run_id = session.runs[-1].run_id if session.runs else None
+        summary = await agent.session_summary_manager.acreate_session_summary(session=session, run_metrics=collector)
+        if summary is not None:
+            latest = await _session.aget_session(agent, session_id=session.session_id) or session
+            if isinstance(latest, (AgentSession, TeamSession)):
+                if latest.runs and latest.runs[-1].run_id != latest_run_id:
+                    log_debug("Skipping stale session summary: a newer run was stored meanwhile.")
+                    return collector
+                latest.summary = summary
+                await _session.asave_session(agent, session=latest)
+    except Exception as e:
+        log_warning(f"Error in session summary creation: {str(e)}")
+    return collector
+
+
+async def astart_session_summary_task(
+    agent: Agent,
+    session: AgentSession,
+    existing_task: Optional[Task] = None,
+) -> Optional[Task]:
+    """Cancel any existing session summary task and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        session: The agent session to summarize.
+        existing_task: An existing session summary task to cancel before starting a new one.
+
+    Returns:
+        A new session summary task if conditions are met, None otherwise.
+    """
+    # Cancel any existing task from a previous retry attempt
+    if existing_task is not None and not existing_task.done():
+        existing_task.cancel()
+        try:
+            await existing_task
+        except CancelledError:
+            pass
+
+    # Create new task if conditions are met
+    if agent.session_summary_manager is not None and agent.enable_session_summaries:
+        log_debug("Starting session summary creation in background task.")
+        return create_task(amake_session_summary(agent, session=session))
+
+    return None
+
+
+def start_session_summary_future(
+    agent: Agent,
+    session: AgentSession,
+    existing_future: Optional[Future] = None,
+) -> Optional[Future]:
+    """Cancel any existing session summary future and start a new one if conditions are met.
+
+    Args:
+        agent: The Agent instance.
+        session: The agent session to summarize.
+        existing_future: An existing session summary future to cancel before starting a new one.
+
+    Returns:
+        A new session summary future if conditions are met, None otherwise.
+    """
+    # Cancel any existing future from a previous retry attempt
+    # Note: cancel() only works if the future hasn't started yet
+    if existing_future is not None and not existing_future.done():
+        existing_future.cancel()
+
+    # Create new future if conditions are met
+    if agent.session_summary_manager is not None and agent.enable_session_summaries:
+        log_debug("Starting session summary creation in background thread.")
+        return agent.background_executor.submit(make_session_summary, agent, session=session)
 
     return None
