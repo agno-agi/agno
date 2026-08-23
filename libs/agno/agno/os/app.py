@@ -19,6 +19,7 @@ from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.agents.base import BaseExternalAgent
 from agno.db.base import AsyncBaseDb, BaseDb
+from agno.knowledge.image import KnowledgeImageStore, set_image_store
 from agno.knowledge.knowledge import Knowledge
 from agno.os.config import (
     AgentOSConfig,
@@ -256,6 +257,7 @@ class AgentOS:
         run_hooks_in_background: bool = False,
         telemetry: bool = True,
         registry: Optional[Registry] = None,
+        image_store: Optional[KnowledgeImageStore] = None,
         scheduler: bool = False,
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
@@ -311,6 +313,9 @@ class AgentOS:
             run_hooks_in_background: If True, run agent/team pre/post hooks as FastAPI background tasks (non-blocking)
             telemetry: Whether to enable telemetry
             registry: Optional registry to use for the AgentOS
+            image_store: Optional global knowledge image store. When set, registers it via
+                ``set_image_store`` so readers, content cleanup, and
+                ``GET /knowledge/images/...`` share the same store.
             scheduler: Whether to enable the cron scheduler
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
             scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
@@ -356,6 +361,9 @@ class AgentOS:
         self.description = description
         self.db = db
         self.checkpoint = checkpoint
+        self.image_store = image_store
+        if image_store is not None:
+            set_image_store(image_store)
 
         self.telemetry = telemetry
         self.tracing = tracing

@@ -10,6 +10,28 @@ class ReaderFactory:
     # Cache for instantiated readers
     _reader_cache: Dict[str, Reader] = {}
 
+    # Default extension / MIME → reader key. Mutate via set_reader_key_for_extension.
+    _DEFAULT_EXTENSION_TO_KEY: Dict[str, str] = {
+        ".pdf": "pdf",
+        "application/pdf": "pdf",
+        ".csv": "csv",
+        "text/csv": "csv",
+        ".xlsx": "excel",
+        ".xls": "excel",
+        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "excel",
+        "application/vnd.ms-excel": "excel",
+        ".docx": "docx",
+        ".doc": "docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+        ".pptx": "pptx",
+        ".json": "json",
+        ".md": "markdown",
+        ".markdown": "markdown",
+        ".txt": "text",
+        ".text": "text",
+    }
+    _EXTENSION_TO_KEY: Dict[str, str] = dict(_DEFAULT_EXTENSION_TO_KEY)
+
     # Static metadata for readers - avoids instantiation just to get metadata
     READER_METADATA: Dict[str, Dict[str, str]] = {
         "pdf": {
@@ -380,35 +402,31 @@ class ReaderFactory:
         return reader
 
     @classmethod
-    def get_reader_for_extension(cls, extension: str) -> Reader:
-        """Get the appropriate reader for a file extension."""
-        # TODO: add docling for unique file extensions eg: images, audios, etc.
-        extension = extension.lower()
+    def set_reader(cls, reader_key: str, reader: Reader, *, replace: bool = True) -> Reader:
+        """Inject or replace a cached reader instance (e.g. with custom config)."""
+        if replace or reader_key not in cls._reader_cache:
+            cls._reader_cache[reader_key] = reader
+        return cls._reader_cache[reader_key]
 
-        if extension in [".pdf", "application/pdf"]:
-            return cls.create_reader("pdf")
-        elif extension in [".csv", "text/csv"]:
-            return cls.create_reader("csv")
-        elif extension in [
-            ".xlsx",
-            ".xls",
-            "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            "application/vnd.ms-excel",
-        ]:
-            return cls.create_reader("excel")
-        elif extension in [".docx", ".doc", "application/vnd.openxmlformats-officedocument.wordprocessingml.document"]:
-            return cls.create_reader("docx")
-        elif extension == ".pptx":
-            return cls.create_reader("pptx")
-        elif extension == ".json":
-            return cls.create_reader("json")
-        elif extension in [".md", ".markdown"]:
-            return cls.create_reader("markdown")
-        elif extension in [".txt", ".text"]:
-            return cls.create_reader("text")
-        else:
-            # Default to text reader for unknown extensions
-            return cls.create_reader("text")
+    @classmethod
+    def get_reader_key_for_extension(cls, extension: str) -> str:
+        """Map a file extension or MIME type to a reader key (default: ``text``)."""
+        return cls._EXTENSION_TO_KEY.get(extension.lower(), "text")
+
+    @classmethod
+    def set_reader_key_for_extension(cls, extension: str, reader_key: str) -> None:
+        """Globally map an extension / MIME type to a reader key (e.g. ``.pdf`` → ``docling``)."""
+        cls._EXTENSION_TO_KEY[extension.lower()] = reader_key
+
+    @classmethod
+    def reset_extension_map(cls) -> None:
+        """Restore the default extension → reader key mapping."""
+        cls._EXTENSION_TO_KEY = dict(cls._DEFAULT_EXTENSION_TO_KEY)
+
+    @classmethod
+    def get_reader_for_extension(cls, extension: str) -> Reader:
+        """Get the appropriate reader for a file extension or MIME type."""
+        return cls.create_reader(cls.get_reader_key_for_extension(extension))
 
     @classmethod
     def get_reader_for_url(cls, url: str) -> Reader:
