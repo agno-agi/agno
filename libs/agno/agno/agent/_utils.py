@@ -155,6 +155,12 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
 
         field_value = getattr(agent, f.name)
         if field_value is not None:
+            if f.name == "tools":
+                # A failed tool copy must remain a failure. Falling back to the
+                # original list would defeat per-request isolation.
+                fields_for_new_agent[f.name] = deep_copy_field(agent, f.name, field_value)
+                continue
+
             try:
                 fields_for_new_agent[f.name] = deep_copy_field(agent, f.name, field_value)
             except Exception as e:
@@ -176,7 +182,11 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
 
 
 def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
-    """Helper function to deep copy a field based on its type."""
+    """Helper function to deep copy a field based on its type.
+
+    Tool copy failures intentionally propagate so callers cannot silently
+    replace a supposedly isolated tool with the original shared instance.
+    """
     from copy import copy, deepcopy
 
     from pydantic import BaseModel
@@ -195,30 +205,20 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
         if is_callable_factory(field_value, excluded_types=(Toolkit, Function)):
             return field_value
 
-        try:
-            copied_tools = []
-            for tool in field_value:  # type: ignore
-                try:
-                    # Share MCP tools (they maintain server connections)
-                    is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                    )
-                    if is_mcp_tool:
-                        copied_tools.append(tool)
-                    else:
-                        try:
-                            copied_tools.append(deepcopy(tool))
-                        except Exception:
-                            # Tool can't be deep copied, share by reference
-                            copied_tools.append(tool)
-                except Exception:
-                    # MCP detection failed, share tool by reference to be safe
-                    copied_tools.append(tool)
-            return copied_tools
-        except Exception as e:
-            # If entire tools processing fails, log and return original list
-            log_warning(f"Failed to process tools for deep copy: {str(e)}")
-            return field_value
+        copied_tools = []
+        for tool in field_value:  # type: ignore
+            # Share MCP tools (they maintain server connections)
+            is_mcp_tool = hasattr(type(tool), "__mro__") and any(
+                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+            )
+            if is_mcp_tool:
+                copied_tools.append(tool)
+            else:
+                # A failed deepcopy is not consent to share a per-request tool.
+                # An explicit __deepcopy__ implementation that returns self still
+                # works and remains an intentional sharing decision.
+                copied_tools.append(deepcopy(tool))
+        return copied_tools
 
     # Share heavy resources - these maintain connections/pools that shouldn't be duplicated
     if field_name in SHARED_BY_REFERENCE_FIELDS:

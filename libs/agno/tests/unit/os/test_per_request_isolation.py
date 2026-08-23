@@ -1477,8 +1477,8 @@ class TestToolsDeepCopyUnit:
         # MultiMCPTools should be shared
         assert copy.tools[0] is multi
 
-    def test_non_copyable_tool_shared(self):
-        """Tool that can't be copied should be shared."""
+    def test_non_copyable_tool_fails_copy(self):
+        """A failed tool copy must not silently fall back to the original tool."""
 
         class UnpicklableTool:
             def __init__(self):
@@ -1490,11 +1490,22 @@ class TestToolsDeepCopyUnit:
         tool = UnpicklableTool()
         agent = Agent(name="test", id="test-id", tools=[tool])
 
-        # Should not raise
-        copy = agent.deep_copy()
+        with pytest.raises(TypeError, match="Cannot copy"):
+            agent.deep_copy()
 
-        # Should fall back to sharing
-        assert copy.tools[0] is tool
+    def test_tool_explicitly_returning_self_is_shared(self):
+        """An explicit __deepcopy__ -> self remains an intentional share."""
+
+        class SharedTool:
+            def __deepcopy__(self, memo):
+                return self
+
+        tool = SharedTool()
+        agent = Agent(name="test", id="test-id", tools=[tool])
+
+        copied = agent.deep_copy()
+
+        assert copied.tools[0] is tool
 
     def test_empty_tools_list(self):
         """Empty tools list should be copied as empty list."""
