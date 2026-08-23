@@ -581,12 +581,25 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
     # processed in declaration order and the first one to claim a name wins.
     _owning_toolkit: Dict[str, str] = {}
-    if agent.model is not None and agent.tools and isinstance(agent.tools, list):
-        _tools = parse_tools(
-            agent,
-            model=agent.model,
-            tools=agent.tools,
-        )
+    if agent.tools and isinstance(agent.tools, list):
+        if agent.model is not None:
+            _tools = parse_tools(
+                agent,
+                model=agent.model,
+                tools=agent.tools,
+            )
+        else:
+            # Tools are useful to callers that attach a model later, and must
+            # remain part of the persisted configuration in that state.
+            for tool in agent.tools:
+                if isinstance(tool, Function):
+                    _tools.append(tool)
+                elif isinstance(tool, Toolkit):
+                    _tools.extend(tool.get_functions().values())
+                elif callable(tool):
+                    _tools.append(Function.from_callable(tool))
+                else:
+                    _tools.append(tool)
         _claimed_names: Set[str] = set()
         for _tool in agent.tools:
             if isinstance(_tool, Toolkit):

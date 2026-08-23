@@ -1,6 +1,15 @@
 from agno.agent.agent import Agent
 
 
+def test_to_dict_preserves_tools_without_model():
+    def lookup(query: str) -> str:
+        return query
+
+    config = Agent(tools=[lookup]).to_dict()
+
+    assert [tool["name"] for tool in config["tools"]] == ["lookup"]
+
+
 def test_set_id():
     agent = Agent(
         id="test_id",
