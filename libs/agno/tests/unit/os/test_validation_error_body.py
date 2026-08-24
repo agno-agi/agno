@@ -103,6 +103,40 @@ class TestNonValidatorPathsUnchanged:
         assert "secret" not in resp.text, "the 500 body must not echo the exception message"
 
 
+class TestValidatorInDependencyOwnedModel:
+    """The handler must also cover body models agno does not author: interface
+    routes validate request models from dependencies (here ag_ui's RunAgentInput),
+    whose validators can change underneath agno without any agno diff."""
+
+    def test_agui_dependency_validator_is_422_with_message(self, tmp_path):
+        pytest.importorskip("ag_ui", reason="ag_ui not installed")
+        from agno.os.interfaces.agui import AGUI
+
+        db = SqliteDb(db_file=str(tmp_path / "agui.db"))
+        agent = Agent(id="qa-agent", name="QA Agent", db=db)
+        agent_os = AgentOS(agents=[agent], db=db, telemetry=False, interfaces=[AGUI(agent=agent)])
+        client = TestClient(agent_os.get_app(), raise_server_exceptions=False)
+        # A binary content item with no id, url, or data trips BinaryInputContent's
+        # model_validator inside the ag_ui dependency.
+        bad_content = [{"type": "binary", "mimeType": "application/octet-stream"}]
+        resp = client.post(
+            "/agui",
+            json={
+                "threadId": "t1",
+                "runId": "r1",
+                "state": {},
+                "messages": [{"id": "m1", "role": "user", "content": bad_content}],
+                "tools": [],
+                "context": [],
+                "forwardedProps": {},
+            },
+        )
+        assert resp.status_code == 422, f"expected 422, got {resp.status_code}: {resp.text[:200]}"
+        assert "BinaryInputContent requires id, url, or data" in resp.text, (
+            f"message missing from body: {resp.text[:300]}"
+        )
+
+
 class TestOwnedAndBorrowedAppsAgree:
     """The invariant that would have caught this at review time: the owned app
     must answer exactly what a caller-supplied base_app answers."""
