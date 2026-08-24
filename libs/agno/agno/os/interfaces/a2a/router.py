@@ -29,13 +29,7 @@ from agno.os.interfaces.a2a.utils import (
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
-from agno.os.middleware.user_scope import (
-    assert_session_writable,
-    caller_is_admin,
-    get_scoped_user_id,
-    resolve_run_user_id,
-    verify_run_in_session,
-)
+from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, get_scoped_user_id, resolve_run_user_id, verify_run_in_session
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow

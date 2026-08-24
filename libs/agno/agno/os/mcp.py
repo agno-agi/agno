@@ -554,9 +554,7 @@ def _http_request_or_none() -> Optional[Any]:
         return None
 
 
-async def _assert_session_writable_mcp(
-    os_app, component, session_id: str, user_id: Optional[str], session_type
-) -> None:
+async def _assert_session_writable_mcp(os_app, component, session_id: str, user_id: Optional[str], session_type) -> None:
     """Refuse an MCP run into a session owned by another user.
 
     Same rule the REST run routes apply. MCP tools surface plain exceptions, so the
