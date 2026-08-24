@@ -204,7 +204,7 @@ class FileTools(Toolkit):
         :param chunk: String to be inserted instead of lines from start_line to end_line. Can have multiple lines.
         :param encoding: Encoding to use, default - utf-8
 
-        :return: file name if successfull, error message otherwise
+        :return: file name if successful, error message otherwise
         """
         try:
             log_debug(f"Patching file: {file_name}")
