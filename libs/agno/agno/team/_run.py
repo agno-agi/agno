@@ -763,7 +763,7 @@ def _run_tasks_stream(
             run_messages.messages = accumulated_messages
 
             if team.output_model is None:
-                for event in _handle_model_response_stream(
+                for event in _handle_model_response_stream(  # type: ignore[assignment]
                     team,
                     session=session,
                     run_response=run_response,
@@ -778,7 +778,7 @@ def _run_tasks_stream(
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
             else:
-                for event in _handle_model_response_stream(
+                for event in _handle_model_response_stream(  # type: ignore[assignment]
                     team,
                     session=session,
                     run_response=run_response,
@@ -1160,7 +1160,7 @@ def _run(
                 # 1. Execute pre-hooks
                 run_input = cast(TeamRunInput, run_response.input)
                 team.model = cast(Model, team.model)
-                if team.pre_hooks is not None:
+                if attempt == 0 and team.pre_hooks is not None:
                     # Can modify the run input
                     pre_hook_iterator = _execute_pre_hooks(
                         team,
@@ -1522,7 +1522,7 @@ def _run_stream(
                 # 1. Execute pre-hooks
                 run_input = cast(TeamRunInput, run_response.input)
                 team.model = cast(Model, team.model)
-                if team.pre_hooks is not None:
+                if attempt == 0 and team.pre_hooks is not None:
                     # Can modify the run input
                     pre_hook_iterator = _execute_pre_hooks(
                         team,
@@ -1629,7 +1629,7 @@ def _run_stream(
 
                 # 6. Get a response from the model
                 if team.output_model is None:
-                    for event in _handle_model_response_stream(
+                    for event in _handle_model_response_stream(  # type: ignore[assignment]
                         team,
                         session=session,
                         run_response=run_response,
@@ -1644,7 +1644,7 @@ def _run_stream(
                             raise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
-                    for event in _handle_model_response_stream(
+                    for event in _handle_model_response_stream(  # type: ignore[assignment]
                         team,
                         session=session,
                         run_response=run_response,
@@ -2689,7 +2689,7 @@ async def _arun_tasks_stream(
             run_messages.messages = accumulated_messages
 
             if team.output_model is None:
-                async for event in _ahandle_model_response_stream(
+                async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                     team,
                     session=team_session,
                     run_response=run_response,
@@ -2704,7 +2704,7 @@ async def _arun_tasks_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
             else:
-                async for event in _ahandle_model_response_stream(
+                async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                     team,
                     session=team_session,
                     run_response=run_response,
@@ -3132,7 +3132,7 @@ async def _arun(
                 run_input = cast(TeamRunInput, run_response.input)
 
                 # 1. Execute pre-hooks after session is loaded but before processing starts
-                if team.pre_hooks is not None:
+                if attempt == 0 and team.pre_hooks is not None:
                     pre_hook_iterator = _aexecute_pre_hooks(
                         team,
                         hooks=team.pre_hooks,  # type: ignore
@@ -3849,7 +3849,7 @@ async def _arun_stream(
                 # 1. Execute pre-hooks
                 run_input = cast(TeamRunInput, run_response.input)
                 team.model = cast(Model, team.model)
-                if team.pre_hooks is not None:
+                if attempt == 0 and team.pre_hooks is not None:
                     pre_hook_iterator = _aexecute_pre_hooks(
                         team,
                         hooks=team.pre_hooks,  # type: ignore
@@ -3961,7 +3961,7 @@ async def _arun_stream(
 
                 # 6. Get a response from the model
                 if team.output_model is None:
-                    async for event in _ahandle_model_response_stream(
+                    async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                         team,
                         session=team_session,
                         run_response=run_response,
@@ -3976,7 +3976,7 @@ async def _arun_stream(
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
                 else:
-                    async for event in _ahandle_model_response_stream(
+                    async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                         team,
                         session=team_session,
                         run_response=run_response,
@@ -7557,6 +7557,15 @@ def continue_run_dispatch(
     # Initialize the Team
     team.initialize_team(debug_mode=debug_mode)
 
+    # Normalise hooks & guardrails (required for multi-container deployments where
+    # continue_run() may be the first call in a fresh process)
+    if not team._hooks_normalised:
+        if team.pre_hooks:
+            team.pre_hooks = normalize_pre_hooks(team.pre_hooks)  # type: ignore
+        if team.post_hooks:
+            team.post_hooks = normalize_post_hooks(team.post_hooks)  # type: ignore
+        team._hooks_normalised = True
+
     # Read existing session from storage
     team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
@@ -8293,7 +8302,7 @@ def _continue_run(
     5. Create session summary
     6. Cleanup and store
     """
-    from agno.team._hooks import _execute_post_hooks
+    from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools
     from agno.team._response import (
         _convert_response_to_structured_format,
@@ -8321,6 +8330,35 @@ def _continue_run(
         for attempt in range(num_attempts):
             try:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Execute pre-hooks (only on first attempt)
+                run_input = cast(TeamRunInput, run_response.input)
+                if attempt == 0 and team.pre_hooks is not None:
+                    try:
+                        pre_hook_iterator = _execute_pre_hooks(
+                            team,
+                            hooks=team.pre_hooks,  # type: ignore
+                            run_response=run_response,
+                            run_input=run_input,
+                            run_context=run_context,
+                            session=session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            background_tasks=background_tasks,
+                            is_continue=True,
+                            **kwargs,
+                        )
+                        deque(pre_hook_iterator, maxlen=0)
+                    except (InputCheckError, OutputCheckError) as e:
+                        run_response.status = RunStatus.error
+                        flush_in_flight_messages_on_error_team(run_response, run_messages)
+                        if run_response.content is None:
+                            run_response.content = str(e)
+                        log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                        _cleanup_and_store(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+                        return run_response
 
                 # Generate model response
                 model_response: ModelResponse = call_model_with_fallback(
@@ -8483,7 +8521,7 @@ def _continue_run_stream(
     **kwargs: Any,
 ) -> Iterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (sync, streaming)."""
-    from agno.team._hooks import _execute_post_hooks
+    from agno.team._hooks import _execute_post_hooks, _execute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools
     from agno.team._response import (
         _handle_model_response_stream,
@@ -8510,6 +8548,39 @@ def _continue_run_stream(
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
+                # Execute pre-hooks (only on first attempt)
+                run_input = cast(TeamRunInput, run_response.input)
+                if attempt == 0 and team.pre_hooks is not None:
+                    try:
+                        pre_hook_iterator = _execute_pre_hooks(
+                            team,
+                            hooks=team.pre_hooks,  # type: ignore
+                            run_response=run_response,
+                            run_input=run_input,
+                            run_context=run_context,
+                            session=session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=stream_events,
+                            background_tasks=background_tasks,
+                            is_continue=True,
+                            **kwargs,
+                        )
+                        for event in pre_hook_iterator:
+                            yield event
+                    except (InputCheckError, OutputCheckError) as e:
+                        run_response.status = RunStatus.error
+                        flush_in_flight_messages_on_error_team(run_response, run_messages)
+                        if run_response.content is None:
+                            run_response.content = str(e)
+                        log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                        _cleanup_and_store(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+                        if yield_run_output:
+                            yield run_response
+                        return
+
                 # Handle the updated tools (execute confirmed tools, etc.) with streaming
                 yield from _handle_team_tool_call_updates_stream(
                     team,
@@ -8521,7 +8592,7 @@ def _continue_run_stream(
 
                 # Stream model response
                 if team.output_model is None:
-                    for event in _handle_model_response_stream(
+                    for event in _handle_model_response_stream(  # type: ignore[assignment]
                         team,
                         session=session,
                         run_response=run_response,
@@ -8538,7 +8609,7 @@ def _continue_run_stream(
                 else:
                     from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                    for event in _handle_model_response_stream(
+                    for event in _handle_model_response_stream(  # type: ignore[assignment]
                         team,
                         session=session,
                         run_response=run_response,
@@ -9289,6 +9360,15 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Team
     team.initialize_team(debug_mode=debug_mode)
 
+    # Normalise hooks & guardrails (required for multi-container deployments where
+    # continue_run() may be the first call in a fresh process)
+    if not team._hooks_normalised:
+        if team.pre_hooks:
+            team.pre_hooks = normalize_pre_hooks(team.pre_hooks, async_mode=True)  # type: ignore
+        if team.post_hooks:
+            team.post_hooks = normalize_post_hooks(team.post_hooks, async_mode=True)  # type: ignore
+        team._hooks_normalised = True
+
     # Resolve run options
     opts = resolve_run_options(
         team,
@@ -9423,7 +9503,7 @@ async def _acontinue_run(
     **kwargs: Any,
 ) -> TeamRunOutput:
     """Continue a paused team run (async, non-streaming)."""
-    from agno.team._hooks import _aexecute_post_hooks
+    from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
@@ -9580,6 +9660,39 @@ async def _acontinue_run(
                     _did_snapshot_dispatch = True
 
                 await aregister_run(run_response.run_id)  # type: ignore
+
+                # Execute pre-hooks (only on first attempt)
+                run_input = cast(TeamRunInput, run_response.input)
+                if attempt == 0 and team.pre_hooks is not None:
+                    try:
+                        pre_hook_iterator = _aexecute_pre_hooks(
+                            team,
+                            hooks=team.pre_hooks,  # type: ignore
+                            run_response=run_response,
+                            run_input=run_input,
+                            run_context=run_context,
+                            session=team_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            background_tasks=background_tasks,
+                            is_continue=True,
+                            **kwargs,
+                        )
+                        async for _ in pre_hook_iterator:
+                            pass
+                    except (InputCheckError, OutputCheckError) as e:
+                        run_response.status = RunStatus.error
+                        flush_in_flight_messages_on_error_team(run_response, None)
+                        if run_response.content is None:
+                            run_response.content = str(e)
+                        log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                        await _acleanup_and_store(
+                            team,
+                            run_response=run_response,
+                            session=team_session,
+                            run_context=run_context,
+                        )
+                        return run_response
 
                 # Emit RunContinued event (matching streaming variant behaviour)
                 from agno.utils.events import create_team_run_continued_event
@@ -9903,7 +10016,7 @@ async def _acontinue_run_stream(
     **kwargs: Any,
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (async, streaming)."""
-    from agno.team._hooks import _aexecute_post_hooks
+    from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
     from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._response import (
         _ahandle_model_response_stream,
@@ -10062,6 +10175,42 @@ async def _acontinue_run_stream(
 
                 await aregister_run(run_response.run_id)  # type: ignore
 
+                # Execute pre-hooks (only on first attempt)
+                run_input = cast(TeamRunInput, run_response.input)
+                if attempt == 0 and team.pre_hooks is not None:
+                    try:
+                        pre_hook_iterator = _aexecute_pre_hooks(
+                            team,
+                            hooks=team.pre_hooks,  # type: ignore
+                            run_response=run_response,
+                            run_input=run_input,
+                            run_context=run_context,
+                            session=team_session,
+                            user_id=user_id,
+                            debug_mode=debug_mode,
+                            stream_events=stream_events,
+                            background_tasks=background_tasks,
+                            is_continue=True,
+                            **kwargs,
+                        )
+                        async for event in pre_hook_iterator:
+                            yield event
+                    except (InputCheckError, OutputCheckError) as e:
+                        run_response.status = RunStatus.error
+                        flush_in_flight_messages_on_error_team(run_response, None)
+                        if run_response.content is None:
+                            run_response.content = str(e)
+                        log_error(f"Validation failed: {str(e)} | Check trigger: {e.check_trigger}")
+                        await _acleanup_and_store(
+                            team,
+                            run_response=run_response,
+                            session=team_session,
+                            run_context=run_context,
+                        )
+                        if yield_run_output:
+                            yield run_response
+                        return
+
                 run_response.requirements = _reclaim_own_requirements(
                     team, run_response.requirements, run_response.run_id
                 )
@@ -10105,7 +10254,7 @@ async def _acontinue_run_stream(
                     run_response.requirements = member_reqs
                     try:
                         # Streaming: use the async generator variant that yields member events
-                        async for event in _aroute_requirements_to_members_stream(
+                        async for event in _aroute_requirements_to_members_stream(  # type: ignore[assignment]
                             team,
                             run_response=run_response,
                             session=team_session,
@@ -10201,7 +10350,7 @@ async def _acontinue_run_stream(
                         )
 
                     # Handle the updated tools (execute confirmed tools, etc.) with streaming
-                    async for event in _ahandle_team_tool_call_updates_stream(
+                    async for event in _ahandle_team_tool_call_updates_stream(  # type: ignore[assignment]
                         team,
                         run_response=run_response,
                         run_messages=run_messages,
@@ -10213,7 +10362,7 @@ async def _acontinue_run_stream(
 
                     # Stream model response
                     if team.output_model is None:
-                        async for event in _ahandle_model_response_stream(
+                        async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                             team,
                             session=team_session,
                             run_response=run_response,
@@ -10230,7 +10379,7 @@ async def _acontinue_run_stream(
                     else:
                         from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                        async for event in _ahandle_model_response_stream(
+                        async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                             team,
                             session=team_session,
                             run_response=run_response,
@@ -10332,7 +10481,7 @@ async def _acontinue_run_stream(
 
                     # Stream model response
                     if team.output_model is None:
-                        async for event in _ahandle_model_response_stream(
+                        async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                             team,
                             session=team_session,
                             run_response=run_response,
@@ -10349,7 +10498,7 @@ async def _acontinue_run_stream(
                     else:
                         from agno.run.team import IntermediateRunContentEvent, RunContentEvent
 
-                        async for event in _ahandle_model_response_stream(
+                        async for event in _ahandle_model_response_stream(  # type: ignore[assignment]
                             team,
                             session=team_session,
                             run_response=run_response,
