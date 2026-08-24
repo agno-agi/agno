@@ -88,17 +88,12 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
                 "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
             )
             exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
-            table_ref = f"{db_schema}.{table_name}"
         else:
             # Check in current database/schema
             exists_query = text(
                 "SELECT 1 FROM information_schema.tables WHERE table_name = :table AND table_schema = DATABASE()"
             )
             exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
-            table_ref = table_name
-
-        if not exists:
-            log_debug(f"Table {table_ref} {'exists' if exists else 'does not exist'}")
 
         return exists
 

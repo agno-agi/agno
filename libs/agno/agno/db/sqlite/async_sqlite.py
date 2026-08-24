@@ -389,7 +389,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = await sess.execute(exists_query, {"index_name": idx.name})
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in table {table_name}, skipping creation")
                             continue
 
                     async with self.db_engine.begin() as conn:

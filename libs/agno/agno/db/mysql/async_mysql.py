@@ -280,9 +280,6 @@ class AsyncMySQLDb(AsyncBaseDb):
                         )
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(
-                                f"Index {idx.name} already exists in {self.db_schema}.{table_name}, skipping creation"
-                            )
                             continue
 
                     async with self.db_engine.begin() as conn:

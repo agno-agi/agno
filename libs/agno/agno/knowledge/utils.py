@@ -4,7 +4,6 @@ from typing import Any, Dict, List, Optional, Tuple, Type
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.reader_factory import ReaderFactory
 from agno.knowledge.types import ContentType
-from agno.utils.log import log_debug
 
 RESERVED_AGNO_KEY = "_agno"
 
@@ -229,18 +228,6 @@ def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
         raise ValueError(f"Failed to get info for reader '{reader_id}': {str(e)}")
 
 
-# A reader's availability cannot change inside a running process, so the same skip is logged
-# once rather than on every /knowledge/config request. The full set is in the response payload.
-_logged_skips: set = set()
-
-
-def _log_skip_once(message: str) -> None:
-    if message in _logged_skips:
-        return
-    _logged_skips.add(message)
-    log_debug(message)
-
-
 def _first_backticked_token(text: str) -> Optional[str]:
     """The first backticked token in an import failure, which is where agno puts the package.
 
@@ -296,7 +283,6 @@ def get_readers_availability(knowledge_instance: Optional[Any] = None) -> Tuple[
                     continue
                 except ValueError as e:
                     reason = str(e)
-                    _log_skip_once(f"Skipping custom reader '{reader_id}': {reason}")
 
                 unavailable_info.append(
                     {
@@ -318,7 +304,6 @@ def get_readers_availability(knowledge_instance: Optional[Any] = None) -> Tuple[
             continue
         except ValueError as e:
             reason = str(e)
-            _log_skip_once(f"Skipping reader '{key}': {reason}")
 
         missing_packages = ReaderFactory.get_missing_read_time_packages(key)
         if not missing_packages:
@@ -495,7 +480,8 @@ def get_all_chunkers_info() -> List[Dict]:
         try:
             chunker_info = get_chunker_info(key)
             chunkers_info.append(chunker_info)
-        except ValueError as e:
-            log_debug(f"Skipping chunker '{key}': {e}")
+        except ValueError:
+            # A chunker whose optional dependency is absent is simply not offered.
+            # That is the normal shape of a lean install, not a fault to report.
             continue
     return chunkers_info

@@ -242,7 +242,6 @@ class TableResolutionCache:
             )
             return
         self._tables[(table_type, table_name)] = table
-        log_debug(f"Table cache: stored '{table_name}' ({table_type})")
 
     def invalidate(self, table_name: str, metadata: Any) -> None:
         """Forget a resolved table after a schema change (ALTER/DROP).
@@ -389,12 +388,12 @@ class BaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not self.table_exists(table_name):
+            log_debug(f"Table '{table_name}' does not exist")
             return None
         with self._resolve_lock:
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
             return self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )
@@ -2168,12 +2167,12 @@ class AsyncBaseDb(ABC):
         if cached is not None:
             return cached
         if not create_table_if_not_found and not await self.table_exists(table_name):
+            log_debug(f"Table '{table_name}' does not exist")
             return None
         async with self._resolve_lock_async:
             cached = self._table_cache.get(table_type, table_name)
             if cached is not None:
                 return cached
-            log_debug(f"Table cache: miss for '{table_name}' ({table_type}); resolving from database")
             return await self._resolve_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
             )

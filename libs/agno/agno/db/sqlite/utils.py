@@ -71,8 +71,6 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         # SQLite uses sqlite_master instead of information_schema
         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
         exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
-        if not exists:
-            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
@@ -90,8 +88,6 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
     try:
         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
         exists = (await session.execute(exists_query, {"table": table_name})).scalar() is not None
-        if not exists:
-            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
