@@ -80,9 +80,14 @@ class ValidationErrorDetail(BaseModel):
 
 
 class ValidationErrorResponse(BaseModel):
-    """422 body as emitted by FastAPI's request-validation handler: a list of field-level
-    errors under ``detail`` (not a single string). Both built-in coercion errors and
-    custom-validator ``ValueError``s use this shape.
+    """422 body. Two runtime shapes share this status code, and the same endpoint can
+    return either, so ``detail`` is typed as their union:
+
+    - FastAPI's request-validation handler emits a **list** of field-level errors (built-in
+      coercion errors and custom-validator ``ValueError``s alike).
+    - A route that raises ``HTTPException(status_code=422, detail="...")`` for a semantic
+      check (e.g. an invalid cron expression) emits a **string** through the HTTPException
+      handler.
     """
 
     model_config = ConfigDict(
@@ -99,7 +104,13 @@ class ValidationErrorResponse(BaseModel):
         }
     )
 
-    detail: List[ValidationErrorDetail] = Field(..., description="Field-level validation errors")
+    detail: Union[str, List[ValidationErrorDetail]] = Field(
+        ...,
+        description=(
+            "A single message for an explicitly raised 422, or a list of field-level errors "
+            "for a request-validation failure"
+        ),
+    )
 
 
 class ScopeItem(BaseModel):
