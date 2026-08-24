@@ -825,19 +825,6 @@ def get_knowledge_instance(
     Raises:
         HTTPException: If no matching instance is found or parameters are invalid
     """
-    # Answered before any identifier is considered: with nothing registered, no identifier can
-    # be right, and the branches below would blame the caller for not disambiguating an empty
-    # list. 503 is what the rest of AgentOS answers for a feature with no backing resource.
-    if not knowledge_instances:
-        raise HTTPException(
-            status_code=503,
-            detail=(
-                "No knowledge base is available on this AgentOS. A Knowledge is served over "
-                "/knowledge only once it has a contents_db: pass Knowledge(..., contents_db=<db>) "
-                "to AgentOS(knowledge=[...]), or to an agent or team."
-            ),
-        )
-
     # If only one instance and no specific identifier requested, return it (backwards compatible)
     if len(knowledge_instances) == 1 and not knowledge_id and not db_id:
         return next(iter(knowledge_instances))
@@ -879,7 +866,20 @@ def get_knowledge_instance(
             f"Please specify knowledge_id parameter. Available IDs: {knowledge_ids}",
         )
 
-    # No identifiers provided - list available IDs
+    # No identifiers provided. With nothing registered there is nothing to disambiguate, so the
+    # message below would assert a condition its own empty list disproves. A caller that named
+    # a db_id or knowledge_id is answered above, where "not found" is the more precise answer.
+    if not knowledge_instances:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No knowledge base is available on this AgentOS. A Knowledge is served over "
+                "/knowledge only once it has a contents_db: pass Knowledge(..., contents_db=<db>) "
+                "to AgentOS(knowledge=[...]), or to an agent or team."
+            ),
+        )
+
+    # List available IDs
     knowledge_ids = []
     for k in knowledge_instances:
         if k.contents_db:
