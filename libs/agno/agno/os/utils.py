@@ -866,7 +866,20 @@ def get_knowledge_instance(
             f"Please specify knowledge_id parameter. Available IDs: {knowledge_ids}",
         )
 
-    # No identifiers provided - list available IDs
+    # No identifiers provided. With nothing registered there is nothing to disambiguate, so the
+    # message below would assert a condition its own empty list disproves. A caller that named
+    # a db_id or knowledge_id is answered above, where "not found" is the more precise answer.
+    if not knowledge_instances:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No knowledge base is available on this AgentOS. A Knowledge is served over "
+                "/knowledge only once it has a contents_db: pass Knowledge(..., contents_db=<db>) "
+                "to AgentOS(knowledge=[...]), or to an agent or team."
+            ),
+        )
+
+    # List available IDs
     knowledge_ids = []
     for k in knowledge_instances:
         if k.contents_db:
