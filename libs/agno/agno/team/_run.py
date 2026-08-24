@@ -6572,7 +6572,7 @@ def _route_requirements_to_members(
             # (member agents skip save_session when team_id is set)
             session.upsert_run(_member_run_for_storage(team, session, member_response))
 
-            content = _record_member_continuation_result(team, run_response, member_response)
+            content = _record_member_continuation_result(team, run_response, member_response, member)
             member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -6684,7 +6684,7 @@ def _route_requirements_to_members_stream(
             session.upsert_run(_member_run_for_storage(team, session, member_response))
         else:
             session.upsert_run(_member_run_for_storage(team, session, member_response))
-            content = _record_member_continuation_result(team, run_response, member_response)
+            content = _record_member_continuation_result(team, run_response, member_response, member)
             member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -6764,7 +6764,7 @@ async def _aroute_requirements_to_members(
             # (member agents skip save_session when team_id is set, so we do it here)
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
 
-            content = _record_member_continuation_result(team, run_response, member_response)
+            content = _record_member_continuation_result(team, run_response, member_response, member)
             return f"[{member.name or member_id}]: {content}"
 
     tasks = [_continue_member(member, member_run_output, reqs) for member, member_run_output, reqs in groups]
@@ -6889,7 +6889,7 @@ async def _aroute_requirements_to_members_stream(
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
         else:
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
-            content = _record_member_continuation_result(team, run_response, member_response)
+            content = _record_member_continuation_result(team, run_response, member_response, member)
             member_results.append(f"[{member.name or member_id}]: {content}")
 
         # Clear _member_run_response references to allow GC of the member RunOutput
@@ -6901,15 +6901,41 @@ def _record_member_continuation_result(
     team: "Team",
     run_response: TeamRunOutput,
     member_response: Union[RunOutput, TeamRunOutput],
+    member: Optional[Union["Agent", "Team"]] = None,
 ) -> Any:
     """Record a completed member result for a resumed member-only team run.
 
     Route-mode teams expose the member response directly. The initial delegation
-    path gets that behavior from the delegate tool's ``show_result`` /
-    ``stop_after_tool_call`` flags; a resumed member does not execute that tool
-    again, so the continuation router must preserve the member's final content
-    on the team run instead.
+    path records the member run and its media before returning its content; a
+    resumed member does not execute that tool again, so the continuation router
+    must update the recorded member response and preserve its final content and
+    media on the team run instead.
     """
+    member_run_id = getattr(member_response, "run_id", None)
+    for index, existing_response in enumerate(run_response.member_responses):
+        if member_run_id is not None and getattr(existing_response, "run_id", None) == member_run_id:
+            run_response.member_responses[index] = member_response
+            break
+    else:
+        run_response.member_responses.append(member_response)
+
+    for target, field_names in (
+        (run_response, ("images", "videos", "audio", "files")),
+        (team, ("images", "videos", "audio")),
+    ):
+        for field_name in field_names:
+            member_media = getattr(member_response, field_name, None)
+            if member_media is None:
+                continue
+            target_media = getattr(target, field_name, None)
+            if target_media is None:
+                setattr(target, field_name, list(member_media))
+            else:
+                target_media.extend(item for item in member_media if item not in target_media)
+
+    if member is not None and not member.store_media:
+        _record_opted_out_media(run_response, member_response)
+
     content = getattr(member_response, "content", None)
     if content is None:
         content = "Task completed"

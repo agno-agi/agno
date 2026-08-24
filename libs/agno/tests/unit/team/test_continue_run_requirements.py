@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from pydantic import BaseModel
 
+from agno.media import Audio, File, Image, Video
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
@@ -1025,6 +1026,25 @@ class TestContinueRunApprovalResolution:
 class TestRespondDirectlyMemberContinuation:
     cancellation = "Tool execution cancelled by the user: operation not approved."
 
+    @staticmethod
+    def _attach_generated_media(run_output):
+        media = {
+            "images": [Image(url="https://example.com/generated.png")],
+            "videos": [Video(url="https://example.com/generated.mp4")],
+            "audio": [Audio(url="https://example.com/generated.mp3")],
+            "files": [File(url="https://example.com/generated.txt")],
+        }
+        for field_name, items in media.items():
+            setattr(run_output, field_name, items)
+        return media
+
+    @staticmethod
+    def _assert_generated_media_propagated(team, run_response, media):
+        for field_name, items in media.items():
+            assert getattr(run_response, field_name) == items
+        for field_name in ("images", "videos", "audio"):
+            assert getattr(team, field_name) == media[field_name]
+
     def _make_case(self, *, respond_directly=True, rejected=True):
         tool = _make_tool_execution(
             tool_call_id="member-tool-1",
@@ -1087,6 +1107,9 @@ class TestRespondDirectlyMemberContinuation:
         team.events_to_skip = []
         team.store_events = False
         team.stream_member_events = False
+        team.images = None
+        team.videos = None
+        team.audio = None
         team.retries = 0
         team.exponential_backoff = False
         team.delay_between_retries = 0
@@ -1200,6 +1223,7 @@ class TestRespondDirectlyMemberContinuation:
             rejected=False
         )
         member_response.content = '{"result": "approved"}'
+        media = self._attach_generated_media(member_response)
         team.parse_response = True
         run_context = RunContext(
             run_id="team-run-1",
@@ -1223,6 +1247,7 @@ class TestRespondDirectlyMemberContinuation:
         assert result.status == RunStatus.completed
         assert result.content == {"result": "approved"}
         assert result.content_type == "dict"
+        self._assert_generated_media_propagated(team, result, media)
         member.continue_run.assert_called_once()
         leader_model.assert_not_called()
 
@@ -1239,6 +1264,36 @@ class TestRespondDirectlyMemberContinuation:
         assert recorded == content
         assert run_response.content == content
         assert run_response.content_type == "application/json"
+
+    def test_record_member_continuation_replaces_paused_entry_without_duplicate_media(self):
+        from agno.run.agent import RunOutput
+        from agno.team._run import _record_member_continuation_result
+
+        team, _, run_response, _, _, _, _ = self._make_case()
+        paused_image = Image(url="https://example.com/paused.png")
+        generated_image = Image(url="https://example.com/generated.png")
+        paused_response = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.paused,
+            images=[paused_image],
+        )
+        member_response = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content="done",
+            images=[paused_image, generated_image],
+        )
+        run_response.member_responses = [paused_response]
+        run_response.images = [paused_image]
+        team.images = [paused_image]
+
+        _record_member_continuation_result(team, run_response, member_response)
+
+        assert run_response.member_responses == [member_response]
+        assert run_response.images == [paused_image, generated_image]
+        assert team.images == [paused_image, generated_image]
 
     def test_sync_coordinate_mode_still_runs_leader_after_member_continue(self):
         from agno.team._run import continue_run_dispatch
@@ -1310,6 +1365,7 @@ class TestRespondDirectlyMemberContinuation:
             content='{"result": "approved"}',
         )
         member.continue_run = MagicMock(return_value=iter([member_final]))
+        media = self._attach_generated_media(member_final)
         team.parse_response = True
         team.retries = 1
         run_context = RunContext(
@@ -1356,6 +1412,7 @@ class TestRespondDirectlyMemberContinuation:
         assert run_response.status == RunStatus.completed
         assert run_response.content == _StructuredDirectResponse(result="approved")
         assert run_response.content_type == "_StructuredDirectResponse"
+        self._assert_generated_media_propagated(team, run_response, media)
         member.continue_run.assert_called_once()
         team_tool_updates.assert_not_called()
         leader_stream.assert_not_called()
@@ -1368,13 +1425,14 @@ class TestRespondDirectlyMemberContinuation:
         from agno.run import RunContext
         from agno.team._run import _acontinue_run
 
-        team, session, run_response, requirement, member, member_run_output, _ = self._make_case(
+        team, session, run_response, requirement, member, member_run_output, member_response = self._make_case(
             respond_directly=respond_directly
         )
         team.media_storage = MagicMock(spec=AsyncMediaStorage)
         if respond_directly:
             member.continue_run.return_value.content = '{"result": "approved"}'
             member.acontinue_run.return_value.content = '{"result": "approved"}'
+            media = self._attach_generated_media(member_response)
             team.parse_response = True
         run_context = RunContext(
             run_id="team-run-1",
@@ -1418,6 +1476,7 @@ class TestRespondDirectlyMemberContinuation:
             if respond_directly:
                 assert result.content == _StructuredDirectResponse(result="approved")
                 assert result.content_type == "_StructuredDirectResponse"
+                self._assert_generated_media_propagated(team, result, media)
                 assert '{"result": "approved"}' in str(result.tools[0].result)
                 leader_continue.assert_not_awaited()
             else:
@@ -1456,6 +1515,7 @@ class TestRespondDirectlyMemberContinuation:
                 yield None
 
         member.acontinue_run = MagicMock(side_effect=_member_stream)
+        media = self._attach_generated_media(member_final)
         leader_stream = MagicMock(side_effect=_empty_stream)
         team.retries = 1
 
@@ -1488,6 +1548,7 @@ class TestRespondDirectlyMemberContinuation:
             assert run_response.status == RunStatus.completed
             assert run_response.content == _StructuredDirectResponse(result="approved")
             assert run_response.content_type == "_StructuredDirectResponse"
+            self._assert_generated_media_propagated(team, run_response, media)
             member.acontinue_run.assert_called_once()
             assert async_message_builder.await_count == 2
             async_message_builder.assert_awaited_with(
