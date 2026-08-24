@@ -73,7 +73,10 @@ class FileTools(Toolkit):
     Each pattern is matched with ``fnmatch`` against *any path component* of the
     file's path relative to ``base_dir``. A file is excluded if any component
     matches any pattern, so ``.git`` will exclude both ``.git/`` at the root
-    and ``vendor/thing/.git/`` nested deep.
+    and ``vendor/thing/.git/`` nested deep. An entry prefixed with ``!`` is an
+    exemption: a component matching it is never excluded, whatever else it
+    matches. The defaults use this to keep committed env templates
+    (``.env.example`` and friends) listed while real env files stay hidden.
 
     Note: ``exclude_patterns`` does not parse ``.gitignore`` files — it only
     applies the literal patterns provided.
