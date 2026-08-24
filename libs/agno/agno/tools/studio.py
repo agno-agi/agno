@@ -2628,10 +2628,10 @@ class StudioTools(Toolkit):
         append a new version (draft, or published when ``publish``). ``warnings``
         is the list ``mutate`` appends its disclosures to; it rides on the
         success envelope."""
-        # expected_version compares against the latest stored version, and anything
-        # editable has at least v1, so 0 can only ever be a guard that no writer can
-        # satisfy -- an unset argument, not a compare-and-set the caller meant.
-        expected_version = _version_or_latest(expected_version)
+        # expected_version is NOT coerced here even though 0 can never match a latest
+        # version. Refusing is the safe direction for a compare-and-set: reading 0 as
+        # "unset" would turn a guard the caller asked for into an unguarded append, and
+        # the REST guard (`guard.latest_version`) would still refuse the same value.
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3055,7 +3055,15 @@ class StudioTools(Toolkit):
         # `version` names the draft to publish, so 0 reads as omitted. The
         # expected_current_version guard beside it does NOT: 0 is its "nothing is
         # live yet" spelling and stays a guard.
-        version = _version_or_latest(version)
+        coerced_version = _version_or_latest(version)
+        # This one moves the live pointer, so a caller whose argument was
+        # reinterpreted hears about it on the envelope, not only in a debug log.
+        version_warnings = (
+            []
+            if coerced_version == version
+            else ["Ignored version=0, which is not a version, and published the latest draft instead."]
+        )
+        version = coerced_version
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3129,7 +3137,7 @@ class StudioTools(Toolkit):
                 # the live pointer names, so re-projecting this one would make
                 # the row describe a version that is not live; moving the
                 # pointer backwards is set_current_version's job, not publish's.
-                return ok_result("already_published", id=component_id, version=target)
+                return ok_result("already_published", warnings=version_warnings, id=component_id, version=target)
             try:
                 result = self.db.upsert_config(
                     component_id=component_id,
@@ -3148,7 +3156,7 @@ class StudioTools(Toolkit):
                     return self._denied_error(denied)
                 raise
             published_version = result.get("version", target)
-            warnings = self._sync_component_row_after_commit(component_id, published_version)
+            warnings = version_warnings + self._sync_component_row_after_commit(component_id, published_version)
             return ok_result("published", warnings=warnings, id=component_id, version=published_version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to publish component")

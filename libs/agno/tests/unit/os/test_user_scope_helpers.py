@@ -12,9 +12,9 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi import HTTPException
 
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
-from agno.db.base import AsyncBaseDb, SessionType
 from agno.os.middleware.user_scope import (
     apply_scope_to_kwargs,
     assert_session_writable,
