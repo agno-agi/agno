@@ -8,9 +8,9 @@ import httpx
 from pydantic import BaseModel, ValidationError
 
 from agno.exceptions import ModelProviderError, ModelRateLimitError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, DocumentCitation, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -21,6 +21,8 @@ from agno.utils.models.claude import (
     build_system_blocks,
     format_messages,
     format_tools_for_model,
+    resolve_http_client,
+    route_sampling_params_to_extra_body,
     supports_prefill,
 )
 from agno.utils.tokens import count_schema_tokens
@@ -414,11 +416,9 @@ class Claude(Model):
             return self.client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Ignoring and using Anthropic SDK default.")
+        http_client = resolve_http_client(self.http_client)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         # When no custom http_client is provided, let the Anthropic SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -434,13 +434,9 @@ class Claude(Model):
             return self.async_client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Ignoring and using Anthropic SDK default."
-                )
+        http_client = resolve_http_client(self.http_client, is_async=True)
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         # When no custom http_client is provided, let the Anthropic SDK use its own default client.
         # Each model instance gets its own connection, preventing HTTP/2 stream saturation
         # when multiple models (main agent, MemoryManager, etc.) run concurrently.
@@ -582,7 +578,7 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        return _request_params
+        return route_sampling_params_to_extra_body(_request_params)
 
     @staticmethod
     def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:
@@ -689,10 +685,18 @@ class Claude(Model):
 
         self._apply_cache_tools(request_kwargs)
 
-        # Build output_format if response_format is provided
+        # Structured output travels inside output_config. anthropic 1.0.0 dropped the
+        # older output_format parameter from create() on both the stable and the beta
+        # endpoint, where passing it raises TypeError before the request is ever sent.
+        # Merge rather than assign, so a caller who set output_config for effort keeps
+        # it -- and build a new dict, because get_request_params() returns a shallow
+        # copy whose output_config value is still the model's own object.
         output_format = self._build_output_format(response_format)
         if output_format:
-            request_kwargs["output_format"] = output_format
+            request_kwargs["output_config"] = {
+                **(request_kwargs.get("output_config") or {}),
+                "format": output_format,
+            }
 
         if request_kwargs:
             log_debug(f"Calling {self.provider} with request parameters: {request_kwargs}", log_level=2)

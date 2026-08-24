@@ -1,6 +1,7 @@
 """Pydantic request/response models for the schedule API."""
 
 import re
+import unicodedata
 from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, field_validator, model_validator
@@ -42,6 +43,9 @@ class ScheduleCreate(BaseModel):
             raise ValueError("Endpoint must start with '/'")
         if "://" in v:
             raise ValueError("Endpoint must be a path, not a full URL")
+        # A control character makes the URL unsendable, so the schedule would fail on every trigger.
+        if any(c.isspace() or unicodedata.category(c) == "Cc" for c in v):
+            raise ValueError("Endpoint must not contain whitespace or control characters")
         return v
 
 
@@ -81,6 +85,8 @@ class ScheduleUpdate(BaseModel):
                 raise ValueError("Endpoint must start with '/'")
             if "://" in v:
                 raise ValueError("Endpoint must be a path, not a full URL")
+            if any(c.isspace() or unicodedata.category(c) == "Cc" for c in v):
+                raise ValueError("Endpoint must not contain whitespace or control characters")
         return v
 
     @model_validator(mode="after")
@@ -104,6 +110,8 @@ class ScheduleUpdate(BaseModel):
 
 class ScheduleResponse(BaseModel):
     id: str
+    # ``None`` is an unowned (system) schedule, which the executor fires unscoped.
+    user_id: Optional[str] = None
     name: str
     description: Optional[str] = None
     method: str
@@ -116,6 +124,13 @@ class ScheduleResponse(BaseModel):
     retry_delay_seconds: int
     enabled: bool
     next_run_at: Optional[int] = None
+    # Control-plane provenance: which plane manages the row ("studio" for
+    # builder-created schedules), the exact component it targets, and - when
+    # the system disabled it - why (for example "target_archived:agent:x").
+    managed_by: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    disabled_reason: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
@@ -133,6 +148,8 @@ class ScheduleStateResponse(BaseModel):
 class ScheduleRunResponse(BaseModel):
     id: str
     schedule_id: str
+    # Denormalised from the parent schedule when the run is recorded.
+    user_id: Optional[str] = None
     attempt: int
     triggered_at: Optional[int] = None
     completed_at: Optional[int] = None

@@ -106,6 +106,26 @@ class ReaderSchema(BaseModel):
     name: Optional[str] = Field(None, description="Name of the reader")
     description: Optional[str] = Field(None, description="Description of the reader's capabilities")
     chunkers: Optional[List[str]] = Field(None, description="List of supported chunking strategies")
+    content_types: Optional[List[str]] = Field(None, description="Content types this reader can read in this install")
+    unavailable_content_types: Optional[Dict[str, List[str]]] = Field(
+        None, description="Content types this reader supports but cannot read here, and the packages each needs"
+    )
+
+
+class UnavailableReaderSchema(BaseModel):
+    id: str = Field(..., description="Reader key that could not be loaded")
+    name: Optional[str] = Field(None, description="Name of the reader")
+    description: Optional[str] = Field(None, description="Description of the reader's capabilities")
+    missing_packages: List[str] = Field(default_factory=list, description="Packages that are not importable")
+    reason: str = Field(..., description="Verbatim import failure, including its install instruction")
+
+
+class UnavailableChunkerSchema(BaseModel):
+    id: str = Field(..., description="Chunker key that could not be loaded")
+    name: Optional[str] = Field(None, description="Name of the chunker")
+    description: Optional[str] = Field(None, description="Description of the chunking strategy")
+    missing_packages: List[str] = Field(default_factory=list, description="Packages that are not importable")
+    reason: str = Field(..., description="Verbatim import failure, including its install instruction")
 
 
 class ChunkerSchema(BaseModel):
@@ -127,7 +147,7 @@ class VectorDbSchema(BaseModel):
 class VectorSearchResult(BaseModel):
     """Schema for search result documents."""
 
-    id: str = Field(..., description="Unique identifier for the search result document")
+    id: Optional[str] = Field(None, description="Unique identifier for the search result document")
     content: str = Field(..., description="Content text of the document")
     name: Optional[str] = Field(None, description="Name of the document")
     meta_data: Optional[Dict[str, Any]] = Field(None, description="Metadata associated with the document")
@@ -221,4 +241,10 @@ class ConfigResponseSchema(BaseModel):
     vector_dbs: Optional[List[VectorDbSchema]] = Field(None, description="Configured vector databases")
     remote_content_sources: Optional[List[RemoteContentSourceSchema]] = Field(
         None, description="Configured remote content sources (S3, GCS, SharePoint, GitHub)"
+    )
+    unavailable_readers: Optional[Dict[str, UnavailableReaderSchema]] = Field(
+        None, description="Readers that are not usable in this install, and the packages they need"
+    )
+    unavailable_chunkers: Optional[Dict[str, UnavailableChunkerSchema]] = Field(
+        None, description="Chunking strategies that are not usable in this install, and the packages they need"
     )

@@ -1,15 +1,18 @@
+# PEP 604 unions below are evaluated lazily under this import: without it,
+# `str | None` annotations break at import time on Python 3.9
+from __future__ import annotations
+
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Callable, Dict, Type, Union
 
-import httpx
 from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.models.message import Message
 from agno.utils.http import get_default_async_client, get_default_sync_client
 from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import format_tools_for_model
+from agno.utils.models.claude import format_tools_for_model, resolve_http_client, route_sampling_params_to_extra_body
 
 try:
     from anthropic import AnthropicFoundry, AsyncAnthropicFoundry
@@ -85,14 +88,11 @@ class Claude(AnthropicClaude):
             return self.client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.Client):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning("http_client is not an instance of httpx.Client. Using default global httpx.Client.")
-                _client_params["http_client"] = get_default_sync_client()
-        else:
-            _client_params["http_client"] = get_default_sync_client()
+        # The shared agno client is httpx's; an httpx2-based SDK (anthropic >= 1.0.0)
+        # will not take it, so fall through to the SDK's own default rather than raise.
+        http_client = resolve_http_client(self.http_client, fallback=get_default_sync_client())
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         self.client = AnthropicFoundry(**_client_params)
         return self.client
 
@@ -102,16 +102,9 @@ class Claude(AnthropicClaude):
             return self.async_client
 
         _client_params = self._get_client_params()
-        if self.http_client:
-            if isinstance(self.http_client, httpx.AsyncClient):
-                _client_params["http_client"] = self.http_client
-            else:
-                log_warning(
-                    "http_client is not an instance of httpx.AsyncClient. Using default global httpx.AsyncClient."
-                )
-                _client_params["http_client"] = get_default_async_client()
-        else:
-            _client_params["http_client"] = get_default_async_client()
+        http_client = resolve_http_client(self.http_client, is_async=True, fallback=get_default_async_client())
+        if http_client is not None:
+            _client_params["http_client"] = http_client
         self.async_client = AsyncAnthropicFoundry(**_client_params)
         return self.async_client
 
@@ -148,6 +141,8 @@ class Claude(AnthropicClaude):
 
         if self.request_params:
             _request_params.update(self.request_params)
+
+        route_sampling_params_to_extra_body(_request_params)
 
         if _request_params:
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)

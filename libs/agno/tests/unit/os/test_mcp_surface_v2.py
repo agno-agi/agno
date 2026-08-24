@@ -37,7 +37,7 @@ def _resolve_by_identity(monkeypatch):
     resolution behaviour is covered by test_mcp_resolution.py.
     """
 
-    async def _resolve(os, kind, component_id, *, user_id, session_id, strict=True):
+    async def _resolve(os, kind, component_id, *, user_id, session_id, strict=True, version=None, published_only=True):
         pool = {"agents": os.agents, "teams": os.teams, "workflows": os.workflows}.get(kind) or []
         for component in pool:
             if getattr(component, "id", None) == component_id:
@@ -403,7 +403,18 @@ def test_home_route_works_with_mcp_enabled():
     client = TestClient(app)
     response = client.get("/")
     assert response.status_code == 200
-    assert "AgentOS" in response.text
+    assert response.json()["info"] == "/info"
+
+
+def test_info_route_works_with_mcp_enabled():
+    os = AgentOS(agents=[_agent()], mcp_server=True)
+    app = os.get_app()
+    client = TestClient(app)
+    response = client.get("/info")
+    assert response.status_code == 200
+    body = response.json()
+    assert "agno_version" in body
+    assert "os_version" in body
 
 
 def test_get_app_idempotent_with_base_app():

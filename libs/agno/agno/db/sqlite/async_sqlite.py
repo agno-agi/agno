@@ -2,17 +2,16 @@ import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Set, Tuple, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Literal, Optional, Sequence, Tuple, Union, cast
 from uuid import uuid4
 
-from sqlalchemy import or_
+from sqlalchemy import and_, or_
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
-from agno.db.base import AsyncBaseDb, ComponentType, SessionType
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.migrations.manager import MigrationManager
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -27,18 +26,28 @@ from agno.db.sqlite.utils import (
     ais_valid_table,
     apply_sorting,
     calculate_date_metrics,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
 from agno.db.utils import (
+    HISTORY_SKIP_STATUSES,
+    build_single_run_row,
+    deserialize_run,
     deserialize_session,
     deserialize_session_json_fields,
     deserialize_sessions,
+    filter_context_runs,
+    json_serializer,
+    merge_runs_table_with_legacy_blob,
+    metrics_starting_date_from_days,
     serialize_session_json_fields,
+    table_schema_mismatch_error,
+    validate_pagination,
 )
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
@@ -59,7 +68,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         db_engine: Optional[AsyncEngine] = None,
         db_url: Optional[str] = None,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -67,6 +76,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        components_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
@@ -89,7 +99,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             db_engine (Optional[AsyncEngine]): The SQLAlchemy async database engine to use.
             db_url (Optional[str]): The database URL to connect to.
             session_table (Optional[str]): Name of the table to store Agent, Team and Workflow sessions.
-            culture_table (Optional[str]): Name of the table to store cultural notions.
+            runs_table (Optional[str]): Name of the table to store the runs of each session.
             memory_table (Optional[str]): Name of the table to store user memories.
             metrics_table (Optional[str]): Name of the table to store metrics.
             eval_table (Optional[str]): Name of the table to store evaluation runs data.
@@ -97,6 +107,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             traces_table (Optional[str]): Name of the table to store run traces.
             spans_table (Optional[str]): Name of the table to store span events.
             versions_table (Optional[str]): Name of the table to store schema versions.
+            components_table (Optional[str]): Name of the table to store components.
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
@@ -106,13 +117,15 @@ class AsyncSqliteDb(AsyncBaseDb):
             ValueError: If none of the tables are provided.
         """
         if id is None:
-            seed = db_url or db_file or str(db_engine.url) if db_engine else "sqlite+aiosqlite:///agno.db"
+            # Parenthesized on purpose; see SqliteDb: unparenthesized, db_url and
+            # db_file are dead without an engine and every instance shares one id.
+            seed = db_url or db_file or (str(db_engine.url) if db_engine else "sqlite+aiosqlite:///agno.db")
             id = generate_id(seed)
 
         super().__init__(
             id=id,
             session_table=session_table,
-            culture_table=culture_table,
+            runs_table=runs_table,
             memory_table=memory_table,
             metrics_table=metrics_table,
             eval_table=eval_table,
@@ -120,6 +133,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             traces_table=traces_table,
             spans_table=spans_table,
             versions_table=versions_table,
+            components_table=components_table,
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
@@ -131,16 +145,16 @@ class AsyncSqliteDb(AsyncBaseDb):
         _engine: Optional[AsyncEngine] = db_engine
         if _engine is None:
             if db_url is not None:
-                _engine = create_async_engine(db_url)
+                _engine = create_async_engine(db_url, json_serializer=json_serializer)
             elif db_file is not None:
                 db_path = Path(db_file).resolve()
                 db_path.parent.mkdir(parents=True, exist_ok=True)
                 db_file = str(db_path)
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}")
+                _engine = create_async_engine(f"sqlite+aiosqlite:///{db_path}", json_serializer=json_serializer)
             else:
                 # If none of db_engine, db_url, or db_file are provided, create a db in the current directory
                 default_db_path = Path("./agno.db").resolve()
-                _engine = create_async_engine(f"sqlite+aiosqlite:///{default_db_path}")
+                _engine = create_async_engine(f"sqlite+aiosqlite:///{default_db_path}", json_serializer=json_serializer)
                 db_file = str(default_db_path)
                 log_debug(f"Created SQLite database: {default_db_path}")
 
@@ -149,8 +163,46 @@ class AsyncSqliteDb(AsyncBaseDb):
         self.db_file: Optional[str] = db_file
         self.metadata: MetaData = MetaData()
 
+        # SQLite ignores FOREIGN KEY constraints by default — enable them on
+        # every new connection so agno_runs.session_id CASCADE actually fires.
+        # For async engines the hook is on the sync sub-engine.
+        from sqlalchemy import event as _sa_event
+
+        @_sa_event.listens_for(self.db_engine.sync_engine, "connect")
+        def _set_sqlite_pragmas(dbapi_connection, connection_record):  # type: ignore[no-redef]
+            try:
+                cursor = dbapi_connection.cursor()
+                cursor.execute("PRAGMA foreign_keys = ON")
+                # WAL replaces the default DELETE journal, which creates, fsyncs
+                # and deletes a journal file on every commit. The mode persists
+                # in the database file, so re-issuing it per connection is an
+                # idempotent no-op. synchronous is left at its default (FULL):
+                # commits still fsync, durability is unchanged. Where SQLite
+                # cannot switch (in-memory databases, filesystems without
+                # shared-memory support such as some network mounts) the pragma
+                # reports the mode actually in effect — keep whatever it gives
+                # back.
+                cursor.execute("PRAGMA journal_mode=WAL")
+                row = cursor.fetchone()
+                mode = row[0] if row else None
+                if isinstance(mode, str) and mode.lower() != "wal":
+                    log_debug(f"SQLite journal_mode=WAL unavailable, running with journal_mode={mode}")
+                cursor.close()
+            except Exception:
+                pass
+
         # Initialize database session factory
         self.async_session_factory = async_sessionmaker(bind=self.db_engine, expire_on_commit=False)
+
+        # SingletonThreadPool (SQLite's pool for in-memory databases, any URL
+        # spelling) gives every thread its own private database, so "this
+        # table exists" is not a process-wide fact there. StaticPool (the
+        # async in-memory arrangement) shares one connection and caches fine.
+        from sqlalchemy.pool import SingletonThreadPool
+
+        if isinstance(self.db_engine.sync_engine.pool, SingletonThreadPool):
+            self._table_cache.enabled = False
+            log_debug("Table cache: disabled for in-memory SQLite (per-thread private databases)")
         # Zero means never refreshed; get_metrics uses this to refresh lazily, at most once per minute
         self._metrics_refreshed_at: float = 0.0
 
@@ -180,6 +232,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         """Create all tables for the database."""
         tables_to_create = [
             (self.session_table_name, "sessions"),
+            (self.runs_table_name, "runs"),
             (self.memory_table_name, "memories"),
             (self.metrics_table_name, "metrics"),
             (self.eval_table_name, "evals"),
@@ -190,9 +243,15 @@ class AsyncSqliteDb(AsyncBaseDb):
             (self.schedule_runs_table_name, "schedule_runs"),
             (self.approvals_table_name, "approvals"),
             (self.service_accounts_table_name, "service_accounts"),
+            (self.tool_results_table_name, "tool_results"),
         ]
 
         for table_name, table_type in tables_to_create:
+            # Re-verify against the live database (one existence check each), so
+            # this call still recreates tables dropped externally - including
+            # tables registered only as an FK side effect of another reflection
+            if not await self.table_exists(table_name):
+                self._invalidate_table_cache(table_name)
             await self._get_or_create_table(
                 table_name=table_name, table_type=table_type, create_table_if_not_found=True
             )
@@ -208,13 +267,32 @@ class AsyncSqliteDb(AsyncBaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
         try:
             # Pass table names for foreign key resolution
             table_schema = get_table_schema_definition(
                 table_type,
                 traces_table_name=self.trace_table_name,
                 schedules_table_name=self.schedules_table_name,
+                session_table_name=self.session_table_name,
             ).copy()
+
+            # Register FK parent tables on the metadata first, so SQLAlchemy
+            # can resolve the FK references at ``Table(...)`` construction.
+            # Gated on this dialect's schema actually declaring a foreign key:
+            # the dependency map is a cross-dialect superset.
+            declares_fk = bool(table_schema.get("__foreign_keys__")) or any(
+                isinstance(cfg, dict) and "foreign_key" in cfg for cfg in table_schema.values()
+            )
+            if declares_fk:
+                registered = {t.name for t in self.metadata.tables.values()}
+                for ref_type, ref_name in self._fk_dependencies(table_type):
+                    if ref_name not in registered:
+                        await self._resolve_table(
+                            table_name=ref_name,
+                            table_type=ref_type,
+                            create_table_if_not_found=True,
+                        )
 
             columns: List[Column] = []
             indexes: List[str] = []
@@ -248,21 +326,29 @@ class AsyncSqliteDb(AsyncBaseDb):
                 columns.append(Column(*column_args, **column_kwargs))  # type: ignore
 
             # Create the table object
-            table = Table(table_name, self.metadata, *columns)
+            # In-memory SQLite (cache disabled): every thread has a private
+            # database, so re-creation of an already-registered table is
+            # legitimate; allow redefinition instead of "already defined"
+            already_registered = any(t.name == table_name for t in self.metadata.tables.values())
+            table = Table(table_name, self.metadata, *columns, extend_existing=not self._table_cache.enabled)
+
+            # A pre-registered Table (extend_existing path) already carries its
+            # constraints and indexes; re-appending duplicates them unboundedly
+            attach_constraints = not already_registered
 
             # Add multi-column unique constraints with table-specific names
-            for constraint in schema_unique_constraints:
+            for constraint in schema_unique_constraints if attach_constraints else []:
                 constraint_name = f"{table_name}_{constraint['name']}"
                 constraint_columns = constraint["columns"]
                 table.append_constraint(UniqueConstraint(*constraint_columns, name=constraint_name))
 
             # Add indexes to the table definition
-            for idx_col in indexes:
+            for idx_col in indexes if attach_constraints else []:
                 idx_name = f"idx_{table_name}_{idx_col}"
                 table.append_constraint(Index(idx_name, idx_col))
 
             # Composite indexes
-            for idx_config in schema_composite_indexes:
+            for idx_config in schema_composite_indexes if attach_constraints else []:
                 idx_name = f"idx_{table_name}_{'_'.join(idx_config['columns'])}"
                 table.append_constraint(Index(idx_name, *idx_config["columns"]))
 
@@ -270,7 +356,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             # Fail loudly on missing columns like every other backend: silently
             # skipping would drop a uniqueness guarantee (e.g. unique active
             # service-account names) on this backend only.
-            for idx_config in schema_partial_unique_indexes:
+            for idx_config in schema_partial_unique_indexes if attach_constraints else []:
                 missing_columns = [col for col in idx_config["columns"] if col not in table.c]
                 if missing_columns:
                     raise ValueError(
@@ -303,7 +389,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = await sess.execute(exists_query, {"index_name": idx.name})
                         exists = result.scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in table {table_name}, skipping creation")
                             continue
 
                     async with self.db_engine.begin() as conn:
@@ -332,6 +417,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.session_table
+
+        elif table_type == "runs":
+            self.runs_table = await self._get_or_create_table(
+                table_name=self.runs_table_name,
+                table_type="runs",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.runs_table
 
         elif table_type == "memories":
             self.memory_table = await self._get_or_create_table(
@@ -364,14 +457,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.knowledge_table
-
-        elif table_type == "culture":
-            self.culture_table = await self._get_or_create_table(
-                table_name=self.culture_table_name,
-                table_type="culture",
-                create_table_if_not_found=create_table_if_not_found,
-            )
-            return self.culture_table
 
         elif table_type == "versions":
             self.versions_table = await self._get_or_create_table(
@@ -424,6 +509,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             )
             return self.schedule_runs_table
 
+        elif table_type == "tool_results":
+            self.tool_results_table = await self._get_or_create_table(
+                table_name=self.tool_results_table_name,
+                table_type="tool_results",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.tool_results_table
+
         elif table_type == "approvals":
             self.approvals_table = await self._get_or_create_table(
                 table_name=self.approvals_table_name,
@@ -451,7 +544,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         else:
             raise ValueError(f"Unknown table type: '{table_type}'")
 
-    async def _get_or_create_table(
+    async def _resolve_table(
         self,
         table_name: str,
         table_type: str,
@@ -473,11 +566,13 @@ class AsyncSqliteDb(AsyncBaseDb):
         if not table_is_available:
             if not create_table_if_not_found:
                 return None
-            return await self._create_table(table_name=table_name, table_type=table_type)
+            table = await self._create_table(table_name=table_name, table_type=table_type)
+            self._store_resolved_table(table_type, table_name, table)
+            return table
 
         # SQLite version of table validation (no schema)
         if not await ais_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
-            raise ValueError(f"Table {table_name} has an invalid schema")
+            raise table_schema_mismatch_error(table_name, table_type=table_type)
 
         try:
             async with self.db_engine.connect() as conn:
@@ -486,6 +581,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return Table(table_name, self.metadata, autoload_with=connection)
 
                 table = await conn.run_sync(load_table)
+                self._store_resolved_table(table_type, table_name, table)
                 return table
 
         except Exception as e:
@@ -529,6 +625,399 @@ class AsyncSqliteDb(AsyncBaseDb):
             )
             await sess.execute(stmt)
 
+    async def cleanup_legacy_runs_column(self, force: bool = False) -> bool:
+        """Drop the legacy ``runs`` column from the sessions table.
+
+        The v3.0.0 migration intentionally leaves the legacy ``runs`` column on
+        the sessions table as a backup. Once you have verified the migration
+        and taken a backup, call this to reclaim the storage.
+
+        Args:
+            force: If True, drop the column even if some sessions still hold
+                non-null ``runs`` content (a sign that they were not migrated).
+                Defaults to False.
+
+        Returns:
+            True if the column was dropped (or its content cleared on older
+            SQLite versions that don't support DROP COLUMN), False if there
+            was no legacy column to act on.
+        """
+        async with self.async_session_factory() as sess, sess.begin():
+            columns_info = (await sess.execute(text(f"PRAGMA table_info({self.session_table_name})"))).fetchall()
+            existing_columns = {col[1] for col in columns_info}
+            if "runs" not in existing_columns:
+                log_info(f"{self.session_table_name}.runs column does not exist, nothing to clean up")
+                return False
+
+            if not force:
+                pending = (
+                    await sess.execute(text(f"SELECT COUNT(*) FROM {self.session_table_name} WHERE runs IS NOT NULL"))
+                ).scalar() or 0
+                if pending > 0:
+                    raise RuntimeError(
+                        f"Refusing to drop {self.session_table_name}.runs: {pending} session(s) still have "
+                        "non-null `runs` content. Run MigrationManager(db).up() first, or pass force=True."
+                    )
+
+            try:
+                await sess.execute(text(f"ALTER TABLE {self.session_table_name} DROP COLUMN runs"))
+                log_info(f"Dropped legacy runs column from {self.session_table_name}")
+            except Exception:
+                # SQLite < 3.35 does not support DROP COLUMN; clear the column instead.
+                await sess.execute(text(f"UPDATE {self.session_table_name} SET runs = NULL"))
+                log_info(
+                    f"Could not drop runs column from {self.session_table_name} "
+                    "(SQLite < 3.35); cleared its content instead."
+                )
+
+        self._invalidate_table_cache(self.session_table_name)
+        return True
+
+    # -- Run methods --
+    async def _get_session_runs_data(
+        self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
+    ) -> List[Dict[str, Any]]:
+        """Get the raw run_data dicts for the given session, in insertion order.
+
+        When ``limit`` is set, only the most recent ``limit`` context-relevant runs
+        are fetched (indexed ``ORDER BY run_index DESC LIMIT``) and returned in
+        ascending (chronological) order. "Context-relevant" mirrors the pre-slice
+        filtering in ``get_messages``: member sub-runs (``parent_run_id`` set) and
+        terminal-skip statuses are excluded in SQL, so the DB-side last-N matches
+        the in-memory history window.
+        """
+        if limit is not None:
+            stmt = (
+                select(runs_table.c.run_data)
+                .where(runs_table.c.session_id == session_id)
+                .where(runs_table.c.parent_run_id.is_(None))
+                .where(or_(runs_table.c.status.is_(None), runs_table.c.status.notin_(HISTORY_SKIP_STATUSES)))
+                .order_by(
+                    runs_table.c.run_index.desc(),
+                    runs_table.c.created_at.desc(),
+                    runs_table.c.run_id.desc(),
+                )
+                .limit(limit)
+            )
+            result = await sess.execute(stmt)
+            rows = [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+            rows.reverse()
+            return rows
+        stmt = (
+            select(runs_table.c.run_data)
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        result = await sess.execute(stmt)
+        return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in result.fetchall()]
+
+    async def _get_sessions_runs_data(
+        self, sess, runs_table: Table, session_ids: List[str]
+    ) -> Dict[str, List[Dict[str, Any]]]:
+        """Get the raw run_data dicts for the given sessions, grouped by session_id."""
+        if not session_ids:
+            return {}
+        stmt = (
+            select(runs_table.c.session_id, runs_table.c.run_data)
+            .where(runs_table.c.session_id.in_(session_ids))
+            .order_by(runs_table.c.run_index.asc(), runs_table.c.created_at.asc())
+        )
+        result = await sess.execute(stmt)
+        runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+        for session_id, run_data in result.fetchall():
+            if isinstance(run_data, str):
+                run_data = json.loads(run_data)
+            runs_by_session.setdefault(session_id, []).append(run_data)
+        return runs_by_session
+
+    async def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to read.
+            deserialize (Optional[bool]): Whether to deserialize the run. Defaults to True.
+
+        Returns:
+            - When deserialize=True: RunOutput, TeamRunOutput or WorkflowRunOutput object
+            - When deserialize=False: Run row dictionary
+        """
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return None
+
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(select(table).where(table.c.run_id == run_id))
+                row = result.fetchone()
+                if row is None:
+                    return None
+
+                run_row = dict(row._mapping)
+                if isinstance(run_row.get("run_data"), str):
+                    run_row["run_data"] = json.loads(run_row["run_data"])
+
+            if not deserialize:
+                return run_row
+
+            return deserialize_run(run_row.get("run_type"), run_row["run_data"])
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs table (O(1) operation).
+
+        Optimized for updating existing runs (e.g., status changes in HITL or
+        background mode) without re-upserting all runs in the session.
+
+        For new runs, ``run_index`` should be provided or will be read from
+        ``run_data``. For updates to existing runs, ``run_index`` is preserved
+        from the original insert.
+
+        Args:
+            run: The run object or dictionary to upsert.
+            session_id: The session ID this run belongs to.
+            user_id: Optional user ID to associate with the run.
+            run_index: Optional run index for new runs.
+
+        Raises:
+            ValueError: If the run has no run_id.
+            Exception: If an error occurs during upsert.
+        """
+        try:
+            runs_table = await self._get_table(table_type="runs", create_table_if_not_found=True)
+            if runs_table is None:
+                return
+
+            row = build_single_run_row(
+                run=run,
+                session_id=session_id,
+                user_id=user_id,
+                run_index=run_index,
+            )
+
+            async with self.async_session_factory() as sess, sess.begin():
+                # Backfill a monotonic run_index when the run arrives without one
+                # (e.g. a background/continue save that couldn't resolve its position).
+                # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
+                # preserves the existing index, so this only sets it on a genuine insert.
+                if row.get("run_index") is None:
+                    # Computed INSIDE the insert statement: SQLite holds the
+                    # database write lock for the whole statement, so two
+                    # concurrent backfills cannot read the same MAX (the old
+                    # two-statement read-then-insert could - a busy-waiting
+                    # second writer landed a duplicate index after the first
+                    # committed).
+                    row["run_index"] = (
+                        select(func.coalesce(func.max(runs_table.c.run_index) + 1, 0))
+                        .where(runs_table.c.session_id == session_id)
+                        .scalar_subquery()
+                    )
+
+                stmt = sqlite.insert(runs_table).values(**row)
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["run_id"],
+                    set_=dict(
+                        status=stmt.excluded.status,
+                        run_data=stmt.excluded.run_data,
+                        user_id=stmt.excluded.user_id,
+                        parent_run_id=stmt.excluded.parent_run_id,
+                        updated_at=stmt.excluded.updated_at,
+                        # Preserve a non-null run_index; only fill it in for a legacy row
+                        # that was stored as NULL (COALESCE keeps the existing value if set).
+                        run_index=func.coalesce(runs_table.c.run_index, stmt.excluded.run_index),
+                    ),
+                )
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Exception upserting run to runs table: {str(e)}")
+            raise e
+
+    async def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get all runs matching the given filters.
+
+        Args:
+            session_id (Optional[str]): The ID of the session to filter by.
+            user_id (Optional[str]): The ID of the user to filter by.
+            agent_id (Optional[str]): The ID of the agent to filter by.
+            team_id (Optional[str]): The ID of the team to filter by.
+            workflow_id (Optional[str]): The ID of the workflow to filter by.
+            status (Optional[RunStatus]): The run status to filter by.
+            limit (Optional[int]): The maximum number of runs to return.
+            page (Optional[int]): The page number to return.
+            sort_by (Optional[str]): The field to sort by. Defaults to run_index when filtering by session.
+            sort_order (Optional[str]): The sort order.
+            deserialize (Optional[bool]): Whether to deserialize the runs. Defaults to True.
+
+        Returns:
+            - When deserialize=True: List of run output objects
+            - When deserialize=False: Tuple of (run row dictionaries, total count)
+        """
+        validate_pagination(limit, page)
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return [] if deserialize else ([], 0)
+
+            async with self.async_session_factory() as sess:
+                stmt = select(table)
+                if session_id is not None:
+                    stmt = stmt.where(table.c.session_id == session_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                if agent_id is not None:
+                    stmt = stmt.where(table.c.agent_id == agent_id)
+                if team_id is not None:
+                    stmt = stmt.where(table.c.team_id == team_id)
+                if workflow_id is not None:
+                    stmt = stmt.where(table.c.workflow_id == workflow_id)
+                if status is not None:
+                    status_value = status.value if isinstance(status, RunStatus) else status
+                    stmt = stmt.where(table.c.status == status_value)
+
+                count_stmt = select(func.count()).select_from(stmt.alias())
+                count_result = await sess.execute(count_stmt)
+                total_count = count_result.scalar() or 0
+
+                if sort_by is not None:
+                    stmt = apply_sorting(stmt, table, sort_by, sort_order)
+                else:
+                    stmt = stmt.order_by(table.c.run_index.asc(), table.c.created_at.asc())
+
+                if limit is not None:
+                    stmt = stmt.limit(limit)
+                    if page is not None:
+                        stmt = stmt.offset((page - 1) * limit)
+
+                result = await sess.execute(stmt)
+                run_rows = []
+                for record in result.fetchall():
+                    run_row = dict(record._mapping)
+                    if isinstance(run_row.get("run_data"), str):
+                        run_row["run_data"] = json.loads(run_row["run_data"])
+                    run_rows.append(run_row)
+
+            if not deserialize:
+                return run_rows, total_count
+
+            return [deserialize_run(row.get("run_type"), row["run_data"]) for row in run_rows]
+
+        except Exception as e:
+            log_error(f"Exception reading from runs table: {str(e)}")
+            raise e
+
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
+        """Async variant of the legacy-blob scrub. See sqlite.py for rationale.
+
+        Read-modify-write in Python because SQLite lacks JSON1 operators for
+        set-difference on a JSON array.
+        """
+        if not run_ids:
+            return
+        try:
+            import json as _json
+
+            sessions_table = await self._get_table(table_type="sessions")
+            if sessions_table is None or "runs" not in sessions_table.c:
+                return
+            wanted = set(run_ids)
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(
+                    select(sessions_table.c.session_id, sessions_table.c.runs).where(sessions_table.c.runs.isnot(None))
+                )
+                rows = result.fetchall()
+                for sid, runs_raw in rows:
+                    if isinstance(runs_raw, str):
+                        try:
+                            runs_list = _json.loads(runs_raw)
+                        except (_json.JSONDecodeError, TypeError):
+                            continue
+                    else:
+                        runs_list = runs_raw
+                    if not isinstance(runs_list, list):
+                        continue
+                    kept = [r for r in runs_list if not (isinstance(r, dict) and r.get("run_id") in wanted)]
+                    if len(kept) == len(runs_list):
+                        continue
+                    await sess.execute(
+                        sessions_table.update().where(sessions_table.c.session_id == sid).values(runs=_json.dumps(kept))
+                    )
+        except Exception:
+            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+
+    async def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs table.
+
+        Args:
+            run_id (str): The ID of the run to delete.
+
+        Returns:
+            bool: True if the run was deleted, False otherwise.
+        """
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return False
+
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.delete().where(table.c.run_id == run_id))
+                deleted = result.rowcount > 0  # type: ignore
+
+            await self._ascrub_run_ids_from_legacy_blob([run_id])
+            return deleted
+
+        except Exception as e:
+            log_error(f"Error deleting run: {str(e)}")
+            raise e
+
+    async def delete_runs(self, run_ids: List[str]) -> None:
+        """Delete all given runs from the runs table.
+
+        Args:
+            run_ids (List[str]): The IDs of the runs to delete.
+        """
+        try:
+            table = await self._get_table(table_type="runs")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+
+            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
+            log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+
+        except Exception as e:
+            log_error(f"Error deleting runs: {str(e)}")
+            raise e
+
     # -- Session methods --
 
     async def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
@@ -549,6 +1038,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return False
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
                 delete_stmt = table.delete().where(table.c.session_id == session_id)
@@ -558,9 +1048,16 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if result.rowcount == 0:  # type: ignore
                     log_debug(f"No session found to delete with session_id: {session_id}")
                     return False
-                else:
-                    log_debug(f"Successfully deleted session with session_id: {session_id}")
-                    return True
+
+                # Also delete the runs belonging to the session
+                if runs_table is not None:
+                    await sess.execute(runs_table.delete().where(runs_table.c.session_id == session_id))
+
+                log_debug(f"Successfully deleted session with session_id: {session_id}")
+
+            # Cascade offloaded tool results after the session delete commits.
+            await self._cascade_tool_results([session_id])
+            return True
 
         except Exception as e:
             log_error(f"Error deleting session: {str(e)}")
@@ -581,17 +1078,171 @@ class AsyncSqliteDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.session_id.in_(session_ids))
+                # The ids a user_id-scoped delete is allowed to touch. The
+                # cascade below removes stored payloads, which no filter on the
+                # sessions table would stop it from doing for another user's
+                # session id.
+                select_stmt = select(table.c.session_id).where(table.c.session_id.in_(session_ids))
                 if user_id is not None:
-                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    select_stmt = select_stmt.where(table.c.user_id == user_id)
+                deletable_ids = [row[0] for row in await sess.execute(select_stmt)]
+                # Stored payloads are cascaded only for sessions this delete
+                # was allowed to remove. An unscoped delete has no other user
+                # to protect, so it also cleans up after a session whose row
+                # is already gone.
+                cascade_ids = session_ids if user_id is None else deletable_ids
+
+                delete_stmt = table.delete().where(table.c.session_id.in_(deletable_ids))
                 result = await sess.execute(delete_stmt)
+
+                # Also delete the runs belonging to the sessions
+                if runs_table is not None:
+                    runs_delete_stmt = runs_table.delete().where(runs_table.c.session_id.in_(session_ids))
+                    if user_id is not None:
+                        runs_delete_stmt = runs_delete_stmt.where(runs_table.c.user_id == user_id)
+                    await sess.execute(runs_delete_stmt)
 
             log_debug(f"Successfully deleted {result.rowcount} sessions")  # type: ignore
 
+            # Cascade offloaded tool results after the session delete commits.
+            await self._cascade_tool_results(cascade_ids)
+
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
+
+    async def _cascade_tool_results(self, session_ids: List[str]) -> None:
+        """Cascade result offloading on session delete: read the index rows,
+        delete their payloads, then the index rows.
+
+        Best-effort and outside the session delete, so a cascade failure can
+        never poison or roll back the delete itself. Payloads are removed by
+        the exact (namespace, path) of each index row, through the
+        filesystems result stores registered on this db, or from the AgentFS
+        table at its defaults when no store registered.
+        """
+        try:
+            table = await self._get_table(table_type="tool_results")
+            if table is None:
+                return
+            async with self.async_session_factory() as sess:
+                result = await sess.execute(
+                    select(table.c.result_id, table.c.namespace, table.c.path).where(
+                        table.c.session_id.in_(session_ids)
+                    )
+                )
+                rows = result.fetchall()
+            if not rows:
+                return
+            # Payloads are removed through every filesystem a store on this db
+            # registered, and from the default payload table as well: a fresh
+            # process has no registrations, and the exact (namespace, path)
+            # delete cannot touch anything but these rows. A row whose payload
+            # was found nowhere is reported; its bytes live in a filesystem
+            # this process cannot reach.
+            removed = set()
+            filesystems = list(getattr(self, "tool_result_filesystems", []) or [])
+            if filesystems:
+                from agno.fs import FileSystem
+
+                for _, namespace, path in rows:
+                    for fs in filesystems:
+                        try:
+                            if await FileSystem(backend=fs.backend, namespace=str(namespace)).adelete(str(path)):
+                                removed.add((str(namespace), str(path)))
+                        except Exception as e:
+                            log_warning(f"Tool-result payload delete failed for {namespace}/{path}: {e}")
+            async with self.async_session_factory() as sess, sess.begin():
+                if await self._adefault_payload_table_exists(sess):
+                    for _, namespace, path in rows:
+                        if (str(namespace), str(path)) in removed:
+                            continue
+                        result = await sess.execute(
+                            text(f"DELETE FROM {self._default_payload_table()} WHERE namespace = :ns AND path = :p"),
+                            {"ns": str(namespace), "p": str(path)},
+                        )
+                        if getattr(result, "rowcount", 0):
+                            removed.add((str(namespace), str(path)))
+            missing = [
+                f"{namespace}/{path}" for _, namespace, path in rows if (str(namespace), str(path)) not in removed
+            ]
+            if missing:
+                log_warning(
+                    f"Tool-result cascade removed {len(rows) - len(missing)} of {len(rows)} payloads; "
+                    f"{len(missing)} live in a filesystem this process has no store for: {missing[:3]}"
+                )
+            result_ids = [str(row[0]) for row in rows]
+            for start in range(0, len(result_ids), 500):
+                async with self.async_session_factory() as sess, sess.begin():
+                    await sess.execute(table.delete().where(table.c.result_id.in_(result_ids[start : start + 500])))
+        except Exception as e:
+            log_warning(f"Tool-result cascade on session delete failed: {e}")
+
+    @staticmethod
+    def _default_payload_table() -> str:
+        return "agno_fs"
+
+    @staticmethod
+    async def _adefault_payload_table_exists(sess: Any) -> bool:
+        result = await sess.execute(text("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'agno_fs'"))
+        return result.first() is not None
+
+    # -- Tool Results (result offloading index) --
+
+    async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        table = await self._get_table(table_type="tool_results", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.tool_results_table_name}")
+        from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+        stmt = sqlite_insert(table).values(**row)
+        update_columns = {key: stmt.excluded[key] for key in row.keys() if key != "result_id"}
+        stmt = stmt.on_conflict_do_update(index_elements=["result_id"], set_=update_columns)
+        async with self.async_session_factory() as sess, sess.begin():
+            await sess.execute(stmt)
+
+    async def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return None
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(select(table).where(table.c.result_id == result_id))
+            row = result.fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    async def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = (
+            select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc(), table.c.result_id)
+        )
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
+
+    async def delete_tool_results(self, result_ids: List[str]) -> int:
+        if not result_ids:
+            return 0
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return 0
+        async with self.async_session_factory() as sess, sess.begin():
+            result = await sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
+        return result.rowcount or 0  # type: ignore
+
+    async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        table = await self._get_table(table_type="tool_results")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.expires_at.is_not(None)).where(table.c.expires_at <= now)
+        async with self.async_session_factory() as sess:
+            result = await sess.execute(stmt)
+            return [dict(row._mapping) for row in result.fetchall()]
 
     async def get_session(
         self,
@@ -599,6 +1250,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         """
         Read a session from the database.
@@ -608,6 +1260,11 @@ class AsyncSqliteDb(AsyncBaseDb):
             session_type (SessionType): Type of session to get.
             user_id (Optional[str]): User ID to filter by. Defaults to None.
             deserialize (Optional[bool]): Whether to serialize the session. Defaults to True.
+            runs_limit (Optional[int]): If set, attach only the most recent ``runs_limit``
+                runs instead of the full history. For a fully-migrated session this is an
+                indexed ``ORDER BY run_index DESC LIMIT`` query; for a session that still
+                carries a legacy ``runs`` blob it falls back to a full load + merge, then
+                slices, so no history is ever lost.
 
         Returns:
             Optional[Union[Session, Dict[str, Any]]]:
@@ -621,6 +1278,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return None
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.session_id == session_id)
@@ -635,6 +1293,33 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return None
 
                 session_raw = deserialize_session_json_fields(dict(row._mapping))
+
+                # Attach the runs stored in the runs table, merged with any runs still
+                # sitting in the legacy `runs` column (so partially-migrated sessions
+                # don't silently lose history).
+                if session_raw is not None:
+                    legacy_runs = session_raw.get("runs")
+                    if runs_table is not None and runs_limit is not None and not legacy_runs:
+                        # Fully migrated: push "most recent N" down to the DB (indexed).
+                        session_raw["runs"] = await self._get_session_runs_data(
+                            sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
+                        )
+                    elif runs_table is not None:
+                        # Full load + merge. Also the un-migrated fallback: the legacy blob
+                        # holds the whole history in one column, so "last N" can't be pushed
+                        # to SQL — load all, merge, then filter+slice to match the migrated path.
+                        runs_data = await self._get_session_runs_data(
+                            sess=sess, runs_table=runs_table, session_id=session_id
+                        )
+                        merged = merge_runs_table_with_legacy_blob(runs_data, legacy_runs)
+                        if runs_limit is not None:
+                            merged = filter_context_runs(merged)[-runs_limit:]
+                        session_raw["runs"] = merged
+                    elif runs_limit is not None:
+                        # No runs table yet (fully un-migrated): filter+slice the legacy blob.
+                        merged = merge_runs_table_with_legacy_blob([], legacy_runs)
+                        session_raw["runs"] = filter_context_runs(merged)[-runs_limit:]
+
                 if not session_raw or not deserialize:
                     return session_raw
 
@@ -657,9 +1342,15 @@ class AsyncSqliteDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         """
         Get all sessions in the given table. Can filter by user_id and entity_id.
+
+        Pass ``include_runs=False`` to skip attaching each session's run history —
+        a large, usually-unnecessary read for list views. The runs are untouched
+        in storage; a single ``get_session`` still returns them. Defaults to True
+        to preserve existing behavior.
         Args:
             session_type (Optional[SessionType]): The type of session to get.
             user_id (Optional[str]): The ID of the user to filter by.
@@ -681,10 +1372,12 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="sessions")
             if table is None:
                 return [] if deserialize else ([], 0)
+            runs_table = await self._get_table(table_type="runs")
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -734,6 +1427,21 @@ class AsyncSqliteDb(AsyncBaseDb):
                     return [] if deserialize else ([], 0)
 
                 sessions_raw = [deserialize_session_json_fields(dict(record._mapping)) for record in records]
+
+                # Attach the runs stored in the runs table. If a session has no rows in the
+                # runs table, fall back to its legacy `runs` column content, if any.
+                if include_runs and runs_table is not None and sessions_raw:
+                    runs_by_session = await self._get_sessions_runs_data(
+                        sess=sess, runs_table=runs_table, session_ids=[s["session_id"] for s in sessions_raw]
+                    )
+                    for s in sessions_raw:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        s["runs"] = merge_runs_table_with_legacy_blob(runs_data, s.get("runs"))
+                elif not include_runs:
+                    # List views don't need run history; leave it unattached (storage untouched).
+                    for s in sessions_raw:
+                        s["runs"] = None
+
                 if not deserialize:
                     return sessions_raw, total_count
                 if not sessions_raw:
@@ -813,122 +1521,72 @@ class AsyncSqliteDb(AsyncBaseDb):
             if table is None:
                 return None
 
-            serialized_session = serialize_session_json_fields(session.to_dict())
+            serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
 
             if isinstance(session, AgentSession):
-                async with self.async_session_factory() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.AGENT.value,
-                        agent_id=serialized_session.get("agent_id"),
-                        user_id=serialized_session.get("user_id"),
-                        agent_data=serialized_session.get("agent_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
-                    )
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            agent_id=serialized_session.get("agent_id"),
-                            user_id=serialized_session.get("user_id"),
-                            runs=serialized_session.get("runs"),
-                            summary=serialized_session.get("summary"),
-                            agent_data=serialized_session.get("agent_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
-
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return AgentSession.from_dict(session_raw)
-
+                values = dict(
+                    session_type=SessionType.AGENT.value,
+                    agent_id=serialized_session.get("agent_id"),
+                    user_id=serialized_session.get("user_id"),
+                    agent_data=serialized_session.get("agent_data"),
+                    session_data=serialized_session.get("session_data"),
+                    summary=serialized_session.get("summary"),
+                    metadata=serialized_session.get("metadata"),
+                )
             elif isinstance(session, TeamSession):
-                async with self.async_session_factory() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.TEAM.value,
-                        team_id=serialized_session.get("team_id"),
-                        user_id=serialized_session.get("user_id"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at"),
-                        updated_at=serialized_session.get("created_at"),
-                        team_data=serialized_session.get("team_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                    )
-
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            team_id=serialized_session.get("team_id"),
-                            user_id=serialized_session.get("user_id"),
-                            summary=serialized_session.get("summary"),
-                            runs=serialized_session.get("runs"),
-                            team_data=serialized_session.get("team_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
-
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return TeamSession.from_dict(session_raw)
-
+                values = dict(
+                    session_type=SessionType.TEAM.value,
+                    team_id=serialized_session.get("team_id"),
+                    user_id=serialized_session.get("user_id"),
+                    team_data=serialized_session.get("team_data"),
+                    session_data=serialized_session.get("session_data"),
+                    summary=serialized_session.get("summary"),
+                    metadata=serialized_session.get("metadata"),
+                )
             else:
-                async with self.async_session_factory() as sess, sess.begin():
-                    stmt = sqlite.insert(table).values(
-                        session_id=serialized_session.get("session_id"),
-                        session_type=SessionType.WORKFLOW.value,
-                        workflow_id=serialized_session.get("workflow_id"),
-                        user_id=serialized_session.get("user_id"),
-                        runs=serialized_session.get("runs"),
-                        summary=serialized_session.get("summary"),
-                        created_at=serialized_session.get("created_at") or int(time.time()),
-                        updated_at=serialized_session.get("updated_at") or int(time.time()),
-                        workflow_data=serialized_session.get("workflow_data"),
-                        session_data=serialized_session.get("session_data"),
-                        metadata=serialized_session.get("metadata"),
-                    )
-                    stmt = stmt.on_conflict_do_update(
-                        index_elements=["session_id"],
-                        set_=dict(
-                            workflow_id=serialized_session.get("workflow_id"),
-                            user_id=serialized_session.get("user_id"),
-                            summary=serialized_session.get("summary"),
-                            runs=serialized_session.get("runs"),
-                            workflow_data=serialized_session.get("workflow_data"),
-                            session_data=serialized_session.get("session_data"),
-                            metadata=serialized_session.get("metadata"),
-                            updated_at=int(time.time()),
-                        ),
-                        where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
-                    )
-                    stmt = stmt.returning(*table.columns)  # type: ignore
-                    result = await sess.execute(stmt)
-                    row = result.fetchone()
+                values = dict(
+                    session_type=SessionType.WORKFLOW.value,
+                    workflow_id=serialized_session.get("workflow_id"),
+                    user_id=serialized_session.get("user_id"),
+                    workflow_data=serialized_session.get("workflow_data"),
+                    session_data=serialized_session.get("session_data"),
+                    summary=serialized_session.get("summary"),
+                    metadata=serialized_session.get("metadata"),
+                )
 
-                    session_raw = deserialize_session_json_fields(dict(row._mapping)) if row else None
-                    if session_raw is None or not deserialize:
-                        return session_raw
-                    return WorkflowSession.from_dict(session_raw)
+            update_values = {k: v for k, v in values.items() if k != "session_type"}
+            # The legacy `runs` column is intentionally left untouched here. Runs now
+            # live in the runs table; the legacy column stays as a frozen backup and is
+            # only reclaimed by the explicit cleanup_legacy_runs_column() helper. Nulling
+            # it on write would lose history for sessions not yet migrated to the runs table.
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = sqlite.insert(table).values(
+                    session_id=serialized_session.get("session_id"),
+                    created_at=serialized_session.get("created_at") or int(time.time()),
+                    updated_at=serialized_session.get("created_at") or int(time.time()),
+                    **values,
+                )
+                stmt = stmt.on_conflict_do_update(
+                    index_elements=["session_id"],
+                    set_=dict(updated_at=int(time.time()), **update_values),
+                    where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
+                )
+                stmt = stmt.returning(*table.columns)  # type: ignore
+                result = await sess.execute(stmt)
+                row = result.fetchone()
+                if row is None:
+                    return None
+                session_raw = deserialize_session_json_fields(dict(row._mapping))
+
+            if not deserialize:
+                session_raw["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+                return session_raw
+
+            session_raw.pop("runs", None)
+            upserted_session = deserialize_session(None, session_raw)
+            upserted_session.runs = session.runs  # type: ignore[union-attr]
+            return upserted_session
 
         except Exception as e:
             log_warning(f"Exception upserting into table: {str(e)}")
@@ -982,6 +1640,16 @@ class AsyncSqliteDb(AsyncBaseDb):
                 elif isinstance(session, WorkflowSession):
                     workflow_sessions.append(session)
 
+            sessions_by_id: Dict[str, Session] = {s.session_id: s for s in sessions}
+
+            def _attach_runs(session_dict: Dict[str, Any]) -> Dict[str, Any]:
+                original_session = sessions_by_id.get(session_dict.get("session_id"))  # type: ignore[arg-type]
+                session_dict["runs"] = [
+                    run if isinstance(run, dict) else run.to_dict()
+                    for run in (original_session.runs if original_session else None) or []
+                ]
+                return session_dict
+
             results: List[Union[Session, Dict[str, Any]]] = []
 
             async with self.async_session_factory() as sess, sess.begin():
@@ -989,7 +1657,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
@@ -1001,7 +1669,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 "agent_data": serialized_session.get("agent_data"),
                                 "session_data": serialized_session.get("session_data"),
                                 "metadata": serialized_session.get("metadata"),
-                                "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
@@ -1018,7 +1685,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 agent_data=stmt.excluded.agent_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
@@ -1031,7 +1697,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
                                 if deserialized_agent_session is None:
@@ -1044,7 +1710,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
@@ -1053,7 +1719,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 "session_type": SessionType.TEAM.value,
                                 "team_id": serialized_session.get("team_id"),
                                 "user_id": serialized_session.get("user_id"),
-                                "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
@@ -1073,7 +1738,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 team_data=stmt.excluded.team_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
@@ -1086,7 +1750,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
                                 if deserialized_team_session is None:
@@ -1099,7 +1763,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict())
+                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
                         updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
@@ -1108,7 +1772,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 "session_type": SessionType.WORKFLOW.value,
                                 "workflow_id": serialized_session.get("workflow_id"),
                                 "user_id": serialized_session.get("user_id"),
-                                "runs": serialized_session.get("runs"),
                                 "summary": serialized_session.get("summary"),
                                 "created_at": serialized_session.get("created_at"),
                                 "updated_at": updated_at,
@@ -1128,7 +1791,6 @@ class AsyncSqliteDb(AsyncBaseDb):
                                 workflow_data=stmt.excluded.workflow_data,
                                 session_data=stmt.excluded.session_data,
                                 metadata=stmt.excluded.metadata,
-                                runs=stmt.excluded.runs,
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
@@ -1141,7 +1803,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         result = (await sess.execute(select_stmt)).fetchall()
 
                         for row in result:
-                            session_dict = deserialize_session_json_fields(dict(row._mapping))
+                            session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
                                 if deserialized_workflow_session is None:
@@ -1344,6 +2006,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
@@ -1420,6 +2083,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             total_count: 1,
         )
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="memories")
             if table is None:
@@ -1685,14 +2349,20 @@ class AsyncSqliteDb(AsyncBaseDb):
             table = await self._get_table(table_type="sessions", create_table_if_not_found=True)
             if table is None:
                 return []
+            runs_table = await self._get_table(table_type="runs")
 
-            stmt = select(
+            columns = [
+                table.c.session_id,
                 table.c.user_id,
                 table.c.session_data,
-                table.c.runs,
                 table.c.created_at,
                 table.c.session_type,
-            )
+            ]
+            # Include the legacy runs column if it still exists, to count not yet migrated runs
+            if "runs" in table.c:
+                columns.append(table.c.runs)
+
+            stmt = select(*columns)
 
             if start_timestamp is not None:
                 stmt = stmt.where(table.c.created_at >= start_timestamp)
@@ -1701,7 +2371,30 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess:
                 result = (await sess.execute(stmt)).fetchall()
-                return [dict(record._mapping) for record in result]
+                sessions = [dict(record._mapping) for record in result]
+
+                # Attach lightweight run info (model and provider) from the runs table
+                if runs_table is not None and sessions:
+                    session_ids = [s["session_id"] for s in sessions]
+                    runs_stmt = select(
+                        runs_table.c.session_id,
+                        func.json_extract(runs_table.c.run_data, "$.model").label("model"),
+                        func.json_extract(runs_table.c.run_data, "$.model_provider").label("model_provider"),
+                    ).where(runs_table.c.session_id.in_(session_ids))
+
+                    runs_result = await sess.execute(runs_stmt)
+                    runs_by_session: Dict[str, List[Dict[str, Any]]] = {}
+                    for session_id, model, model_provider in runs_result.fetchall():
+                        runs_by_session.setdefault(session_id, []).append(
+                            {"model": model, "model_provider": model_provider}
+                        )
+
+                    for s in sessions:
+                        runs_data = runs_by_session.get(s["session_id"], [])
+                        if runs_data or not s.get("runs"):
+                            s["runs"] = runs_data
+
+                return sessions
 
         except Exception as e:
             log_error(f"Error reading from sessions table: {str(e)}")
@@ -1721,15 +2414,22 @@ class AsyncSqliteDb(AsyncBaseDb):
             Optional[date]: The starting date for which metrics calculation is needed.
         """
         async with self.async_session_factory() as sess:
-            stmt = select(table).order_by(table.c.date.desc()).limit(1)
-            result = (await sess.execute(stmt)).fetchone()
+            # resume at the earliest incomplete day after the latest completed one, otherwise the
+            # day after that one: a day holding a completed row was rebuilt after it ended, so an
+            # incomplete row sharing it belongs to an owner whose sessions have gone and can never
+            # be rebuilt
+            latest_completed = (
+                await sess.execute(select(func.max(table.c.date)).where(table.c.completed.is_(True)))
+            ).scalar()
 
-            # 1. Return the date of the first day without a complete metrics record.
-            if result is not None:
-                if result.completed:
-                    return result._mapping["date"] + timedelta(days=1)
-                else:
-                    return result._mapping["date"]
+            incomplete_stmt = select(func.min(table.c.date)).where(table.c.completed.is_(False))
+            if latest_completed is not None:
+                incomplete_stmt = incomplete_stmt.where(table.c.date > latest_completed)
+            earliest_incomplete = (await sess.execute(incomplete_stmt)).scalar()
+
+            starting_date = metrics_starting_date_from_days(latest_completed, earliest_incomplete)
+            if starting_date is not None:
+                return starting_date
 
         # 2. No metrics records. Return the date of the first recorded session.
         first_session, _ = await self.get_sessions(sort_by="created_at", sort_order="asc", limit=1, deserialize=False)
@@ -1754,7 +2454,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             # Stamp first so failed runs are throttled too instead of retried on every read
             self._metrics_refreshed_at = time.time()
 
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return None
 
@@ -1800,8 +2500,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 if not any(len(sessions) > 0 for sessions in sessions_for_date.values()):
                     continue
 
-                metrics_record = calculate_date_metrics(date_to_process, sessions_for_date)
-                metrics_records.append(metrics_record)
+                # One record per user_id, plus the empty-string bucket for unowned sessions
+                metrics_records.extend(calculate_date_metrics(date_to_process, sessions_for_date))
 
             if metrics_records:
                 async with self.async_session_factory() as sess, sess.begin():
@@ -1819,6 +2519,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[dict], Optional[int]]:
         """Get all metrics matching the given date range.
 
@@ -1828,6 +2529,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         Args:
             starting_date (Optional[date]): The starting date to filter metrics by.
             ending_date (Optional[date]): The ending date to filter metrics by.
+            user_id (Optional[str]): Return only this user's bucket. ``None`` returns every
+                bucket, including the empty-string unowned one.
 
         Returns:
             Tuple[List[dict], Optional[int]]: A tuple containing the metrics and the timestamp of the latest update.
@@ -1844,7 +2547,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 except Exception as e:
                     log_warning(f"Could not refresh metrics before reading them: {str(e)}")
 
-            table = await self._get_table(table_type="metrics")
+            table = await self._get_table(table_type="metrics", create_table_if_not_found=True)
             if table is None:
                 return [], None
 
@@ -1854,15 +2557,26 @@ class AsyncSqliteDb(AsyncBaseDb):
                     stmt = stmt.where(table.c.date >= starting_date)
                 if ending_date:
                     stmt = stmt.where(table.c.date <= ending_date)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = (await sess.execute(stmt)).fetchall()
                 if not result:
                     return [], None
 
-                # Get the latest updated_at
+                # Get the latest updated_at, scoped to the same user filter
                 latest_stmt = select(func.max(table.c.updated_at))
+                if user_id is not None:
+                    latest_stmt = latest_stmt.where(table.c.user_id == user_id)
                 latest_updated_at = (await sess.execute(latest_stmt)).scalar()
 
-            return [dict(row._mapping) for row in result], latest_updated_at
+            # Map the sentinel empty-string user_id back to None for API consumers
+            rows: List[dict] = []
+            for row in result:
+                row_dict = dict(row._mapping)
+                if row_dict.get("user_id") == "":
+                    row_dict["user_id"] = None
+                rows.append(row_dict)
+            return rows, latest_updated_at
 
         except Exception as e:
             log_error(f"Error getting metrics: {str(e)}")
@@ -1870,11 +2584,12 @@ class AsyncSqliteDb(AsyncBaseDb):
 
     # -- Knowledge methods --
 
-    async def delete_knowledge_content(self, id: str):
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only delete the row if it is owned by this user.
 
         Raises:
             Exception: If an error occurs during deletion.
@@ -1886,17 +2601,20 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
         except Exception as e:
             log_error(f"Error deleting knowledge content: {str(e)}")
             raise e
 
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): When set, match rows owned by this user or unowned rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -1911,6 +2629,8 @@ class AsyncSqliteDb(AsyncBaseDb):
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.id == id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
                 result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
@@ -1928,6 +2648,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -1937,6 +2658,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): When set, match rows owned by this user or unowned rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -1948,6 +2670,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         if table is None:
             return [], 0
 
+        validate_pagination(limit, page)
         try:
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table)
@@ -1955,6 +2678,10 @@ class AsyncSqliteDb(AsyncBaseDb):
                 # Apply linked_to filter if provided
                 if linked_to is not None:
                     stmt = stmt.where(table.c.linked_to == linked_to)
+
+                # Apply owner scoping if provided
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Apply sorting
                 if sort_by is not None:
@@ -1992,6 +2719,14 @@ class AsyncSqliteDb(AsyncBaseDb):
                 return None
 
             async with self.async_session_factory() as sess, sess.begin():
+                # A scoped write must not overwrite a row it does not own
+                if knowledge_row.user_id is not None and knowledge_row.id:
+                    stored = (
+                        await sess.execute(select(table.c.user_id).where(table.c.id == knowledge_row.id))
+                    ).fetchone()
+                    if stored is not None and stored[0] != knowledge_row.user_id:
+                        raise ValueError(f"Knowledge content {knowledge_row.id} not found")
+
                 update_fields = {
                     k: v
                     for k, v in {
@@ -2004,6 +2739,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                         "access_count": knowledge_row.access_count,
                         "status": knowledge_row.status,
                         "status_message": knowledge_row.status_message,
+                        "user_id": knowledge_row.user_id,
                         "created_at": knowledge_row.created_at,
                         "updated_at": knowledge_row.updated_at,
                         "external_id": knowledge_row.external_id,
@@ -2086,11 +2822,12 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error deleting eval run {eval_run_id}: {str(e)}")
             raise e
 
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         """Delete multiple eval runs from the database.
 
         Args:
             eval_run_ids (List[str]): List of eval run IDs to delete.
+            user_id (Optional[str]): If set, only delete runs owned by this user.
         """
         try:
             table = await self._get_table(table_type="evals")
@@ -2099,6 +2836,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = table.delete().where(table.c.run_id.in_(eval_run_ids))
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = await sess.execute(stmt)
                 if result.rowcount == 0:  # type: ignore
                     log_debug(f"No eval runs found with IDs: {eval_run_ids}")
@@ -2110,13 +2849,14 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise e
 
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Get an eval run from the database.
 
         Args:
             eval_run_id (str): The ID of the eval run to get.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only return the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2133,6 +2873,8 @@ class AsyncSqliteDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess, sess.begin():
                 stmt = select(table).where(table.c.run_id == eval_run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 result = (await sess.execute(stmt)).fetchone()
                 if result is None:
                     return None
@@ -2160,6 +2902,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         """Get all eval runs from the database.
 
@@ -2172,6 +2915,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             team_id (Optional[str]): The ID of the team to filter by.
             workflow_id (Optional[str]): The ID of the workflow to filter by.
             model_id (Optional[str]): The ID of the model to filter by.
+            user_id (Optional[str]): If set, only return runs owned by this user.
             eval_type (Optional[List[EvalType]]): The type(s) of eval to filter by.
             filter_type (Optional[EvalFilterType]): Filter by component type (agent, team, workflow).
             deserialize (Optional[bool]): Whether to serialize the eval runs. Defaults to True.
@@ -2185,6 +2929,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         Raises:
             Exception: If an error occurs during retrieval.
         """
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="evals")
             if table is None:
@@ -2194,6 +2939,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = select(table)
 
                 # Filtering
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 if agent_id is not None:
                     stmt = stmt.where(table.c.agent_id == agent_id)
                 if team_id is not None:
@@ -2242,7 +2989,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             raise e
 
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         """Upsert the name of an eval run in the database, returning raw dictionary.
 
@@ -2250,6 +2997,7 @@ class AsyncSqliteDb(AsyncBaseDb):
             eval_run_id (str): The ID of the eval run to update.
             name (str): The new name of the eval run.
             deserialize (Optional[bool]): Whether to serialize the eval run. Defaults to True.
+            user_id (Optional[str]): If set, only rename the run if owned by this user.
 
         Returns:
             Optional[Union[EvalRunRecord, Dict[str, Any]]]:
@@ -2268,9 +3016,11 @@ class AsyncSqliteDb(AsyncBaseDb):
                 stmt = (
                     table.update().where(table.c.run_id == eval_run_id).values(name=name, updated_at=int(time.time()))
                 )
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
                 await sess.execute(stmt)
 
-            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize)
+            eval_run_raw = await self.get_eval_run(eval_run_id=eval_run_id, deserialize=deserialize, user_id=user_id)
 
             log_debug(f"Renamed eval run with id '{eval_run_id}' to '{name}'")
 
@@ -2281,6 +3031,26 @@ class AsyncSqliteDb(AsyncBaseDb):
 
         except Exception as e:
             log_error(f"Error renaming eval run {eval_run_id}: {str(e)}")
+            raise e
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
+        """Set the owner (user_id) on an existing eval run.
+
+        Args:
+            eval_run_id (str): The ID of the eval run to update.
+            user_id (str): The owner to set.
+        """
+        try:
+            table = await self._get_table(table_type="evals")
+            if table is None:
+                return
+
+            async with self.async_session_factory() as sess, sess.begin():
+                stmt = table.update().where(table.c.run_id == eval_run_id).values(user_id=user_id)
+                await sess.execute(stmt)
+
+        except Exception as e:
+            log_error(f"Error setting owner on eval run {eval_run_id}: {str(e)}")
             raise e
 
     # -- Migrations --
@@ -2340,233 +3110,6 @@ class AsyncSqliteDb(AsyncBaseDb):
             for memory in memories:
                 await self.upsert_user_memory(memory)
             log_info(f"Migrated {len(memories)} memories to table: {self.memory_table}")
-
-    # -- Culture methods --
-
-    async def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural artifacts from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            async with self.async_session_factory() as sess, sess.begin():
-                await sess.execute(table.delete())
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural artifacts: {str(e)}")
-
-    async def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete a cultural artifact from the database.
-
-        Args:
-            id (str): The ID of the cultural artifact to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return
-
-            async with self.async_session_factory() as sess, sess.begin():
-                delete_stmt = table.delete().where(table.c.id == id)
-                result = await sess.execute(delete_stmt)
-
-                success = result.rowcount > 0  # type: ignore
-                if success:
-                    log_debug(f"Successfully deleted cultural artifact id: {id}")
-                else:
-                    log_debug(f"No cultural artifact found with id: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural artifact: {str(e)}")
-
-    async def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get a cultural artifact from the database.
-
-        Args:
-            id (str): The ID of the cultural artifact to get.
-            deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
-
-        Returns:
-            Optional[CulturalKnowledge]: The cultural artifact, or None if it doesn't exist.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return None
-
-            async with self.async_session_factory() as sess, sess.begin():
-                stmt = select(table).where(table.c.id == id)
-                result = (await sess.execute(stmt)).fetchone()
-                if result is None:
-                    return None
-
-                db_row = dict(result._mapping)
-                if not db_row or not deserialize:
-                    return db_row
-
-            return deserialize_cultural_knowledge_from_db(db_row)
-
-        except Exception as e:
-            log_error(f"Exception reading from cultural artifacts table: {str(e)}")
-            return None
-
-    async def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural artifacts from the database as CulturalNotion objects.
-
-        Args:
-            name (Optional[str]): The name of the cultural artifact to filter by.
-            agent_id (Optional[str]): The ID of the agent to filter by.
-            team_id (Optional[str]): The ID of the team to filter by.
-            limit (Optional[int]): The maximum number of cultural artifacts to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            deserialize (Optional[bool]): Whether to serialize the cultural artifacts. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalNotion objects
-                - When deserialize=False: List of CulturalNotion dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            table = await self._get_table(table_type="culture")
-            if table is None:
-                return [] if deserialize else ([], 0)
-
-            async with self.async_session_factory() as sess, sess.begin():
-                stmt = select(table)
-
-                # Filtering
-                if name is not None:
-                    stmt = stmt.where(table.c.name == name)
-                if agent_id is not None:
-                    stmt = stmt.where(table.c.agent_id == agent_id)
-                if team_id is not None:
-                    stmt = stmt.where(table.c.team_id == team_id)
-
-                # Get total count after applying filtering
-                count_stmt = select(func.count()).select_from(stmt.alias())
-                total_count = (await sess.execute(count_stmt)).scalar() or 0
-
-                # Sorting
-                stmt = apply_sorting(stmt, table, sort_by, sort_order)
-                # Paginating
-                if limit is not None:
-                    stmt = stmt.limit(limit)
-                    if page is not None:
-                        stmt = stmt.offset((page - 1) * limit)
-
-                result = (await sess.execute(stmt)).fetchall()
-                if not result:
-                    return [] if deserialize else ([], 0)
-
-                db_rows = [dict(record._mapping) for record in result]
-
-                if not deserialize:
-                    return db_rows, total_count
-
-            return [deserialize_cultural_knowledge_from_db(row) for row in db_rows]
-
-        except Exception as e:
-            log_error(f"Error reading from cultural artifacts table: {str(e)}")
-            return [] if deserialize else ([], 0)
-
-    async def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert a cultural artifact into the database.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural artifact to upsert.
-            deserialize (Optional[bool]): Whether to serialize the cultural artifact. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalNotion, Dict[str, Any]]]:
-                - When deserialize=True: CulturalNotion object
-                - When deserialize=False: CulturalNotion dictionary
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            table = await self._get_table(table_type="culture", create_table_if_not_found=True)
-            if table is None:
-                return None
-
-            if cultural_knowledge.id is None:
-                cultural_knowledge.id = str(uuid4())
-
-            # Serialize content, categories, and notes into a JSON string for DB storage (SQLite requires strings)
-            content_json_str = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            async with self.async_session_factory() as sess, sess.begin():
-                stmt = sqlite.insert(table).values(
-                    id=cultural_knowledge.id,
-                    name=cultural_knowledge.name,
-                    summary=cultural_knowledge.summary,
-                    content=content_json_str,
-                    metadata=cultural_knowledge.metadata,
-                    input=cultural_knowledge.input,
-                    created_at=cultural_knowledge.created_at,
-                    updated_at=int(time.time()),
-                    agent_id=cultural_knowledge.agent_id,
-                    team_id=cultural_knowledge.team_id,
-                )
-                stmt = stmt.on_conflict_do_update(  # type: ignore
-                    index_elements=["id"],
-                    set_=dict(
-                        name=cultural_knowledge.name,
-                        summary=cultural_knowledge.summary,
-                        content=content_json_str,
-                        metadata=cultural_knowledge.metadata,
-                        input=cultural_knowledge.input,
-                        updated_at=int(time.time()),
-                        agent_id=cultural_knowledge.agent_id,
-                        team_id=cultural_knowledge.team_id,
-                    ),
-                ).returning(table)
-
-                result = await sess.execute(stmt)
-                row = result.fetchone()
-
-                if row is None:
-                    return None
-
-            db_row: Dict[str, Any] = dict(row._mapping)
-            if not db_row or not deserialize:
-                return db_row
-
-            return deserialize_cultural_knowledge_from_db(db_row)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
 
     # --- Traces ---
     def _get_traces_base_query(self, table: Table, spans_table: Optional[Table] = None):
@@ -3664,6 +4207,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
+        validate_pagination(limit, page)
         try:
             table = await self._get_table(table_type="learnings")
             if table is None:
@@ -3713,142 +4257,42 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error getting learning user stats: {e}")
             raise e
 
-    # --- Components (Not yet supported for async) ---
-    def get_component(
-        self,
-        component_id: str,
-        component_type: Optional[ComponentType] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def upsert_component(
-        self,
-        component_id: str,
-        component_type: Optional[ComponentType] = None,
-        name: Optional[str] = None,
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-    ) -> Dict[str, Any]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def delete_component(
-        self,
-        component_id: str,
-        hard_delete: bool = False,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def list_components(
-        self,
-        component_type: Optional[ComponentType] = None,
-        include_deleted: bool = False,
-        limit: int = 20,
-        offset: int = 0,
-        exclude_component_ids: Optional[Set[str]] = None,
-        name: Optional[str] = None,
-    ) -> Tuple[List[Dict[str, Any]], int]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def create_component_with_config(
-        self,
-        component_id: str,
-        component_type: ComponentType,
-        name: Optional[str],
-        config: Dict[str, Any],
-        description: Optional[str] = None,
-        metadata: Optional[Dict[str, Any]] = None,
-        label: Optional[str] = None,
-        stage: str = "draft",
-        notes: Optional[str] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
-    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_config(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def upsert_config(
-        self,
-        component_id: str,
-        config: Optional[Dict[str, Any]] = None,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-        stage: Optional[str] = None,
-        notes: Optional[str] = None,
-        links: Optional[List[Dict[str, Any]]] = None,
-    ) -> Dict[str, Any]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def delete_config(
-        self,
-        component_id: str,
-        version: int,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def list_configs(
-        self,
-        component_id: str,
-        include_config: bool = False,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def set_current_version(
-        self,
-        component_id: str,
-        version: int,
-    ) -> bool:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_links(
-        self,
-        component_id: str,
-        version: int,
-        link_kind: Optional[str] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def get_dependents(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-    ) -> List[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
-
-    def load_component_graph(
-        self,
-        component_id: str,
-        version: Optional[int] = None,
-        label: Optional[str] = None,
-    ) -> Optional[Dict[str, Any]]:
-        raise NotImplementedError("Component methods not yet supported for async databases")
+    # --- Components (Not supported for async) ---
+    # The plain-def stubs raising NotImplementedError are inherited from AsyncBaseDb.
 
     # -- Schedule methods --
-    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    # ``claim_due_schedule`` / ``release_schedule`` take no user_id: the poller has to fire
+    # schedules across all users.
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == schedule_id))
+                stmt = select(table).where(table.c.id == schedule_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
             log_debug(f"Error getting schedule: {e}")
             return None
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.name == name))
+                stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's schedule of the same name.
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -3860,6 +4304,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedules")
@@ -3870,6 +4315,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 base_query = select(table)
                 if enabled is not None:
                     base_query = base_query.where(table.c.enabled == enabled)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())
@@ -3900,7 +4347,16 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error creating schedule: {str(e)}")
             raise
 
-    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        if kwargs.get("enabled") is True:
+            # A system-set disabled_reason describes why the row was off;
+            # turning it on retires the explanation.
+            kwargs.setdefault("disabled_reason", None)
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -3908,13 +4364,22 @@ class AsyncSqliteDb(AsyncBaseDb):
             kwargs["updated_at"] = int(time.time())
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    await sess.execute(table.update().where(table.c.id == schedule_id).values(**kwargs))
-            return await self.get_schedule(schedule_id)
+                    stmt = table.update().where(table.c.id == schedule_id)
+                    if user_id is not None:
+                        stmt = stmt.where(table.c.user_id == user_id)
+                    await sess.execute(stmt.values(**kwargs))
+            return await self.get_schedule(schedule_id, user_id=user_id)
         except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
             log_debug(f"Error updating schedule: {e}")
             return None
 
-    async def delete_schedule(self, schedule_id: str) -> bool:
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         try:
             table = await self._get_table(table_type="schedules")
             if table is None:
@@ -3923,12 +4388,90 @@ class AsyncSqliteDb(AsyncBaseDb):
             async with self.async_session_factory() as sess:
                 async with sess.begin():
                     if runs_table is not None:
-                        await sess.execute(runs_table.delete().where(runs_table.c.schedule_id == schedule_id))
-                    result = await sess.execute(table.delete().where(table.c.id == schedule_id))
+                        # Mirror the owner guard on the cascade so another user's runs are kept
+                        runs_delete = runs_table.delete().where(runs_table.c.schedule_id == schedule_id)
+                        if user_id is not None:
+                            runs_delete = runs_delete.where(runs_table.c.user_id == user_id)
+                        await sess.execute(runs_delete)
+                    delete_stmt = table.delete().where(table.c.id == schedule_id)
+                    if user_id is not None:
+                        delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                    result = await sess.execute(delete_stmt)
                     return result.rowcount > 0  # type: ignore[attr-defined]
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Async variant of the sync adapter's primitive: matches provenance-tagged
+        rows and generic rows whose endpoint is the component's run endpoint,
+        across owners, and records the system reason in disabled_reason.
+        """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return 0
+            endpoint = build_run_endpoint(target_type, target_id)
+            # RUN_ENDPOINT_RE accepts an optional trailing slash, so a stored
+            # "/agents/x/runs/" is a valid run endpoint that plain equality would
+            # miss - matching both spellings keeps the cascade from leaking rows.
+            endpoints = [endpoint, endpoint + "/"]
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.update()
+                        .where(
+                            or_(
+                                and_(table.c.target_type == target_type, table.c.target_id == target_id),
+                                table.c.endpoint.in_(endpoints),
+                            ),
+                            table.c.enabled.is_(True),
+                        )
+                        .values(enabled=False, disabled_reason=reason, updated_at=int(time.time()))
+                    )
+            return int(getattr(result, "rowcount", 0) or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses."""
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            table = await self._get_table(table_type="schedules")
+            if table is None:
+                return False
+            async with self.async_session_factory() as sess:
+                async with sess.begin():
+                    result = await sess.execute(
+                        table.update()
+                        .where(table.c.id == schedule_id)
+                        .values(updated_at=int(time.time()), **provenance)
+                    )
+            return getattr(result, "rowcount", 0) > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:
@@ -3957,10 +4500,17 @@ class AsyncSqliteDb(AsyncBaseDb):
                     if row is None:
                         return None
                     schedule = dict(row._mapping)
+                    # Claim it with EVERY predicate the select used, not just
+                    # the lock half: the select runs before the write, so a
+                    # disable (the archive cascade among them) or a reschedule
+                    # committing in the gap must make the claim a no-op rather
+                    # than arm a run against a target that is gone.
                     claim_result = await sess.execute(
                         table.update()
                         .where(
                             table.c.id == schedule["id"],
+                            table.c.enabled == True,  # noqa: E712
+                            table.c.next_run_at <= now,
                             or_(
                                 table.c.locked_by.is_(None),
                                 table.c.locked_at <= stale_lock_threshold,
@@ -3970,9 +4520,12 @@ class AsyncSqliteDb(AsyncBaseDb):
                     )
                     if claim_result.rowcount == 0:  # type: ignore[attr-defined]
                         return None
-                    schedule["locked_by"] = worker_id
-                    schedule["locked_at"] = now
-                    return schedule
+                    # Return post-claim state: the executor acts on this dict,
+                    # and the pre-claim snapshot can already be stale.
+                    claimed = (await sess.execute(select(table).where(table.c.id == schedule["id"]))).fetchone()
+                    if claimed is None:
+                        return None
+                    return dict(claimed._mapping)
         except Exception as e:
             log_debug(f"Error claiming schedule: {e}")
             return None
@@ -4019,13 +4572,16 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_debug(f"Error updating schedule run: {e}")
             return None
 
-    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == run_id))
+                stmt = select(table).where(table.c.id == run_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -4037,14 +4593,19 @@ class AsyncSqliteDb(AsyncBaseDb):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="schedule_runs")
             if table is None:
                 return [], 0
             async with self.async_session_factory() as sess:
+                base_filter = table.c.schedule_id == schedule_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+
                 # Get total count
-                count_stmt = select(func.count()).select_from(table).where(table.c.schedule_id == schedule_id)
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
                 count_result = await sess.execute(count_stmt)
                 total_count = count_result.scalar() or 0
 
@@ -4052,13 +4613,7 @@ class AsyncSqliteDb(AsyncBaseDb):
                 offset = (page - 1) * limit
 
                 # Get paginated results
-                stmt = (
-                    select(table)
-                    .where(table.c.schedule_id == schedule_id)
-                    .order_by(table.c.created_at.desc())
-                    .limit(limit)
-                    .offset(offset)
-                )
+                stmt = select(table).where(base_filter).order_by(table.c.created_at.desc()).limit(limit).offset(offset)
                 result = await sess.execute(stmt)
                 return [dict(row._mapping) for row in result.fetchall()], total_count
         except Exception as e:
@@ -4324,13 +4879,18 @@ class AsyncSqliteDb(AsyncBaseDb):
             log_error(f"Error creating service account: {str(e)}")
             raise
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
         try:
             table = await self._get_table(table_type="service_accounts")
             if table is None:
                 return None
             async with self.async_session_factory() as sess:
-                result = await sess.execute(select(table).where(table.c.id == service_account_id))
+                stmt = select(table).where(table.c.id == service_account_id)
+                if user_id is not None:
+                    stmt = stmt.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
+                result = await sess.execute(stmt)
                 row = result.fetchone()
                 return dict(row._mapping) if row else None
         except Exception as e:
@@ -4386,6 +4946,7 @@ class AsyncSqliteDb(AsyncBaseDb):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = await self._get_table(table_type="service_accounts")
@@ -4396,6 +4957,8 @@ class AsyncSqliteDb(AsyncBaseDb):
                 base_query = select(table)
                 if not include_revoked:
                     base_query = base_query.where(table.c.revoked_at.is_(None))
+                if user_id is not None:
+                    base_query = base_query.where(or_(table.c.user_id == user_id, table.c.user_id.is_(None)))
 
                 # Get total count
                 count_stmt = select(func.count()).select_from(base_query.alias())

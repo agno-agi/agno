@@ -7,8 +7,10 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from agno.agent import Agent, RemoteAgent
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.evals import EvalFilterType, EvalType
+from agno.exceptions import AgnoError
 from agno.models.utils import get_model
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import apply_scope_to_kwargs, get_scoped_user_id
 from agno.os.routers.evals.schemas import (
     DeleteEvalRunsRequest,
     EvalRunInput,
@@ -32,7 +34,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_agent_by_id, get_db, get_team_by_id
+from agno.os.utils import AgnoHTTPException, get_agent_by_id, get_db, get_team_by_id
 from agno.remote.base import RemoteDb
 from agno.team import RemoteTeam, Team
 from agno.utils.log import log_warning
@@ -127,6 +129,8 @@ def attach_routes(
     ) -> PaginatedResponse[EvalSchema]:
         db = await get_db(dbs, db_id, table)
 
+        scope = apply_scope_to_kwargs(request)
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -158,6 +162,7 @@ def attach_routes(
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,
+                **scope,
             )
         else:
             eval_runs, total_count = db.get_eval_runs(  # type: ignore
@@ -172,6 +177,7 @@ def attach_routes(
                 eval_type=eval_types,
                 filter_type=filter_type,
                 deserialize=False,
+                **scope,
             )
 
         return PaginatedResponse(
@@ -228,6 +234,7 @@ def attach_routes(
         table: Optional[str] = Query(default=None, description="Table to query eval run from"),
     ) -> EvalSchema:
         db = await get_db(dbs, db_id, table)
+        scope = apply_scope_to_kwargs(request)
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -235,9 +242,9 @@ def attach_routes(
 
         if isinstance(db, AsyncBaseDb):
             db = cast(AsyncBaseDb, db)
-            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+            eval_run = await db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, **scope)
         else:
-            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False)
+            eval_run = db.get_eval_run(eval_run_id=eval_run_id, deserialize=False, **scope)
         if not eval_run:
             raise HTTPException(status_code=404, detail=f"Eval run with id '{eval_run_id}' not found")
 
@@ -262,6 +269,7 @@ def attach_routes(
     ) -> None:
         try:
             db = await get_db(dbs, db_id, table)
+            scope = apply_scope_to_kwargs(http_request)
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(http_request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -271,9 +279,13 @@ def attach_routes(
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+                await db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
             else:
-                db.delete_eval_runs(eval_run_ids=request.eval_run_ids)
+                db.delete_eval_runs(eval_run_ids=request.eval_run_ids, **scope)
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to delete eval runs: {e}")
 
@@ -324,6 +336,7 @@ def attach_routes(
     ) -> EvalSchema:
         try:
             db = await get_db(dbs, db_id, table)
+            scope = apply_scope_to_kwargs(http_request)
             if isinstance(db, RemoteDb):
                 auth_token = get_auth_token_from_request(http_request)
                 headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -333,9 +346,15 @@ def attach_routes(
 
             if isinstance(db, AsyncBaseDb):
                 db = cast(AsyncBaseDb, db)
-                eval_run = await db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+                eval_run = await db.rename_eval_run(
+                    eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope
+                )
             else:
-                eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False)
+                eval_run = db.rename_eval_run(eval_run_id=eval_run_id, name=request.name, deserialize=False, **scope)
+        except HTTPException:
+            raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to rename eval run: {e}")
 
@@ -409,6 +428,9 @@ def attach_routes(
                 headers=headers,
             )
 
+        # Resolved before the run: get_scoped_user_id raises 403 and the eval below makes real model calls.
+        creator_user_id = get_scoped_user_id(request) or getattr(request.state, "user_id", None)
+
         if eval_run_input.agent_id and eval_run_input.team_id:
             raise HTTPException(status_code=400, detail="Only one of agent_id or team_id must be provided")
 
@@ -473,17 +495,18 @@ def attach_routes(
             raise HTTPException(status_code=400, detail="One of agent_id or team_id must be provided")
 
         # Run the evaluation
+        eval_run: Optional[EvalSchema] = None
         if eval_run_input.eval_type == EvalType.ACCURACY:
             if isinstance(agent, RemoteAgent) or isinstance(team, RemoteTeam):
                 # TODO: Handle remote evaluation
                 log_warning("Evaluation against remote agents are not supported yet")
                 return None
-            return await run_accuracy_eval(
+            eval_run = await run_accuracy_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
         elif eval_run_input.eval_type == EvalType.AGENT_AS_JUDGE:
-            return await run_agent_as_judge_eval(
+            eval_run = await run_agent_as_judge_eval(
                 eval_run_input=eval_run_input,
                 db=db,
                 agent=agent,
@@ -496,7 +519,7 @@ def attach_routes(
                 # TODO: Handle remote evaluation
                 log_warning("Evaluation against remote agents are not supported yet")
                 return None
-            return await run_performance_eval(
+            eval_run = await run_performance_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
 
@@ -505,9 +528,25 @@ def attach_routes(
                 # TODO: Handle remote evaluation
                 log_warning("Evaluation against remote agents are not supported yet")
                 return None
-            return await run_reliability_eval(
+            eval_run = await run_reliability_eval(
                 eval_run_input=eval_run_input, db=db, agent=agent, team=team, default_model=default_model
             )
+
+        # Attribute the created run to the caller. Best-effort: the eval run is
+        # already persisted, so a backend that can't stamp the owner (e.g. a
+        # custom Db without update_eval_run_user_id) must not fail the request.
+        if eval_run is not None:
+            if creator_user_id is not None:
+                try:
+                    if isinstance(db, AsyncBaseDb):
+                        await db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                    else:
+                        db.update_eval_run_user_id(eval_run_id=eval_run.id, user_id=creator_user_id)
+                    eval_run.user_id = creator_user_id
+                except Exception as e:
+                    log_warning(f"Could not set owner on eval run {eval_run.id}: {e}")
+
+        return eval_run
 
     return router
 

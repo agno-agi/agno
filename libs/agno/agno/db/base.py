@@ -1,3 +1,5 @@
+import asyncio
+import threading
 from abc import ABC, abstractmethod
 from datetime import date, datetime
 from enum import Enum
@@ -8,11 +10,14 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 from agno.db.schemas import UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
+from agno.run.team import TeamRunOutput
+from agno.run.workflow import WorkflowRunOutput
 from agno.session import Session
+from agno.utils.log import log_debug
 
 
 class SessionType(str, Enum):
@@ -27,6 +32,266 @@ class ComponentType(str, Enum):
     WORKFLOW = "workflow"
 
 
+# Stage marking a config version as deleted without freeing its number.
+# Tombstoned versions are invisible to every read unless include_deleted is
+# passed; the high-water version allocation counts them so numbers never
+# recycle into a history another component version may still cite.
+DELETED_CONFIG_STAGE = "_deleted"
+
+# Link kinds that pin a child component version for rebuild: team members and
+# the three step-executor kinds Step.get_links emits. Guards that enforce
+# "published parents pin published children" and "restore refuses orphaned
+# pins" filter on THIS tuple - a bare "step" kind does not exist, and a guard
+# written against it silently skips every workflow.
+PIN_LINK_KINDS = ("member", "step_agent", "step_team", "step_workflow")
+
+
+def project_config_identity(config: Dict[str, Any]) -> Dict[str, Any]:
+    """The catalog-row fields a config version owns, for projecting onto the
+    component row whenever that version is (or becomes) the live one.
+
+    This is the single statement of the projection rule; the adapters' publish
+    transaction, the REST pointer-move path and the StudioTools row sync all
+    apply it. A key in the result must be written to the row; a key it omits
+    must be left alone. ``description`` and ``metadata`` are also first-class
+    columns set through the component routes and never written into a config,
+    so writing an empty value for a key the config does not carry would
+    destroy row-only data no version can restore.
+
+    * ``name``: owned when it is not None.
+    * ``description``: owned on key PRESENCE. Writers that go through
+      ``upsert_component`` read None as "leave the column alone", so a
+      present-but-empty description is returned as ``""`` to actually clear.
+    * ``metadata``: owned when it is a mapping, UNLESS its only content is the
+      platform's provenance stamp (the ``"studio"`` key) and the version does
+      not carry the ``metadata_authored`` marker. The stamp is written into
+      every config a scoped actor saves, so stamp-only metadata says nothing
+      about whether this version authored the metadata field; treating it as
+      owned would overwrite row-only metadata on every scoped publish. An
+      explicit empty dict is a deliberate clear and IS owned. A metadata value
+      that is not a mapping is SKIPPED, neither raising nor claiming the
+      column: such a value cannot be a row's metadata, so the projection does
+      not own it and the column is left alone exactly as it is for every other
+      key this projection omits. Probing an arbitrary value for keys must
+      never turn a write into an error, and a value that cannot be stored must
+      never reach the column - it would make the component, and every listing
+      that includes it, unreadable. The config keeps whatever the caller sent.
+    """
+    projection: Dict[str, Any] = {}
+    if config.get("name") is not None:
+        projection["name"] = config["name"]
+    if "description" in config:
+        projection["description"] = config.get("description") or ""
+    metadata = config.get("metadata")
+    if isinstance(metadata, dict):
+        stamp_only = bool(metadata) and all(key == "studio" for key in metadata)
+        if config.get("metadata_authored") or not stamp_only:
+            projection["metadata"] = metadata
+    return projection
+
+
+class ComponentVersionConflictError(ValueError):
+    """A compare-and-set guard did not match the stored version state.
+
+    Raised when expected_latest_version / expected_current_version disagrees
+    with the row, and when two concurrent appends race for one version
+    number. Retry after re-reading the component."""
+
+
+# A component that has never been published has no live version: its
+# current_version is NULL, and no integer compares equal to NULL, so an
+# expected_current_version guard on a first publish could never be satisfied.
+# Version numbers start at 1, which leaves 0 free to spell "I expect no live
+# version" - an ordinary compare-and-set request that a first publish can
+# satisfy and that a publish landing in the gap makes fail, like any other.
+NO_LIVE_VERSION = 0
+
+
+def expects_no_live_version(expected: Any) -> bool:
+    """Whether an expected_current_version value is the "nothing is live"
+    spelling. Only the integer 0 qualifies: False compares equal to 0 in
+    Python and JSON guards can arrive as booleans through lax coercion, and a
+    boolean is not a version number, so it never names the sentinel."""
+    return not isinstance(expected, bool) and expected == NO_LIVE_VERSION
+
+
+def current_version_matches(current: Optional[int], expected: int) -> bool:
+    """The Python half of the expected_current_version guard: does the stored
+    live pointer satisfy the expectation? 0 expects no live version at all."""
+    if expects_no_live_version(expected):
+        return current is None
+    return current == expected
+
+
+def current_version_guard_clause(current_version_column: Any, expected: int) -> Any:
+    """The SQL half of the same guard: the predicate that rides the write, so
+    that two writers expecting the same pointer cannot both win. Takes a
+    SQLAlchemy column and returns the clause to put on the UPDATE/DELETE."""
+    if expects_no_live_version(expected):
+        return current_version_column.is_(None)
+    return current_version_column == expected
+
+
+class ComponentArchivedError(ValueError):
+    """The component is archived; its id is reserved and its rows immutable.
+
+    Restore it explicitly (restore_component) before writing to it."""
+
+
+class ComponentDependencyError(ValueError):
+    """The operation would break another component's exact-version pin."""
+
+
+class ComponentCycleError(ValueError):
+    """The links being written would close a reference cycle."""
+
+
+class ComponentDraftRequiredError(ValueError):
+    """The operation applies only to draft versions; this one is published."""
+
+
+class ComponentLastConfigError(ValueError):
+    """A component must keep at least one visible config version."""
+
+
+class _ReentrantAsyncLock:
+    """asyncio.Lock with RLock semantics: the owning task may re-acquire.
+
+    Table resolution recurses (FK parents, version stamping after a create),
+    so the same task legitimately re-enters the resolution lock.
+
+    The inner lock is created lazily on the running loop and recreated when
+    the instance moves to a new loop, so repeated ``asyncio.run`` calls and
+    per-test loops work. Adapters are single-loop-at-a-time objects:
+    concurrent use from two loops is not supported (true of every asyncio
+    primitive the adapters hold).
+    """
+
+    def __init__(self) -> None:
+        # No asyncio primitives here: constructing them outside a running
+        # loop is not portable across supported Python versions.
+        self._loop: Optional[Any] = None
+        self._lock: Optional[asyncio.Lock] = None
+        self._owner: Optional[Any] = None
+        self._depth = 0
+
+    async def __aenter__(self) -> "_ReentrantAsyncLock":
+        loop = asyncio.get_running_loop()
+        if self._lock is None or self._loop is not loop:
+            # New (or first) loop: the previous loop's lock and ownership are defunct
+            self._loop = loop
+            self._lock = asyncio.Lock()
+            self._owner = None
+            self._depth = 0
+        task = asyncio.current_task()
+        if self._owner is task:
+            self._depth += 1
+            return self
+        await self._lock.acquire()
+        self._owner = task
+        self._depth = 1
+        return self
+
+    async def __aexit__(self, exc_type: Any, exc: Any, tb: Any) -> None:
+        self._depth -= 1
+        if self._depth == 0:
+            self._owner = None
+            self._lock.release()  # type: ignore[union-attr]
+
+
+class TableResolutionCache:
+    """Resolved Table objects for one adapter instance, keyed by (table_type, table_name).
+
+    Held by composition on ``BaseDb`` / ``AsyncBaseDb``. Only successful
+    resolutions are stored: a missing table is re-checked on the next call, so
+    a table created later (including by another process) is still picked up.
+    Keying by type keeps two logical types configured to the same physical
+    name from aliasing. Per-process scope: other replicas hold their own
+    cache, so restart them after cross-process schema changes.
+    """
+
+    def __init__(self) -> None:
+        # Adapters where table existence is not a process-wide fact
+        # (e.g. in-memory SQLite) set this to False to disable caching.
+        self.enabled: bool = True
+        self._tables: Dict[Tuple[str, str], Any] = {}
+
+    def __contains__(self, key: Tuple[str, str]) -> bool:
+        return key in self._tables
+
+    def __len__(self) -> int:
+        return len(self._tables)
+
+    def get(self, table_type: str, table_name: str) -> Optional[Any]:
+        if not self.enabled:
+            return None
+        return self._tables.get((table_type, table_name))
+
+    def store(self, table_type: str, table_name: str, table: Any, metadata: Any) -> None:
+        """Cache a resolved table.
+
+        Only the object currently registered on the metadata is stored (an
+        identity check, not a name check), so a resolver suspended across an
+        invalidation cannot re-pin its stale table under the fresh one.
+        """
+        if not self.enabled or table is None:
+            return
+        if metadata is not None and not any(t is table for t in metadata.tables.values()):
+            log_debug(
+                f"Table cache: refused stale store for '{table_name}' ({table_type}); object is no longer registered"
+            )
+            return
+        self._tables[(table_type, table_name)] = table
+
+    def invalidate(self, table_name: str, metadata: Any) -> None:
+        """Forget a resolved table after a schema change (ALTER/DROP).
+
+        The metadata entry is removed FIRST: a resolver racing this call then
+        at worst gets a cache hit on the soon-to-be-popped entry (stale for one
+        read), instead of re-resolving through the still-registered metadata
+        key and permanently re-pinning the old object.
+        """
+        if metadata is not None:
+            for table in list(metadata.tables.values()):
+                if table.name == table_name:
+                    metadata.remove(table)
+        evicted = 0
+        for key in [k for k in self._tables if k[1] == table_name]:
+            self._tables.pop(key, None)
+            evicted += 1
+        log_debug(f"Table cache: invalidated '{table_name}' ({evicted} cached resolution(s) evicted)")
+
+    def clear(self) -> None:
+        self._tables.clear()
+
+
+_FK_EDGES = {
+    "runs": [("sessions", "session_table_name")],
+    "spans": [("traces", "trace_table_name")],
+    "schedule_runs": [("schedules", "schedules_table_name")],
+    "component_configs": [("components", "components_table_name")],
+    "component_links": [
+        ("components", "components_table_name"),
+        ("component_configs", "component_configs_table_name"),
+    ],
+}
+
+
+def _fk_dependencies_for(db: Any, table_type: str) -> List[Tuple[str, str]]:
+    """(table_type, table_name) pairs the given table type MAY declare foreign keys to.
+
+    The map is a superset across dialects; callers must consult their own
+    schema definition and only register parents when the dependent table
+    actually declares a foreign key in that dialect.
+    """
+    dependencies = []
+    for ref_type, attr in _FK_EDGES.get(table_type, []):
+        ref_name = getattr(db, attr, None)
+        if ref_name:
+            dependencies.append((ref_type, ref_name))
+    return dependencies
+
+
 class BaseDb(ABC):
     """Base abstract class for all our Database implementations."""
 
@@ -36,7 +301,7 @@ class BaseDb(ABC):
     def __init__(
         self,
         session_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
@@ -50,6 +315,7 @@ class BaseDb(ABC):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -62,7 +328,18 @@ class BaseDb(ABC):
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
-        self.culture_table_name = culture_table or "agno_culture"
+        # The runs table foreign-keys to THIS db's session table. If the caller
+        # customized session_table but not runs_table, defaulting to the shared
+        # "agno_runs" would FK-lock it to whichever db created the table first,
+        # silently dropping every other db's runs (the run insert violates the
+        # FK and is swallowed). Derive a session-table-scoped runs name so each
+        # session table owns a correctly foreign-keyed runs table by default.
+        if runs_table:
+            self.runs_table_name = runs_table
+        elif session_table and session_table != "agno_sessions":
+            self.runs_table_name = f"{session_table}_runs"
+        else:
+            self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
@@ -76,6 +353,8 @@ class BaseDb(ABC):
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
+        self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -86,6 +365,57 @@ class BaseDb(ABC):
         self.mcp_oauth_refresh_tokens_table_name = mcp_oauth_refresh_tokens_table or "agno_mcp_oauth_refresh_tokens"
         self.mcp_oauth_keys_table_name = mcp_oauth_keys_table or "agno_mcp_oauth_keys"
 
+        # Avoids re-running the existence check and schema validation on
+        # every query; see TableResolutionCache.
+        self._table_cache = TableResolutionCache()
+        # Serializes table resolution: concurrent reflection into the shared
+        # metadata can expose a half-built Table to other threads. Reentrant
+        # because resolving a table may resolve its FK parents.
+        self._resolve_lock = threading.RLock()
+
+    def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Any]:
+        """Resolve a table through the cache; delegate cold resolution to ``_resolve_table``.
+
+        Cache hits are lock-free. Read-only probes of an absent table return
+        None without the lock, so a permanently missing table does not
+        serialize resolution of everything else. Cold resolution is serialized:
+        concurrent reflection into the shared metadata can expose a half-built
+        Table to other threads.
+        """
+        cached = self._table_cache.get(table_type, table_name)
+        if cached is not None:
+            return cached
+        if not create_table_if_not_found and not self.table_exists(table_name):
+            log_debug(f"Table '{table_name}' does not exist")
+            return None
+        with self._resolve_lock:
+            cached = self._table_cache.get(table_type, table_name)
+            if cached is not None:
+                return cached
+            return self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
+
+    def _resolve_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Any]:
+        """Adapter-specific resolution (existence check, validation, reflect or create)."""
+        raise NotImplementedError
+
+    def _get_cached_table(self, table_type: str, table_name: str) -> Optional[Any]:
+        return self._table_cache.get(table_type, table_name)
+
+    def _store_resolved_table(self, table_type: str, table_name: str, table: Any) -> None:
+        self._table_cache.store(table_type, table_name, table, getattr(self, "metadata", None))
+
+    def _invalidate_table_cache(self, table_name: str) -> None:
+        self._table_cache.invalidate(table_name, getattr(self, "metadata", None))
+
+    def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
+        return _fk_dependencies_for(self, table_type)
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Serialize common DB fields (table names + id). Subclasses may extend this.
@@ -93,7 +423,8 @@ class BaseDb(ABC):
         return {
             "id": self.id,
             "session_table": self.session_table_name,
-            "culture_table": self.culture_table_name,
+            "job_table": self.job_table_name,
+            "runs_table": self.runs_table_name,
             "memory_table": self.memory_table_name,
             "metrics_table": self.metrics_table_name,
             "eval_table": self.eval_table_name,
@@ -124,7 +455,7 @@ class BaseDb(ABC):
         """
         return cls(
             session_table=data.get("session_table"),
-            culture_table=data.get("culture_table"),
+            runs_table=data.get("runs_table"),
             memory_table=data.get("memory_table"),
             metrics_table=data.get("metrics_table"),
             eval_table=data.get("eval_table"),
@@ -176,6 +507,24 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Sessions ---
+    #
+    # Referential-integrity contract for ``session_id`` → runs:
+    #
+    # SQL adapters (Postgres, MySQL, SQLite) enforce this at the DB layer
+    # via ``ON DELETE CASCADE`` on ``agno_runs.session_id`` — deleting a
+    # session automatically deletes its runs, atomically and race-free.
+    # SQLite additionally requires ``PRAGMA foreign_keys = ON`` which the
+    # adapter sets on every connection.
+    #
+    # SingleStore parses FK syntax but does NOT enforce it at runtime — the
+    # constraint is emitted for schema documentation only; ``delete_session``
+    # performs an application-level cascade.
+    #
+    # NoSQL adapters (Mongo, Firestore, Redis, DynamoDB, GCS-JSON, SurrealDB)
+    # have no FK primitive; each ``delete_session`` implementation deletes
+    # the session's runs explicitly before/after removing the session doc.
+    # Best-effort — a crash between the two writes can leave orphan runs;
+    # partial-migration cleanup and admin tooling should tolerate this.
     @abstractmethod
     def delete_session(self, session_id: str, user_id: Optional[str] = None) -> bool:
         raise NotImplementedError
@@ -191,7 +540,11 @@ class BaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # runs_limit: attach only the most recent N context-relevant runs. Adapters
+        # that don't optimize this MUST still accept it and load the full history
+        # (a safe, unbounded superset); adapters that can push it to the DB do so.
         raise NotImplementedError
 
     @abstractmethod
@@ -208,6 +561,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -237,6 +591,75 @@ class BaseDb(ABC):
     ) -> List[Union[Session, Dict[str, Any]]]:
         """Bulk upsert multiple sessions for improved performance on large datasets."""
         raise NotImplementedError
+
+    # --- Runs ---
+    def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Read a single run from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported to v3 storage return ``None``.
+        """
+        return None
+
+    def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Get runs matching the given filters.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported return an empty list (or empty tuple).
+        """
+        if deserialize:
+            return []
+        return [], 0
+
+    def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Upsert a single run to the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported raise ``NotImplementedError`` — callers
+        should check ``hasattr(db, "upsert_run")`` is insufficient now that the
+        method is on the base class; check ``type(db).upsert_run is not BaseDb.upsert_run``
+        instead, or simply let the NotImplementedError bubble up.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
+        )
+
+    def delete_run(self, run_id: str) -> bool:
+        """Delete a single run from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        Adapters that have not been ported return ``False``.
+        """
+        return False
+
+    def delete_runs(self, run_ids: List[str]) -> None:
+        """Bulk-delete runs from the runs storage.
+
+        Adapters that store runs in a dedicated table/collection override this.
+        No-op on adapters that have not been ported.
+        """
+        return None
 
     # --- Memory ---
     @abstractmethod
@@ -306,11 +729,14 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Metrics ---
+    # ``user_id`` picks the metrics bucket: ``None`` returns every bucket, a name returns that
+    # user's, and ``""`` returns the unowned bucket (sessions written without a user_id).
     @abstractmethod
     def get_metrics(
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         raise NotImplementedError
 
@@ -319,21 +745,26 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
+    # ``user_id`` scopes reads to that user's rows plus shared (``user_id IS NULL``) rows;
+    # ``None`` applies no scoping. Deletes are stricter — see ``delete_knowledge_content``.
     @abstractmethod
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         """Delete a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to delete.
+            user_id (Optional[str]): When set, only delete rows owned by this user. Shared rows
+                are readable by every scoped caller but deletable only by the unscoped path.
         """
         raise NotImplementedError
 
     @abstractmethod
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         """Get a knowledge row from the database.
 
         Args:
             id (str): The ID of the knowledge row to get.
+            user_id (Optional[str]): Restrict to this user's rows plus shared rows.
 
         Returns:
             Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
@@ -348,6 +779,7 @@ class BaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
         """Get all knowledge contents from the database.
 
@@ -357,6 +789,7 @@ class BaseDb(ABC):
             sort_by (Optional[str]): The column to sort by.
             sort_order (Optional[str]): The order to sort by.
             linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
+            user_id (Optional[str]): Restrict to this user's rows plus shared rows.
 
         Returns:
             Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
@@ -371,7 +804,8 @@ class BaseDb(ABC):
         """Upsert knowledge content in the database.
 
         Args:
-            knowledge_row (KnowledgeRow): The knowledge row to upsert.
+            knowledge_row (KnowledgeRow): The knowledge row to upsert. Its ``user_id`` carries
+                the owner, ``None`` for shared uploads.
 
         Returns:
             Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
@@ -384,12 +818,12 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
     def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -407,13 +841,17 @@ class BaseDb(ABC):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
         raise NotImplementedError
 
     # --- Traces ---
@@ -629,48 +1067,23 @@ class BaseDb(ABC):
         """
         raise NotImplementedError
 
-    # --- Cultural Knowledge ---
-    @abstractmethod
-    def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def get_all_cultural_knowledge(
-        self,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-    ) -> Optional[List[CulturalKnowledge]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
-        raise NotImplementedError
-
     # --- Components (Optional) ---
     # These methods are optional. Override in subclasses to enable component persistence.
     def get_component(
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a component by ID.
 
         Args:
             component_id: The component ID.
             component_type: Optional filter by type (agent|team|workflow).
+            user_id: If set, only return the component if owned by this user, unowned (shared), or published.
+            include_deleted: Also return an archived (soft-deleted) row. Archived
+                ids are reserved, so an existence check must pass True.
 
         Returns:
             Component dictionary or None if not found.
@@ -685,6 +1098,7 @@ class BaseDb(ABC):
         description: Optional[str] = None,
         current_version: Optional[int] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a component.
 
@@ -695,12 +1109,15 @@ class BaseDb(ABC):
             description: Optional description.
             current_version: Optional current version.
             metadata: Optional metadata dict.
+            user_id: Owner to set when creating; scopes the update to this user when set.
 
         Returns:
             Created/updated component dictionary.
 
         Raises:
             ValueError: If creating and component_type is not provided.
+            ComponentArchivedError: If the row is archived. Archived components
+                are immutable and their ids reserved; restore explicitly first.
         """
         raise NotImplementedError
 
@@ -708,15 +1125,59 @@ class BaseDb(ABC):
         self,
         component_id: str,
         hard_delete: bool = False,
+        user_id: Optional[str] = None,
+        expected_current_version: Optional[int] = None,
+        require_no_dependents: bool = True,
+        cascade_stats: Optional[Dict[str, int]] = None,
     ) -> bool:
-        """Delete a component and all its configs/links.
+        """Delete a component. Soft delete archives it; the id stays reserved.
 
         Args:
             component_id: The component ID.
-            hard_delete: If True, permanently delete. Otherwise soft-delete.
+            hard_delete: If True, permanently delete rows and links. Otherwise
+                archive: stamp deleted_at, keep every version, reserve the id.
+            user_id: If set, only delete the component if owned by this user.
+            expected_current_version: Optional compare-and-set guard on the
+                current published version; None skips the check, 0 expects
+                the component to have no published version.
+            require_no_dependents: Refuse when other components pin this one.
+                An archive checks active (non-archived) parents; a hard delete
+                checks every parent, because it would break even an archived
+                parent's history.
+            cascade_stats: Optional dict the delete fills in with what its
+                cascade touched, currently "schedules_disabled". The count is
+                only knowable inside the cascade - it counts the rows this
+                delete flipped from enabled, and restore does not re-enable
+                them - so a caller that reports it cannot recompute it from a
+                later read.
 
         Returns:
             True if deleted, False if not found or already deleted.
+
+        Raises:
+            ComponentDependencyError: If dependents exist and
+                require_no_dependents is True.
+            ComponentVersionConflictError: If the guard does not match.
+        """
+        raise NotImplementedError
+
+    def restore_component(
+        self,
+        component_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        """Restore an archived component: clear deleted_at, keep every version.
+
+        The current_version pointer is untouched, so a published component
+        comes back published. Schedules that were disabled when the component
+        was archived stay disabled; re-enabling them is a separate decision.
+
+        Args:
+            component_id: The component ID.
+            user_id: If set, only restore the component if owned by this user.
+
+        Returns:
+            True if restored, False if not found or not archived.
         """
         raise NotImplementedError
 
@@ -727,6 +1188,7 @@ class BaseDb(ABC):
         limit: int = 20,
         offset: int = 0,
         exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
         name: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List components with pagination.
@@ -737,6 +1199,7 @@ class BaseDb(ABC):
             limit: Maximum number of items to return.
             offset: Number of items to skip.
             exclude_component_ids: Component IDs to exclude from results.
+            user_id: If set, only list components owned by this user, unowned (shared), or published.
             name: Exact-match filter on the component name; the returned total
                 counts the filtered set.
 
@@ -757,6 +1220,7 @@ class BaseDb(ABC):
         stage: str = "draft",
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
         """Create a component with its initial config atomically.
 
@@ -771,12 +1235,13 @@ class BaseDb(ABC):
             stage: "draft" or "published".
             notes: Optional notes.
             links: Optional list of links. Each must have child_version set.
+            user_id: Owner to attribute the component to.
 
         Returns:
             Tuple of (component dict, config dict).
 
         Raises:
-            ValueError: If component already exists, invalid stage, or link missing child_version.
+            ValueError: If component ID is already taken, invalid stage, or link missing child_version.
         """
         raise NotImplementedError
 
@@ -786,18 +1251,43 @@ class BaseDb(ABC):
         component_id: str,
         version: Optional[int] = None,
         label: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Get a config by component ID and version or label.
 
+        Tombstoned versions (stage "_deleted") are invisible unless
+        include_deleted is passed; the current/latest fallbacks skip them.
+
         Args:
             component_id: The component ID.
-            version: Specific version number. If None, uses current.
+            version: Specific version number. If None, uses current, else the
+                latest visible version.
             label: Config label to lookup. Ignored if version is provided.
+            include_deleted: Also return a tombstoned version.
 
         Returns:
             Config dictionary or None if not found.
         """
         raise NotImplementedError
+
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The current published config, or None when nothing is published.
+
+        Unlike get_config(version=None) this never falls back to a draft, so
+        it is the read dispatch surfaces build on.
+        """
+        raise NotImplementedError
+
+    def get_latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        """The latest visible (non-tombstoned) config version, draft or published."""
+        raise NotImplementedError
+
+    def get_latest_configs(self, component_ids: Set[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        """Bulk get_latest_config: one result per requested id (None when absent).
+
+        Default implementation loops; adapters may override with one query.
+        """
+        return {component_id: self.get_latest_config(component_id) for component_id in component_ids}
 
     def upsert_config(
         self,
@@ -808,22 +1298,43 @@ class BaseDb(ABC):
         stage: Optional[str] = None,
         notes: Optional[str] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Create or update a config version for a component.
 
         Rules:
-            - Draft configs can be edited freely
-            - Published configs are immutable
-            - Publishing a config automatically sets it as current_version
+            - version=None appends a new version. Numbering is high-water over
+              every row including tombstones, so numbers never recycle. Two
+              concurrent appends race for one number; the loser gets
+              ComponentVersionConflictError.
+            - Draft configs can still be edited in place by explicit version
+              (the AgentOS UI's contract); control planes that want immutable
+              history append instead.
+            - Published configs are immutable.
+            - Publishing sets current_version and re-projects the config's
+              name/description/metadata onto the component row atomically.
+            - expected_latest_version is an optional compare-and-set guard
+              against the latest visible version; a mismatch means someone
+              else wrote since the caller read.
 
         Args:
             component_id: The component ID.
             config: The config data. Required for create, optional for update.
-            version: If None, creates new version. If provided, updates that version.
+            version: If None, appends a new version. If provided, updates that version.
             label: Optional human-readable label.
             stage: "draft" or "published". Defaults to "draft" for new configs.
             notes: Optional notes.
             links: Optional list of links. Each link must have child_version set.
+            expected_latest_version: Optional CAS guard; None skips the check.
+            expected_current_version: Optional CAS guard on the live pointer a
+                publish replaces; None skips the check, 0 expects no live
+                version (a first publish has nothing to compare against).
+            user_id: When set, the write applies only if this user owns the
+                component. A foreign or shared (unowned) row answers the same
+                ValueError a missing component answers, inside the write
+                transaction, so the refusal cannot be split from the write.
 
         Returns:
             Created/updated config dictionary.
@@ -831,6 +1342,10 @@ class BaseDb(ABC):
         Raises:
             ValueError: If component doesn't exist, version not found, label conflict,
                         or attempting to update a published config.
+            ComponentVersionConflictError: If the guard does not match or a
+                concurrent append won the version number.
+            ComponentArchivedError: If the component is archived.
+            ComponentCycleError: If the links would close a reference cycle.
         """
         raise NotImplementedError
 
@@ -838,21 +1353,30 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        user_id: Optional[str] = None,
     ) -> bool:
-        """Delete a specific config version.
+        """Tombstone a specific config version. Its number is never reused.
 
-        Only draft configs can be deleted. Published configs are immutable.
-        Cannot delete the current version.
+        Only draft versions can be deleted, never the current version, never
+        the last visible version, and never a version another component pins.
 
         Args:
             component_id: The component ID.
             version: The version to delete.
+            user_id: When set, the delete applies only if this user owns the
+                component. A foreign or shared (unowned) row answers the same
+                False a missing version answers, inside the write transaction.
 
         Returns:
-            True if deleted, False if not found.
+            True if deleted, False if not found (or already tombstoned).
 
         Raises:
-            ValueError: If attempting to delete a published or current config.
+            ComponentDraftRequiredError: If the version is published.
+            ComponentArchivedError: If the component is archived; its history is
+                frozen so restore brings every version back.
+            ComponentLastConfigError: If it is the last visible version.
+            ComponentDependencyError: If an active parent pins this version.
+            ValueError: If it is the current version.
         """
         raise NotImplementedError
 
@@ -860,12 +1384,14 @@ class BaseDb(ABC):
         self,
         component_id: str,
         include_config: bool = False,
+        include_deleted: bool = False,
     ) -> List[Dict[str, Any]]:
         """List all config versions for a component.
 
         Args:
             component_id: The component ID.
             include_config: If True, include full config blob. Otherwise just metadata.
+            include_deleted: Include tombstoned versions.
 
         Returns:
             List of config dictionaries, newest first.
@@ -877,6 +1403,8 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: int,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
     ) -> bool:
         """Set a specific published version as current.
 
@@ -887,12 +1415,20 @@ class BaseDb(ABC):
         Args:
             component_id: The component ID.
             version: The version to set as current (must be published).
+            expected_current_version: Optional compare-and-set guard on the
+                pointer being replaced; None skips the check, 0 expects no
+                live version (a first publish has nothing to compare against).
+            user_id: When set, the pointer moves only if this user owns the
+                component; the predicate rides the UPDATE itself. A foreign or
+                shared (unowned) row answers the same False a missing
+                component answers.
 
         Returns:
             True if successful, False if component or version not found.
 
         Raises:
             ValueError: If attempting to set a draft config as current.
+            ComponentVersionConflictError: If the guard does not match.
         """
         raise NotImplementedError
 
@@ -919,12 +1455,15 @@ class BaseDb(ABC):
         self,
         component_id: str,
         version: Optional[int] = None,
+        active_parents_only: bool = False,
     ) -> List[Dict[str, Any]]:
         """Find all components that reference this component.
 
         Args:
             component_id: The component ID to find dependents of.
             version: Optional specific version. If None, finds links to any version.
+            active_parents_only: Only count links whose parent component is not
+                archived and whose parent version is not tombstoned.
 
         Returns:
             List of link dictionaries showing what depends on this component.
@@ -1221,13 +1760,19 @@ class BaseDb(ABC):
 
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
+    # ``user_id`` scopes the user-facing reads, updates and deletes; ``claim_due_schedule`` and
+    # ``release_schedule`` take none, since the poller has to fire schedules across all users.
 
-    def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get a schedule by name."""
+    def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name within one owner bucket.
+
+        Names are unique per owner: ``user_id=None`` matches only unowned
+        schedules, never another owner's schedule of the same name.
+        """
         raise NotImplementedError
 
     def get_schedules(
@@ -1235,6 +1780,7 @@ class BaseDb(ABC):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
 
@@ -1244,15 +1790,43 @@ class BaseDb(ABC):
         raise NotImplementedError
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new schedule."""
+        """Create a new schedule. ``schedule_data["user_id"]`` carries the owner."""
         raise NotImplementedError
 
-    def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update a schedule by ID."""
         raise NotImplementedError
 
-    def delete_schedule(self, schedule_id: str) -> bool:
+    def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component.
+
+        Matches provenance-tagged rows and generic rows whose endpoint is the
+        component's run endpoint, across owners (archiving the target is a
+        system action). ``reason`` lands in disabled_reason; enable clears it.
+
+        Returns:
+            The number of schedules disabled.
+        """
+        raise NotImplementedError
+
+    def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write control-plane provenance columns (managed_by, target_*,
+        created_by_*/updated_by_*) that the generic update_schedule refuses.
+
+        Returns:
+            True when the schedule row was updated.
+        """
         raise NotImplementedError
 
     def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -1266,14 +1840,14 @@ class BaseDb(ABC):
     # --- Schedule Runs (Optional) ---
 
     def create_schedule_run(self, run_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a schedule run record."""
+        """Create a schedule run record. ``run_data["user_id"]`` is denormalised from the parent schedule."""
         raise NotImplementedError
 
     def update_schedule_run(self, schedule_run_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
         """Update a schedule run record."""
         raise NotImplementedError
 
-    def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 
@@ -1282,12 +1856,38 @@ class BaseDb(ABC):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List runs for a schedule.
 
         Returns:
             Tuple of (runs, total_count)
         """
+        raise NotImplementedError
+
+    # --- Tool Results (Optional) ---
+    # Optional: the index table for result offloading (agno_tool_results).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
+
+    def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        """Insert or replace one tool-result index row."""
+        raise NotImplementedError
+
+    def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Get one tool-result index row by id."""
+        raise NotImplementedError
+
+    def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's tool-result rows, newest first."""
+        raise NotImplementedError
+
+    def delete_tool_results(self, result_ids: List[str]) -> int:
+        """Delete index rows by id. Returns the number deleted."""
+        raise NotImplementedError
+
+    def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        """Rows whose expires_at has passed."""
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
@@ -1441,8 +2041,9 @@ class BaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    def get_service_account(self, service_account_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID. When ``user_id`` is set, only returns the account if it is
+        owned by that user or is workspace-level (no owner)."""
         raise NotImplementedError
 
     def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -1460,6 +2061,7 @@ class BaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 
@@ -1493,37 +2095,105 @@ class AsyncBaseDb(ABC):
         self,
         id: Optional[str] = None,
         session_table: Optional[str] = None,
+        runs_table: Optional[str] = None,
         memory_table: Optional[str] = None,
         metrics_table: Optional[str] = None,
         eval_table: Optional[str] = None,
         knowledge_table: Optional[str] = None,
         traces_table: Optional[str] = None,
         spans_table: Optional[str] = None,
-        culture_table: Optional[str] = None,
         versions_table: Optional[str] = None,
+        components_table: Optional[str] = None,
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        job_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
     ):
         self.id = id or str(uuid4())
         self.session_table_name = session_table or "agno_sessions"
+        # The runs table foreign-keys to THIS db's session table. If the caller
+        # customized session_table but not runs_table, defaulting to the shared
+        # "agno_runs" would FK-lock it to whichever db created the table first,
+        # silently dropping every other db's runs (the run insert violates the
+        # FK and is swallowed). Derive a session-table-scoped runs name so each
+        # session table owns a correctly foreign-keyed runs table by default.
+        if runs_table:
+            self.runs_table_name = runs_table
+        elif session_table and session_table != "agno_sessions":
+            self.runs_table_name = f"{session_table}_runs"
+        else:
+            self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
         self.span_table_name = spans_table or "agno_spans"
-        self.culture_table_name = culture_table or "agno_culture"
         self.versions_table_name = versions_table or "agno_schema_versions"
+        # Async adapters cannot read or write components yet, but may still migrate a table a sync adapter created.
+        self.components_table_name = components_table or "agno_components"
         self.learnings_table_name = learnings_table or "agno_learnings"
         self.schedules_table_name = schedules_table or "agno_schedules"
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
+        self.job_table_name = job_table or "agno_jobs"
+        self.tool_results_table_name = "agno_tool_results"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
+
+        # Async adapters cannot create component config/link tables yet, but
+        # the FK dependency map needs their configured names.
+        self.component_configs_table_name = "agno_component_configs"
+        self.component_links_table_name = "agno_component_links"
+
+        # See BaseDb._table_cache: same contract for async adapters.
+        self._table_cache = TableResolutionCache()
+        # See BaseDb._resolve_lock: task-reentrant, because resolving a table
+        # may resolve FK parents and stamp the versions table.
+        self._resolve_lock_async = _ReentrantAsyncLock()
+
+    async def _get_or_create_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Any]:
+        """Async twin of ``BaseDb._get_or_create_table``; same contract.
+
+        The resolution lock is task-reentrant; code already holding it may
+        call ``_resolve_table`` directly.
+        """
+        cached = self._table_cache.get(table_type, table_name)
+        if cached is not None:
+            return cached
+        if not create_table_if_not_found and not await self.table_exists(table_name):
+            log_debug(f"Table '{table_name}' does not exist")
+            return None
+        async with self._resolve_lock_async:
+            cached = self._table_cache.get(table_type, table_name)
+            if cached is not None:
+                return cached
+            return await self._resolve_table(
+                table_name=table_name, table_type=table_type, create_table_if_not_found=create_table_if_not_found
+            )
+
+    async def _resolve_table(
+        self, table_name: str, table_type: str, create_table_if_not_found: Optional[bool] = False
+    ) -> Optional[Any]:
+        """Adapter-specific resolution (existence check, validation, reflect or create)."""
+        raise NotImplementedError
+
+    def _get_cached_table(self, table_type: str, table_name: str) -> Optional[Any]:
+        return self._table_cache.get(table_type, table_name)
+
+    def _store_resolved_table(self, table_type: str, table_name: str, table: Any) -> None:
+        self._table_cache.store(table_type, table_name, table, getattr(self, "metadata", None))
+
+    def _invalidate_table_cache(self, table_name: str) -> None:
+        self._table_cache.invalidate(table_name, getattr(self, "metadata", None))
+
+    def _fk_dependencies(self, table_type: str) -> List[Tuple[str, str]]:
+        return _fk_dependencies_for(self, table_type)
 
     async def _create_all_tables(self) -> None:
         """Create all tables for this database. Override in subclasses."""
@@ -1577,7 +2247,9 @@ class AsyncBaseDb(ABC):
         session_type: Optional[SessionType] = None,
         user_id: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        runs_limit: Optional[int] = None,
     ) -> Optional[Union[Session, Dict[str, Any]]]:
+        # See BaseDb.get_session for the runs_limit contract.
         raise NotImplementedError
 
     @abstractmethod
@@ -1594,6 +2266,7 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         deserialize: Optional[bool] = True,
+        include_runs: bool = True,
     ) -> Union[List[Session], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
@@ -1613,6 +2286,52 @@ class AsyncBaseDb(ABC):
         self, session: Session, deserialize: Optional[bool] = True
     ) -> Optional[Union[Session, Dict[str, Any]]]:
         raise NotImplementedError
+
+    # --- Runs ---
+    async def get_run(
+        self, run_id: str, deserialize: Optional[bool] = True
+    ) -> Optional[Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]]]:
+        """Async read of a single run. Adapters ported to v3 storage override this."""
+        return None
+
+    async def get_runs(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        agent_id: Optional[str] = None,
+        team_id: Optional[str] = None,
+        workflow_id: Optional[str] = None,
+        status: Optional[RunStatus] = None,
+        limit: Optional[int] = None,
+        page: Optional[int] = None,
+        sort_by: Optional[str] = None,
+        sort_order: Optional[str] = None,
+        deserialize: Optional[bool] = True,
+    ) -> Union[List[Union[RunOutput, TeamRunOutput, WorkflowRunOutput]], Tuple[List[Dict[str, Any]], int]]:
+        """Async list of runs. Adapters ported to v3 storage override this."""
+        if deserialize:
+            return []
+        return [], 0
+
+    async def upsert_run(
+        self,
+        run: Union[RunOutput, TeamRunOutput, WorkflowRunOutput, Dict[str, Any]],
+        session_id: str,
+        user_id: Optional[str] = None,
+        run_index: Optional[int] = None,
+    ) -> None:
+        """Async upsert of a single run. Adapters ported to v3 storage override this."""
+        raise NotImplementedError(
+            f"{type(self).__name__} does not implement upsert_run yet. Use upsert_session() to persist runs inline."
+        )
+
+    async def delete_run(self, run_id: str) -> bool:
+        """Async delete of a single run. Adapters ported to v3 storage override this."""
+        return False
+
+    async def delete_runs(self, run_ids: List[str]) -> None:
+        """Async bulk-delete of runs. Adapters ported to v3 storage override this."""
+        return None
 
     # --- Memory ---
     @abstractmethod
@@ -1672,9 +2391,13 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Metrics ---
+    # See BaseDb.get_metrics for the ``user_id`` semantics.
     @abstractmethod
     async def get_metrics(
-        self, starting_date: Optional[date] = None, ending_date: Optional[date] = None
+        self,
+        starting_date: Optional[date] = None,
+        ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         raise NotImplementedError
 
@@ -1683,25 +2406,15 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     # --- Knowledge ---
+    # See the BaseDb knowledge methods for the ``user_id`` semantics.
     @abstractmethod
-    async def delete_knowledge_content(self, id: str):
-        """Delete a knowledge row from the database.
-
-        Args:
-            id (str): The ID of the knowledge row to delete.
-        """
+    async def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
+        """Delete a knowledge row from the database."""
         raise NotImplementedError
 
     @abstractmethod
-    async def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
-        """Get a knowledge row from the database.
-
-        Args:
-            id (str): The ID of the knowledge row to get.
-
-        Returns:
-            Optional[KnowledgeRow]: The knowledge row, or None if it doesn't exist.
-        """
+    async def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
+        """Get a knowledge row from the database."""
         raise NotImplementedError
 
     @abstractmethod
@@ -1712,34 +2425,14 @@ class AsyncBaseDb(ABC):
         sort_by: Optional[str] = None,
         sort_order: Optional[str] = None,
         linked_to: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[KnowledgeRow], int]:
-        """Get all knowledge contents from the database.
-
-        Args:
-            limit (Optional[int]): The maximum number of knowledge contents to return.
-            page (Optional[int]): The page number.
-            sort_by (Optional[str]): The column to sort by.
-            sort_order (Optional[str]): The order to sort by.
-            linked_to (Optional[str]): Filter by linked_to value (knowledge instance name).
-
-        Returns:
-            Tuple[List[KnowledgeRow], int]: The knowledge contents and total count.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
+        """Get all knowledge contents from the database."""
         raise NotImplementedError
 
     @abstractmethod
     async def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
-        """Upsert knowledge content in the database.
-
-        Args:
-            knowledge_row (KnowledgeRow): The knowledge row to upsert.
-
-        Returns:
-            Optional[KnowledgeRow]: The upserted knowledge row, or None if the operation fails.
-        """
+        """Upsert knowledge content in the database."""
         raise NotImplementedError
 
     # --- Evals ---
@@ -1748,12 +2441,12 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     @abstractmethod
-    async def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    async def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError
 
     @abstractmethod
     async def get_eval_run(
-        self, eval_run_id: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
         raise NotImplementedError
 
@@ -1771,13 +2464,17 @@ class AsyncBaseDb(ABC):
         filter_type: Optional[EvalFilterType] = None,
         eval_type: Optional[List[EvalType]] = None,
         deserialize: Optional[bool] = True,
+        user_id: Optional[str] = None,
     ) -> Union[List[EvalRunRecord], Tuple[List[Dict[str, Any]], int]]:
         raise NotImplementedError
 
     @abstractmethod
     async def rename_eval_run(
-        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True
+        self, eval_run_id: str, name: str, deserialize: Optional[bool] = True, user_id: Optional[str] = None
     ) -> Optional[Union[EvalRunRecord, Dict[str, Any]]]:
+        raise NotImplementedError
+
+    async def update_eval_run_user_id(self, eval_run_id: str, user_id: str) -> None:
         raise NotImplementedError
 
     # --- Traces ---
@@ -1987,40 +2684,190 @@ class AsyncBaseDb(ABC):
         """
         raise NotImplementedError
 
-    # --- Cultural Notions ---
-    @abstractmethod
-    async def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def get_all_cultural_knowledge(
+    # --- Components (Not supported for async) ---
+    # Plain (non-async) stubs matching the BaseDb signatures, so every async
+    # adapter fails the same way until an async catalog lands.
+    def get_component(
         self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        raise NotImplementedError
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
 
-    @abstractmethod
-    async def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        raise NotImplementedError
+    def upsert_component(
+        self,
+        component_id: str,
+        component_type: Optional[ComponentType] = None,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        current_version: Optional[int] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def delete_component(
+        self,
+        component_id: str,
+        hard_delete: bool = False,
+        user_id: Optional[str] = None,
+        expected_current_version: Optional[int] = None,
+        require_no_dependents: bool = True,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def restore_component(
+        self,
+        component_id: str,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def list_components(
+        self,
+        component_type: Optional[ComponentType] = None,
+        include_deleted: bool = False,
+        limit: int = 20,
+        offset: int = 0,
+        exclude_component_ids: Optional[Set[str]] = None,
+        user_id: Optional[str] = None,
+        name: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def create_component_with_config(
+        self,
+        component_id: str,
+        component_type: ComponentType,
+        name: Optional[str],
+        config: Dict[str, Any],
+        description: Optional[str] = None,
+        metadata: Optional[Dict[str, Any]] = None,
+        label: Optional[str] = None,
+        stage: str = "draft",
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        user_id: Optional[str] = None,
+    ) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_config(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        include_deleted: bool = False,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_current_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_latest_config(self, component_id: str) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_latest_configs(self, component_ids: Set[str]) -> Dict[str, Optional[Dict[str, Any]]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def upsert_config(
+        self,
+        component_id: str,
+        config: Optional[Dict[str, Any]] = None,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+        stage: Optional[str] = None,
+        notes: Optional[str] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        expected_latest_version: Optional[int] = None,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def delete_config(
+        self,
+        component_id: str,
+        version: int,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def list_configs(
+        self,
+        component_id: str,
+        include_config: bool = False,
+        include_deleted: bool = False,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def set_current_version(
+        self,
+        component_id: str,
+        version: int,
+        expected_current_version: Optional[int] = None,
+        user_id: Optional[str] = None,
+    ) -> bool:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_links(
+        self,
+        component_id: str,
+        version: int,
+        link_kind: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def get_dependents(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        active_parents_only: bool = False,
+    ) -> List[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
+
+    def load_component_graph(
+        self,
+        component_id: str,
+        version: Optional[int] = None,
+        label: Optional[str] = None,
+    ) -> Optional[Dict[str, Any]]:
+        raise NotImplementedError(
+            "Component methods are not supported for async databases yet; use SqliteDb or PostgresDb"
+        )
 
     # --- Learnings ---
     @abstractmethod
@@ -2293,13 +3140,18 @@ class AsyncBaseDb(ABC):
 
     # --- Schedules (Optional) ---
     # These methods are optional. Override in subclasses to enable scheduler persistence.
+    # See BaseDb for the ``user_id`` semantics.
 
-    async def get_schedule(self, schedule_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule by ID."""
         raise NotImplementedError
 
-    async def get_schedule_by_name(self, name: str) -> Optional[Dict[str, Any]]:
-        """Get a schedule by name."""
+    async def get_schedule_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a schedule by name within one owner bucket.
+
+        Names are unique per owner: ``user_id=None`` matches only unowned
+        schedules, never another owner's schedule of the same name.
+        """
         raise NotImplementedError
 
     async def get_schedules(
@@ -2307,6 +3159,7 @@ class AsyncBaseDb(ABC):
         enabled: Optional[bool] = None,
         limit: int = 100,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
 
@@ -2316,15 +3169,30 @@ class AsyncBaseDb(ABC):
         raise NotImplementedError
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
-        """Create a new schedule."""
+        """Create a new schedule. ``schedule_data["user_id"]`` carries the owner."""
         raise NotImplementedError
 
-    async def update_schedule(self, schedule_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+    async def update_schedule(
+        self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
+    ) -> Optional[Dict[str, Any]]:
         """Update a schedule by ID."""
         raise NotImplementedError
 
-    async def delete_schedule(self, schedule_id: str) -> bool:
+    async def delete_schedule(self, schedule_id: str, user_id: Optional[str] = None) -> bool:
         """Delete a schedule and its associated runs."""
+        raise NotImplementedError
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Async variant of BaseDb.disable_schedules_for_target."""
+        raise NotImplementedError
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Async variant of BaseDb.stamp_schedule_provenance."""
         raise NotImplementedError
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
@@ -2345,7 +3213,7 @@ class AsyncBaseDb(ABC):
         """Update a schedule run record."""
         raise NotImplementedError
 
-    async def get_schedule_run(self, run_id: str) -> Optional[Dict[str, Any]]:
+    async def get_schedule_run(self, run_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         """Get a schedule run by ID."""
         raise NotImplementedError
 
@@ -2354,12 +3222,38 @@ class AsyncBaseDb(ABC):
         schedule_id: str,
         limit: int = 20,
         page: int = 1,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List runs for a schedule.
 
         Returns:
             Tuple of (runs, total_count)
         """
+        raise NotImplementedError
+
+    # --- Tool Results (Optional) ---
+    # Optional: the index table for result offloading (agno_tool_results).
+    # Implemented by PostgreSQL and SQLite; on any other backend the agent
+    # runs with offloading off.
+
+    async def upsert_tool_result(self, row: Dict[str, Any]) -> None:
+        """Insert or replace one tool-result index row."""
+        raise NotImplementedError
+
+    async def get_tool_result(self, result_id: str) -> Optional[Dict[str, Any]]:
+        """Get one tool-result index row by id."""
+        raise NotImplementedError
+
+    async def get_tool_results_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        """The session's tool-result rows, newest first."""
+        raise NotImplementedError
+
+    async def delete_tool_results(self, result_ids: List[str]) -> int:
+        """Delete index rows by id. Returns the number deleted."""
+        raise NotImplementedError
+
+    async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
+        """Rows whose expires_at has passed."""
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
@@ -2438,8 +3332,11 @@ class AsyncBaseDb(ABC):
         """Create a service account. Raises on failure (including duplicate active name)."""
         raise NotImplementedError
 
-    async def get_service_account(self, service_account_id: str) -> Optional[Dict[str, Any]]:
-        """Get a service account by ID."""
+    async def get_service_account(
+        self, service_account_id: str, user_id: Optional[str] = None
+    ) -> Optional[Dict[str, Any]]:
+        """Get a service account by ID. When ``user_id`` is set, only returns the account if it is
+        owned by that user or is workspace-level (no owner)."""
         raise NotImplementedError
 
     async def get_service_account_by_token_hash(self, token_hash: str) -> Optional[Dict[str, Any]]:
@@ -2457,6 +3354,7 @@ class AsyncBaseDb(ABC):
         page: int = 1,
         sort_by: str = "created_at",
         sort_order: str = "desc",
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List service accounts.
 
