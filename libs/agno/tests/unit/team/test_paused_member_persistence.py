@@ -6058,3 +6058,310 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+# ---------------------------------------------------------------------------
+# Issue #9447: foreground continue must use the stored terminal status.
+#
+# These tests intentionally describe the safe contract.  On the affected
+# revision the six terminal-state cases are RED and report the persisted status
+# and side effects that crossed the stale caller-object boundary.
+# ---------------------------------------------------------------------------
+
+
+def _issue_9447_state(db_file: str, session_id: str, run_id: str) -> RunStatus:
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run_id]
+    assert len(stored) == 1
+    return stored[0].status
+
+
+def _issue_9447_assert_refused(
+    *, refused: bool, stored_status: RunStatus, expected_status: RunStatus, expected_executions: List[str]
+) -> None:
+    assert refused and stored_status == expected_status and _EXECUTED == expected_executions, (
+        f"refused={refused}, stored_status={stored_status!r}, executions={_EXECUTED!r}; "
+        f"expected authoritative {expected_status!r} and executions={expected_executions!r}"
+    )
+
+
+def test_issue_9447_sync_stale_paused_object_cannot_reexecute_completed_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_sync_completed.db")
+    session_id = "s-issue-9447-sync-completed"
+
+    stale = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    done = _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_id=stale.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(stale.requirements),
+    )
+    assert done.status == RunStatus.completed
+    assert stale.status == RunStatus.paused
+    assert _EXECUTED == ["a@example.com"]
+
+    refused = False
+    try:
+        _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+    except RunNotContinuableError:
+        refused = True
+
+    _issue_9447_assert_refused(
+        refused=refused,
+        stored_status=_issue_9447_state(db_file, session_id, stale.run_id),
+        expected_status=RunStatus.completed,
+        expected_executions=["a@example.com"],
+    )
+
+
+def test_issue_9447_sync_stale_paused_object_cannot_override_cancelled_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_sync_cancelled.db")
+    session_id = "s-issue-9447-sync-cancelled"
+
+    stale = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    _set_stored_team_run_status(SqliteDb(db_file=db_file), session_id, stale.run_id, RunStatus.cancelled)
+
+    refused = False
+    try:
+        _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+    except RunNotContinuableError:
+        refused = True
+
+    _issue_9447_assert_refused(
+        refused=refused,
+        stored_status=_issue_9447_state(db_file, session_id, stale.run_id),
+        expected_status=RunStatus.cancelled,
+        expected_executions=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stale_paused_object_cannot_reexecute_completed_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_completed.db")
+    session_id = "s-issue-9447-async-completed"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    done = await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=stale.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(stale.requirements),
+    )
+    assert done.status == RunStatus.completed
+    assert stale.status == RunStatus.paused
+    assert _EXECUTED == ["a@example.com"]
+
+    refused = False
+    try:
+        await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+    except RunNotContinuableError:
+        refused = True
+
+    _issue_9447_assert_refused(
+        refused=refused,
+        stored_status=_issue_9447_state(db_file, session_id, stale.run_id),
+        expected_status=RunStatus.completed,
+        expected_executions=["a@example.com"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stale_paused_object_cannot_override_cancelled_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_cancelled.db")
+    session_id = "s-issue-9447-async-cancelled"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    _set_stored_team_run_status(SqliteDb(db_file=db_file), session_id, stale.run_id, RunStatus.cancelled)
+
+    refused = False
+    try:
+        await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+        )
+    except RunNotContinuableError:
+        refused = True
+
+    _issue_9447_assert_refused(
+        refused=refused,
+        stored_status=_issue_9447_state(db_file, session_id, stale.run_id),
+        expected_status=RunStatus.cancelled,
+        expected_executions=[],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stream_stale_paused_object_cannot_reexecute_completed_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_stream_completed.db")
+    session_id = "s-issue-9447-async-stream-completed"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    done = await _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+        run_id=stale.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(stale.requirements),
+    )
+    assert done.status == RunStatus.completed
+    assert stale.status == RunStatus.paused
+    assert _EXECUTED == ["a@example.com"]
+
+    refused = False
+    try:
+        async for _ in _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+            stream=True,
+            stream_events=True,
+        ):
+            pass
+    except RunNotContinuableError:
+        refused = True
+
+    _issue_9447_assert_refused(
+        refused=refused,
+        stored_status=_issue_9447_state(db_file, session_id, stale.run_id),
+        expected_status=RunStatus.completed,
+        expected_executions=["a@example.com"],
+    )
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_async_stream_stale_paused_object_cannot_override_cancelled_run(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_async_stream_cancelled.db")
+    session_id = "s-issue-9447-async-stream-cancelled"
+
+    stale = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+        "Email a@example.com", session_id=session_id
+    )
+    assert stale.status == RunStatus.paused
+    _set_stored_team_run_status(SqliteDb(db_file=db_file), session_id, stale.run_id, RunStatus.cancelled)
+
+    refused = False
+    try:
+        async for _ in _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=stale,
+            session_id=session_id,
+            requirements=_wire_requirements(stale.requirements),
+            stream=True,
+            stream_events=True,
+        ):
+            pass
+    except RunNotContinuableError:
+        refused = True
+
+    _issue_9447_assert_refused(
+        refused=refused,
+        stored_status=_issue_9447_state(db_file, session_id, stale.run_id),
+        expected_status=RunStatus.cancelled,
+        expected_executions=[],
+    )
+
+
+def test_issue_9447_fresh_matching_paused_object_continues_normally(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_fresh_object.db")
+    session_id = "s-issue-9447-fresh-object"
+
+    paused = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    done = _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_response=paused,
+        session_id=session_id,
+        requirements=_wire_requirements(paused.requirements),
+    )
+
+    assert done.status == RunStatus.completed
+    assert done.run_id == paused.run_id
+    assert _EXECUTED == ["a@example.com"]
+
+
+@pytest.mark.asyncio
+async def test_issue_9447_fresh_matching_paused_object_async_variants_continue_normally(tmp_path):
+    for stream in (False, True):
+        _EXECUTED.clear()
+        suffix = "stream" if stream else "plain"
+        db_file = str(tmp_path / f"issue_9447_fresh_object_async_{suffix}.db")
+        session_id = f"s-issue-9447-fresh-object-async-{suffix}"
+
+        paused = await _build_flat_team(SqliteDb(db_file=db_file), resuming=False).arun(
+            "Email a@example.com", session_id=session_id
+        )
+        result = _build_flat_team(SqliteDb(db_file=db_file), resuming=True).acontinue_run(
+            run_response=paused,
+            session_id=session_id,
+            requirements=_wire_requirements(paused.requirements),
+            stream=stream,
+            stream_events=stream,
+        )
+        if stream:
+            async for _ in result:
+                pass
+            done_status = _issue_9447_state(db_file, session_id, paused.run_id)
+            done_run_id = paused.run_id
+        else:
+            done = await result
+            done_status = done.status
+            done_run_id = done.run_id
+
+        assert done_status == RunStatus.completed
+        assert done_run_id == paused.run_id
+        assert _EXECUTED == ["a@example.com"]
+
+
+def test_issue_9447_run_id_completion_and_auto_fork_semantics_remain(tmp_path):
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "issue_9447_run_id_control.db")
+    session_id = "s-issue-9447-run-id-control"
+
+    paused = _build_flat_team(SqliteDb(db_file=db_file), resuming=False).run(
+        "Email a@example.com", session_id=session_id
+    )
+    done = _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_id=paused.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(paused.requirements),
+    )
+    forked = _build_flat_team(SqliteDb(db_file=db_file), resuming=True).continue_run(
+        run_id=paused.run_id,
+        session_id=session_id,
+    )
+
+    assert done.status == RunStatus.completed
+    assert done.run_id == paused.run_id
+    assert forked.status == RunStatus.completed
+    assert forked.run_id != paused.run_id
+    assert forked.forked_from_run_id == paused.run_id
+    assert _EXECUTED == ["a@example.com"]

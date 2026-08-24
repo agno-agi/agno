@@ -7561,6 +7561,12 @@ def continue_run_dispatch(
     team_session = _read_or_create_session(team, session_id=session_id, user_id=user_id)
     _update_metadata(team, session=team_session)
 
+    # A caller-held run_response is only a snapshot. Read the run row directly
+    # so a cached session or stale caller object cannot hide a durable terminal
+    # transition before the continuation applies approvals or executes tools.
+    durable_run = cast(Any, team.db).get_run(run_id_resolved) if team.db is not None else None
+    _raise_if_stale_terminal_run(run_response, durable_run, fork=fork, regenerate=regenerate)
+
     # Fall back to the owner the run paused with, so the resume retrieves under the same scope
     if user_id is None:
         user_id = _resolve_continue_owner_team(run_response, run_id=run_id_resolved, session=team_session)
@@ -8761,6 +8767,28 @@ def _as_run_status(value: Union[RunStatus, str, None]) -> Union[RunStatus, str, 
         return value
 
 
+def _raise_if_stale_terminal_run(
+    run_response: Optional[TeamRunOutput],
+    durable_run: Optional[Any],
+    *,
+    fork: bool,
+    regenerate: bool,
+) -> None:
+    """Refuse an in-place continue when durable terminal state supersedes a caller snapshot."""
+    if run_response is None or durable_run is None or fork or regenerate:
+        return
+    if getattr(durable_run, "run_id", None) != run_response.run_id:
+        return
+
+    durable_status = _as_run_status(getattr(durable_run, "status", None))
+    caller_status = _as_run_status(run_response.status)
+    if durable_status in (RunStatus.completed, RunStatus.cancelled) and caller_status != durable_status:
+        raise RunNotContinuableError(
+            f"Cannot continue run {run_response.run_id}: caller status {caller_status} conflicts with durable "
+            f"terminal status {durable_status}. The stored run is unchanged."
+        )
+
+
 async def _acontinue_run_background_stream(
     team: Team,
     run_context: RunContext,
@@ -9424,7 +9452,7 @@ async def _acontinue_run(
 ) -> TeamRunOutput:
     """Continue a paused team run (async, non-streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools, _has_async_db
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
 
@@ -9458,6 +9486,14 @@ async def _acontinue_run(
                     user_id=user_id,
                     run_id=run_id,
                 )
+
+                durable_run = None
+                if run_response is not None and team.db is not None:
+                    if _has_async_db(team):
+                        durable_run = await team.db.get_run(run_response.run_id)  # type: ignore[union-attr,misc]
+                    else:
+                        durable_run = team.db.get_run(run_response.run_id)  # type: ignore[union-attr]
+                _raise_if_stale_terminal_run(run_response, durable_run, fork=fork, regenerate=regenerate)
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
                 # the same scope.
@@ -9904,7 +9940,7 @@ async def _acontinue_run_stream(
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (async, streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools, _has_async_db
     from agno.team._response import (
         _ahandle_model_response_stream,
         agenerate_response_with_output_model_stream,
@@ -9939,6 +9975,14 @@ async def _acontinue_run_stream(
                     user_id=user_id,
                     run_id=run_id,
                 )
+
+                durable_run = None
+                if run_response is not None and team.db is not None:
+                    if _has_async_db(team):
+                        durable_run = await team.db.get_run(run_response.run_id)  # type: ignore[union-attr,misc]
+                    else:
+                        durable_run = team.db.get_run(run_response.run_id)  # type: ignore[union-attr]
+                _raise_if_stale_terminal_run(run_response, durable_run, fork=fork, regenerate=regenerate)
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
                 # the same scope.
