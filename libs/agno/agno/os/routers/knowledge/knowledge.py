@@ -14,11 +14,10 @@ from agno.knowledge.reader.base import Reader
 from agno.knowledge.remote_content.s3 import S3Config
 from agno.knowledge.utils import (
     get_all_chunkers_info,
-    get_all_readers_info,
     get_content_types_to_readers_mapping,
     get_read_time_availability,
+    get_readers_availability,
     get_unavailable_chunkers_info,
-    get_unavailable_readers_info,
 )
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
@@ -1314,8 +1313,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     metadata=chunker_info.get("metadata", {}),
                 )
 
-        # Get factory readers info (including custom readers from this knowledge instance)
-        readers_info = get_all_readers_info(knowledge)
+        # One sweep: it imports every reader module, and the readers, the content-type mapping
+        # and the unavailable list are all read off it.
+        readers_info, unavailable_readers_info = get_readers_availability(knowledge)
         reader_schemas = {}
         # Add factory readers
         for reader_info in readers_info:
@@ -1381,9 +1381,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 )
 
         # Get content types to readers mapping (including custom readers from this knowledge instance)
-        types_of_readers = get_content_types_to_readers_mapping(knowledge)
+        types_of_readers = get_content_types_to_readers_mapping(knowledge, readers_info=readers_info)
 
-        unavailable_readers = {r["id"]: UnavailableReaderSchema(**r) for r in get_unavailable_readers_info()}
+        unavailable_readers = {r["id"]: UnavailableReaderSchema(**r) for r in unavailable_readers_info}
         unavailable_readers.update(unusable_readers)
         # A reader this knowledge instance supplies under a factory id answers for that id, so
         # the response never calls the same reader usable and missing at once.

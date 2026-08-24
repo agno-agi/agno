@@ -231,18 +231,33 @@ def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
         raise ValueError(f"Failed to get info for reader '{reader_id}': {str(e)}")
 
 
-def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]:
-    """Get information about all available readers, including custom readers from a Knowledge instance.
+# A reader's availability cannot change inside a running process, so the same skip is logged
+# once rather than on every /knowledge/config request. The full set is in the response payload.
+_logged_skips: set = set()
 
-    Custom readers are added first and take precedence over factory readers with the same ID.
 
-    Args:
-        knowledge_instance: Optional Knowledge instance to include custom readers from.
+def _log_skip_once(message: str) -> None:
+    if message in _logged_skips:
+        return
+    _logged_skips.add(message)
+    log_debug(message)
 
-    Returns:
-        List of reader info dictionaries (custom readers first, then factory readers).
+
+def get_readers_availability(knowledge_instance: Optional[Any] = None) -> Tuple[List[Dict], List[Dict]]:
+    """One sweep over every reader, answering both halves of the question.
+
+    Returns ``(available, unavailable)``. The sweep imports each reader module, so callers that
+    need both -- the config route needs the readers, the content-type mapping and the
+    unavailable list -- should take them from here rather than sweeping repeatedly.
+
+    ``unavailable`` covers factory readers, whose id is stable and whose packages an operator
+    can install. Each entry carries ``id``, ``name``, ``description``, ``missing_packages`` and
+    ``reason``; ``missing_packages`` comes from the reader's own declaration when it declares
+    what it needs, otherwise from a best-effort read of the framework's message, which
+    ``reason`` always carries verbatim, install instruction included.
     """
-    readers_info = []
+    readers_info: List[Dict] = []
+    unavailable_info: List[Dict] = []
     seen_ids: set = set()
 
     # 1. Add custom readers FIRST (they take precedence over factory readers)
@@ -255,53 +270,20 @@ def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]
                     readers_info.append(reader_info)
                     seen_ids.add(reader_id)
                 except ValueError as e:
-                    log_debug(f"Skipping custom reader '{reader_id}': {e}")
+                    _log_skip_once(f"Skipping custom reader '{reader_id}': {e}")
                     continue
 
     # 2. Add factory readers (skip if custom reader with same ID already exists)
-    keys = ReaderFactory.get_all_reader_keys()
-    for key in keys:
+    for key in ReaderFactory.get_all_reader_keys():
         if key in seen_ids:
             # Custom reader with this ID already added, skip factory version
             continue
         try:
-            reader_info = get_reader_info(key)
-            readers_info.append(reader_info)
-        except ValueError as e:
-            # Skip readers with missing dependencies or other issues
-            log_debug(f"Skipping reader '{key}': {e}")
-            continue
-
-    return readers_info
-
-
-def _first_backticked_token(text: str) -> Optional[str]:
-    """The first backticked token in an import failure, which is where agno puts the package.
-
-    Wording varies -- "`pypdf` not installed" against "The `bs4` package is not installed" --
-    but the package name is the first backticked token in both. This is a hint: the caller
-    always keeps the verbatim message alongside it.
-    """
-    match = re.search(r"`([A-Za-z0-9_.\-]+)`", text)
-    return match.group(1) if match else None
-
-
-def get_unavailable_readers_info() -> List[Dict]:
-    """Factory readers that cannot be used in this install, with why.
-
-    Each entry carries ``id``, ``name``, ``description``, ``missing_packages`` and ``reason``.
-    ``missing_packages`` comes from the reader's own declaration when the reader declares what
-    it needs; otherwise it is a best-effort single name read out of the framework's message,
-    which ``reason`` always carries verbatim, install instruction included.
-    """
-    unavailable_info = []
-
-    for key in ReaderFactory.get_all_reader_keys():
-        try:
-            get_reader_info(key)
+            readers_info.append(get_reader_info(key))
             continue
         except ValueError as e:
             reason = str(e)
+            _log_skip_once(f"Skipping reader '{key}': {reason}")
 
         missing_packages = ReaderFactory.get_missing_read_time_packages(key)
         if not missing_packages:
@@ -321,7 +303,41 @@ def get_unavailable_readers_info() -> List[Dict]:
             }
         )
 
-    return unavailable_info
+    return readers_info, unavailable_info
+
+
+def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]:
+    """Get information about all available readers, including custom readers from a Knowledge instance.
+
+    Custom readers are added first and take precedence over factory readers with the same ID.
+
+    Args:
+        knowledge_instance: Optional Knowledge instance to include custom readers from.
+
+    Returns:
+        List of reader info dictionaries (custom readers first, then factory readers).
+    """
+    return get_readers_availability(knowledge_instance)[0]
+
+
+def _first_backticked_token(text: str) -> Optional[str]:
+    """The first backticked token in an import failure, which is where agno puts the package.
+
+    Wording varies -- "`pypdf` not installed" against "The `bs4` package is not installed" --
+    but the package name is the first backticked token in both. This is a hint: the caller
+    always keeps the verbatim message alongside it.
+    """
+    match = re.search(r"`([A-Za-z0-9_.\-]+)`", text)
+    return match.group(1) if match else None
+
+
+def get_unavailable_readers_info() -> List[Dict]:
+    """Factory readers that cannot be used in this install, with why.
+
+    See :func:`get_readers_availability`, which answers this and the available half in one
+    sweep; prefer it when you need both.
+    """
+    return get_readers_availability()[1]
 
 
 def get_unavailable_chunkers_info() -> List[Dict]:
@@ -355,17 +371,21 @@ def get_unavailable_chunkers_info() -> List[Dict]:
     return unavailable_info
 
 
-def get_content_types_to_readers_mapping(knowledge_instance: Optional[Any] = None) -> Dict[str, List[str]]:
+def get_content_types_to_readers_mapping(
+    knowledge_instance: Optional[Any] = None, readers_info: Optional[List[Dict]] = None
+) -> Dict[str, List[str]]:
     """Get mapping of content types to list of reader IDs that support them.
 
     Args:
         knowledge_instance: Optional Knowledge instance to include custom readers from.
+        readers_info: Optional result of a sweep the caller already ran, to avoid repeating it.
 
     Returns:
         Dictionary mapping content type strings (ContentType enum values) to list of reader IDs.
     """
     content_type_mapping: Dict[str, List[str]] = {}
-    readers_info = get_all_readers_info(knowledge_instance)
+    if readers_info is None:
+        readers_info = get_all_readers_info(knowledge_instance)
     for reader_info in readers_info:
         reader_id = reader_info["id"]
         content_types = reader_info.get("content_types", [])

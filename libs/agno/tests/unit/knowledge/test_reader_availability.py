@@ -318,3 +318,43 @@ def test_a_declaration_keyed_by_a_plain_string_is_honoured():
 
     assert StringKeyedReader.get_missing_read_time_packages() == ["definitely_not_installed_xyz"]
     assert StringKeyedReader.get_available_content_types() == []
+
+
+def test_a_skipped_reader_is_logged_once_per_process():
+    """Availability cannot change inside a process, so the same skip is not logged per request."""
+    import agno.knowledge.utils as knowledge_utils
+
+    saved = set(knowledge_utils._logged_skips)
+    knowledge_utils._logged_skips.clear()
+    try:
+        with patch.object(knowledge_utils, "log_debug") as log:
+            with _specs(absent=("openpyxl", "xlrd")):
+                knowledge_utils.get_all_readers_info()
+                knowledge_utils.get_all_readers_info()
+                knowledge_utils.get_all_readers_info()
+
+        excel_lines = [call.args[0] for call in log.call_args_list if "'excel'" in call.args[0]]
+    finally:
+        knowledge_utils._logged_skips.clear()
+        knowledge_utils._logged_skips.update(saved)
+
+    assert len(excel_lines) == 1
+    assert "openpyxl" in excel_lines[0]
+
+
+def test_availability_is_answered_by_a_single_sweep():
+    """The sweep imports every reader module, so both halves come from one pass."""
+    import agno.knowledge.utils as knowledge_utils
+
+    real_get_reader_info = knowledge_utils.get_reader_info
+    calls = []
+
+    def counting(key):
+        calls.append(key)
+        return real_get_reader_info(key)
+
+    with patch.object(knowledge_utils, "get_reader_info", side_effect=counting):
+        available, unavailable = knowledge_utils.get_readers_availability()
+
+    assert len(calls) == len(ReaderFactory.get_all_reader_keys())
+    assert len(available) + len(unavailable) == len(calls)
