@@ -1188,6 +1188,10 @@ class PostgresDb(BaseDb):
             # Also scrub the legacy blob so the merge helper doesn't resurrect
             # the deleted run on the next read (partial-migration state).
             self._scrub_run_ids_from_legacy_blob([run_id])
+            # Only for a row this delete actually removed: the cascade destroys
+            # payloads, and a run_id that matched nothing may still be in flight.
+            if deleted:
+                self._cascade_tool_results(run_ids=[run_id])
             return deleted
 
         except Exception as e:
@@ -1206,10 +1210,16 @@ class PostgresDb(BaseDb):
                 return
 
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                # Cascade the ids the delete actually removed: it destroys
+                # payloads, and an id that matched no row may still be in flight.
+                deleted_ids = [
+                    row[0]
+                    for row in sess.execute(table.delete().where(table.c.run_id.in_(run_ids)).returning(table.c.run_id))
+                ]
 
             self._scrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")
+            self._cascade_tool_results(run_ids=deleted_ids)
+            log_debug(f"Successfully deleted {len(deleted_ids)} runs")
 
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
@@ -1311,26 +1321,30 @@ class PostgresDb(BaseDb):
             log_error(f"Error deleting sessions: {str(e)}")
             raise e
 
-    def _cascade_tool_results(self, session_ids: List[str]) -> None:
-        """Cascade result offloading on session delete: read the index rows,
-        delete their payloads, then the index rows.
+    def _cascade_tool_results(
+        self, session_ids: Optional[List[str]] = None, *, run_ids: Optional[List[str]] = None
+    ) -> None:
+        """Cascade result offloading on session or run delete: read the index
+        rows, delete their payloads, then the index rows.
 
-        Best-effort and outside the session delete, so a cascade failure can
-        never poison or roll back the delete itself. Payloads are removed by
-        the exact (namespace, path) of each index row, through the
-        filesystems result stores registered on this db, or from the AgentFS
-        table at its defaults when no store registered.
+        Best-effort and outside the delete, so a cascade failure can never
+        poison or roll back the delete itself. Payloads are removed by the
+        exact (namespace, path) of each index row, through the filesystems
+        result stores registered on this db, or from the AgentFS table at its
+        defaults when no store registered.
         """
         try:
             table = self._get_table(table_type="tool_results")
             if table is None:
                 return
+            if session_ids is not None:
+                scope = table.c.session_id.in_(session_ids)
+            elif run_ids is not None:
+                scope = table.c.run_id.in_(run_ids)
+            else:
+                return
             with self.Session() as sess:
-                rows = sess.execute(
-                    select(table.c.result_id, table.c.namespace, table.c.path).where(
-                        table.c.session_id.in_(session_ids)
-                    )
-                ).fetchall()
+                rows = sess.execute(select(table.c.result_id, table.c.namespace, table.c.path).where(scope)).fetchall()
             if not rows:
                 return
             # Payloads are removed through every filesystem a store on this db
