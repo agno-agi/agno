@@ -3249,7 +3249,21 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Get the model response for the team leader
+                # 6. Pre-loop compaction: compress history BEFORE first model call
+                if team.compaction_manager is not None and team.compaction_manager.compact_context:
+                    log_debug(f"[TEAM-RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    compaction_result = await team.compaction_manager.acompact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        log_debug(
+                            f"[TEAM-RUN-ASYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
+                        )
+
+                # 7. Get the model response for the team leader
                 model_response = await acall_model_with_fallback(
                     team.model,
                     team.fallback_config,
@@ -3261,6 +3275,8 @@ async def _arun(
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
                     compaction_manager=team.compaction_manager if team.compact_tools else None,
+                    compacted_messages=run_messages.compacted_messages,
+                    compaction_callback=await abuild_team_compaction_callback(team, run_messages, run_response),
                     **result_store_kwargs(team),
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
