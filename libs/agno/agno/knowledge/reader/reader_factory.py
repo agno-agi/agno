@@ -2,6 +2,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.types import ContentType
 
 
 class ReaderFactory:
@@ -363,6 +364,32 @@ class ReaderFactory:
 
         module = importlib.import_module(module_path)
         return getattr(module, class_name)
+
+    @classmethod
+    def get_missing_read_time_packages(cls, reader_key: str, content_type: Optional[str] = None) -> List[str]:
+        """Declared read-time packages a reader needs that are not importable.
+
+        Returns an empty list for a reader whose class cannot be imported at all: its module
+        scope already reports what is missing, and this table only covers what that import
+        cannot see.
+        """
+        try:
+            reader_class = cls.get_reader_class(reader_key)
+        except Exception:
+            return []
+        return reader_class.get_missing_read_time_packages(content_type)  # type: ignore[attr-defined]
+
+    @classmethod
+    def get_available_content_types(cls, reader_key: str) -> List[ContentType]:
+        """Content types a reader supports and can actually read in this install.
+
+        An unknown reader key, or one whose class cannot be imported, returns [].
+        """
+        try:
+            reader_class = cls.get_reader_class(reader_key)
+            return reader_class.get_available_content_types()  # type: ignore[attr-defined]
+        except Exception:
+            return []
 
     @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:

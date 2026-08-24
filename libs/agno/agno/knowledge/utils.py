@@ -1,4 +1,5 @@
-from typing import Any, Dict, List, Optional
+import re
+from typing import Any, Dict, List, Optional, Tuple, Type
 
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.reader.reader_factory import ReaderFactory
@@ -116,6 +117,45 @@ def _import_class(module_name: str, class_name: str):
     return getattr(module, class_name)
 
 
+def get_read_time_availability(
+    reader_class: Type[Reader],
+) -> Tuple[List[ContentType], Dict[str, List[str]]]:
+    """Split a reader's supported content types into what it can and cannot read here.
+
+    Returns ``(available, unavailable)`` where ``unavailable`` maps a content type value to the
+    declared packages it needs that are not installed. A reader that declares no read-time
+    requirements, or whose class does not answer, reports everything as available.
+    """
+    try:
+        supported = reader_class.get_supported_content_types()
+    except Exception:
+        return [], {}
+
+    try:
+        if not reader_class.get_read_time_requirements():
+            return supported, {}
+        available = reader_class.get_available_content_types()
+        unavailable = {
+            content_type.value: reader_class.get_missing_read_time_packages(content_type)
+            for content_type in supported
+            if content_type not in available
+        }
+    except Exception:
+        return supported, {}
+
+    return available, unavailable
+
+
+def _missing_read_time_dependencies_message(reader_id: str, reader_class: Type[Reader]) -> str:
+    """The message for a reader whose every content type needs a package that is not installed."""
+    missing = reader_class.get_missing_read_time_packages()
+    packages = ", ".join(f"`{package}`" for package in missing)
+    return (
+        f"Reader '{reader_id}' has missing dependencies: {packages} not installed. "
+        f"Please install it via `pip install {' '.join(missing)}`."
+    )
+
+
 def get_reader_info(reader_key: str) -> Dict:
     """Get information about a reader without instantiating it.
 
@@ -132,19 +172,26 @@ def get_reader_info(reader_key: str) -> Dict:
         # Call class methods directly (no instance needed)
         supported_strategies = reader_class.get_supported_chunking_strategies()  # type: ignore[attr-defined]
         supported_content_types = reader_class.get_supported_content_types()  # type: ignore[attr-defined]
-
-        return {
-            "id": reader_key,
-            "name": metadata.get("name", reader_class.__name__),
-            "description": metadata.get("description", f"{reader_class.__name__} reader"),
-            "chunking_strategies": [strategy.value for strategy in supported_strategies],
-            "content_types": [ct.value for ct in supported_content_types],
-        }
     except ImportError as e:
         # Skip readers with missing dependencies
         raise ValueError(f"Reader '{reader_key}' has missing dependencies: {str(e)}")
     except Exception as e:
         raise ValueError(f"Unknown reader: {reader_key}. Error: {str(e)}")
+
+    # Raised outside the block above on purpose: inside it, the catch-all would relabel a
+    # missing engine as an unknown reader, and that relabelled text is what operators read.
+    available_content_types, unavailable_content_types = get_read_time_availability(reader_class)
+    if supported_content_types and not available_content_types:
+        raise ValueError(_missing_read_time_dependencies_message(reader_key, reader_class))
+
+    return {
+        "id": reader_key,
+        "name": metadata.get("name", reader_class.__name__),
+        "description": metadata.get("description", f"{reader_class.__name__} reader"),
+        "chunking_strategies": [strategy.value for strategy in supported_strategies],
+        "content_types": [ct.value for ct in available_content_types],
+        "unavailable_content_types": unavailable_content_types,
+    }
 
 
 def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
@@ -153,16 +200,24 @@ def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
         reader_class = reader.__class__
         supported_strategies = reader_class.get_supported_chunking_strategies()
         supported_content_types = reader_class.get_supported_content_types()
-
-        return {
-            "id": reader_id,
-            "name": getattr(reader, "name", reader_class.__name__),
-            "description": getattr(reader, "description", f"Custom {reader_class.__name__}"),
-            "chunking_strategies": [strategy.value for strategy in supported_strategies],
-            "content_types": [ct.value for ct in supported_content_types],
-        }
     except Exception as e:
         raise ValueError(f"Failed to get info for reader '{reader_id}': {str(e)}")
+
+    # An instance takes precedence over the factory entry with the same id, so it has to apply
+    # the same read-time filter -- otherwise a cached ExcelReader re-advertises what the
+    # factory path just stopped advertising.
+    available_content_types, unavailable_content_types = get_read_time_availability(reader_class)
+    if supported_content_types and not available_content_types:
+        raise ValueError(_missing_read_time_dependencies_message(reader_id, reader_class))
+
+    return {
+        "id": reader_id,
+        "name": getattr(reader, "name", reader_class.__name__),
+        "description": getattr(reader, "description", f"Custom {reader_class.__name__}"),
+        "chunking_strategies": [strategy.value for strategy in supported_strategies],
+        "content_types": [ct.value for ct in available_content_types],
+        "unavailable_content_types": unavailable_content_types,
+    }
 
 
 def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]:
@@ -207,6 +262,86 @@ def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]
             continue
 
     return readers_info
+
+
+def _first_backticked_token(text: str) -> Optional[str]:
+    """The first backticked token in an import failure, which is where agno puts the package.
+
+    Wording varies -- "`pypdf` not installed" against "The `bs4` package is not installed" --
+    but the package name is the first backticked token in both. This is a hint: the caller
+    always keeps the verbatim message alongside it.
+    """
+    match = re.search(r"`([A-Za-z0-9_.\-]+)`", text)
+    return match.group(1) if match else None
+
+
+def get_unavailable_readers_info() -> List[Dict]:
+    """Factory readers that cannot be used in this install, with why.
+
+    Each entry carries ``id``, ``name``, ``description``, ``missing_packages`` and ``reason``.
+    ``missing_packages`` comes from the reader's own declaration when the reader declares what
+    it needs; otherwise it is a best-effort single name read out of the framework's message,
+    which ``reason`` always carries verbatim, install instruction included.
+    """
+    unavailable_info = []
+
+    for key in ReaderFactory.get_all_reader_keys():
+        try:
+            get_reader_info(key)
+            continue
+        except ValueError as e:
+            reason = str(e)
+
+        missing_packages = ReaderFactory.get_missing_read_time_packages(key)
+        if not missing_packages:
+            package = _first_backticked_token(reason)
+            missing_packages = [package] if package else []
+
+        # The class is by definition not importable for a module-scope failure, so the static
+        # metadata is the only name and description available here.
+        metadata = ReaderFactory.READER_METADATA.get(key, {})
+        unavailable_info.append(
+            {
+                "id": key,
+                "name": metadata.get("name"),
+                "description": metadata.get("description"),
+                "missing_packages": missing_packages,
+                "reason": reason,
+            }
+        )
+
+    return unavailable_info
+
+
+def get_unavailable_chunkers_info() -> List[Dict]:
+    """Chunking strategies that cannot be used in this install, with why.
+
+    Same shape as :func:`get_unavailable_readers_info`, keyed by ``id`` on the chunker key.
+    """
+    from agno.knowledge.chunking.strategy import ChunkingStrategyType
+
+    unavailable_info = []
+
+    for strategy_type in ChunkingStrategyType:
+        key = strategy_type.value
+        try:
+            get_chunker_info(key)
+            continue
+        except ValueError as e:
+            reason = str(e)
+
+        package = _first_backticked_token(reason)
+        unavailable_info.append(
+            {
+                "id": key,
+                "name": key,
+                "description": None,
+                "missing_packages": [package] if package else [],
+                "reason": reason,
+            }
+        )
+
+    return unavailable_info
 
 
 def get_content_types_to_readers_mapping(knowledge_instance: Optional[Any] = None) -> Dict[str, List[str]]:
