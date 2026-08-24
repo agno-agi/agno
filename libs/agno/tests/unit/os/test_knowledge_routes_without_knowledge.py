@@ -44,10 +44,12 @@ def test_the_no_knowledge_base_error_does_not_blame_the_caller():
     assert "contents_db" in response.json()["detail"]
 
 
-def test_an_identifier_against_no_knowledge_base_still_reports_none_configured():
+def test_a_named_identifier_still_answers_not_found():
+    """A caller that named an id gets the precise answer; only the empty no-identifier case moved."""
     response = _build_client().get("/knowledge/config", params={"knowledge_id": "does-not-exist"})
 
-    assert response.status_code == 503
+    assert response.status_code == 404
+    assert "does-not-exist" in response.json()["detail"]
 
 
 def test_knowledge_routes_stay_mounted_without_a_knowledge_base():
