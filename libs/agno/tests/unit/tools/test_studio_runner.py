@@ -225,7 +225,7 @@ class TestRegistration:
         assert expected == set(runner.async_functions.keys())
 
     def test_flags_scope_the_surface(self, db):
-        runner = StudioRunnerTools(db=db, teams=False, workflows=False)
+        runner = StudioRunnerTools(db=db, run_teams=False, run_workflows=False)
         assert {"list_agents", "run_agent"} == set(runner.functions.keys())
         assert {"list_agents", "run_agent"} == set(runner.async_functions.keys())
 
@@ -644,7 +644,7 @@ class TestResolution:
         # With the team tools off, run_team does not exist on this toolkit; a
         # hint naming it would point at a door that is not there.
         stub = _StubTeam()
-        runner = StudioRunnerTools(db=db, include_teams=[stub], teams=False)
+        runner = StudioRunnerTools(db=db, include_teams=[stub], run_teams=False)
         out = _loads(runner.run_agent("stub-team", "hi"))
         assert out == {"error": "Agent not found: stub-team"}
 
@@ -658,7 +658,7 @@ class TestResolution:
     def test_the_instructions_say_the_rosters_are_separate(self, db):
         assert "separate rosters" in StudioRunnerTools(db=db).instructions
         # With a single kind enabled there is no sibling roster to point at.
-        assert "separate rosters" not in StudioRunnerTools(db=db, teams=False, workflows=False).instructions
+        assert "separate rosters" not in StudioRunnerTools(db=db, run_teams=False, run_workflows=False).instructions
 
     def test_exact_id_beats_code_defined_display_name(self, db):
         shadow = _StubAgent()
@@ -1533,7 +1533,7 @@ class TestDiscovery:
     def test_disclosure_omits_disabled_namespaces(self, db):
         # run_team is not registered on this toolkit, so a team count would
         # advertise components the caller has no tool to run.
-        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent()], include_teams=[_StubTeam()], teams=False)
+        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent()], include_teams=[_StubTeam()], run_teams=False)
         out = _loads(runner.list_agents())
         assert out["other_components"] == {"workflows": 0}
 

@@ -287,9 +287,9 @@ class StudioRunnerTools(Toolkit):
         include_agents: Optional[List["Agent"]] = None,
         include_teams: Optional[List["Team"]] = None,
         include_workflows: Optional[List["Workflow"]] = None,
-        agents: bool = True,
-        teams: bool = True,
-        workflows: bool = True,
+        run_agents: bool = True,
+        run_teams: bool = True,
+        run_workflows: bool = True,
         include_all_components: bool = False,
         max_dispatch_depth: int = 2,
         list_limit: int = 100,
@@ -312,25 +312,32 @@ class StudioRunnerTools(Toolkit):
         self.include_agents = include_agents
         self.include_teams = include_teams
         self.include_workflows = include_workflows
-        self.enable_agents = agents
-        self.enable_teams = teams
-        self.enable_workflows = workflows
+        # Each run_* flag exposes that kind's whole surface, list tool
+        # included: the list reports exactly what dispatch admits, so a kind
+        # that cannot run has nothing to list either.
+        self.enable_agents = run_agents
+        self.enable_teams = run_teams
+        self.enable_workflows = run_workflows
         self.include_all_components = include_all_components
         self.list_limit = list_limit
 
         tools: List[Callable] = []
         async_tools: List[tuple[Callable[..., Any], str]] = []
-        if agents:
+        if run_agents:
             tools.extend([self.list_agents, self.run_agent])
             async_tools.extend([(self.alist_agents, "list_agents"), (self.arun_agent, "run_agent")])
-        if teams:
+        if run_teams:
             tools.extend([self.list_teams, self.run_team])
             async_tools.extend([(self.alist_teams, "list_teams"), (self.arun_team, "run_team")])
-        if workflows:
+        if run_workflows:
             tools.extend([self.list_workflows, self.run_workflow])
             async_tools.extend([(self.alist_workflows, "list_workflows"), (self.arun_workflow, "run_workflow")])
 
-        enabled = [label for flag, label in ((agents, "agents"), (teams, "teams"), (workflows, "workflows")) if flag]
+        enabled = [
+            label
+            for flag, label in ((run_agents, "agents"), (run_teams, "teams"), (run_workflows, "workflows"))
+            if flag
+        ]
         instruction_lines: List[str] = []
         if enabled:
             list_names = "/".join(f"list_{label}" for label in enabled)
