@@ -60,7 +60,6 @@ if __name__ == "__main__":
             "Use the generate_image tool to create detailed visualizations of user requests.",
             "Provide creative suggestions to enhance the images if needed.",
         ],
-        debug_mode=True,
     )
 
     # Generate an image with the standard OpenAI model and Azure tools

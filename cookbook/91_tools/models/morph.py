@@ -56,7 +56,6 @@ def main():
     code_editor = Agent(
         model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[MorphTools(model="morph-v3-large")],
-        debug_mode=True,
         markdown=True,
     )
 

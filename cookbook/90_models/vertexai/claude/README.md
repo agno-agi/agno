@@ -113,7 +113,7 @@ python cookbook/90_models/vertexai/claude/adaptive_thinking.py
 ```
 
 ```python
-from agno.models.vertexai import Claude
+from agno.models.vertexai.claude import Claude
 
 model = Claude(
     id="claude-sonnet-4-6@20250514",

@@ -57,7 +57,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     markdown=True,
-    debug_mode=True,
 )
 
 

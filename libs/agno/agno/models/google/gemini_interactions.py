@@ -155,7 +155,7 @@ class GeminiInteractions(Model):
         ```
     """
 
-    id: str = "gemini-3-flash-preview"
+    id: str = "gemini-3.7-flash"
     name: str = "GeminiInteractions"
     provider: str = "Google"
 

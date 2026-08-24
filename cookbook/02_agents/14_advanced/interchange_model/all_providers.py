@@ -34,7 +34,6 @@ def main() -> None:
         add_history_to_context=True,
         num_history_runs=10,
         tools=[get_weather],
-        debug_mode=True,
         introduction="You are a weather agent that can check the weather in different cities.",
     )
 
