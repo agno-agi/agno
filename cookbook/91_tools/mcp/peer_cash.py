@@ -41,6 +41,9 @@ async def run_agent(message: str) -> None:
             model=OpenAIResponses(id="gpt-5.5"),
             tools=[peer_cash],
             output_schema=CashoutPlan,
+            # Keep the final response structured without forcing OpenAI's strict
+            # schema rules onto externally defined MCP tool schemas.
+            use_json_mode=True,
             instructions=[
                 "Use Peer Cash to help users move Base USDC to supported fiat payout rails.",
                 "Read capabilities before assuming a platform, currency, amount, or payee format is supported.",
