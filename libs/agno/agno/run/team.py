@@ -2,9 +2,12 @@ from copy import copy
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union, get_args
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union, get_args
 
 from pydantic import BaseModel
+
+if TYPE_CHECKING:
+    from agno.compression import CompactionState
 
 from agno.media import Audio, File, Image, Video
 from agno.metrics import RunMetrics
@@ -787,6 +790,10 @@ class TeamRunOutput:
     additional_input: Optional[List[Message]] = None
     reasoning_steps: Optional[List[ReasoningStep]] = None
     reasoning_messages: Optional[List[Message]] = None
+
+    # Point-in-time compaction state for continue_run time travel
+    compaction_state: Optional["CompactionState"] = None
+
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
@@ -862,6 +869,7 @@ class TeamRunOutput:
         "followups",
         "member_responses",
         "input",
+        "compaction_state",
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -951,6 +959,9 @@ class TeamRunOutput:
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
+        if self.compaction_state is not None:
+            _dict["compaction_state"] = self.compaction_state.to_dict()
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -1037,6 +1048,13 @@ class TeamRunOutput:
         citations = data.pop("citations", None)
         citations = Citations.model_validate(citations) if citations else None
 
+        compaction_data = data.pop("compaction_state", None)
+        compaction_state = None
+        if compaction_data:
+            from agno.compression import CompactionState
+
+            compaction_state = CompactionState.from_dict(compaction_data)
+
         # Filter data to only include fields that are actually defined in the TeamRunOutput dataclass
         from dataclasses import fields
 
@@ -1061,6 +1079,7 @@ class TeamRunOutput:
             tools=tools,
             requirements=requirements,
             events=events,
+            compaction_state=compaction_state,
             **filtered_data,
         )
 

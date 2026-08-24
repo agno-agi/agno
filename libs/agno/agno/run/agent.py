@@ -23,6 +23,7 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
+    from agno.compression import CompactionState
     from agno.session.summary import SessionSummary
 
 
@@ -660,6 +661,9 @@ class RunOutput:
     metadata: Optional[Dict[str, Any]] = None
     session_state: Optional[Dict[str, Any]] = None
 
+    # Point-in-time compaction state for continue_run time travel
+    compaction_state: Optional["CompactionState"] = None
+
     created_at: int = field(default_factory=lambda: int(time()))
 
     events: Optional[List[RunOutputEvent]] = None
@@ -743,6 +747,7 @@ class RunOutput:
         "references",
         "requirements",
         "followups",
+        "compaction_state",
     )
 
     def to_dict(self) -> Dict[str, Any]:
@@ -849,6 +854,9 @@ class RunOutput:
         if self.input is not None:
             _dict["input"] = self.input.to_dict()
 
+        if self.compaction_state is not None:
+            _dict["compaction_state"] = self.compaction_state.to_dict()
+
         return _dict
 
     def to_json(self, separators=(", ", ": "), indent: Optional[int] = 2) -> str:
@@ -936,6 +944,14 @@ class RunOutput:
         if references is not None:
             references = [MessageReferences.model_validate(reference) for reference in references]
 
+        # Handle compaction state deserialization
+        compaction_data = data.pop("compaction_state", None)
+        compaction_state = None
+        if compaction_data and isinstance(compaction_data, dict):
+            from agno.compression import CompactionState
+
+            compaction_state = CompactionState.from_dict(compaction_data)
+
         # Filter data to only include fields that are actually defined in the RunOutput dataclass
         from dataclasses import fields
 
@@ -959,6 +975,7 @@ class RunOutput:
             reasoning_messages=reasoning_messages,
             references=references,
             requirements=requirements,
+            compaction_state=compaction_state,
             **filtered_data,
         )
 
