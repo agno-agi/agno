@@ -771,13 +771,14 @@ class Workflow:
         elif self.dependencies is not None:
             resolved_dependencies = self.dependencies.copy()
 
-        # metadata: layered merge, self wins (call-site < session < self).
-        # Each layer is deep-copied before it is merged, so no nested dict in the
-        # result aliases a source dict — in particular self.metadata, whose nested
-        # dicts must never be mutated by an in-run write to run_context.metadata
-        # (merge_dictionaries recurses in place).
+        # metadata: layered merge, call-site wins (self < session < call-site),
+        # matching how Agent resolves. Each layer is deep-copied before it is
+        # merged, so no nested dict in the result aliases a source dict — in
+        # particular self.metadata, whose nested dicts must never be mutated by
+        # an in-run write to run_context.metadata (merge_dictionaries recurses
+        # in place).
         resolved_metadata: Optional[Dict[str, Any]] = None
-        for layer in (metadata, session_metadata, self.metadata):
+        for layer in (self.metadata, session_metadata, metadata):
             if layer is not None:
                 if resolved_metadata is None:
                     resolved_metadata = {}
