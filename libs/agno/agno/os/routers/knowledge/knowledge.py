@@ -111,6 +111,7 @@ def get_knowledge_router(
             404: {"description": "Not Found", "model": NotFoundResponse},
             422: {"description": "Validation Error", "model": ValidationErrorResponse},
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+            503: {"description": "No knowledge base is configured on this AgentOS"},
         },
     )
     return attach_routes(router=router, knowledge_instances=knowledge_instances)
@@ -1335,6 +1336,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             readers_dict: Dict[str, Reader] = {}
         else:
             readers_dict = readers_result
+        unusable_readers: Dict[str, UnavailableReaderSchema] = {}
         if readers_dict:
             for reader_id, reader in readers_dict.items():
                 # Check if this reader ID already exists in factory readers
@@ -1344,6 +1346,20 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 available_types, unavailable_types = get_read_time_availability(reader.__class__)
                 if unavailable_types and not available_types:
                     # Every format this reader handles needs a package that is not installed.
+                    # Reported rather than dropped: a reader that vanishes with no reason is
+                    # the defect this endpoint is being fixed for.
+                    missing = sorted({package for packages in unavailable_types.values() for package in packages})
+                    unusable_readers[reader_id] = UnavailableReaderSchema(
+                        id=reader_id,
+                        name=getattr(reader, "name", None) or reader.__class__.__name__,
+                        description=getattr(reader, "description", None),
+                        missing_packages=missing,
+                        reason=(
+                            f"Reader '{reader_id}' has missing dependencies: "
+                            f"{', '.join(f'`{package}`' for package in missing)} not installed. "
+                            f"Please install it via `pip install {' '.join(missing)}`."
+                        ),
+                    )
                     continue
 
                 # Get chunking strategies from the reader
@@ -1356,10 +1372,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
                 reader_schemas[reader_id] = ReaderSchema(
                     id=reader_id,
-                    name=getattr(reader, "name", reader.__class__.__name__),
-                    description=getattr(reader, "description", f"Custom {reader.__class__.__name__}"),
+                    name=getattr(reader, "name", None) or reader.__class__.__name__,
+                    description=getattr(reader, "description", None) or f"Custom {reader.__class__.__name__}",
                     chunkers=[c for c in chunking_strategies if c in chunkers_dict],
-                    content_types=[content_type.value for content_type in available_types],
+                    # A reader whose content types are not the enum still has to render.
+                    content_types=[getattr(ct, "value", str(ct)) for ct in available_types],
                     unavailable_content_types=unavailable_types or None,
                 )
 
@@ -1367,6 +1384,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         types_of_readers = get_content_types_to_readers_mapping(knowledge)
 
         unavailable_readers = {r["id"]: UnavailableReaderSchema(**r) for r in get_unavailable_readers_info()}
+        unavailable_readers.update(unusable_readers)
+        # A reader this knowledge instance supplies under a factory id answers for that id, so
+        # the response never calls the same reader usable and missing at once.
+        for reader_id in reader_schemas:
+            unavailable_readers.pop(reader_id, None)
         unavailable_chunkers = {c["id"]: UnavailableChunkerSchema(**c) for c in get_unavailable_chunkers_info()}
         _warn_once_about_unavailable(unavailable_readers, unavailable_chunkers)
 

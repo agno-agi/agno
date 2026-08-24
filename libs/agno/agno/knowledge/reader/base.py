@@ -121,7 +121,8 @@ class Reader:
             wanted = content_type.value if isinstance(content_type, ContentType) else content_type
             packages = []
             for declared_type, declared_packages in requirements.items():
-                if declared_type.value == wanted:
+                declared = declared_type.value if isinstance(declared_type, ContentType) else declared_type
+                if declared == wanted:
                     packages = list(declared_packages)
                     break
 

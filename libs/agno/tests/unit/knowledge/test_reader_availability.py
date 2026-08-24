@@ -12,6 +12,7 @@ import ast
 import importlib
 import importlib.util
 import sys
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Set, Tuple
 from unittest.mock import patch
@@ -48,6 +49,40 @@ def _specs(absent: Tuple[str, ...] = (), present: Tuple[str, ...] = ()):
         return real(name, package)
 
     return patch("agno.knowledge.reader.base.find_spec", side_effect=fake)
+
+
+class _BlockedFinder:
+    """Refuse one package, so agno's own module-scope guard runs."""
+
+    def __init__(self, blocked: str):
+        self.blocked = blocked
+
+    def find_spec(self, fullname, path=None, target=None):
+        if fullname == self.blocked or fullname.startswith(f"{self.blocked}."):
+            raise ImportError(f"blocked for test: {fullname}")
+        return None
+
+
+@contextmanager
+def _package_absent(package: str, *reimport: str):
+    """Make *package* unimportable and force *reimport* modules to be imported again.
+
+    patch.dict(sys.modules, ...) is the obvious tool and the wrong one: it restores by
+    clearing the whole mapping, so anything imported inside the block is evicted from the
+    interpreter for good. This touches only the keys it names.
+    """
+    finder = _BlockedFinder(package)
+    saved = {name: sys.modules.pop(name, None) for name in (package, *reimport)}
+    sys.meta_path.insert(0, finder)
+    try:
+        yield
+    finally:
+        sys.meta_path.remove(finder)
+        for name in (package, *reimport):
+            sys.modules.pop(name, None)
+        for name, module in saved.items():
+            if module is not None:
+                sys.modules[name] = module
 
 
 def test_excel_reader_is_not_advertised_when_neither_engine_is_installed():
@@ -126,8 +161,7 @@ def test_a_read_time_failure_is_not_reported_as_an_unknown_reader():
 
 
 def test_unavailable_reader_reason_is_verbatim_for_module_level_failures():
-    with patch.dict(sys.modules, {"pypdf": None}):
-        sys.modules.pop("agno.knowledge.reader.pdf_reader", None)
+    with _package_absent("pypdf", "agno.knowledge.reader.pdf_reader"):
         by_id = {entry["id"]: entry for entry in get_unavailable_readers_info()}
 
     assert "`pypdf` not installed" in by_id["pdf"]["reason"]
@@ -135,14 +169,15 @@ def test_unavailable_reader_reason_is_verbatim_for_module_level_failures():
 
 
 def test_unavailable_chunkers_are_reported_with_their_missing_packages():
-    with patch.dict(sys.modules, {"chonkie": None}):
-        for module in [name for name in sys.modules if name.startswith("agno.knowledge.chunking")]:
-            sys.modules.pop(module, None)
+    chunking_modules = [name for name in sys.modules if name.startswith("agno.knowledge.chunking")]
+
+    with _package_absent("chonkie", *chunking_modules):
         by_id = {entry["id"]: entry for entry in get_unavailable_chunkers_info()}
 
     assert by_id, "expected at least one chunker to be unavailable without chonkie"
     for entry in by_id.values():
-        assert entry["reason"]
+        assert entry["missing_packages"] == ["chonkie"]
+        assert "chonkie" in entry["reason"]
 
 
 def test_docx_reader_does_not_advertise_legacy_doc():
@@ -179,6 +214,7 @@ def _function_scoped_third_party_imports(path: Path) -> Set[str]:
     return {name for name in found if name != "agno" and name not in sys.stdlib_module_names}
 
 
+@pytest.mark.skipif(not hasattr(sys, "stdlib_module_names"), reason="sys.stdlib_module_names is 3.10+")
 def test_every_hard_function_scoped_reader_import_is_declared():
     """A dependency imported at read time has to be declared, or the reader lies about itself.
 
@@ -217,3 +253,68 @@ def test_every_hard_function_scoped_reader_import_is_declared():
         f"Undeclared read-time imports: {undeclared}. Declare them in the reader's "
         "get_read_time_requirements(), or allowlist them with the fallback that makes them optional."
     )
+
+
+def test_docling_does_not_advertise_audio_it_cannot_transcribe():
+    """docling loads its speech engine at read time, so the class import proves nothing."""
+    with _specs(absent=("whisper",)):
+        info = get_reader_info("docling")
+
+    assert ContentType.AUDIO_MP3.value not in info["content_types"]
+    assert info["unavailable_content_types"][ContentType.AUDIO_MP3.value] == ["whisper"]
+    assert ContentType.IMAGE_PNG.value in info["content_types"]
+
+
+def test_docling_advertises_audio_when_the_engine_is_installed():
+    with _specs(present=("whisper",)):
+        info = get_reader_info("docling")
+
+    assert ContentType.AUDIO_MP3.value in info["content_types"]
+    assert info["unavailable_content_types"] == {}
+
+
+def test_a_reader_that_does_not_return_enums_is_skipped_not_fatal():
+    """One non-conforming reader must not take the whole config sweep down with it."""
+
+    class StringyReader(Reader):
+        @classmethod
+        def get_supported_chunking_strategies(cls):
+            return []
+
+        @classmethod
+        def get_supported_content_types(cls):
+            return [".mine"]
+
+    from agno.knowledge.utils import get_all_readers_info, get_reader_info_from_instance
+
+    with pytest.raises(ValueError):
+        get_reader_info_from_instance(StringyReader(), "stringy")
+
+    from agno.knowledge.knowledge import Knowledge
+
+    knowledge = Knowledge(name="Stringy KB")
+    knowledge.readers = {"stringy": StringyReader()}
+
+    ids = [info["id"] for info in get_all_readers_info(knowledge)]
+    assert "stringy" not in ids
+    assert "text" in ids
+
+
+def test_a_declaration_keyed_by_a_plain_string_is_honoured():
+    """The declaration is a public hook, so it takes the enum or its value."""
+
+    class StringKeyedReader(Reader):
+        @classmethod
+        def get_supported_chunking_strategies(cls):
+            return []
+
+        @classmethod
+        def get_supported_content_types(cls):
+            return [ContentType.TXT]
+
+        @classmethod
+        def get_read_time_requirements(cls):
+            return {ContentType.TXT.value: ["definitely_not_installed_xyz"]}
+
+    assert StringKeyedReader.get_missing_read_time_packages() == ["definitely_not_installed_xyz"]
+    assert StringKeyedReader.get_available_content_types() == []

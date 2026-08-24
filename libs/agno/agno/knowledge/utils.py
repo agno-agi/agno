@@ -184,14 +184,19 @@ def get_reader_info(reader_key: str) -> Dict:
     if supported_content_types and not available_content_types:
         raise ValueError(_missing_read_time_dependencies_message(reader_key, reader_class))
 
-    return {
-        "id": reader_key,
-        "name": metadata.get("name", reader_class.__name__),
-        "description": metadata.get("description", f"{reader_class.__name__} reader"),
-        "chunking_strategies": [strategy.value for strategy in supported_strategies],
-        "content_types": [ct.value for ct in available_content_types],
-        "unavailable_content_types": unavailable_content_types,
-    }
+    # A reader whose class methods return something other than the enums still has to be
+    # skipped rather than take the whole config response down with it.
+    try:
+        return {
+            "id": reader_key,
+            "name": metadata.get("name", reader_class.__name__),
+            "description": metadata.get("description", f"{reader_class.__name__} reader"),
+            "chunking_strategies": [strategy.value for strategy in supported_strategies],
+            "content_types": [ct.value for ct in available_content_types],
+            "unavailable_content_types": unavailable_content_types,
+        }
+    except Exception as e:
+        raise ValueError(f"Unknown reader: {reader_key}. Error: {str(e)}")
 
 
 def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
@@ -210,14 +215,20 @@ def get_reader_info_from_instance(reader: Reader, reader_id: str) -> Dict:
     if supported_content_types and not available_content_types:
         raise ValueError(_missing_read_time_dependencies_message(reader_id, reader_class))
 
-    return {
-        "id": reader_id,
-        "name": getattr(reader, "name", reader_class.__name__),
-        "description": getattr(reader, "description", f"Custom {reader_class.__name__}"),
-        "chunking_strategies": [strategy.value for strategy in supported_strategies],
-        "content_types": [ct.value for ct in available_content_types],
-        "unavailable_content_types": unavailable_content_types,
-    }
+    # A reader whose class methods return something other than the enums still has to be
+    # skipped rather than take the whole config response down with it.
+    try:
+        return {
+            "id": reader_id,
+            # Reader.__init__ assigns both, so the attribute is present and often None.
+            "name": getattr(reader, "name", None) or reader_class.__name__,
+            "description": getattr(reader, "description", None) or f"Custom {reader_class.__name__}",
+            "chunking_strategies": [strategy.value for strategy in supported_strategies],
+            "content_types": [ct.value for ct in available_content_types],
+            "unavailable_content_types": unavailable_content_types,
+        }
+    except Exception as e:
+        raise ValueError(f"Failed to get info for reader '{reader_id}': {str(e)}")
 
 
 def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]:
