@@ -1,7 +1,9 @@
 # Test Log: 24_showcase
 
 Tested on 2026-07-24 against Agno source commit
-`45bfff9f2aa6ec11b7386c3cd3bf6d1141d005dc`.
+`45bfff9f2aa6ec11b7386c3cd3bf6d1141d005dc`, and `demo.py` re-tested on
+2026-08-24 after its eval persistence check moved from
+`accuracy_evaluation.eval_id` to `result.run_id`.
 
 The lesson was loaded from the rewrite worktree and exercised with the demo
 Python environment, PostgreSQL with pgvector on port 5532, `gpt-5.5`, and
@@ -52,23 +54,21 @@ their results into a sourced table with timing caveats.
 
 **Test mode:** LIVE
 
-**Description:** Ran the documented module entrypoint with `SHOWCASE_PORT=17877`,
-prepared knowledge, ran the real accuracy evaluation, and exercised
-authentication, discovery, an Agent run, knowledge, sessions, traces, and
-evals.
+**Description:** Re-tested 2026-08-24 on `SHOWCASE_PORT=17879` after the eval
+persistence check moved to `result.run_id`: prepared knowledge, ran the real
+accuracy evaluation, and exercised authentication and the eval endpoints.
 
-**Result:** Module-entrypoint AccuracyEval
-`0a7df9c3-aecc-4ee5-bc2e-fa7165bb234a` scored `10/10`. The
-post-run persistence assertion was then exercised with eval
-`47325c0e-73c5-4477-87e7-38dc4f5323ce`; its stored name and `10/10`
-average were read back from PostgreSQL. Anonymous `GET /config` returned
-`401`; the Bearer-authenticated request returned `200` and exactly
-`agno-assist`, `sage`, and `finance-team`. Authenticated Agent run
-`46f18a31-9a8e-4db5-810b-c63e14275ec0` completed after a knowledge
-search. Trace `f43d8d4a65e4c0218fc6f84ef9df77a2` was read back with 4
-Agent, model, and tool spans. The knowledge, session, trace, and eval list
-endpoints returned `200`. The validation server shut down cleanly, and port
-17877 had no remaining listener.
+**Result:** AccuracyEval `da6e8c87-0250-40d3-aec3-2c8398810a51` scored `10/10`
+with the `claude-sonnet-4-6` judge, and the persistence assertion read its row
+back by `result.run_id`. Anonymous `GET /config` returned `401`, authenticated
+`200`, and the eval list returned three stored runs, each under its own id. The
+server shut down cleanly with no remaining listener. The 2026-07-24 pass on
+`17877` covered more surface: AccuracyEval
+`0a7df9c3-aecc-4ee5-bc2e-fa7165bb234a` at `10/10`, persistence via eval
+`47325c0e-73c5-4477-87e7-38dc4f5323ce`, discovery returning exactly
+`agno-assist`, `sage`, and `finance-team`, Agent run
+`46f18a31-9a8e-4db5-810b-c63e14275ec0` after a knowledge search, and trace
+`f43d8d4a65e4c0218fc6f84ef9df77a2` with 4 spans.
 
 ---
 

@@ -31,6 +31,8 @@ class PerformanceResult:
     for a more robust understanding.
     """
 
+    run_id: str
+
     # Run time performance in seconds
     run_times: List[float] = field(default_factory=list)
     avg_run_time: float = field(init=False)
@@ -205,13 +207,11 @@ class PerformanceEval:
 
     # Evaluation name
     name: Optional[str] = None
-    # Evaluation UUID
-    eval_id: str = field(default_factory=lambda: str(uuid4()))
     # Number of warm-up runs (not included in final stats)
     warmup_runs: Optional[int] = 10
     # Number of measured iterations
     num_iterations: int = 50
-    # Result of the evaluation
+    # Result of the last run. Each run method returns its own result object
     result: Optional[PerformanceResult] = None
 
     # Print summary of results
@@ -233,6 +233,7 @@ class PerformanceEval:
     model_provider: Optional[str] = None
 
     # If set, results will be saved in the given file path
+    # Supports the {name} and {run_id} placeholders
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
@@ -296,29 +297,29 @@ class PerformanceEval:
 
         return adjusted_usage
 
-    def _parse_eval_run_data(self) -> dict:
+    def _parse_eval_run_data(self, result: Optional[PerformanceResult]) -> dict:
         """Parse the evaluation result into a dictionary with the data we want for monitoring."""
-        if self.result is None:
+        if result is None:
             return {}
 
         return {
             "result": {
-                "avg_run_time": self.result.avg_run_time,
-                "min_run_time": self.result.min_run_time,
-                "max_run_time": self.result.max_run_time,
-                "std_dev_run_time": self.result.std_dev_run_time,
-                "median_run_time": self.result.median_run_time,
-                "p95_run_time": self.result.p95_run_time,
-                "avg_memory_usage": self.result.avg_memory_usage,
-                "min_memory_usage": self.result.min_memory_usage,
-                "max_memory_usage": self.result.max_memory_usage,
-                "std_dev_memory_usage": self.result.std_dev_memory_usage,
-                "median_memory_usage": self.result.median_memory_usage,
-                "p95_memory_usage": self.result.p95_memory_usage,
+                "avg_run_time": result.avg_run_time,
+                "min_run_time": result.min_run_time,
+                "max_run_time": result.max_run_time,
+                "std_dev_run_time": result.std_dev_run_time,
+                "median_run_time": result.median_run_time,
+                "p95_run_time": result.p95_run_time,
+                "avg_memory_usage": result.avg_memory_usage,
+                "min_memory_usage": result.min_memory_usage,
+                "max_memory_usage": result.max_memory_usage,
+                "std_dev_memory_usage": result.std_dev_memory_usage,
+                "median_memory_usage": result.median_memory_usage,
+                "p95_memory_usage": result.p95_memory_usage,
             },
             "runs": [
                 {"runtime": runtime, "memory": memory_usage}
-                for runtime, memory_usage in zip(self.result.run_times, self.result.memory_usages)
+                for runtime, memory_usage in zip(result.run_times, result.memory_usages)
             ],
         }
 
@@ -512,7 +513,7 @@ class PerformanceEval:
         from rich.console import Console
         from rich.status import Status
 
-        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        # Generate unique run_id for this execution
         run_id = str(uuid4())
 
         run_times = []
@@ -585,22 +586,23 @@ class PerformanceEval:
                     status.stop()
 
         # 4. Collect results
-        self.result = PerformanceResult(run_times=run_times, memory_usages=memory_usages)
+        result = PerformanceResult(run_id=run_id, run_times=run_times, memory_usages=memory_usages)
+        self.result = result
 
         # 5. Save result to file if requested
-        if self.file_path_to_save_results is not None and self.result is not None:
+        if self.file_path_to_save_results is not None:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
-                result=self.result,
+                run_id=run_id,
+                result=result,
             )
 
         # 6. Print results if requested
         if self.print_results or print_results:
-            self.result.print_results(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
+            result.print_results(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
         if self.print_summary or print_summary:
-            self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
+            result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
         if self.db:
@@ -611,8 +613,8 @@ class PerformanceEval:
 
             log_eval_run(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=self._parse_eval_run_data(),
+                run_id=run_id,
+                run_data=self._parse_eval_run_data(result),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
                 evaluated_component_name=self.func.__name__,
@@ -624,10 +626,10 @@ class PerformanceEval:
             )
 
         if self.telemetry:
-            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data)
+            log_eval_telemetry(run_id=run_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data)
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
-        return self.result
+        return result
 
     async def arun(
         self, *, print_summary: bool = False, print_results: bool = False, memory_growth_tracking: bool = False
@@ -651,7 +653,7 @@ class PerformanceEval:
         from rich.console import Console
         from rich.status import Status
 
-        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        # Generate unique run_id for this execution
         run_id = str(uuid4())
 
         run_times = []
@@ -724,22 +726,23 @@ class PerformanceEval:
                     status.stop()
 
         # 4. Collect results
-        self.result = PerformanceResult(run_times=run_times, memory_usages=memory_usages)
+        result = PerformanceResult(run_id=run_id, run_times=run_times, memory_usages=memory_usages)
+        self.result = result
 
         # 5. Save result to file if requested
-        if self.file_path_to_save_results is not None and self.result is not None:
+        if self.file_path_to_save_results is not None:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
-                result=self.result,
+                run_id=run_id,
+                result=result,
             )
 
         # 6. Print results if requested
         if self.print_results or print_results:
-            self.result.print_results(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
+            result.print_results(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
         if self.print_summary or print_summary:
-            self.result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
+            result.print_summary(console, measure_memory=self.measure_memory, measure_runtime=self.measure_runtime)
 
         # 7. Log results to the Agno platform if requested
         if self.db:
@@ -750,8 +753,8 @@ class PerformanceEval:
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=self._parse_eval_run_data(),
+                run_id=run_id,
+                run_data=self._parse_eval_run_data(result),
                 eval_type=EvalType.PERFORMANCE,
                 name=self.name if self.name is not None else None,
                 evaluated_component_name=self.func.__name__,
@@ -764,11 +767,11 @@ class PerformanceEval:
 
         if self.telemetry:
             await async_log_eval_telemetry(
-                run_id=self.eval_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data
+                run_id=run_id, eval_type=EvalType.PERFORMANCE, get_data=self._get_telemetry_data
             )
 
         log_debug(f"*********** Evaluation End: {run_id} ***********")
-        return self.result
+        return result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the evaluation"""

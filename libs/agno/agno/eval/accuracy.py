@@ -68,6 +68,7 @@ class AccuracyEvaluation:
 
 @dataclass
 class AccuracyResult:
+    run_id: str
     results: List[AccuracyEvaluation] = field(default_factory=list)
     avg_score: Optional[float] = field(init=False)
     mean_score: Optional[float] = field(init=False)
@@ -166,11 +167,9 @@ class AccuracyEval:
 
     # Evaluation name
     name: Optional[str] = None
-    # Evaluation UUID
-    eval_id: str = field(default_factory=lambda: str(uuid4()))
     # Number of iterations to run
     num_iterations: int = 1
-    # Result of the evaluation
+    # Result of the last run. Each run method returns its own result object
     result: Optional[AccuracyResult] = None
 
     # Model for the evaluator agent
@@ -190,6 +189,7 @@ class AccuracyEval:
     # console (e.g. the suite runner) disable it.
     show_spinner: bool = True
     # If set, results will be saved in the given file path
+    # Supports the {name} and {run_id} placeholders
     file_path_to_save_results: Optional[str] = None
     # Enable debug logs
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
@@ -376,11 +376,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         from rich.console import Console
         from rich.status import Status
 
+        # Generate unique run_id for this execution
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        self.result = AccuracyResult()
+        result = AccuracyResult(run_id=run_id)
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -393,7 +396,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
 
-                agent_session_id = f"eval_{self.eval_id}_{i + 1}"
+                agent_session_id = f"eval_{run_id}_{i + 1}"
 
                 run_response: Optional[Any] = None
                 if self.agent is not None:
@@ -421,7 +424,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     </agent_output>\
                     """)
                 logger.debug(f"Agent output #{i + 1}: {output}")
-                result = self.evaluate_answer(
+                evaluation = self.evaluate_answer(
                     input=eval_input,
                     evaluator_agent=evaluator_agent,
                     evaluation_input=evaluation_input,
@@ -429,30 +432,30 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     agent_output=output,
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
-                if result is None:
+                if evaluation is None:
                     log_error(f"Failed to evaluate accuracy on iteration {i + 1}")
                     continue
 
-                self.result.results.append(result)
-                self.result.compute_stats()
+                result.results.append(evaluation)
+                result.compute_stats()
                 status.update(f"Eval iteration {i + 1} finished")
 
             status.stop()
 
         # Save result to file if requested
-        if self.file_path_to_save_results is not None and self.result is not None:
+        if self.file_path_to_save_results is not None:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
-                result=self.result,
+                run_id=run_id,
+                result=result,
             )
 
         # Print results if requested
         if self.print_results or print_results:
-            self.result.print_results(console)
+            result.print_results(console)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
+            result.print_summary(console)
 
         # Log results to the Agno DB if requested
         if self.agent is not None:
@@ -479,8 +482,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
             log_eval_run(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
+                run_id=run_id,
+                run_data=asdict(result),
                 eval_type=EvalType.ACCURACY,
                 agent_id=agent_id,
                 team_id=team_id,
@@ -492,10 +495,11 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             )
 
         if self.telemetry:
-            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data)
+            log_eval_telemetry(run_id=run_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data)
 
-        logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
-        return self.result
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
+        self.result = result
+        return result
 
     async def arun(
         self,
@@ -514,11 +518,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         from rich.console import Console
         from rich.status import Status
 
+        # Generate unique run_id for this execution
+        run_id = str(uuid4())
+
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        self.result = AccuracyResult()
+        result = AccuracyResult(run_id=run_id)
 
-        logger.debug(f"************ Evaluation Start: {self.eval_id} ************")
+        logger.debug(f"************ Evaluation Start: {run_id} ************")
 
         # Add a spinner while running the evaluations
         console = Console()
@@ -531,7 +538,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 status = Status(f"Running evaluation {i + 1}...", spinner="dots", speed=1.0, refresh_per_second=10)
                 live_log.update(status)
 
-                agent_session_id = f"eval_{self.eval_id}_{i + 1}"
+                agent_session_id = f"eval_{run_id}_{i + 1}"
 
                 run_response: Optional[Any] = None
                 if self.agent is not None:
@@ -559,7 +566,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     </agent_output>\
                     """)
                 logger.debug(f"Agent output #{i + 1}: {output}")
-                result = await self.aevaluate_answer(
+                evaluation = await self.aevaluate_answer(
                     input=eval_input,
                     evaluator_agent=evaluator_agent,
                     evaluation_input=evaluation_input,
@@ -567,30 +574,30 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                     agent_output=output,
                     run_metrics=run_response.metrics if run_response is not None else None,
                 )
-                if result is None:
+                if evaluation is None:
                     log_error(f"Failed to evaluate accuracy on iteration {i + 1}")
                     continue
 
-                self.result.results.append(result)
-                self.result.compute_stats()
+                result.results.append(evaluation)
+                result.compute_stats()
                 status.update(f"Eval iteration {i + 1} finished")
 
             status.stop()
 
         # Save result to file if requested
-        if self.file_path_to_save_results is not None and self.result is not None:
+        if self.file_path_to_save_results is not None:
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 name=self.name,
-                eval_id=self.eval_id,
-                result=self.result,
+                run_id=run_id,
+                result=result,
             )
 
         # Print results if requested
         if self.print_results or print_results:
-            self.result.print_results(console)
+            result.print_results(console)
         if self.print_summary or print_summary:
-            self.result.print_summary(console)
+            result.print_summary(console)
 
         if self.agent is not None:
             agent_id = self.agent.id
@@ -616,8 +623,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             }
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
+                run_id=run_id,
+                run_data=asdict(result),
                 eval_type=EvalType.ACCURACY,
                 agent_id=agent_id,
                 model_id=model_id,
@@ -631,11 +638,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
         if self.telemetry:
             await async_log_eval_telemetry(
-                run_id=self.eval_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data
+                run_id=run_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data
             )
 
-        logger.debug(f"*********** Evaluation {self.eval_id} Finished ***********")
-        return self.result
+        logger.debug(f"*********** Evaluation End: {run_id} ***********")
+        self.result = result
+        return result
 
     def run_with_output(
         self,
@@ -645,12 +653,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
-        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        # Generate unique run_id for this execution
         run_id = str(uuid4())
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        self.result = AccuracyResult()
+        result = AccuracyResult(run_id=run_id)
 
         logger.debug(f"************ Evaluation Start: {run_id} ************")
 
@@ -672,7 +680,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             </agent_output>\
             """)
 
-        result = self.evaluate_answer(
+        evaluation = self.evaluate_answer(
             input=eval_input,
             evaluator_agent=evaluator_agent,
             evaluation_input=evaluation_input,
@@ -680,23 +688,23 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             agent_output=output,
         )
 
-        if result is not None:
-            self.result.results.append(result)
-            self.result.compute_stats()
+        if evaluation is not None:
+            result.results.append(evaluation)
+            result.compute_stats()
 
             # Print results if requested
             if self.print_results or print_results:
-                self.result.print_results()
+                result.print_results()
             if self.print_summary or print_summary:
-                self.result.print_summary()
+                result.print_summary()
 
             # Save result to file if requested
             if self.file_path_to_save_results is not None:
                 store_result_in_file(
                     file_path=self.file_path_to_save_results,
                     name=self.name,
-                    eval_id=self.eval_id,
-                    result=self.result,
+                    run_id=run_id,
+                    result=result,
                 )
         # Log results to the Agno DB if requested
         if self.db:
@@ -733,8 +741,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
                 log_eval_run(
                     db=self.db,
-                    run_id=self.eval_id,  # type: ignore
-                    run_data=asdict(self.result),
+                    run_id=run_id,
+                    run_data=asdict(result),
                     eval_type=EvalType.ACCURACY,
                     name=self.name if self.name is not None else None,
                     agent_id=agent_id,
@@ -747,10 +755,11 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 )
 
         if self.telemetry:
-            log_eval_telemetry(run_id=self.eval_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data)
+            log_eval_telemetry(run_id=run_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data)
 
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
-        return self.result
+        self.result = result
+        return result
 
     async def arun_with_output(
         self,
@@ -760,12 +769,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
         print_results: bool = True,
     ) -> Optional[AccuracyResult]:
         """Run the evaluation logic against the given answer, instead of generating an answer with the Agent"""
-        # Generate unique run_id for this execution (don't modify self.eval_id due to concurrency)
+        # Generate unique run_id for this execution
         run_id = str(uuid4())
 
         set_log_level_to_debug() if self.debug_mode else set_log_level_to_info()
 
-        self.result = AccuracyResult()
+        result = AccuracyResult(run_id=run_id)
 
         logger.debug(f"************ Evaluation Start: {run_id} ************")
 
@@ -787,7 +796,7 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             </agent_output>\
             """)
 
-        result = await self.aevaluate_answer(
+        evaluation = await self.aevaluate_answer(
             input=eval_input,
             evaluator_agent=evaluator_agent,
             evaluation_input=evaluation_input,
@@ -795,23 +804,23 @@ Remember: You must only compare the agent_output to the expected_output. The exp
             agent_output=output,
         )
 
-        if result is not None:
-            self.result.results.append(result)
-            self.result.compute_stats()
+        if evaluation is not None:
+            result.results.append(evaluation)
+            result.compute_stats()
 
             # Print results if requested
             if self.print_results or print_results:
-                self.result.print_results()
+                result.print_results()
             if self.print_summary or print_summary:
-                self.result.print_summary()
+                result.print_summary()
 
             # Save result to file if requested
             if self.file_path_to_save_results is not None:
                 store_result_in_file(
                     file_path=self.file_path_to_save_results,
                     name=self.name,
-                    eval_id=self.eval_id,
-                    result=self.result,
+                    run_id=run_id,
+                    result=result,
                 )
         # Log results to the Agno DB if requested
         if self.db:
@@ -827,6 +836,12 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 model_id = self.team.model.id if self.team.model is not None else None
                 model_provider = self.team.model.provider if self.team.model is not None else None
                 evaluated_component_name = self.team.name
+            else:
+                agent_id = None
+                team_id = None
+                model_id = None
+                model_provider = None
+                evaluated_component_name = None
 
             log_eval_input = {
                 "additional_guidelines": self.additional_guidelines,
@@ -838,8 +853,8 @@ Remember: You must only compare the agent_output to the expected_output. The exp
 
             await async_log_eval(
                 db=self.db,
-                run_id=self.eval_id,  # type: ignore
-                run_data=asdict(self.result),
+                run_id=run_id,
+                run_data=asdict(result),
                 eval_type=EvalType.ACCURACY,
                 name=self.name if self.name is not None else None,
                 agent_id=agent_id,
@@ -851,8 +866,14 @@ Remember: You must only compare the agent_output to the expected_output. The exp
                 eval_input=log_eval_input,
             )
 
+        if self.telemetry:
+            await async_log_eval_telemetry(
+                run_id=run_id, eval_type=EvalType.ACCURACY, get_data=self._get_telemetry_data
+            )
+
         logger.debug(f"*********** Evaluation End: {run_id} ***********")
-        return self.result
+        self.result = result
+        return result
 
     def _get_telemetry_data(self) -> Dict[str, Any]:
         """Get the telemetry data for the evaluation"""
