@@ -539,7 +539,7 @@ def _run(
                     response_format=response_format,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compaction_manager if agent.compact_tools else None,
                     **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
@@ -1667,7 +1667,7 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compaction_manager if agent.compact_tools else None,
                     **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
@@ -3744,7 +3744,7 @@ def _continue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compaction_manager if agent.compact_tools else None,
                     **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
@@ -4952,7 +4952,7 @@ async def _acontinue_run(
                     tool_call_limit=agent.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+                    compression_manager=agent.compaction_manager if agent.compact_tools else None,
                     **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,

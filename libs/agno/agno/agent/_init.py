@@ -18,7 +18,7 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb
 from agno.memory import MemoryManager
 from agno.models.utils import get_model
@@ -178,18 +178,26 @@ def set_session_summary_manager(agent: Agent) -> None:
         )
 
 
-def set_compression_manager(agent: Agent) -> None:
-    if agent.compress_tool_results and agent.compression_manager is None:
-        agent.compression_manager = CompressionManager(
+def set_compaction_manager(agent: Agent) -> None:
+    """Initialize compaction_manager for tool and/or history compaction."""
+    # Auto-create if either compaction flag is set
+    if (agent.compact_tools or agent.compact_context) and agent.compaction_manager is None:
+        agent.compaction_manager = CompactionManager(
             model=agent.model,
+            compact_tools=agent.compact_tools,
+            compact_context=agent.compact_context,
         )
 
-    if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+    # If manager exists, sync the compact_context flag
+    if agent.compaction_manager is not None and agent.compact_context:
+        agent.compaction_manager.compact_context = True
 
-    # Check compression flag on the compression manager
-    if agent.compression_manager is not None and agent.compression_manager.compress_tool_results:
-        agent.compress_tool_results = True
+    if agent.compaction_manager is not None and agent.compaction_manager.model is None:
+        agent.compaction_manager.model = agent.model
+
+    # Sync compact_tools flag from manager back to agent
+    if agent.compaction_manager is not None and agent.compaction_manager.compact_tools:
+        agent.compact_tools = True
 
 
 def set_result_store(agent: Agent) -> None:
@@ -203,10 +211,10 @@ def set_result_store(agent: Agent) -> None:
     # stored-result envelope with text whose result id may be gone, while the
     # payload it pointed at lives on unreferenced. Refuse the combination
     # loudly instead of silently favouring one of them.
-    if agent.compress_tool_results and (agent.offload_tool_results or agent._result_store is not None):
+    if agent.compact_tools and (agent.offload_tool_results or agent._result_store is not None):
         raise ValueError(
-            "offload_tool_results and compress_tool_results cannot be enabled together: "
-            "compression rewrites the tool messages that hold stored-result envelopes. "
+            "offload_tool_results and compact_tools cannot be enabled together: "
+            "compaction rewrites the tool messages that hold stored-result envelopes. "
             "Disable one of the two."
         )
     # A store handed down by a team is the team's to manage.
@@ -280,8 +288,8 @@ def get_models(agent: Agent) -> None:
     if agent.fallback_config is not None:
         agent.fallback_config.resolve_models()
 
-    if agent.compression_manager is not None and agent.compression_manager.model is None:
-        agent.compression_manager.model = agent.model
+    if agent.compaction_manager is not None and agent.compaction_manager.model is None:
+        agent.compaction_manager.model = agent.model
 
 
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
@@ -294,8 +302,8 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
         set_memory_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
-    if agent.compress_tool_results or agent.compression_manager is not None:
-        set_compression_manager(agent)
+    if agent.compact_tools or agent.compact_context or agent.compaction_manager is not None:
+        set_compaction_manager(agent)
     # Resolved when a setting is present or when a store exists.
     if agent.offload_tool_results or agent._result_store is not None:
         set_result_store(agent)

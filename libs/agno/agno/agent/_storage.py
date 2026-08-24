@@ -1144,16 +1144,18 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.metadata is not None:
         config["metadata"] = agent.metadata
 
-    # --- Context compression settings ---
-    if agent.compress_tool_results:
-        config["compress_tool_results"] = agent.compress_tool_results
+    # --- Context compaction settings ---
+    if agent.compact_tools:
+        config["compact_tools"] = agent.compact_tools
+    if agent.compact_context:
+        config["compact_context"] = agent.compact_context
 
     # --- Result offloading settings ---
     if agent.offload_tool_results is not None:
         config["offload_tool_results"] = _offload_to_config(agent.offload_tool_results)
-    # TODO: implement compression manager serialization
-    # if agent.compression_manager is not None:
-    #     config["compression_manager"] = agent.compression_manager.to_dict()
+    # TODO: implement compaction manager serialization
+    # if agent.compaction_manager is not None:
+    #     config["compaction_manager"] = agent.compaction_manager.to_dict()
 
     # --- Callable factory settings ---
     if not agent.cache_callables:
@@ -1461,9 +1463,10 @@ def from_dict(
         role=config.get("role"),
         # --- Metadata ---
         metadata=strip_reserved_run_metadata(config.get("metadata")),
-        # --- Compression settings ---
-        compress_tool_results=config.get("compress_tool_results", False),
-        # compression_manager=config.get("compression_manager"),  # TODO
+        # --- Compaction settings (with backward compat for old config keys) ---
+        compact_tools=config.get("compact_tools") or config.get("compress_tool_results", False),
+        compact_context=config.get("compact_context", False),
+        # compaction_manager=config.get("compaction_manager"),  # TODO
         # --- Result offloading settings ---
         offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
         # --- Debug and telemetry settings ---
