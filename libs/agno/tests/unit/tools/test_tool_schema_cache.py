@@ -347,6 +347,19 @@ def test_user_input_schema_is_fresh_per_run():
     assert all(field.value is None for field in second.user_input_schema)
 
 
+def test_stale_per_run_state_on_a_source_function_is_not_carried():
+    """Per-run copies start clean even when the source object is dirty: a
+    source that somehow holds one run's context must not hand it to the next."""
+    source = Function.from_callable(adder)
+    source._run_context = RunContext(run_id="stale", session_id="stale")
+    source._images = [Image(url="http://example.com/stale.png")]
+
+    copied = source._per_run_copy()
+    assert copied._run_context is None
+    assert copied._images is None
+    assert copied._agent is None and copied._team is None
+
+
 def test_per_run_copies_share_the_wrapped_entrypoint_but_validate_independently():
     first = Function.from_callable(adder)
     second = Function.from_callable(adder)
