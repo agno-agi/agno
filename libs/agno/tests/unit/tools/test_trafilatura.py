@@ -91,10 +91,10 @@ class TestTrafilaturaToolsInitialization:
 
         # Check registered functions - all tools included by default
         function_names = [func.name for func in trafilatura_tools.functions.values()]
-        assert "extract_text" in function_names
-        assert "extract_metadata_only" in function_names
-        assert "html_to_text" in function_names
-        assert "extract_batch" in function_names
+        assert "scrape" in function_names
+        assert "get_metadata" in function_names
+        assert "convert_html" in function_names
+        assert "scrape_batch" in function_names
 
     def test_initialization_custom(self, custom_trafilatura_tools):
         """Test initialization with custom values."""
@@ -115,29 +115,29 @@ class TestTrafilaturaToolsInitialization:
 
         # Check all functions are registered
         function_names = [func.name for func in tools.functions.values()]
-        assert "extract_text" in function_names
-        assert "extract_metadata_only" in function_names
-        assert "html_to_text" in function_names
-        assert "extract_batch" in function_names
+        assert "scrape" in function_names
+        assert "get_metadata" in function_names
+        assert "convert_html" in function_names
+        assert "scrape_batch" in function_names
 
     def test_initialization_include_tools(self, mock_trafilatura_modules):
         """Test initialization with include_tools parameter."""
-        tools = TrafilaturaTools(include_tools=["extract_text", "extract_batch"])
+        tools = TrafilaturaTools(include_tools=["scrape", "scrape_batch"])
         function_names = [func.name for func in tools.functions.values()]
-        assert "extract_text" in function_names
-        assert "extract_batch" in function_names
-        assert "extract_metadata_only" not in function_names
-        assert "html_to_text" not in function_names
+        assert "scrape" in function_names
+        assert "scrape_batch" in function_names
+        assert "get_metadata" not in function_names
+        assert "convert_html" not in function_names
 
     def test_initialization_exclude_tools(self, mock_trafilatura_modules):
         """Test initialization with exclude_tools parameter."""
-        tools = TrafilaturaTools(exclude_tools=["crawl_website", "html_to_text"])
+        tools = TrafilaturaTools(exclude_tools=["crawl", "convert_html"])
         function_names = [func.name for func in tools.functions.values()]
-        assert "extract_text" in function_names
-        assert "extract_metadata_only" in function_names
-        assert "extract_batch" in function_names
-        assert "crawl_website" not in function_names
-        assert "html_to_text" not in function_names
+        assert "scrape" in function_names
+        assert "get_metadata" in function_names
+        assert "scrape_batch" in function_names
+        assert "crawl" not in function_names
+        assert "convert_html" not in function_names
 
     @patch("agno.tools.trafilatura.SPIDER_AVAILABLE", False)
     def test_initialization_without_spider(self, mock_trafilatura_modules):
@@ -145,7 +145,7 @@ class TestTrafilaturaToolsInitialization:
         tools = TrafilaturaTools()
         function_names = [func.name for func in tools.functions.values()]
         # crawl_website should not be in functions when spider is not available
-        assert "crawl_website" not in function_names
+        assert "crawl" not in function_names
 
 
 class TestExtractTextMethod:
@@ -158,7 +158,7 @@ class TestExtractTextMethod:
         mock_trafilatura_modules["extract"].return_value = "Extracted text content"
 
         # Execute
-        result = trafilatura_tools.extract_text("https://example.com")
+        result = trafilatura_tools.scrape("https://example.com")
 
         # Assert
         assert result == "Extracted text content"
@@ -172,7 +172,7 @@ class TestExtractTextMethod:
         mock_trafilatura_modules["fetch_url"].return_value = None
 
         # Execute
-        result = trafilatura_tools.extract_text("https://example.com")
+        result = trafilatura_tools.scrape("https://example.com")
 
         # Assert
         assert "Error: Could not fetch content from URL" in result
@@ -186,7 +186,7 @@ class TestExtractTextMethod:
         mock_trafilatura_modules["extract"].return_value = "Extracted text"
 
         # Execute with custom output format
-        result = trafilatura_tools.extract_text("https://example.com", output_format="json")
+        result = trafilatura_tools.scrape("https://example.com", output_format="json")
 
         # Assert
         assert result == "Extracted text"
@@ -200,7 +200,7 @@ class TestExtractTextMethod:
         mock_trafilatura_modules["fetch_url"].side_effect = Exception("Network error")
 
         # Execute
-        result = trafilatura_tools.extract_text("https://example.com")
+        result = trafilatura_tools.scrape("https://example.com")
 
         # Assert
         assert "Error extracting text from https://example.com: Network error" in result
@@ -217,7 +217,7 @@ class TestExtractMetadataOnlyMethod:
         mock_trafilatura_modules["extract_metadata"].return_value = mock_doc
 
         # Execute
-        result = trafilatura_tools.extract_metadata_only("https://example.com")
+        result = trafilatura_tools.get_metadata("https://example.com")
 
         # Assert
         result_data = json.loads(result)
@@ -232,7 +232,7 @@ class TestExtractMetadataOnlyMethod:
         mock_trafilatura_modules["fetch_url"].return_value = None
 
         # Execute
-        result = trafilatura_tools.extract_metadata_only("https://example.com")
+        result = trafilatura_tools.get_metadata("https://example.com")
 
         # Assert
         assert "Error: Could not fetch content from URL" in result
@@ -244,7 +244,7 @@ class TestExtractMetadataOnlyMethod:
         mock_trafilatura_modules["extract_metadata"].return_value = None
 
         # Execute
-        result = trafilatura_tools.extract_metadata_only("https://example.com")
+        result = trafilatura_tools.get_metadata("https://example.com")
 
         # Assert
         assert "Error: Could not extract metadata" in result
@@ -257,7 +257,7 @@ class TestExtractMetadataOnlyMethod:
         mock_trafilatura_modules["extract_metadata"].return_value = mock_doc
 
         # Execute
-        result = trafilatura_tools.extract_metadata_only("https://example.com", as_json=False)
+        result = trafilatura_tools.get_metadata("https://example.com", as_json=False)
 
         # Assert
         assert "Test Title" in result  # Should be string representation
@@ -276,7 +276,7 @@ class TestCrawlWebsiteMethod:
         mock_trafilatura_modules["focused_crawler"].return_value = (mock_to_visit, mock_known_links)
 
         # Execute
-        result = trafilatura_tools.crawl_website("https://example.com")
+        result = trafilatura_tools.crawl("https://example.com")
 
         # Assert
         result_data = json.loads(result)
@@ -291,7 +291,7 @@ class TestCrawlWebsiteMethod:
     def test_crawl_website_spider_unavailable(self, trafilatura_tools, mock_trafilatura_modules):
         """Test crawl_website when spider is not available."""
         # Execute
-        result = trafilatura_tools.crawl_website("https://example.com")
+        result = trafilatura_tools.crawl("https://example.com")
 
         # Assert
         assert "Error: Web crawling functionality not available" in result
@@ -306,7 +306,7 @@ class TestCrawlWebsiteMethod:
         mock_trafilatura_modules["extract"].return_value = "Extracted content"
 
         # Execute
-        result = trafilatura_tools.crawl_website("https://example.com", extract_content=True)
+        result = trafilatura_tools.crawl("https://example.com", extract_content=True)
 
         # Assert
         result_data = json.loads(result)
@@ -324,7 +324,7 @@ class TestHtmlToTextMethod:
 
         # Execute
         html_content = "<html><body><h1>Title</h1><p>Paragraph</p></body></html>"
-        result = trafilatura_tools.html_to_text(html_content)
+        result = trafilatura_tools.convert_html(html_content)
 
         # Assert
         assert result == "Converted text content"
@@ -338,7 +338,7 @@ class TestHtmlToTextMethod:
 
         # Execute
         html_content = "<html><body>Content</body></html>"
-        result = trafilatura_tools.html_to_text(html_content, clean=False)
+        result = trafilatura_tools.convert_html(html_content, clean=False)
 
         # Assert
         assert result == "Raw text content"
@@ -350,7 +350,7 @@ class TestHtmlToTextMethod:
         mock_trafilatura_modules["html2txt"].return_value = ""
 
         # Execute
-        result = trafilatura_tools.html_to_text("<html></html>")
+        result = trafilatura_tools.convert_html("<html></html>")
 
         # Assert
         assert "Error: Could not extract text from HTML content" in result
@@ -361,7 +361,7 @@ class TestHtmlToTextMethod:
         mock_trafilatura_modules["html2txt"].side_effect = Exception("Conversion error")
 
         # Execute
-        result = trafilatura_tools.html_to_text("<html></html>")
+        result = trafilatura_tools.convert_html("<html></html>")
 
         # Assert
         assert "Error converting HTML to text: Conversion error" in result
@@ -378,7 +378,7 @@ class TestExtractBatchMethod:
 
         # Execute
         urls = ["https://example1.com", "https://example2.com"]
-        result = trafilatura_tools.extract_batch(urls)
+        result = trafilatura_tools.scrape_batch(urls)
 
         # Assert
         result_data = json.loads(result)
@@ -402,7 +402,7 @@ class TestExtractBatchMethod:
 
         # Execute
         urls = ["https://example1.com", "https://example2.com"]
-        result = trafilatura_tools.extract_batch(urls)
+        result = trafilatura_tools.scrape_batch(urls)
 
         # Assert
         result_data = json.loads(result)
@@ -439,20 +439,20 @@ class TestToolkitIntegration:
         """Test that tools are registered correctly with default configuration."""
         function_names = [func.name for func in trafilatura_tools.functions.values()]
         # Default configuration should include all available tools
-        assert "extract_text" in function_names
-        assert "extract_metadata_only" in function_names
-        assert "html_to_text" in function_names
-        assert "extract_batch" in function_names
+        assert "scrape" in function_names
+        assert "get_metadata" in function_names
+        assert "convert_html" in function_names
+        assert "scrape_batch" in function_names
         # crawl_website should be included if spider is available
 
     def test_toolkit_registration_custom(self, custom_trafilatura_tools):
         """Test that tools are registered correctly with custom configuration."""
         function_names = [func.name for func in custom_trafilatura_tools.functions.values()]
         # Custom configuration should include all enabled tools
-        assert "extract_text" in function_names
-        assert "extract_metadata_only" in function_names
-        assert "html_to_text" in function_names
-        assert "extract_batch" in function_names
+        assert "scrape" in function_names
+        assert "get_metadata" in function_names
+        assert "convert_html" in function_names
+        assert "scrape_batch" in function_names
 
     def test_toolkit_name(self, trafilatura_tools):
         """Test that toolkit has correct name."""

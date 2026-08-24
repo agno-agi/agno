@@ -17,7 +17,7 @@ class GiphyTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         limit: int = 1,
-        enable_search_gifs: bool = True,
+        search_gifs: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -36,7 +36,7 @@ class GiphyTools(Toolkit):
         self.limit: int = limit
 
         tools: List[Any] = []
-        if all or enable_search_gifs:
+        if all or search_gifs:
             tools.append(self.search_gifs)
 
         super().__init__(name="giphy_tools", tools=tools, **kwargs)

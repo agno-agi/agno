@@ -18,9 +18,9 @@ class SofyaTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         base_url: Optional[str] = None,
-        enable_search: bool = True,
-        enable_extract: bool = False,
-        enable_research: bool = False,
+        search: bool = True,
+        extract: bool = False,
+        research: bool = False,
         all: bool = False,
         max_results: int = 5,
         search_depth: Literal["snippets", "basic"] = "basic",
@@ -60,11 +60,11 @@ class SofyaTools(Toolkit):
         self.timeout: int = timeout
 
         tools: List[Any] = []
-        if enable_search or all:
+        if search or all:
             tools.append(self.search_web)
-        if enable_extract or all:
+        if extract or all:
             tools.append(self.extract_url_content)
-        if enable_research or all:
+        if research or all:
             tools.append(self.research)
 
         super().__init__(name="sofya_tools", tools=tools, **kwargs)

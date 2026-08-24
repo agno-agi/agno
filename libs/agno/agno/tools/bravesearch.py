@@ -26,7 +26,7 @@ class BraveSearchTools(Toolkit):
         api_key: Optional[str] = None,
         fixed_max_results: Optional[int] = None,
         fixed_language: Optional[str] = None,
-        enable_brave_search: bool = True,
+        brave_search: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -40,7 +40,7 @@ class BraveSearchTools(Toolkit):
         self.brave_client = Brave(api_key=self.api_key)
 
         tools = []
-        if all or enable_brave_search:
+        if all or brave_search:
             tools.append(self.brave_search)
 
         super().__init__(

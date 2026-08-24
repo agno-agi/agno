@@ -192,6 +192,7 @@ class GmailTools(GoogleToolkit):
         max_batch_size: int = 10,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize GmailTools and authenticate with Gmail API
@@ -232,39 +233,39 @@ class GmailTools(GoogleToolkit):
         self._label_cache: Optional[Dict[str, str]] = None
         tools: List[Any] = []
         # Reading emails
-        if get_latest_emails:
+        if all or get_latest_emails:
             tools.append(self.get_latest_emails)
-        if get_emails_from_user:
+        if all or get_emails_from_user:
             tools.append(self.get_emails_from_user)
-        if get_unread_emails:
+        if all or get_unread_emails:
             tools.append(self.get_unread_emails)
-        if get_starred_emails:
+        if all or get_starred_emails:
             tools.append(self.get_starred_emails)
-        if get_emails_by_context:
+        if all or get_emails_by_context:
             tools.append(self.get_emails_by_context)
-        if get_emails_by_date:
+        if all or get_emails_by_date:
             tools.append(self.get_emails_by_date)
-        if get_emails_by_thread:
+        if all or get_emails_by_thread:
             tools.append(self.get_emails_by_thread)
-        if search_emails:
+        if all or search_emails:
             tools.append(self.search_emails)
         # Email management
-        if mark_email_as_read:
+        if all or mark_email_as_read:
             tools.append(self.mark_email_as_read)
-        if mark_email_as_unread:
+        if all or mark_email_as_unread:
             tools.append(self.mark_email_as_unread)
-        if star_email:
+        if all or star_email:
             tools.append(self.star_email)
-        if unstar_email:
+        if all or unstar_email:
             tools.append(self.unstar_email)
-        if archive_email:
+        if all or archive_email:
             tools.append(self.archive_email)
         # Composing emails
-        if create_draft_email:
+        if all or create_draft_email:
             tools.append(self.create_draft_email)
-        if send_email:
+        if all or send_email:
             tools.append(self.send_email)
-        if send_email_reply:
+        if all or send_email_reply:
             tools.append(self.send_email_reply)
         # Label management
         if list_custom_labels:
@@ -288,19 +289,19 @@ class GmailTools(GoogleToolkit):
             tools.append(self.trash_thread)
         if get_draft:
             tools.append(self.get_draft)
-        if list_drafts:
+        if all or list_drafts:
             tools.append(self.list_drafts)
-        if send_draft:
+        if all or send_draft:
             tools.append(self.send_draft)
-        if update_draft:
+        if all or update_draft:
             tools.append(self.update_draft)
-        if list_labels:
+        if all or list_labels:
             tools.append(self.list_labels)
-        if modify_message_labels:
+        if all or modify_message_labels:
             tools.append(self.modify_message_labels)
-        if trash_message:
+        if all or trash_message:
             tools.append(self.trash_message)
-        if download_attachment:
+        if all or download_attachment:
             tools.append(self.download_attachment)
 
         super().__init__(

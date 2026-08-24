@@ -16,7 +16,7 @@ class LinkupTools(Toolkit):
         api_key: Optional[str] = None,
         depth: Literal["standard", "deep"] = "standard",
         output_type: Literal["sourcedAnswer", "searchResults"] = "searchResults",
-        enable_web_search_with_linkup: bool = True,
+        web_search_with_linkup: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -29,7 +29,7 @@ class LinkupTools(Toolkit):
         self.output_type = output_type
 
         tools: List[Any] = []
-        if all or enable_web_search_with_linkup:
+        if all or web_search_with_linkup:
             tools.append(self.web_search_with_linkup)
 
         super().__init__(name="linkup_tools", tools=tools, **kwargs)

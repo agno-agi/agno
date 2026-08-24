@@ -21,13 +21,13 @@ class Crawl4aiTools(Toolkit):
         headless: bool = True,
         wait_until: str = "domcontentloaded",
         proxy_config: Optional[Dict[str, Any]] = None,
-        enable_crawl: bool = True,
+        crawl: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools = []
-        if all or enable_crawl:
-            tools.append(self.crawl)
+        if all or crawl:
+            tools.append(self.crawl4ai_crawl)
 
         super().__init__(name="crawl4ai_tools", tools=tools, **kwargs)
         self.max_length = max_length
@@ -77,7 +77,9 @@ class Crawl4aiTools(Toolkit):
 
         return config_params
 
-    def crawl(self, url: Union[str, List[str]], search_query: Optional[str] = None) -> Union[str, Dict[str, str]]:
+    def crawl4ai_crawl(
+        self, url: Union[str, List[str]], search_query: Optional[str] = None
+    ) -> Union[str, Dict[str, str]]:
         """
         Crawl URLs and extract their text content.
 

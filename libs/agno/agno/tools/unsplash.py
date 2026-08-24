@@ -43,10 +43,10 @@ class UnsplashTools(Toolkit):
     def __init__(
         self,
         access_key: Optional[str] = None,
-        enable_search_photos: bool = True,
-        enable_get_photo: bool = True,
-        enable_get_random_photo: bool = True,
-        enable_download_photo: bool = False,
+        search_photos: bool = True,
+        get_photo: bool = True,
+        get_random_photo: bool = True,
+        download_photo: bool = False,
         all: bool = False,
         timeout: int = 30,
         **kwargs: Any,
@@ -71,13 +71,13 @@ class UnsplashTools(Toolkit):
         self.base_url = "https://api.unsplash.com"
 
         tools: List[Any] = []
-        if all or enable_search_photos:
+        if all or search_photos:
             tools.append(self.search_photos)
-        if all or enable_get_photo:
+        if all or get_photo:
             tools.append(self.get_photo)
-        if all or enable_get_random_photo:
+        if all or get_random_photo:
             tools.append(self.get_random_photo)
-        if all or enable_download_photo:
+        if all or download_photo:
             tools.append(self.download_photo)
 
         super().__init__(name="unsplash_tools", tools=tools, timeout=timeout, **kwargs)

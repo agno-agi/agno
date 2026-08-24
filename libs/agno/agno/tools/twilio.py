@@ -22,9 +22,9 @@ class TwilioTools(Toolkit):
         region: Optional[str] = None,
         edge: Optional[str] = None,
         debug: bool = False,
-        enable_send_sms: bool = True,
-        enable_get_call_details: bool = True,
-        enable_list_messages: bool = True,
+        send_sms: bool = True,
+        get_call_details: bool = True,
+        list_messages: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -88,11 +88,11 @@ class TwilioTools(Toolkit):
             self.client.http_client.logger.setLevel(logging.INFO)
 
         tools: List[Any] = []
-        if all or enable_send_sms:
+        if all or send_sms:
             tools.append(self.send_sms)
-        if all or enable_get_call_details:
+        if all or get_call_details:
             tools.append(self.get_call_details)
-        if all or enable_list_messages:
+        if all or list_messages:
             tools.append(self.list_messages)
 
         super().__init__(name="twilio", tools=tools, **kwargs)

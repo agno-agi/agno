@@ -15,13 +15,13 @@ class ScavioTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_google: bool = True,
-        enable_amazon: bool = True,
-        enable_walmart: bool = True,
-        enable_youtube: bool = True,
-        enable_reddit: bool = True,
-        enable_tiktok: bool = True,
-        enable_instagram: bool = True,
+        google: bool = True,
+        amazon: bool = True,
+        walmart: bool = True,
+        youtube: bool = True,
+        reddit: bool = True,
+        tiktok: bool = True,
+        instagram: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -51,21 +51,21 @@ class ScavioTools(Toolkit):
 
         tools: List[Any] = []
 
-        if all or enable_google:
+        if all or google:
             tools.append(self.google_search)
-        if all or enable_amazon:
+        if all or amazon:
             tools.append(self.amazon_search)
             tools.append(self.amazon_product)
-        if all or enable_walmart:
+        if all or walmart:
             tools.append(self.walmart_search)
             tools.append(self.walmart_product)
-        if all or enable_youtube:
+        if all or youtube:
             tools.append(self.youtube_search)
             tools.append(self.youtube_metadata)
-        if all or enable_reddit:
+        if all or reddit:
             tools.append(self.reddit_search)
             tools.append(self.reddit_post)
-        if all or enable_tiktok:
+        if all or tiktok:
             tools.append(self.tiktok_profile)
             tools.append(self.tiktok_user_posts)
             tools.append(self.tiktok_video)
@@ -77,7 +77,7 @@ class ScavioTools(Toolkit):
             tools.append(self.tiktok_hashtag_videos)
             tools.append(self.tiktok_user_followers)
             tools.append(self.tiktok_user_followings)
-        if all or enable_instagram:
+        if all or instagram:
             tools.append(self.instagram_profile)
             tools.append(self.instagram_user_posts)
             tools.append(self.instagram_user_reels)

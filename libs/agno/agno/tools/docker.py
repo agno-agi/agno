@@ -1,7 +1,7 @@
 import json
 import os
 import sys
-from typing import Any, Dict, List, Optional, Union
+from typing import Callable, Dict, List, Optional, Union
 
 from agno.tools import Toolkit
 from agno.utils.log import log_error, log_warning, logger
@@ -56,10 +56,48 @@ except ImportError:
 
 
 class DockerTools(Toolkit):
-    def __init__(
-        self,
-        **kwargs,
-    ):
+    """Toolkit for managing Docker containers, images, volumes, and networks.
+
+    Use include_tools/exclude_tools to filter which tools are registered.
+
+    Args:
+        **kwargs: Passed to Toolkit. Use include_tools/exclude_tools to filter.
+
+    Example:
+        # Include only read-only tools
+        DockerTools(include_tools=[DockerTools.LIST_CONTAINERS, DockerTools.LIST_IMAGES])
+
+        # Exclude destructive tools
+        DockerTools(exclude_tools=[DockerTools.REMOVE_CONTAINER, DockerTools.REMOVE_IMAGE])
+    """
+
+    # Tool name constants for include_tools/exclude_tools
+    LIST_CONTAINERS = "list_containers"
+    START_CONTAINER = "start_container"
+    STOP_CONTAINER = "stop_container"
+    REMOVE_CONTAINER = "remove_container"
+    GET_CONTAINER_LOGS = "get_container_logs"
+    INSPECT_CONTAINER = "inspect_container"
+    RUN_CONTAINER = "run_container"
+    EXEC_IN_CONTAINER = "exec_in_container"
+    LIST_IMAGES = "list_images"
+    PULL_IMAGE = "pull_image"
+    REMOVE_IMAGE = "remove_image"
+    BUILD_IMAGE = "build_image"
+    TAG_IMAGE = "tag_image"
+    INSPECT_IMAGE = "inspect_image"
+    LIST_VOLUMES = "list_volumes"
+    CREATE_VOLUME = "create_volume"
+    REMOVE_VOLUME = "remove_volume"
+    INSPECT_VOLUME = "inspect_volume"
+    LIST_NETWORKS = "list_networks"
+    CREATE_NETWORK = "create_network"
+    REMOVE_NETWORK = "remove_network"
+    INSPECT_NETWORK = "inspect_network"
+    CONNECT_CONTAINER_TO_NETWORK = "connect_container_to_network"
+    DISCONNECT_CONTAINER_FROM_NETWORK = "disconnect_container_from_network"
+
+    def __init__(self, **kwargs):
         self._check_docker_availability()
 
         try:
@@ -76,7 +114,8 @@ class DockerTools(Toolkit):
         except Exception:
             logger.exception("Error connecting to Docker")
 
-        tools: List[Any] = [
+        # Register all tools - base Toolkit handles include_tools/exclude_tools filtering
+        tools: List[Callable] = [
             # Container management
             self.list_containers,
             self.start_container,

@@ -16,7 +16,7 @@ from collections import Counter
 from datetime import datetime, timedelta
 from itertools import combinations
 from os import getenv
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 import httpx
 
@@ -25,14 +25,29 @@ from agno.utils.log import log_debug
 
 
 class ShopifyTools(Toolkit):
-    """
-    Shopify toolkit for analyzing sales data and product performance.
+    """Shopify toolkit for analyzing sales data and product performance.
 
     Args:
-        shop_name: Your Shopify store name (e.g., 'my-store' from my-store.myshopify.com).
-        access_token: Shopify Admin API access token with required scopes.
-        api_version: Shopify API version (default: '2025-10').
-        timeout: Request timeout in seconds.
+        shop_name: Store name (e.g., 'my-store' from my-store.myshopify.com).
+            Falls back to SHOPIFY_SHOP_NAME env var.
+        access_token: Admin API access token. Falls back to SHOPIFY_ACCESS_TOKEN env var.
+        api_version: Shopify API version. Defaults to '2025-10'.
+        timeout: Request timeout in seconds. Defaults to 30.
+        get_shop_info: Enable get_shop_info tool. Defaults to True.
+        get_products: Enable get_products tool. Defaults to True.
+        get_orders: Enable get_orders tool. Defaults to True.
+        get_top_selling_products: Enable get_top_selling_products tool. Defaults to True.
+        get_products_bought_together: Enable get_products_bought_together tool. Defaults to True.
+        get_sales_by_date_range: Enable get_sales_by_date_range tool. Defaults to True.
+        get_order_analytics: Enable get_order_analytics tool. Defaults to True.
+        get_product_sales_breakdown: Enable get_product_sales_breakdown tool. Defaults to True.
+        get_customer_order_history: Enable get_customer_order_history tool. Defaults to False (token heavy).
+        get_inventory_levels: Enable get_inventory_levels tool. Defaults to True.
+        get_low_stock_products: Enable get_low_stock_products tool. Defaults to True.
+        get_sales_trends: Enable get_sales_trends tool. Defaults to True.
+        get_average_order_value: Enable get_average_order_value tool. Defaults to True.
+        get_repeat_customers: Enable get_repeat_customers tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -41,6 +56,21 @@ class ShopifyTools(Toolkit):
         access_token: Optional[str] = None,
         api_version: str = "2025-10",
         timeout: int = 30,
+        get_shop_info: bool = True,
+        get_products: bool = True,
+        get_orders: bool = True,
+        get_top_selling_products: bool = True,
+        get_products_bought_together: bool = True,
+        get_sales_by_date_range: bool = True,
+        get_order_analytics: bool = True,
+        get_product_sales_breakdown: bool = True,
+        get_customer_order_history: bool = False,
+        get_inventory_levels: bool = True,
+        get_low_stock_products: bool = True,
+        get_sales_trends: bool = True,
+        get_average_order_value: bool = True,
+        get_repeat_customers: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.shop_name = shop_name or getenv("SHOPIFY_SHOP_NAME")
@@ -49,22 +79,35 @@ class ShopifyTools(Toolkit):
         self.timeout = timeout
         self.base_url = f"https://{self.shop_name}.myshopify.com/admin/api/{self.api_version}/graphql.json"
 
-        tools: List[Any] = [
-            self.get_shop_info,
-            self.get_products,
-            self.get_orders,
-            self.get_top_selling_products,
-            self.get_products_bought_together,
-            self.get_sales_by_date_range,
-            self.get_order_analytics,
-            self.get_product_sales_breakdown,
-            self.get_customer_order_history,
-            self.get_inventory_levels,
-            self.get_low_stock_products,
-            self.get_sales_trends,
-            self.get_average_order_value,
-            self.get_repeat_customers,
-        ]
+        tools: List[Callable] = []
+        if all or get_shop_info:
+            tools.append(self.get_shop_info)
+        if all or get_products:
+            tools.append(self.get_products)
+        if all or get_orders:
+            tools.append(self.get_orders)
+        if all or get_top_selling_products:
+            tools.append(self.get_top_selling_products)
+        if all or get_products_bought_together:
+            tools.append(self.get_products_bought_together)
+        if all or get_sales_by_date_range:
+            tools.append(self.get_sales_by_date_range)
+        if all or get_order_analytics:
+            tools.append(self.get_order_analytics)
+        if all or get_product_sales_breakdown:
+            tools.append(self.get_product_sales_breakdown)
+        if all or get_customer_order_history:
+            tools.append(self.get_customer_order_history)
+        if all or get_inventory_levels:
+            tools.append(self.get_inventory_levels)
+        if all or get_low_stock_products:
+            tools.append(self.get_low_stock_products)
+        if all or get_sales_trends:
+            tools.append(self.get_sales_trends)
+        if all or get_average_order_value:
+            tools.append(self.get_average_order_value)
+        if all or get_repeat_customers:
+            tools.append(self.get_repeat_customers)
 
         super().__init__(name="shopify", tools=tools, **kwargs)
 

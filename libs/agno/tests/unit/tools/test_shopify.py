@@ -195,7 +195,6 @@ def test_tools_registration():
         "get_sales_by_date_range",
         "get_order_analytics",
         "get_product_sales_breakdown",
-        "get_customer_order_history",
         "get_inventory_levels",
         "get_low_stock_products",
         "get_sales_trends",

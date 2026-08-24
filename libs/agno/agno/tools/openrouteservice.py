@@ -16,7 +16,7 @@ Prerequisites:
 Note:
 - OpenRouteService does not provide public transit / train routing. Use the
   `driving-car`, `cycling-*` or `foot-*` profiles for road-based routing, or
-  fall back to `GoogleMapTools` for transit directions.
+  fall back to `GoogleMapsTools` for transit directions.
 """
 
 from os import getenv
@@ -63,9 +63,9 @@ class OpenRouteServiceTools(Toolkit):
         api_key: Optional[str] = None,
         base_url: str = "https://api.openrouteservice.org",
         timeout: float = 30.0,
-        enable_directions: bool = True,
-        enable_distance_matrix: bool = True,
-        enable_geocoding: bool = True,
+        directions: bool = True,
+        distance_matrix: bool = True,
+        geocoding: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -84,13 +84,13 @@ class OpenRouteServiceTools(Toolkit):
         tools: List[Any] = []
         async_tools: List[Tuple[Any, str]] = []
 
-        if all or enable_geocoding:
+        if all or geocoding:
             tools.append(self.geocode_location)
             async_tools.append((self.ageocode_location, "geocode_location"))
-        if all or enable_directions:
+        if all or directions:
             tools.append(self.get_directions)
             async_tools.append((self.aget_directions, "get_directions"))
-        if all or enable_distance_matrix:
+        if all or distance_matrix:
             tools.append(self.get_distance_matrix)
             async_tools.append((self.aget_distance_matrix, "get_distance_matrix"))
 

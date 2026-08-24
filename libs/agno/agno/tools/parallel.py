@@ -55,10 +55,10 @@ class ParallelTools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_search: bool = True,
-        enable_extract: bool = True,
-        enable_task: bool = False,
-        enable_monitor: bool = False,
+        search: bool = True,
+        extract: bool = True,
+        task: bool = False,
+        monitor: bool = False,
         all: bool = False,
         max_results: int = 10,
         max_chars_per_result: int = 10000,
@@ -94,13 +94,13 @@ class ParallelTools(Toolkit):
         self.parallel_client = ParallelClient(api_key=self.api_key)
 
         tools: List[Any] = []
-        if all or enable_search:
+        if all or search:
             tools.append(self.parallel_search)
-        if all or enable_extract:
+        if all or extract:
             tools.append(self.parallel_extract)
-        if all or enable_task:
+        if all or task:
             tools.extend([self.create_task, self.get_task_status, self.get_task_result])
-        if all or enable_monitor:
+        if all or monitor:
             tools.extend(
                 [
                     self.create_monitor,

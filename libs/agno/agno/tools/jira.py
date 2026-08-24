@@ -18,11 +18,11 @@ class JiraTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         token: Optional[str] = None,
-        enable_get_issue: bool = True,
-        enable_create_issue: bool = True,
-        enable_search_issues: bool = True,
-        enable_add_comment: bool = True,
-        enable_add_worklog: bool = True,
+        get_issue: bool = True,
+        create_issue: bool = True,
+        search_issues: bool = True,
+        add_comment: bool = True,
+        add_worklog: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -48,15 +48,15 @@ class JiraTools(Toolkit):
             self.jira = JIRA(server=self.server_url)
 
         tools: List[Any] = []
-        if enable_get_issue or all:
+        if get_issue or all:
             tools.append(self.get_issue)
-        if enable_create_issue or all:
+        if create_issue or all:
             tools.append(self.create_issue)
-        if enable_search_issues or all:
+        if search_issues or all:
             tools.append(self.search_issues)
-        if enable_add_comment or all:
+        if add_comment or all:
             tools.append(self.add_comment)
-        if enable_add_worklog or all:
+        if add_worklog or all:
             tools.append(self.add_worklog)
 
         super().__init__(name="jira_tools", tools=tools, **kwargs)

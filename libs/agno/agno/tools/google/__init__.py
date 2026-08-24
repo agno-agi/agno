@@ -6,7 +6,7 @@ __all__ = [
     "GoogleCalendarTools",
     "GoogleDriveTools",
     "GmailTools",
-    "GoogleMapTools",
+    "GoogleMapsTools",
     "GoogleSheetsTools",
 ]
 
@@ -40,10 +40,10 @@ def __getattr__(name: str):
         from agno.tools.google.gmail import GmailTools
 
         return GmailTools
-    if name == "GoogleMapTools":
-        from agno.tools.google.maps import GoogleMapTools
+    if name == "GoogleMapsTools":
+        from agno.tools.google.maps import GoogleMapsTools
 
-        return GoogleMapTools
+        return GoogleMapsTools
     if name == "GoogleSheetsTools":
         from agno.tools.google.sheets import GoogleSheetsTools
 

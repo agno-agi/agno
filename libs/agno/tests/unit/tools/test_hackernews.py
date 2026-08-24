@@ -36,7 +36,7 @@ class TestHackerNewsToolsInitialization:
         function_names = [func.name for func in tools.functions.values()]
 
         assert "get_top_hackernews_stories" in function_names
-        assert "get_user_details" in function_names
+        assert "hackernews_get_user_details" in function_names
         assert tools.name == "hackers_news"
 
     def test_initialization_with_all_flag(self):
@@ -46,7 +46,7 @@ class TestHackerNewsToolsInitialization:
         function_names = [func.name for func in tools.functions.values()]
 
         assert "get_top_hackernews_stories" in function_names
-        assert "get_user_details" in function_names
+        assert "hackernews_get_user_details" in function_names
 
     def test_initialization_stories_only(self):
         """Test initialization with only stories enabled."""
@@ -55,7 +55,7 @@ class TestHackerNewsToolsInitialization:
         function_names = [func.name for func in tools.functions.values()]
 
         assert "get_top_hackernews_stories" in function_names
-        assert "get_user_details" not in function_names
+        assert "hackernews_get_user_details" not in function_names
 
     def test_initialization_user_details_only(self):
         """Test initialization with only user details enabled."""
@@ -64,7 +64,7 @@ class TestHackerNewsToolsInitialization:
         function_names = [func.name for func in tools.functions.values()]
 
         assert "get_top_hackernews_stories" not in function_names
-        assert "get_user_details" in function_names
+        assert "hackernews_get_user_details" in function_names
 
     def test_initialization_no_tools_enabled(self):
         """Test initialization with no tools enabled."""
@@ -73,7 +73,7 @@ class TestHackerNewsToolsInitialization:
         function_names = [func.name for func in tools.functions.values()]
 
         assert "get_top_hackernews_stories" not in function_names
-        assert "get_user_details" not in function_names
+        assert "hackernews_get_user_details" not in function_names
 
     def test_toolkit_name(self):
         """Test that toolkit has correct name."""
@@ -273,7 +273,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("testuser")
+            result = hackernews_tools.hackernews_get_user_details("testuser")
 
         user_details = json.loads(result)
         assert user_details["id"] == "testuser"
@@ -294,7 +294,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("testuser123")
+            result = hackernews_tools.hackernews_get_user_details("testuser123")
 
         user_details = json.loads(result)
         assert user_details["id"] == "testuser123"
@@ -312,7 +312,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("newuser")
+            result = hackernews_tools.hackernews_get_user_details("newuser")
 
         user_details = json.loads(result)
         assert user_details["total_items_submitted"] == 0
@@ -329,7 +329,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("quietuser")
+            result = hackernews_tools.hackernews_get_user_details("quietuser")
 
         user_details = json.loads(result)
         assert user_details["about"] is None
@@ -337,7 +337,7 @@ class TestGetUserDetails:
     def test_get_user_details_error_handling(self, hackernews_tools):
         """Test error handling when API call fails."""
         with patch("agno.tools.hackernews.httpx.get", side_effect=Exception("Network error")):
-            result = hackernews_tools.get_user_details("testuser")
+            result = hackernews_tools.hackernews_get_user_details("testuser")
 
         assert "Error getting user details" in result
         assert "Network error" in result
@@ -348,7 +348,7 @@ class TestGetUserDetails:
         mock_response.json.return_value = None
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("nonexistentuser12345")
+            result = hackernews_tools.hackernews_get_user_details("nonexistentuser12345")
 
         # Should handle None gracefully by catching the exception
         assert "Error getting user details" in result
@@ -369,13 +369,13 @@ class TestToolkitIntegration:
     def test_tools_list_user_details_only(self, user_details_only_tools):
         """Test tools list with only user details enabled."""
         assert len(user_details_only_tools.tools) == 1
-        assert user_details_only_tools.tools[0].__name__ == "get_user_details"
+        assert user_details_only_tools.tools[0].__name__ == "hackernews_get_user_details"
 
     def test_functions_dict_populated(self, hackernews_tools):
         """Test that functions dict is properly populated."""
         function_names = list(hackernews_tools.functions.keys())
         assert "get_top_hackernews_stories" in function_names
-        assert "get_user_details" in function_names
+        assert "hackernews_get_user_details" in function_names
 
 
 class TestEdgeCases:
@@ -432,7 +432,7 @@ class TestEdgeCases:
         mock_response.json.return_value = mock_user
 
         with patch("agno.tools.hackernews.httpx.get", return_value=mock_response):
-            result = hackernews_tools.get_user_details("user_with-special.chars")
+            result = hackernews_tools.hackernews_get_user_details("user_with-special.chars")
 
         user_details = json.loads(result)
         assert user_details["karma"] == 100

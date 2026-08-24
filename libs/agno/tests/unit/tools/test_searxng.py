@@ -41,7 +41,7 @@ def test_searxng_search(searxng_instance):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        result = searxng_instance.search_web("test query", max_results=2)
+        result = searxng_instance.searxng_search_web("test query", max_results=2)
 
         # Parse the JSON result since the method returns JSON string
         result_data = json.loads(result)
@@ -63,7 +63,7 @@ def test_searxng_search_with_engines(searxng_with_engines):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        searxng_with_engines.search_web("test query")
+        searxng_with_engines.searxng_search_web("test query")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query&engines=google,bing"
         mock_get.assert_called_once_with(expected_url, timeout=30)
@@ -80,7 +80,7 @@ def test_searxng_search_with_fixed_max_results(searxng_with_fixed_results):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        result = searxng_with_fixed_results.search_web("test query", max_results=10)
+        result = searxng_with_fixed_results.searxng_search_web("test query", max_results=10)
         result_data = json.loads(result)
 
         # Should respect fixed_max_results (3) instead of max_results (10)
@@ -98,7 +98,7 @@ def test_searxng_image_search(searxng_instance):
 
         # Need to create instance with images=True to register the tool
         searxng_images = Searxng(host="http://localhost:53153")
-        result = searxng_images.image_search("test image")
+        result = searxng_images.searxng_image_search("test image")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20image&categories=images"
         mock_get.assert_called_once_with(expected_url, timeout=30)
@@ -117,7 +117,7 @@ def test_searxng_news_search():
         mock_get.return_value = mock_response
 
         searxng_news = Searxng(host="http://localhost:53153")
-        searxng_news.news_search("breaking news")
+        searxng_news.searxng_news_search("breaking news")
 
         expected_url = "http://localhost:53153/search?format=json&q=breaking%20news&categories=news"
         mock_get.assert_called_once_with(expected_url, timeout=30)
@@ -128,7 +128,7 @@ def test_searxng_search_error_handling(searxng_instance):
     with patch("httpx.get") as mock_get:
         mock_get.side_effect = Exception("Network error")
 
-        result = searxng_instance.search_web("test query")
+        result = searxng_instance.searxng_search_web("test query")
 
         assert "Error fetching results from searxng: Network error" in result
 
@@ -142,7 +142,7 @@ def test_searxng_query_encoding(searxng_instance):
         mock_response.json.return_value = mock_response_payload
         mock_get.return_value = mock_response
 
-        searxng_instance.search_web("test query with spaces & symbols")
+        searxng_instance.searxng_search_web("test query with spaces & symbols")
 
         expected_url = "http://localhost:53153/search?format=json&q=test%20query%20with%20spaces%20%26%20symbols"
         mock_get.assert_called_once_with(expected_url, timeout=30)
@@ -184,11 +184,11 @@ def test_default_engines_isolated_under_mutation():
 @pytest.mark.parametrize(
     "category,method_name",
     [
-        ("it", "it_search"),
-        ("map", "map_search"),
-        ("music", "music_search"),
-        ("science", "science_search"),
-        ("videos", "video_search"),
+        ("it", "searxng_it_search"),
+        ("map", "searxng_map_search"),
+        ("music", "searxng_music_search"),
+        ("science", "searxng_science_search"),
+        ("videos", "searxng_video_search"),
     ],
 )
 def test_category_searches(category, method_name):

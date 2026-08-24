@@ -21,7 +21,7 @@ class EvmTools(Toolkit):
         self,
         private_key: Optional[str] = None,
         rpc_url: Optional[str] = None,
-        enable_send_transaction: bool = True,
+        send_transaction: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -53,7 +53,7 @@ class EvmTools(Toolkit):
         log_debug(f"Your wallet address is: {self.account.address}")
 
         tools = []
-        if all or enable_send_transaction:
+        if all or send_transaction:
             tools.append(self.send_transaction)
 
         super().__init__(name="evm_tools", tools=tools, **kwargs)

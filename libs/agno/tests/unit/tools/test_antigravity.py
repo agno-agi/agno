@@ -39,7 +39,7 @@ def test_init_requires_api_key():
 
 
 def test_init_registers_expected_tools():
-    tools = AntigravityTools(api_key="dummy")
+    tools = AntigravityTools(api_key="dummy", all=True)
     tool_names = {f.name for f in tools.functions.values()}
     assert tool_names == {
         "run_antigravity_task",

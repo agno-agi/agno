@@ -77,6 +77,7 @@ class GoogleCalendarTools(GoogleToolkit):
         respond_to_event: bool = False,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         """Initialize GoogleCalendarTools with authentication and tool selection.
@@ -114,34 +115,34 @@ class GoogleCalendarTools(GoogleToolkit):
         self._user_email: Optional[str] = None
         tools: List[Any] = []
 
-        if list_events:
+        if all or list_events:
             tools.append(self.list_events)
-        if get_event:
+        if all or get_event:
             tools.append(self.get_event)
-        if fetch_all_events:
+        if all or fetch_all_events:
             tools.append(self.fetch_all_events)
-        if find_available_slots:
+        if all or find_available_slots:
             tools.append(self.find_available_slots)
-        if list_calendars:
+        if all or list_calendars:
             tools.append(self.list_calendars)
-        if check_availability:
+        if all or check_availability:
             tools.append(self.check_availability)
-        if get_event_attendees:
+        if all or get_event_attendees:
             tools.append(self.get_event_attendees)
-        if search_events:
+        if all or search_events:
             tools.append(self.search_events)
 
-        if create_event:
+        if all or create_event:
             tools.append(self.create_event)
-        if update_event:
+        if all or update_event:
             tools.append(self.update_event)
-        if delete_event:
+        if all or delete_event:
             tools.append(self.delete_event)
-        if quick_add_event:
+        if all or quick_add_event:
             tools.append(self.quick_add_event)
-        if move_event:
+        if all or move_event:
             tools.append(self.move_event)
-        if respond_to_event:
+        if all or respond_to_event:
             tools.append(self.respond_to_event)
 
         super().__init__(

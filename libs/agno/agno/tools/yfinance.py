@@ -30,15 +30,15 @@ class YFinanceTools(Toolkit):
 
     def __init__(
         self,
-        enable_stock_price: bool = True,
-        enable_company_info: bool = False,
-        enable_stock_fundamentals: bool = False,
-        enable_income_statements: bool = False,
-        enable_key_financial_ratios: bool = False,
-        enable_analyst_recommendations: bool = False,
-        enable_company_news: bool = False,
-        enable_technical_indicators: bool = False,
-        enable_historical_prices: bool = False,
+        stock_price: bool = True,
+        company_info: bool = False,
+        stock_fundamentals: bool = False,
+        income_statements: bool = False,
+        key_financial_ratios: bool = False,
+        analyst_recommendations: bool = False,
+        company_news: bool = False,
+        technical_indicators: bool = False,
+        historical_prices: bool = False,
         all: bool = False,
         session: Optional[Any] = None,
         **kwargs,
@@ -46,23 +46,23 @@ class YFinanceTools(Toolkit):
         self.session = session
 
         tools: List[Any] = []
-        if all or enable_stock_price:
+        if all or stock_price:
             tools.append(self.get_current_stock_price)
-        if all or enable_company_info:
+        if all or company_info:
             tools.append(self.get_company_info)
-        if all or enable_stock_fundamentals:
+        if all or stock_fundamentals:
             tools.append(self.get_stock_fundamentals)
-        if all or enable_income_statements:
+        if all or income_statements:
             tools.append(self.get_income_statements)
-        if all or enable_key_financial_ratios:
+        if all or key_financial_ratios:
             tools.append(self.get_key_financial_ratios)
-        if all or enable_analyst_recommendations:
+        if all or analyst_recommendations:
             tools.append(self.get_analyst_recommendations)
-        if all or enable_company_news:
+        if all or company_news:
             tools.append(self.get_company_news)
-        if all or enable_technical_indicators:
+        if all or technical_indicators:
             tools.append(self.get_technical_indicators)
-        if all or enable_historical_prices:
+        if all or historical_prices:
             tools.append(self.get_historical_stock_prices)
 
         super().__init__(name="yfinance_tools", tools=tools, **kwargs)

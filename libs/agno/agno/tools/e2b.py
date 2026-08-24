@@ -13,7 +13,7 @@ from agno.team.team import Team
 from agno.tools import Toolkit
 from agno.tools.function import ToolResult
 from agno.utils.code_execution import prepare_python_code
-from agno.utils.log import log_error, logger
+from agno.utils.log import log_error, log_exception, log_info
 
 try:
     from e2b_code_interpreter import Sandbox
@@ -22,21 +22,61 @@ except ImportError:
 
 
 class E2BTools(Toolkit):
+    """Toolkit for running code in an isolated E2B cloud sandbox.
+
+    Args:
+        api_key: E2B API key. Falls back to E2B_API_KEY env var.
+        timeout: Sandbox timeout in seconds. Defaults to 300.
+        sandbox_options: Additional options for Sandbox constructor.
+        run_python_code: Enable run_python_code tool. Defaults to False (executes code).
+        upload_file: Enable upload_file tool. Defaults to False (uploads to sandbox).
+        download_png_result: Enable download_png_result tool. Defaults to False (downloads).
+        download_chart_data: Enable download_chart_data tool. Defaults to False (downloads).
+        download_file_from_sandbox: Enable download_file_from_sandbox tool. Defaults to False (downloads).
+        list_files: Enable list_files tool. Defaults to True.
+        read_file_content: Enable read_file_content tool. Defaults to True.
+        write_file_content: Enable write_file_content tool. Defaults to False (writes to sandbox).
+        watch_directory: Enable watch_directory tool. Defaults to True.
+        get_public_url: Enable get_public_url tool. Defaults to False (exposes URL).
+        run_server: Enable run_server tool. Defaults to False (executes code).
+        set_sandbox_timeout: Enable set_sandbox_timeout tool. Defaults to True.
+        get_sandbox_status: Enable get_sandbox_status tool. Defaults to True.
+        shutdown_sandbox: Enable shutdown_sandbox tool. Defaults to False (destructive).
+        list_running_sandboxes: Enable list_running_sandboxes tool. Defaults to True.
+        run_command: Enable run_command tool. Defaults to False (executes commands).
+        stream_command: Enable stream_command tool. Defaults to False (executes commands).
+        run_background_command: Enable run_background_command tool. Defaults to False (executes commands).
+        kill_background_command: Enable kill_background_command tool. Defaults to False (kills process).
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         api_key: Optional[str] = None,
-        timeout: int = 300,  # 5 minutes default timeout
+        timeout: int = 300,
         sandbox_options: Optional[Dict[str, Any]] = None,
+        run_python_code: bool = True,
+        upload_file: bool = True,
+        download_png_result: bool = True,
+        download_chart_data: bool = True,
+        download_file_from_sandbox: bool = True,
+        list_files: bool = True,
+        read_file_content: bool = True,
+        write_file_content: bool = True,
+        watch_directory: bool = True,
+        get_public_url: bool = True,
+        run_server: bool = True,
+        set_sandbox_timeout: bool = True,
+        get_sandbox_status: bool = True,
+        shutdown_sandbox: bool = True,
+        list_running_sandboxes: bool = True,
+        run_command: bool = True,
+        stream_command: bool = True,
+        run_background_command: bool = True,
+        kill_background_command: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        """Initialize E2B toolkit for code interpretation and running Python code in a sandbox.
-
-        Args:
-            api_key: E2B API key (defaults to E2B_API_KEY environment variable)
-            timeout: Timeout in seconds for the sandbox (default: 5 minutes)
-            sandbox_options: Additional options to pass to the Sandbox constructor
-        """
-
         self.api_key = api_key or getenv("E2B_API_KEY")
         if not self.api_key:
             raise ValueError("E2B_API_KEY not set. Please set the E2B_API_KEY environment variable.")
@@ -48,40 +88,52 @@ class E2BTools(Toolkit):
         try:
             self.sandbox = Sandbox.create(api_key=self.api_key, timeout=timeout, **self.sandbox_options)
         except Exception as e:
-            logger.exception("Warning: Could not create sandbox")
+            log_exception("Warning: Could not create sandbox")
             raise e
 
         # Last execution result for reference
         self.last_execution = None
         self.downloaded_files: Dict[int, str] = {}
 
-        tools: List[Any] = [
-            # Code execution
-            self.run_python_code,
-            # File operations
-            self.upload_file,
-            self.download_png_result,
-            self.download_chart_data,
-            self.download_file_from_sandbox,
-            # Filesystem operations
-            self.list_files,
-            self.read_file_content,
-            self.write_file_content,
-            self.watch_directory,
-            # Internet access
-            self.get_public_url,
-            self.run_server,
-            # Sandbox management
-            self.set_sandbox_timeout,
-            self.get_sandbox_status,
-            self.shutdown_sandbox,
-            self.list_running_sandboxes,
-            # Command execution
-            self.run_command,
-            self.stream_command,
-            self.run_background_command,
-            self.kill_background_command,
-        ]
+        tools: List[Callable] = []
+        if all or run_python_code:
+            tools.append(self.run_python_code)
+        if all or upload_file:
+            tools.append(self.upload_file)
+        if all or download_png_result:
+            tools.append(self.download_png_result)
+        if all or download_chart_data:
+            tools.append(self.download_chart_data)
+        if all or download_file_from_sandbox:
+            tools.append(self.download_file_from_sandbox)
+        if all or list_files:
+            tools.append(self.list_files)
+        if all or read_file_content:
+            tools.append(self.read_file_content)
+        if all or write_file_content:
+            tools.append(self.write_file_content)
+        if all or watch_directory:
+            tools.append(self.watch_directory)
+        if all or get_public_url:
+            tools.append(self.get_public_url)
+        if all or run_server:
+            tools.append(self.run_server)
+        if all or set_sandbox_timeout:
+            tools.append(self.set_sandbox_timeout)
+        if all or get_sandbox_status:
+            tools.append(self.get_sandbox_status)
+        if all or shutdown_sandbox:
+            tools.append(self.shutdown_sandbox)
+        if all or list_running_sandboxes:
+            tools.append(self.list_running_sandboxes)
+        if all or run_command:
+            tools.append(self.run_command)
+        if all or stream_command:
+            tools.append(self.stream_command)
+        if all or run_background_command:
+            tools.append(self.run_background_command)
+        if all or kill_background_command:
+            tools.append(self.kill_background_command)
 
         super().__init__(name="e2b_tools", tools=tools, **kwargs)
 
@@ -202,10 +254,13 @@ class E2BTools(Toolkit):
             with fdopen(fd, "wb") as tmp:
                 tmp.write(png_data)
 
-            # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
+            # Generate a file:// URL for the temp file
+            file_url = f"file://{temp_path}"
+
+            # Create Image object
             image_id = str(uuid4())
             image_artifact = Image(
-                id=image_id, filepath=temp_path, original_prompt=f"Generated from code execution result {result_index}"
+                id=image_id, url=file_url, original_prompt=f"Generated from code execution result {result_index}"
             )
 
             if output_path:
@@ -286,12 +341,13 @@ class E2BTools(Toolkit):
                 with os.fdopen(fd, "wb") as tmp:
                     tmp.write(png_data)
 
-                # A local path belongs in filepath, not a file:// url: url is fetched over http(s).
+                # Generate a file:// URL for the temp file
+                file_url = f"file://{temp_path}"
+
+                # Create Image object
                 image_id = str(uuid4())
                 image_artifact = Image(
-                    id=image_id,
-                    filepath=temp_path,
-                    original_prompt=f"Interactive {chart_type} chart from code execution",
+                    id=image_id, url=file_url, original_prompt=f"Interactive {chart_type} chart from code execution"
                 )
 
                 summary += f"\nChart image added as artifact with ID {image_id}"
@@ -394,7 +450,7 @@ class E2BTools(Toolkit):
 
         def stdout_callback(data):
             outputs.append(f"STDOUT: {data}")
-            logger.info(f"STDOUT: {data}")
+            log_info(f"STDOUT: {data}")
 
         def stderr_callback(data):
             outputs.append(f"STDERR: {data}")

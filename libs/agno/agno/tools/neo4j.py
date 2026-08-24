@@ -18,10 +18,10 @@ class Neo4jTools(Toolkit):
         password: Optional[str] = None,
         database: Optional[str] = None,
         # Enable flags for <6 functions
-        enable_list_labels: bool = True,
-        enable_list_relationships: bool = True,
-        enable_get_schema: bool = True,
-        enable_run_cypher: bool = True,
+        list_labels: bool = True,
+        list_relationships: bool = True,
+        get_schema: bool = True,
+        run_cypher: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -64,13 +64,13 @@ class Neo4jTools(Toolkit):
 
         # Register toolkit methods as tools
         tools: List[Any] = []
-        if all or enable_list_labels:
+        if all or list_labels:
             tools.append(self.list_labels)
-        if all or enable_list_relationships:
+        if all or list_relationships:
             tools.append(self.list_relationship_types)
-        if all or enable_get_schema:
+        if all or get_schema:
             tools.append(self.get_schema)
-        if all or enable_run_cypher:
+        if all or run_cypher:
             tools.append(self.run_cypher_query)
         super().__init__(name="neo4j_tools", tools=tools, **kwargs)
 

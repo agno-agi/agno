@@ -44,7 +44,7 @@ class NanoBananaTools(Toolkit):
         model: str = "gemini-2.5-flash-image",
         aspect_ratio: str = "1:1",
         api_key: Optional[str] = None,
-        enable_create_image: bool = True,
+        create_image: bool = True,
         **kwargs,
     ):
         self.model = model
@@ -62,7 +62,7 @@ class NanoBananaTools(Toolkit):
             raise ValueError("GOOGLE_API_KEY not set. Export it: `export GOOGLE_API_KEY=<your-key>`")
 
         tools: List[Any] = []
-        if enable_create_image:
+        if create_image:
             tools.append(self.create_image)
 
         super().__init__(name="nano_banana", tools=tools, **kwargs)

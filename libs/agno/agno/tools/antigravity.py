@@ -1,7 +1,7 @@
 import json
 from os import getenv
 from textwrap import dedent
-from typing import Any, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 import httpx
 
@@ -35,11 +35,29 @@ DEFAULT_INSTRUCTIONS = dedent(
 
 
 class AntigravityTools(Toolkit):
-    """Toolkit that lets an Agno agent delegate sub-tasks to Google's Gemini Agents API.
+    """Toolkit for delegating tasks to Google's Gemini Agents API (Antigravity).
 
-    An Antigravity sandbox is provisioned lazily on the first `run_antigravity_task` call
-    and its environment_id is cached in the agent's session_state so subsequent calls
-    in the same session reuse the same environment (and prior files).
+    Args:
+        api_key: Gemini API key. Falls back to GEMINI_API_KEY env var.
+        base_url: API base URL. Defaults to Google's generativelanguage endpoint.
+        agent: Antigravity agent ID. Defaults to "antigravity-preview-05-2026".
+        default_sources: Optional sources to seed the sandbox environment.
+        persistent: Persist sandbox across calls in same session. Defaults to True.
+        timeout: Request timeout in seconds. Defaults to 600.
+        instructions: Custom instructions for the toolkit.
+        add_instructions: Add instructions to agent. Defaults to True.
+        agent_directory: Path to agent directory (agent.yaml + workspace/).
+        register: Register agent from directory on construction. Defaults to True.
+        run_task: Enable run_antigravity_task tool. Defaults to True.
+        run_custom_agent: Enable run_custom_antigravity_agent tool. Defaults to True.
+        create_agent: Enable create_custom_antigravity_agent tool. Defaults to False (creates external resource).
+        update_agent: Enable update_custom_antigravity_agent tool. Defaults to False (modifies external).
+        get_agent: Enable get_custom_antigravity_agent tool. Defaults to True.
+        list_agents: Enable list_antigravity_agents tool. Defaults to True.
+        list_versions: Enable list_antigravity_agent_versions tool. Defaults to True.
+        delete_agent: Enable delete_antigravity_agent tool. Defaults to False (destructive).
+        download_snapshot: Enable download_antigravity_environment_snapshot tool. Defaults to False (downloads).
+        all: Enable all tools. Defaults to True.
     """
 
     def __init__(
@@ -54,18 +72,18 @@ class AntigravityTools(Toolkit):
         add_instructions: bool = False,
         agent_directory: Optional[str] = None,
         register: bool = True,
+        run_task: bool = True,
+        run_custom_agent: bool = True,
+        create_agent: bool = True,
+        update_agent: bool = True,
+        get_agent: bool = True,
+        list_agents: bool = True,
+        list_versions: bool = True,
+        delete_agent: bool = True,
+        download_snapshot: bool = True,
+        all: bool = False,
         **kwargs,
     ):
-        """
-        Args:
-            agent_directory: Optional path to an agent directory (per the Managed
-                Agents docs: agent.yaml + AGENTS.md + workspace/ + skills/). When
-                set, the toolkit parses the folder, sets `agent` to the yaml's
-                `id`, and seeds `default_sources` from workspace/ + skills/.
-            register: When `agent_directory` is set and `register=True` (default),
-                POST the agent definition to /v1beta/agents on construction.
-                Treats 409/already-exists as success. Set False to defer.
-        """
         self.api_key = api_key or getenv("GEMINI_API_KEY")
         if not self.api_key:
             raise ValueError("GEMINI_API_KEY not set. Pass api_key= or set the GEMINI_API_KEY environment variable.")
@@ -84,17 +102,25 @@ class AntigravityTools(Toolkit):
                 raise ValueError("agent_directory conflicts with explicit `default_sources=` argument")
             self._load_agent_directory(agent_directory, register=register)
 
-        tools: List[Any] = [
-            self.run_antigravity_task,
-            self.run_custom_antigravity_agent,
-            self.create_custom_antigravity_agent,
-            self.update_custom_antigravity_agent,
-            self.get_custom_antigravity_agent,
-            self.list_antigravity_agents,
-            self.list_antigravity_agent_versions,
-            self.delete_antigravity_agent,
-            self.download_antigravity_environment_snapshot,
-        ]
+        tools: List[Callable] = []
+        if all or run_task:
+            tools.append(self.run_antigravity_task)
+        if all or run_custom_agent:
+            tools.append(self.run_custom_antigravity_agent)
+        if all or create_agent:
+            tools.append(self.create_custom_antigravity_agent)
+        if all or update_agent:
+            tools.append(self.update_custom_antigravity_agent)
+        if all or get_agent:
+            tools.append(self.get_custom_antigravity_agent)
+        if all or list_agents:
+            tools.append(self.list_antigravity_agents)
+        if all or list_versions:
+            tools.append(self.list_antigravity_agent_versions)
+        if all or delete_agent:
+            tools.append(self.delete_antigravity_agent)
+        if all or download_snapshot:
+            tools.append(self.download_antigravity_environment_snapshot)
         super().__init__(
             name="antigravity_tools",
             tools=tools,

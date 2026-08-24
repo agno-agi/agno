@@ -42,9 +42,9 @@ class OpenAITools(Toolkit):
     def __init__(
         self,
         api_key: Optional[str] = None,
-        enable_transcription: bool = True,
-        enable_image_generation: bool = True,
-        enable_speech_generation: bool = True,
+        transcription: bool = True,
+        image_generation: bool = True,
+        speech_generation: bool = True,
         all: bool = False,
         transcription_model: str = "whisper-1",
         text_to_speech_voice: OpenAIVoice = "alloy",
@@ -71,11 +71,11 @@ class OpenAITools(Toolkit):
         self.image_size = image_size
 
         tools: List[Any] = []
-        if all or enable_transcription:
+        if all or transcription:
             tools.append(self.transcribe_audio)
-        if all or enable_image_generation:
+        if all or image_generation:
             tools.append(self.generate_image)
-        if all or enable_speech_generation:
+        if all or speech_generation:
             tools.append(self.generate_speech)
 
         super().__init__(name="openai_tools", tools=tools, **kwargs)

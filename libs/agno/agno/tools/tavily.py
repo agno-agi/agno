@@ -16,9 +16,9 @@ class TavilyTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         api_base_url: Optional[str] = None,
-        enable_search: bool = True,
-        enable_search_context: bool = False,
-        enable_extract: bool = False,
+        search: bool = True,
+        search_context: bool = False,
+        extract: bool = False,
         all: bool = False,
         max_tokens: int = 6000,
         include_answer: bool = True,
@@ -102,13 +102,13 @@ class TavilyTools(Toolkit):
 
         tools: List[Any] = []
 
-        if enable_search or all:
-            if enable_search_context:
+        if search or all:
+            if search_context:
                 tools.append(self.web_search_with_tavily)
             else:
                 tools.append(self.web_search_using_tavily)
 
-        if enable_extract or all:
+        if extract or all:
             tools.append(self.extract_url_content)
 
         super().__init__(name="tavily_tools", tools=tools, **kwargs)

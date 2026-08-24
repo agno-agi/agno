@@ -12,17 +12,17 @@ except ImportError:
 class PandasTools(Toolkit):
     def __init__(
         self,
-        enable_create_pandas_dataframe: bool = True,
-        enable_run_dataframe_operation: bool = True,
+        create_pandas_dataframe: bool = True,
+        run_dataframe_operation: bool = True,
         all: bool = False,
         **kwargs,
     ):
         self.dataframes: Dict[str, pd.DataFrame] = {}
 
         tools: List[Any] = []
-        if all or enable_create_pandas_dataframe:
+        if all or create_pandas_dataframe:
             tools.append(self.create_pandas_dataframe)
-        if all or enable_run_dataframe_operation:
+        if all or run_dataframe_operation:
             tools.append(self.run_dataframe_operation)
 
         super().__init__(name="pandas_tools", tools=tools, **kwargs)

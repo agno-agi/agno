@@ -24,8 +24,8 @@ class FalTools(Toolkit):
         self,
         api_key: Optional[str] = None,
         model: str = "fal-ai/hunyuan-video",
-        enable_generate_media: bool = True,
-        enable_image_to_image: bool = False,
+        generate_media: bool = True,
+        image_to_image: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -36,9 +36,9 @@ class FalTools(Toolkit):
         self.seen_logs: set[str] = set()
 
         tools = []
-        if all or enable_generate_media:
+        if all or generate_media:
             tools.append(self.generate_media)
-        if all or enable_image_to_image:
+        if all or image_to_image:
             tools.append(self.image_to_image)
 
         super().__init__(name="fal-tools", tools=tools, **kwargs)

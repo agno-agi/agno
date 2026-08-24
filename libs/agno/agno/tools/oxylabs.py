@@ -49,10 +49,15 @@ class OxylabsTools(Toolkit):
     with optional JavaScript rendering and Markdown output.
 
     Args:
-        username (Optional[str]): Oxylabs username. Falls back to OXYLABS_USERNAME env var.
-        password (Optional[str]): Oxylabs password. Falls back to OXYLABS_PASSWORD env var.
-        markdown (bool): Default output format for scrape_website. If True, returns Markdown;
-            if False, returns parsed HTML. Default: False.
+        username: Oxylabs username. Falls back to OXYLABS_USERNAME env var.
+        password: Oxylabs password. Falls back to OXYLABS_PASSWORD env var.
+        markdown: Default output format for scrape_website. If True, returns Markdown;
+            if False, returns parsed HTML. Defaults to False.
+        search_google: Enable Google search tool. Defaults to True.
+        get_amazon_product: Enable Amazon product lookup tool. Defaults to True.
+        search_amazon_products: Enable Amazon product search tool. Defaults to True.
+        scrape_website: Enable website scraping tool. Defaults to True (token heavy).
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -60,6 +65,11 @@ class OxylabsTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         markdown: bool = False,
+        search_google: bool = True,
+        get_amazon_product: bool = True,
+        search_amazon_products: bool = True,
+        scrape_website: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.username = username or getenv("OXYLABS_USERNAME")
@@ -79,12 +89,15 @@ class OxylabsTools(Toolkit):
             log_debug(f"Failed to initialize Oxylabs client: {e}")
             raise
 
-        tools: List[Callable[..., str]] = [
-            self.search_google,
-            self.get_amazon_product,
-            self.search_amazon_products,
-            self.scrape_website,
-        ]
+        tools: List[Callable] = []
+        if all or search_google:
+            tools.append(self.search_google)
+        if all or get_amazon_product:
+            tools.append(self.get_amazon_product)
+        if all or search_amazon_products:
+            tools.append(self.search_amazon_products)
+        if all or scrape_website:
+            tools.append(self.scrape_website)
 
         super().__init__(name="oxylabs_web_scraping", tools=tools, **kwargs)
 
@@ -455,12 +468,12 @@ class OxylabsTools(Toolkit):
         """Generate a standardized JSON error response.
 
         Args:
-            tool_name (str): Name of the tool that encountered the error.
-            error_message (str): Human-readable error description.
-            context (Optional[Dict[str, Any]]): Additional context about the error.
+            tool_name: Name of the tool that encountered the error.
+            error_message: Human-readable error description.
+            context: Additional context about the error.
 
         Returns:
-            str: JSON string with tool name, error message, and context.
+            JSON string with tool name, error message, and context.
         """
         error_data = {"tool": tool_name, "error": error_message, "context": context or {}}
         return json.dumps(error_data, indent=2)

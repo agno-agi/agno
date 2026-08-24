@@ -44,11 +44,11 @@ class ExaTools(Toolkit):
 
     def __init__(
         self,
-        enable_search: bool = True,
-        enable_get_contents: bool = True,
-        enable_find_similar: bool = True,
-        enable_answer: bool = True,
-        enable_research: bool = False,
+        search: bool = True,
+        get_contents: bool = True,
+        find_similar: bool = True,
+        answer: bool = True,
+        research: bool = False,
         all: bool = False,
         text: bool = True,
         text_length_limit: int = 1000,
@@ -96,16 +96,16 @@ class ExaTools(Toolkit):
         self.research_model: Literal["exa-research", "exa-research-pro"] = research_model
 
         tools: List[Any] = []
-        if all or enable_search:
+        if all or search:
             tools.append(self.search_exa)
-        if all or enable_get_contents:
-            tools.append(self.get_contents)
-        if all or enable_find_similar:
-            tools.append(self.find_similar)
-        if all or enable_answer:
+        if all or get_contents:
+            tools.append(self.exa_get_contents)
+        if all or find_similar:
+            tools.append(self.exa_find_similar)
+        if all or answer:
             tools.append(self.exa_answer)
-        if all or enable_research:
-            tools.append(self.research)
+        if all or research:
+            tools.append(self.exa_research)
 
         super().__init__(name="exa", tools=tools, **kwargs)
 
@@ -185,7 +185,7 @@ class ExaTools(Toolkit):
             logger.exception("Failed to search exa")
             return f"Error: {e}"
 
-    def get_contents(self, urls: list[str]) -> str:
+    def exa_get_contents(self, urls: list[str]) -> str:
         """
         Retrieve detailed content from specific URLs using the Exa API.
 
@@ -220,7 +220,7 @@ class ExaTools(Toolkit):
             logger.exception("Failed to get contents from Exa")
             return f"Error: {e}"
 
-    def find_similar(self, url: str, num_results: int = 5) -> str:
+    def exa_find_similar(self, url: str, num_results: int = 5) -> str:
         """
         Find similar links to a given URL using the Exa API.
 
@@ -314,7 +314,7 @@ class ExaTools(Toolkit):
             logger.exception("Failed to get answer from Exa")
             return f"Error: {e}"
 
-    def research(
+    def exa_research(
         self,
         instructions: str,
         output_schema: Optional[Dict[str, Any]] = None,

@@ -13,9 +13,9 @@ class KnowledgeTools(Toolkit):
     def __init__(
         self,
         knowledge: Knowledge,
-        enable_think: bool = True,
-        enable_search: bool = True,
-        enable_analyze: bool = True,
+        think: bool = True,
+        search: bool = True,
+        analyze: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         add_few_shot: bool = False,
@@ -41,11 +41,11 @@ class KnowledgeTools(Toolkit):
         self.knowledge: Knowledge = knowledge
 
         tools: List[Any] = []
-        if enable_think or all:
+        if think or all:
             tools.append(self.think)
-        if enable_search or all:
+        if search or all:
             tools.append(self.search_knowledge)
-        if enable_analyze or all:
+        if analyze or all:
             tools.append(self.analyze)
 
         super().__init__(

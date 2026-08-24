@@ -25,9 +25,9 @@ class SQLTools(Toolkit):
         schema: Optional[str] = None,
         dialect: Optional[str] = None,
         tables: Optional[Dict[str, Any]] = None,
-        enable_list_tables: bool = True,
-        enable_describe_table: bool = True,
-        enable_run_sql_query: bool = True,
+        list_tables: bool = True,
+        describe_table: bool = True,
+        run_sql_query: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -54,11 +54,11 @@ class SQLTools(Toolkit):
         self.tables: Optional[Dict[str, Any]] = tables
 
         tools: List[Any] = []
-        if enable_list_tables or all:
+        if list_tables or all:
             tools.append(self.list_tables)
-        if enable_describe_table or all:
+        if describe_table or all:
             tools.append(self.describe_table)
-        if enable_run_sql_query or all:
+        if run_sql_query or all:
             tools.append(self.run_sql_query)
 
         super().__init__(name="sql_tools", tools=tools, **kwargs)

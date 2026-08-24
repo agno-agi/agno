@@ -1,42 +1,74 @@
 import functools
 import runpy
 from pathlib import Path
-from typing import Any, List, Optional
+from typing import Callable, List, Optional
 
 from agno.tools import Toolkit
-from agno.utils.log import log_debug, log_error, log_info, logger
+from agno.utils.log import log_debug, log_error, log_exception, log_info, log_warning
 
 
 @functools.lru_cache(maxsize=None)
 def warn() -> None:
-    logger.warning("PythonTools can run arbitrary code, please provide human supervision.")
+    log_warning("PythonTools can run arbitrary code, please provide human supervision.")
 
 
 class PythonTools(Toolkit):
+    """Toolkit for running Python code and managing files.
+
+    Args:
+        base_dir: Root directory for file operations. Defaults to cwd.
+        safe_globals: Global scope for code execution.
+        safe_locals: Local scope for code execution.
+        restrict_to_base_dir: Restrict file operations to base_dir. Defaults to True.
+        run_python_code: Enable run_python_code tool. Defaults to False (executes code).
+        save_to_file_and_run: Enable save_to_file_and_run tool. Defaults to False (executes code).
+        run_python_file_return_variable: Enable run_python_file_return_variable tool. Defaults to False (executes code).
+        pip_install_package: Enable pip_install_package tool. Defaults to False (executes code).
+        uv_pip_install_package: Enable uv_pip_install_package tool. Defaults to False (executes code).
+        read_file: Enable read_file tool. Defaults to True.
+        list_files: Enable list_files tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
+    """
+
     def __init__(
         self,
         base_dir: Optional[Path] = None,
         safe_globals: Optional[dict] = None,
         safe_locals: Optional[dict] = None,
         restrict_to_base_dir: bool = True,
+        run_python_code: bool = True,
+        save_to_file_and_run: bool = True,
+        run_python_file_return_variable: bool = True,
+        pip_install_package: bool = True,
+        uv_pip_install_package: bool = True,
+        read_file: bool = True,
+        list_files: bool = True,
+        all: bool = False,
         **kwargs,
     ):
         self.base_dir: Path = (base_dir or Path.cwd()).resolve()
         self.restrict_to_base_dir = restrict_to_base_dir
-
-        # Restricted global and local scope
         self.safe_globals: dict = safe_globals or globals()
         self.safe_locals: dict = safe_locals or locals()
 
-        tools: List[Any] = [
-            self.save_to_file_and_run,
-            self.run_python_code,
-            self.pip_install_package,
-            self.uv_pip_install_package,
-            self.run_python_file_return_variable,
-            self.read_file,
-            self.list_files,
-        ]
+        # Auto-enable tools specified in include_tools
+        include = set(kwargs.get("include_tools") or [])
+
+        tools: List[Callable] = []
+        if all or run_python_code or "run_python_code" in include:
+            tools.append(self.run_python_code)
+        if all or save_to_file_and_run or "save_to_file_and_run" in include:
+            tools.append(self.save_to_file_and_run)
+        if all or run_python_file_return_variable or "run_python_file_return_variable" in include:
+            tools.append(self.run_python_file_return_variable)
+        if all or pip_install_package or "pip_install_package" in include:
+            tools.append(self.pip_install_package)
+        if all or uv_pip_install_package or "uv_pip_install_package" in include:
+            tools.append(self.uv_pip_install_package)
+        if all or read_file or "read_file" in include:
+            tools.append(self.read_file)
+        if all or list_files or "list_files" in include:
+            tools.append(self.list_files)
 
         super().__init__(name="python_tools", tools=tools, **kwargs)
 
@@ -79,7 +111,7 @@ class PythonTools(Toolkit):
             else:
                 return f"successfully ran {str(file_path)}"
         except Exception as e:
-            logger.exception("Error saving and running code")
+            log_exception("Error saving and running code")
             return f"Error saving and running code: {e}"
 
     def run_python_file_return_variable(self, file_name: str, variable_to_return: Optional[str] = None) -> str:
@@ -107,7 +139,7 @@ class PythonTools(Toolkit):
             else:
                 return f"successfully ran {str(file_path)}"
         except Exception as e:
-            logger.exception("Error running file")
+            log_exception("Error running file")
             return f"Error running file: {e}"
 
     def read_file(self, file_name: str) -> str:
@@ -125,7 +157,7 @@ class PythonTools(Toolkit):
             contents = file_path.read_text(encoding="utf-8")
             return str(contents)
         except Exception as e:
-            logger.exception("Error reading file")
+            log_exception("Error reading file")
             return f"Error reading file: {e}"
 
     def list_files(self) -> str:
@@ -138,7 +170,7 @@ class PythonTools(Toolkit):
             files = [str(file_path.name) for file_path in self.base_dir.iterdir()]
             return ", ".join(files)
         except Exception as e:
-            logger.exception("Error reading files")
+            log_exception("Error reading files")
             return f"Error reading files: {e}"
 
     def run_python_code(self, code: str, variable_to_return: Optional[str] = None) -> str:
@@ -167,7 +199,7 @@ class PythonTools(Toolkit):
             else:
                 return "successfully ran python code"
         except Exception as e:
-            logger.exception("Error running python code")
+            log_exception("Error running python code")
             return f"Error running python code: {e}"
 
     def pip_install_package(self, package_name: str) -> str:
@@ -188,7 +220,7 @@ class PythonTools(Toolkit):
             subprocess.check_call([sys.executable, "-m", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
-            logger.exception(f"Error installing package {package_name}")
+            log_exception(f"Error installing package {package_name}")
             return f"Error installing package {package_name}: {e}"
 
     def uv_pip_install_package(self, package_name: str) -> str:
@@ -209,5 +241,5 @@ class PythonTools(Toolkit):
             subprocess.check_call([sys.executable, "-m", "uv", "pip", "install", package_name])
             return f"successfully installed package {package_name}"
         except Exception as e:
-            logger.exception(f"Error installing package {package_name}")
+            log_exception(f"Error installing package {package_name}")
             return f"Error installing package {package_name}: {e}"

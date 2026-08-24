@@ -35,7 +35,7 @@ class BaiduSearchTools(Toolkit):
         proxy: Optional[str] = None,
         timeout: Optional[int] = 10,
         debug: Optional[bool] = False,
-        enable_baidu_search: bool = True,
+        baidu_search: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -47,7 +47,7 @@ class BaiduSearchTools(Toolkit):
         self.debug = debug
 
         tools = []
-        if all or enable_baidu_search:
+        if all or baidu_search:
             tools.append(self.baidu_search)
 
         super().__init__(name="baidusearch", tools=tools, **kwargs)

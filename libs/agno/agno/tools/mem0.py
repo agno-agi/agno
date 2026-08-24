@@ -22,21 +22,21 @@ class Mem0Tools(Toolkit):
         org_id: Optional[str] = None,
         project_id: Optional[str] = None,
         infer: bool = True,
-        enable_add_memory: bool = True,
-        enable_search_memory: bool = True,
-        enable_get_all_memories: bool = True,
-        enable_delete_all_memories: bool = True,
+        add_memory: bool = True,
+        search_memory: bool = True,
+        get_all_memories: bool = True,
+        delete_all_memories: bool = True,
         all: bool = False,
         **kwargs,
     ):
         tools: List[Any] = []
-        if enable_add_memory or all:
+        if add_memory or all:
             tools.append(self.add_memory)
-        if enable_search_memory or all:
+        if search_memory or all:
             tools.append(self.search_memory)
-        if enable_get_all_memories or all:
+        if get_all_memories or all:
             tools.append(self.get_all_memories)
-        if enable_delete_all_memories or all:
+        if delete_all_memories or all:
             tools.append(self.delete_all_memories)
 
         super().__init__(name="mem0_tools", tools=tools, **kwargs)

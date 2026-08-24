@@ -13,7 +13,7 @@ Prerequisites:
 
 Note:
 - OpenRouteService does not support public transit / train routing. Use the
-  driving-car, cycling-* or foot-* profiles, or GoogleMapTools for transit.
+  driving-car, cycling-* or foot-* profiles, or GoogleMapsTools for transit.
 """
 
 from agno.agent import Agent

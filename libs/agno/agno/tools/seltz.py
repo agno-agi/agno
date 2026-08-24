@@ -27,6 +27,8 @@ except ImportError as exc:
 
 
 class SeltzTools(Toolkit):
+    _legacy_param_aliases = {"max_documents": "max_results"}
+
     """Toolkit for interacting with the Seltz AI-powered search API.
 
     Args:
@@ -50,7 +52,7 @@ class SeltzTools(Toolkit):
         context: Optional[str] = None,
         profile: Optional[str] = None,
         show_results: bool = False,
-        enable_search: bool = True,
+        search: bool = True,
         all: bool = False,
         **kwargs: Any,
     ):
@@ -77,7 +79,7 @@ class SeltzTools(Toolkit):
             self.client = Seltz(**client_kwargs)
 
         tools: List[Any] = []
-        if all or enable_search:
+        if all or search:
             tools.append(self.search_seltz)
 
         super().__init__(name="seltz", tools=tools, **kwargs)

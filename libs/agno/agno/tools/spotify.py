@@ -11,7 +11,7 @@ Required scopes:
 """
 
 import json
-from typing import Any, List, Optional
+from typing import Any, Callable, List, Optional
 
 import httpx
 
@@ -20,13 +20,31 @@ from agno.utils.log import log_debug
 
 
 class SpotifyTools(Toolkit):
-    """
-    Spotify toolkit for searching songs and managing playlists.
+    """Spotify toolkit for searching songs and managing playlists.
 
     Args:
         access_token: Spotify OAuth access token with required scopes.
         default_market: Default market/country code for search results (e.g., 'US', 'GB').
         timeout: Request timeout in seconds.
+        search_tracks: Enable search_tracks tool. Defaults to True.
+        search_playlists: Enable search_playlists tool. Defaults to True.
+        search_artists: Enable search_artists tool. Defaults to True.
+        search_albums: Enable search_albums tool. Defaults to True.
+        get_user_playlists: Enable get_user_playlists tool. Defaults to True.
+        get_track_recommendations: Enable get_track_recommendations tool. Defaults to True.
+        get_artist_top_tracks: Enable get_artist_top_tracks tool. Defaults to True.
+        get_album_tracks: Enable get_album_tracks tool. Defaults to True.
+        get_my_top_tracks: Enable get_my_top_tracks tool. Defaults to False (token heavy).
+        get_my_top_artists: Enable get_my_top_artists tool. Defaults to False (token heavy).
+        create_playlist: Enable create_playlist tool. Defaults to False (creates external resource).
+        add_tracks_to_playlist: Enable add_tracks_to_playlist tool. Defaults to False (modifies external resource).
+        update_playlist_details: Enable update_playlist_details tool. Defaults to False (modifies external resource).
+        remove_tracks_from_playlist: Enable remove_tracks_from_playlist tool. Defaults to False (destructive).
+        get_current_user: Enable get_current_user tool. Defaults to True.
+        get_playlist: Enable get_playlist tool. Defaults to True.
+        play_track: Enable play_track tool. Defaults to False (controls playback).
+        get_currently_playing: Enable get_currently_playing tool. Defaults to True.
+        all: Enable all tools. Defaults to False.
     """
 
     def __init__(
@@ -34,6 +52,25 @@ class SpotifyTools(Toolkit):
         access_token: str,
         default_market: Optional[str] = "US",
         timeout: int = 30,
+        search_tracks: bool = True,
+        search_playlists: bool = True,
+        search_artists: bool = True,
+        search_albums: bool = True,
+        get_user_playlists: bool = True,
+        get_track_recommendations: bool = True,
+        get_artist_top_tracks: bool = True,
+        get_album_tracks: bool = True,
+        get_current_user: bool = True,
+        get_playlist: bool = True,
+        get_currently_playing: bool = True,
+        get_my_top_tracks: bool = False,
+        get_my_top_artists: bool = False,
+        create_playlist: bool = False,
+        add_tracks_to_playlist: bool = False,
+        update_playlist_details: bool = False,
+        remove_tracks_from_playlist: bool = False,
+        play_track: bool = False,
+        all: bool = False,
         **kwargs,
     ):
         self.access_token = access_token
@@ -41,26 +78,43 @@ class SpotifyTools(Toolkit):
         self.timeout = timeout
         self.base_url = "https://api.spotify.com/v1"
 
-        tools: List[Any] = [
-            self.search_tracks,
-            self.search_playlists,
-            self.search_artists,
-            self.search_albums,
-            self.get_user_playlists,
-            self.get_track_recommendations,
-            self.get_artist_top_tracks,
-            self.get_album_tracks,
-            self.get_my_top_tracks,
-            self.get_my_top_artists,
-            self.create_playlist,
-            self.add_tracks_to_playlist,
-            self.get_playlist,
-            self.update_playlist_details,
-            self.remove_tracks_from_playlist,
-            self.get_current_user,
-            self.play_track,
-            self.get_currently_playing,
-        ]
+        tools: List[Callable] = []
+        if all or search_tracks:
+            tools.append(self.search_tracks)
+        if all or search_playlists:
+            tools.append(self.search_playlists)
+        if all or search_artists:
+            tools.append(self.search_artists)
+        if all or search_albums:
+            tools.append(self.search_albums)
+        if all or get_user_playlists:
+            tools.append(self.get_user_playlists)
+        if all or get_track_recommendations:
+            tools.append(self.get_track_recommendations)
+        if all or get_artist_top_tracks:
+            tools.append(self.get_artist_top_tracks)
+        if all or get_album_tracks:
+            tools.append(self.get_album_tracks)
+        if all or get_current_user:
+            tools.append(self.get_current_user)
+        if all or get_playlist:
+            tools.append(self.get_playlist)
+        if all or get_currently_playing:
+            tools.append(self.get_currently_playing)
+        if all or get_my_top_tracks:
+            tools.append(self.get_my_top_tracks)
+        if all or get_my_top_artists:
+            tools.append(self.get_my_top_artists)
+        if all or create_playlist:
+            tools.append(self.create_playlist)
+        if all or add_tracks_to_playlist:
+            tools.append(self.add_tracks_to_playlist)
+        if all or update_playlist_details:
+            tools.append(self.update_playlist_details)
+        if all or remove_tracks_from_playlist:
+            tools.append(self.remove_tracks_from_playlist)
+        if all or play_track:
+            tools.append(self.play_track)
 
         super().__init__(name="spotify", tools=tools, **kwargs)
 

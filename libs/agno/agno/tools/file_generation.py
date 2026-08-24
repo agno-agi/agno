@@ -93,27 +93,37 @@ CODE_LANGUAGE_MAP: Dict[str, Tuple[str, str]] = {
 
 
 class FileGenerationTools(Toolkit):
+    _legacy_param_aliases = {
+        "enable_json_generation": "generate_json",
+        "enable_csv_generation": "generate_csv",
+        "enable_pdf_generation": "generate_pdf",
+        "enable_docx_generation": "generate_docx",
+        "enable_txt_generation": "generate_txt",
+        "enable_html_generation": "generate_html",
+        "enable_code_generation": "generate_code",
+    }
+
     def __init__(
         self,
-        enable_json_generation: bool = True,
-        enable_csv_generation: bool = True,
-        enable_pdf_generation: bool = True,
-        enable_docx_generation: bool = True,
-        enable_txt_generation: bool = True,
-        enable_html_generation: bool = True,
-        enable_code_generation: bool = True,
+        generate_json: bool = True,
+        generate_csv: bool = True,
+        generate_pdf: bool = True,
+        generate_docx: bool = True,
+        generate_txt: bool = True,
+        generate_html: bool = True,
+        generate_code: bool = True,
         output_directory: Optional[str] = None,
         save_files: bool = False,
         all: bool = False,
         **kwargs,
     ):
-        self.enable_json_generation = enable_json_generation
-        self.enable_csv_generation = enable_csv_generation
-        self.enable_pdf_generation = enable_pdf_generation and PDF_AVAILABLE
-        self.enable_docx_generation = enable_docx_generation and DOCX_AVAILABLE
-        self.enable_txt_generation = enable_txt_generation
-        self.enable_html_generation = enable_html_generation
-        self.enable_code_generation = enable_code_generation
+        self.generate_json = generate_json
+        self.generate_csv = generate_csv
+        self.generate_pdf = generate_pdf and PDF_AVAILABLE
+        self.generate_docx = generate_docx and DOCX_AVAILABLE
+        self.generate_txt = generate_txt
+        self.generate_html = generate_html
+        self.generate_code = generate_code
         # output_directory implies save_files=True for backward compatibility
         self.save_files = save_files or (output_directory is not None)
 
@@ -126,28 +136,28 @@ class FileGenerationTools(Toolkit):
         else:
             self.output_directory = None
 
-        if enable_pdf_generation and not PDF_AVAILABLE:
+        if generate_pdf and not PDF_AVAILABLE:
             logger.warning("PDF generation requested but reportlab is not installed. Disabling PDF generation.")
-            self.enable_pdf_generation = False
+            generate_pdf = False
 
-        if enable_docx_generation and not DOCX_AVAILABLE:
+        if generate_docx and not DOCX_AVAILABLE:
             logger.warning("DOCX generation requested but python-docx is not installed. Disabling DOCX generation.")
-            self.enable_docx_generation = False
+            generate_docx = False
 
         tools: List[Any] = []
-        if all or enable_json_generation:
+        if all or generate_json:
             tools.append(self.generate_json_file)
-        if all or enable_csv_generation:
+        if all or generate_csv:
             tools.append(self.generate_csv_file)
-        if all or (enable_pdf_generation and PDF_AVAILABLE):
+        if all or (generate_pdf and PDF_AVAILABLE):
             tools.append(self.generate_pdf_file)
-        if all or (enable_docx_generation and DOCX_AVAILABLE):
+        if all or (generate_docx and DOCX_AVAILABLE):
             tools.append(self.generate_docx_file)
-        if all or enable_txt_generation:
+        if all or generate_txt:
             tools.append(self.generate_text_file)
-        if all or enable_html_generation:
+        if all or generate_html:
             tools.append(self.generate_html_file)
-        if all or enable_code_generation:
+        if all or generate_code:
             tools.append(self.generate_code_file)
 
         super().__init__(name="file_generation", tools=tools, **kwargs)

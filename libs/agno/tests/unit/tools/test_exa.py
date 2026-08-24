@@ -64,8 +64,8 @@ def test_init_with_selective_tools():
         )
 
         assert "search_exa" in [func.name for func in tools.functions.values()]
-        assert "get_contents" not in [func.name for func in tools.functions.values()]
-        assert "find_similar" in [func.name for func in tools.functions.values()]
+        assert "exa_get_contents" not in [func.name for func in tools.functions.values()]
+        assert "exa_find_similar" in [func.name for func in tools.functions.values()]
         assert "exa_answer" not in [func.name for func in tools.functions.values()]
 
 
@@ -107,7 +107,7 @@ def test_get_contents_success(exa_tools, mock_exa_client):
 
     mock_exa_client.get_contents.return_value = mock_response
 
-    result = exa_tools.get_contents(["https://example.com"])
+    result = exa_tools.exa_get_contents(["https://example.com"])
     result_data = json.loads(result)
 
     assert len(result_data) == 1
@@ -129,7 +129,7 @@ def test_find_similar_success(exa_tools, mock_exa_client):
 
     mock_exa_client.find_similar_and_contents.return_value = mock_response
 
-    result = exa_tools.find_similar("https://example.com", num_results=5)
+    result = exa_tools.exa_find_similar("https://example.com", num_results=5)
     result_data = json.loads(result)
 
     assert len(result_data) == 1
@@ -198,12 +198,12 @@ def test_error_handling(exa_tools, mock_exa_client):
 
     # Test get_contents error
     mock_exa_client.get_contents.side_effect = Exception("Contents API Error")
-    result = exa_tools.get_contents(["https://example.com"])
+    result = exa_tools.exa_get_contents(["https://example.com"])
     assert "Error: Contents API Error" in result
 
     # Test find_similar error
     mock_exa_client.find_similar_and_contents.side_effect = Exception("Similar API Error")
-    result = exa_tools.find_similar("https://example.com")
+    result = exa_tools.exa_find_similar("https://example.com")
     assert "Error: Similar API Error" in result
 
     # Test answer error
@@ -283,7 +283,7 @@ def test_init_with_research_tool():
     with patch.dict("os.environ", {"EXA_API_KEY": "test_key"}):
         tools = ExaTools(enable_research=True)
 
-        assert "research" in [func.name for func in tools.functions.values()]
+        assert "exa_research" in [func.name for func in tools.functions.values()]
 
 
 def test_research_success(exa_tools, mock_exa_client):
@@ -311,7 +311,7 @@ def test_research_success(exa_tools, mock_exa_client):
     mock_exa_client.research = mock_research_client
 
     # Execute research with custom schema
-    result = exa_tools.research(
+    result = exa_tools.exa_research(
         instructions="Research AI trends in 2024",
         output_schema={"type": "object", "properties": {"trends": {"type": "array"}}},
     )
@@ -349,7 +349,7 @@ def test_research_with_string_query(exa_tools, mock_exa_client):
     mock_exa_client.research = mock_research_client
 
     # Execute research with simple string
-    result = exa_tools.research("What are the latest AI trends?")
+    result = exa_tools.exa_research("What are the latest AI trends?")
     result_data = json.loads(result)
 
     # Verify results
@@ -371,7 +371,7 @@ def test_research_timeout(exa_tools, mock_exa_client):
     mock_research_client.poll_task.side_effect = TimeoutError("Task timed out")
     mock_exa_client.research = mock_research_client
 
-    result = exa_tools.research("test instructions")
+    result = exa_tools.exa_research("test instructions")
     result_data = json.loads(result)
 
     assert "error" in result_data
@@ -384,7 +384,7 @@ def test_research_error_handling(exa_tools, mock_exa_client):
     mock_research_client.create_task.side_effect = Exception("API Error")
     mock_exa_client.research = mock_research_client
 
-    result = exa_tools.research("test instructions")
+    result = exa_tools.exa_research("test instructions")
     result_data = json.loads(result)
 
     assert "error" in result_data

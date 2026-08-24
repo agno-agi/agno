@@ -24,7 +24,7 @@ class ZendeskTools(Toolkit):
         username: Optional[str] = None,
         password: Optional[str] = None,
         company_name: Optional[str] = None,
-        enable_search_zendesk: bool = True,
+        search_zendesk: bool = True,
         all: bool = False,
         timeout: int = 30,
         **kwargs,
@@ -48,7 +48,7 @@ class ZendeskTools(Toolkit):
             log_error("Username, password, or company name not provided.")
 
         tools: List[Any] = []
-        if all or enable_search_zendesk:
+        if all or search_zendesk:
             tools.append(self.search_zendesk)
 
         super().__init__(name="zendesk_tools", tools=tools, timeout=timeout, **kwargs)

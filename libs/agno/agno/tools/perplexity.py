@@ -52,12 +52,12 @@ class PerplexitySearch(Toolkit):
 
         super().__init__(
             name="perplexity_search",
-            tools=[self.search],
-            async_tools=[(self.asearch, "search")],
+            tools=[self.perplexity_search],
+            async_tools=[(self.asearch, "perplexity_search")],
             **kwargs,
         )
 
-    def search(self, query: str, max_results: Optional[int] = None) -> str:
+    def perplexity_search(self, query: str, max_results: Optional[int] = None) -> str:
         """Use this function to search the web using the Perplexity Search API.
         Returns ranked web search results with titles, URLs, snippets, and dates.
 
