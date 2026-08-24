@@ -3766,6 +3766,20 @@ def _continue_run(
     # 1. Handle the updated tools
     handle_tool_call_updates(agent, run_response=run_response, run_messages=run_messages, tools=tools)
 
+    # Pre-loop compaction: compress history BEFORE model call
+    if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
+        log_debug(f"[AGENT-CONTINUE-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+        compaction_result = agent.compaction_manager.compact(
+            run_messages.messages,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if compaction_result.summary:
+            run_messages.compacted_messages = compaction_result.compacted_messages
+            log_debug(
+                f"[AGENT-CONTINUE-SYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
+            )
+
     try:
         num_attempts = agent.retries + 1
         for attempt in range(num_attempts):
@@ -3786,6 +3800,8 @@ def _continue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compaction_manager=agent.compaction_manager if agent.compact_tools else None,
+                    compacted_messages=run_messages.compacted_messages,
+                    compaction_callback=build_compaction_callback(agent, run_messages, run_response),
                     **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
@@ -4984,6 +5000,20 @@ async def _acontinue_run(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
 
+                # Pre-loop compaction: compress history BEFORE model call
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
+                    log_debug(f"[AGENT-CONTINUE-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    compaction_result = await agent.compaction_manager.acompact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        log_debug(
+                            f"[AGENT-CONTINUE-ASYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
+                        )
+
                 # 8. Get model response
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
@@ -4996,6 +5026,8 @@ async def _acontinue_run(
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
                     compaction_manager=agent.compaction_manager if agent.compact_tools else None,
+                    compacted_messages=run_messages.compacted_messages,
+                    compaction_callback=await abuild_compaction_callback(agent, run_messages, run_response),
                     **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
