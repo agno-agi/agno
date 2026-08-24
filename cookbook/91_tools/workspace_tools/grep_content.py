@@ -1,14 +1,13 @@
 """
-Workspace — grep_content (regex search)
-=======================================
+Workspace — grep_content (regex search with line numbers)
+=========================================================
 
-Demonstrates grep_content, which provides regex search with line numbers.
-This is the missing piece for code/docs navigation agents.
+grep_content fills the gap between search_content (substring, one snippet per
+file) and what code navigation agents need: regex patterns, every matching
+line with its line number, and optional context lines.
 
-Unlike search_content (substring, one snippet per file), grep_content returns:
-- Every matching line with its line number
-- Optional context lines around each match
-- Files-only mode for quick discovery
+This example shows a docs-agent pattern: discover files, search with regex,
+then read specific sections based on line numbers from grep results.
 
 Requires: OPENAI_API_KEY
 """
@@ -19,48 +18,37 @@ from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.workspace import Workspace
 
-# Point at the agno source code
+# Point at the agno libs directory
 project_root = Path(__file__).resolve().parents[3]
-agno_src = project_root / "libs" / "agno" / "agno"
+libs_dir = project_root / "libs" / "agno" / "agno"
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.4"),
     tools=[
         Workspace(
-            str(agno_src),
+            str(libs_dir),
             allowed=["read", "list", "search", "grep"],
             confirm=[],
         )
     ],
+    instructions="""\
+You are a code navigation assistant. Use the workspace tools to answer questions:
+
+- list_files: discover what files exist (supports glob patterns, recursive)
+- search_content: quick substring search to find which files mention something
+- grep_content: regex search with line numbers — use this when you need exact locations
+- read_file: read file contents, optionally with line ranges from grep results
+
+When answering questions about code, cite file:line references from grep results.
+""",
     markdown=True,
 )
 
 
 if __name__ == "__main__":
-    # Demo 1: Find all async def run methods
-    print("Demo 1: Find async run methods")
-    print("-" * 40)
+    # A practical code navigation task
     agent.print_response(
-        "Use grep_content to find all 'async def run' methods in the agent/ directory. "
-        "Show the file and line number for each match."
-    )
-
-    print("\n")
-
-    # Demo 2: Find class definitions with context
-    print("Demo 2: Find Agent class with context")
-    print("-" * 40)
-    agent.print_response(
-        "Use grep_content with context_lines=2 to find where 'class Agent' is defined. "
-        "Show the surrounding lines to understand its structure."
-    )
-
-    print("\n")
-
-    # Demo 3: Files-only mode for discovery
-    print("Demo 3: Files-only discovery")
-    print("-" * 40)
-    agent.print_response(
-        "Use grep_content with files_only=True to find which files contain 'ContextProvider'. "
-        "Just list the file names, don't show the content."
+        "Find all the context providers in this codebase. "
+        "Use grep_content to find classes that inherit from ContextProvider, "
+        "then summarize what each one does based on its location and name."
     )
