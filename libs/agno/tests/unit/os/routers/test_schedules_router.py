@@ -1,4 +1,9 @@
-"""Tests for the schedule REST API router."""
+"""Tests for the schedule REST API router.
+
+The ``client`` fixture mounts the router on a bare ``FastAPI()``, so these tests
+exercise FastAPI's default exception handlers, not agno's. The owned-app contract
+(AgentOS's own handlers) is pinned in ``tests/unit/os/test_validation_error_body.py``.
+"""
 
 import time
 from unittest.mock import MagicMock, patch
@@ -228,6 +233,13 @@ class TestUpdateSchedule:
         assert resp.status_code == 200
         mock_db.update_schedule.assert_not_called()
 
+    def test_update_invalid_endpoint_full_url(self, client, mock_db):
+        # ScheduleUpdate has its own copy of the full-URL branch; cover it like the
+        # create-side one. The value starts with "/" and contains "://".
+        resp = client.patch("/schedules/sched-1", json={"endpoint": "/proxy?u=http://example.com"})
+        assert resp.status_code == 422
+        assert "Endpoint must be a path, not a full URL" in resp.text
+
 
 # =============================================================================
 # Tests: DELETE /schedules/{schedule_id}
@@ -423,15 +435,18 @@ class TestScheduleCreateValidation:
         assert resp.status_code == 422
 
     def test_invalid_endpoint_full_url(self, client, mock_db):
+        # Starts with "/" and contains "://" so it reaches the full-URL branch;
+        # a bare "http://..." trips the leading-slash check first.
         resp = client.post(
             "/schedules",
             json={
                 "name": "test",
                 "cron_expr": "0 9 * * *",
-                "endpoint": "http://example.com/test",
+                "endpoint": "/proxy?u=http://example.com",
             },
         )
         assert resp.status_code == 422
+        assert "Endpoint must be a path, not a full URL" in resp.text
 
     def test_invalid_method(self, client, mock_db):
         resp = client.post(
