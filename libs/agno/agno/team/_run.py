@@ -7020,6 +7020,19 @@ async def _aprepare_direct_member_continuation(
     return run_messages, direct_content
 
 
+def _restore_direct_member_content(
+    team: "Team",
+    run_response: TeamRunOutput,
+    direct_content: Any,
+    run_context: RunContext,
+) -> None:
+    """Restore and normalize the final member response for a direct continuation."""
+    from agno.team._response import _convert_response_to_structured_format
+
+    run_response.content = direct_content
+    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+
 async def _ahandle_model_response_for_continue(
     team: "Team",
     run_response: TeamRunOutput,
@@ -8645,7 +8658,12 @@ def _continue_run_stream(
                 # Route-mode member continuations already have their final
                 # response, so only run the shared completion lifecycle.
                 if model_response_override is not None:
-                    run_response.content = model_response_override.content
+                    _restore_direct_member_content(
+                        team,
+                        run_response,
+                        model_response_override.content,
+                        run_context,
+                    )
                 else:
                     # Handle the updated tools (execute confirmed tools, etc.) with streaming
                     yield from _handle_team_tool_call_updates_stream(
@@ -9888,7 +9906,7 @@ async def _acontinue_run(
                         run_context,
                         member_results,
                     )
-                    run_response.content = direct_member_content
+                    _restore_direct_member_content(team, run_response, direct_member_content, run_context)
 
                 elif member_results:
                     # Member-only: continue the same run with results
@@ -10483,7 +10501,7 @@ async def _acontinue_run_stream(
                         run_context,
                         member_results,
                     )
-                    run_response.content = direct_member_content
+                    _restore_direct_member_content(team, run_response, direct_member_content, run_context)
 
                     if stream_events:
                         yield handle_event(

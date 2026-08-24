@@ -6,11 +6,17 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from pydantic import BaseModel
 
 from agno.models.response import ToolExecution
 from agno.run import RunStatus
 from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput
+
+
+class _StructuredDirectResponse(BaseModel):
+    result: str
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -1187,12 +1193,19 @@ class TestRespondDirectlyMemberContinuation:
         assert cleanup.call_count == 2
 
     def test_sync_respond_directly_returns_approved_member_without_leader(self):
+        from agno.run import RunContext
         from agno.team._run import continue_run_dispatch
 
         team, session, run_response, requirement, member, member_run_output, member_response = self._make_case(
             rejected=False
         )
-        member_response.content = "Approved member result"
+        member_response.content = '{"result": "approved"}'
+        team.parse_response = True
+        run_context = RunContext(
+            run_id="team-run-1",
+            session_id="session-1",
+            output_schema={"type": "object", "properties": {"result": {"type": "string"}}},
+        )
 
         with (
             self._sync_dispatch_patches(session, member, member_run_output, requirement, self._sync_opts()),
@@ -1204,11 +1217,12 @@ class TestRespondDirectlyMemberContinuation:
             patch("agno.team._run._cleanup_and_store"),
             patch("agno.team._telemetry.log_team_telemetry"),
         ):
-            result = continue_run_dispatch(team, run_response=run_response, stream=False)
+            result = continue_run_dispatch(team, run_response=run_response, run_context=run_context, stream=False)
 
         assert result is run_response
         assert result.status == RunStatus.completed
-        assert result.content == "Approved member result"
+        assert result.content == {"result": "approved"}
+        assert result.content_type == "dict"
         member.continue_run.assert_called_once()
         leader_model.assert_not_called()
 
@@ -1283,6 +1297,7 @@ class TestRespondDirectlyMemberContinuation:
         assert member_results == [f"[Member 1]: {self.cancellation}"]
 
     def test_sync_stream_respond_directly_emits_team_terminal_without_leader(self):
+        from agno.run import RunContext
         from agno.run.agent import RunOutput
         from agno.run.team import RunCompletedEvent, RunContentCompletedEvent, RunContinuedEvent
         from agno.team._run import continue_run_dispatch
@@ -1292,10 +1307,16 @@ class TestRespondDirectlyMemberContinuation:
             run_id="member-run-1",
             session_id="session-1",
             status=RunStatus.completed,
-            content=self.cancellation,
+            content='{"result": "approved"}',
         )
         member.continue_run = MagicMock(return_value=iter([member_final]))
+        team.parse_response = True
         team.retries = 1
+        run_context = RunContext(
+            run_id="team-run-1",
+            session_id="session-1",
+            output_schema=_StructuredDirectResponse,
+        )
 
         with (
             self._sync_dispatch_patches(
@@ -1321,6 +1342,7 @@ class TestRespondDirectlyMemberContinuation:
                 continue_run_dispatch(
                     team,
                     run_response=run_response,
+                    run_context=run_context,
                     stream=True,
                     stream_events=True,
                     yield_run_output=True,
@@ -1332,7 +1354,8 @@ class TestRespondDirectlyMemberContinuation:
         assert any(isinstance(event, RunCompletedEvent) for event in events)
         assert events[-1] is run_response
         assert run_response.status == RunStatus.completed
-        assert run_response.content == self.cancellation
+        assert run_response.content == _StructuredDirectResponse(result="approved")
+        assert run_response.content_type == "_StructuredDirectResponse"
         member.continue_run.assert_called_once()
         team_tool_updates.assert_not_called()
         leader_stream.assert_not_called()
@@ -1342,13 +1365,22 @@ class TestRespondDirectlyMemberContinuation:
     @pytest.mark.parametrize("respond_directly", [True, False])
     def test_async_member_continuation_respects_response_mode(self, respond_directly):
         from agno.media.storage.base import AsyncMediaStorage
+        from agno.run import RunContext
         from agno.team._run import _acontinue_run
 
         team, session, run_response, requirement, member, member_run_output, _ = self._make_case(
             respond_directly=respond_directly
         )
         team.media_storage = MagicMock(spec=AsyncMediaStorage)
-        run_context = MagicMock()
+        if respond_directly:
+            member.continue_run.return_value.content = '{"result": "approved"}'
+            member.acontinue_run.return_value.content = '{"result": "approved"}'
+            team.parse_response = True
+        run_context = RunContext(
+            run_id="team-run-1",
+            session_id="session-1",
+            output_schema=_StructuredDirectResponse if respond_directly else None,
+        )
 
         async def _exercise():
             with (
@@ -1384,8 +1416,9 @@ class TestRespondDirectlyMemberContinuation:
                 run_context=run_context,
             )
             if respond_directly:
-                assert result.content == self.cancellation
-                assert self.cancellation in str(result.tools[0].result)
+                assert result.content == _StructuredDirectResponse(result="approved")
+                assert result.content_type == "_StructuredDirectResponse"
+                assert '{"result": "approved"}' in str(result.tools[0].result)
                 leader_continue.assert_not_awaited()
             else:
                 leader_continue.assert_awaited_once()
@@ -1395,18 +1428,24 @@ class TestRespondDirectlyMemberContinuation:
 
     def test_async_stream_respond_directly_emits_team_terminal_without_leader(self):
         from agno.media.storage.base import AsyncMediaStorage
+        from agno.run import RunContext
         from agno.run.agent import RunOutput
         from agno.run.team import RunCompletedEvent, RunContentCompletedEvent, RunContinuedEvent
         from agno.team._run import _acontinue_run_stream
 
         team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
         team.media_storage = MagicMock(spec=AsyncMediaStorage)
-        run_context = MagicMock()
+        team.parse_response = True
+        run_context = RunContext(
+            run_id="team-run-1",
+            session_id="session-1",
+            output_schema=_StructuredDirectResponse,
+        )
         member_final = RunOutput(
             run_id="member-run-1",
             session_id="session-1",
             status=RunStatus.completed,
-            content=self.cancellation,
+            content='{"result": "approved"}',
         )
 
         async def _member_stream(*args, **kwargs):
@@ -1447,7 +1486,8 @@ class TestRespondDirectlyMemberContinuation:
             assert any(isinstance(event, RunCompletedEvent) for event in events)
             assert events[-1] is run_response
             assert run_response.status == RunStatus.completed
-            assert run_response.content == self.cancellation
+            assert run_response.content == _StructuredDirectResponse(result="approved")
+            assert run_response.content_type == "_StructuredDirectResponse"
             member.acontinue_run.assert_called_once()
             assert async_message_builder.await_count == 2
             async_message_builder.assert_awaited_with(
