@@ -52,50 +52,10 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, get_knowledge_instance
 from agno.remote.base import RemoteKnowledge
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
 
 logger = logging.getLogger(__name__)
-
-# Warned from the first /knowledge/config that finds anything unavailable, not from startup:
-# the sweep imports every reader module, which costs seconds on a knowledge-complete install,
-# and AgentOS builds its routers more than once per boot.
-_unavailable_warned = False
-
-
-def _warn_once_about_unavailable(
-    unavailable_readers: Dict[str, "UnavailableReaderSchema"],
-    unavailable_chunkers: Dict[str, "UnavailableChunkerSchema"],
-) -> None:
-    """Say once per process which readers and chunkers this install cannot use."""
-    global _unavailable_warned
-
-    if _unavailable_warned:
-        return
-    if not unavailable_readers and not unavailable_chunkers:
-        return
-    _unavailable_warned = True
-
-    def _describe(entries: Dict[str, Any]) -> str:
-        return ", ".join(
-            f"{entry.id} (needs {', '.join(entry.missing_packages)})"
-            if entry.missing_packages
-            else f"{entry.id} (see reason)"
-            for entry in entries.values()
-        )
-
-    parts = []
-    if unavailable_readers:
-        parts.append(f"{len(unavailable_readers)} reader(s) unavailable: {_describe(unavailable_readers)}")
-    if unavailable_chunkers:
-        parts.append(f"{len(unavailable_chunkers)} chunker(s) unavailable: {_describe(unavailable_chunkers)}")
-    log_warning(
-        "Knowledge: "
-        + "; ".join(parts)
-        + ". Content needing them will fail to process. "
-        + "See GET /knowledge/config -> unavailable_readers / unavailable_chunkers."
-    )
-
 
 def get_knowledge_router(
     knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], settings: AgnoAPISettings = AgnoAPISettings()
@@ -1375,7 +1335,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         for reader_id in reader_schemas:
             unavailable_readers.pop(reader_id, None)
         unavailable_chunkers = {c["id"]: UnavailableChunkerSchema(**c) for c in get_unavailable_chunkers_info()}
-        _warn_once_about_unavailable(unavailable_readers, unavailable_chunkers)
 
         vector_dbs = []
         if knowledge.vector_db:

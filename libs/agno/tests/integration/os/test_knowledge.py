@@ -1072,40 +1072,6 @@ def test_get_config_publishes_partial_reader_availability(test_app, mock_knowled
     assert "excel" not in data["readersForType"].get(".xls", [])
 
 
-def test_get_config_warns_about_unavailable_readers_exactly_once(test_app, mock_knowledge, caplog):
-    """The sweep is expensive and the answer never changes, so the line is emitted once."""
-    import agno.os.routers.knowledge.knowledge as knowledge_router
-
-    mock_knowledge.get_readers.return_value = {}
-    mock_knowledge.aget_valid_filters.return_value = []
-    mock_knowledge.vector_db = None
-
-    unavailable = [
-        {
-            "id": "pdf",
-            "name": "PdfReader",
-            "description": "Processes PDF documents",
-            "missing_packages": ["pypdf"],
-            "reason": "Reader 'pdf' has missing dependencies: `pypdf` not installed.",
-        }
-    ]
-
-    knowledge_router._unavailable_warned = False
-    try:
-        with (
-            patch.object(
-                knowledge_router, "get_readers_availability", side_effect=_availability_staging("pdf", unavailable)
-            ),
-            caplog.at_level("WARNING"),
-        ):
-            test_app.get("/knowledge/config")
-            test_app.get("/knowledge/config")
-    finally:
-        knowledge_router._unavailable_warned = False
-
-    assert caplog.text.count("reader(s) unavailable") == 1
-
-
 def test_get_config_sweeps_the_readers_once(test_app, mock_knowledge):
     """The sweep imports 18 reader modules; the route must not pay for it three times."""
     import agno.knowledge.utils as knowledge_utils
