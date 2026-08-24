@@ -630,15 +630,16 @@ async def test_git_run_sets_terminal_prompt_zero(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_provider_query_tool_serialises_answer(tmp_path: Path):
+async def test_provider_query_tool_serialises_answer_non_streaming(tmp_path: Path):
+    """With stream_sub_agent_events=False, query tool yields final JSON answer."""
     from agno.run.agent import RunOutput
 
-    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), stream_sub_agent_events=False)
 
     class _StubAgent:
         async def arun(self, message: str, **kwargs):  # noqa: ANN001
-            # When stream=True, arun is an async generator function
-            yield RunOutput(content="hello")
+            # When stream=False, arun returns RunOutput directly
+            return RunOutput(content="hello")
 
     p._read_agent = _StubAgent()
     tool = next(t for t in p.get_tools() if t.name == "query_wiki")
@@ -651,6 +652,177 @@ async def test_provider_query_tool_serialises_answer(tmp_path: Path):
             out = chunk
     payload = json.loads(out)
     assert payload == {"text": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_provider_query_tool_streams_events_not_json(tmp_path: Path):
+    """With stream_sub_agent_events=True (default), query yields events only.
+
+    The content is captured by models/base.py from RunContentEvent deltas,
+    so no final JSON is yielded — matching the Team streaming pattern.
+    """
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    # Default: stream_sub_agent_events=True
+
+    class _StubAgent:
+        async def arun(self, message: str, **kwargs):  # noqa: ANN001
+            event = ToolCallStartedEvent()
+            event.tool_call_id = "test_call"
+            yield event
+            yield RunOutput(content="hello")
+
+    p._read_agent = _StubAgent()
+    tool = next(t for t in p.get_tools() if t.name == "query_wiki")
+
+    gen = await tool.entrypoint(question="anything")
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    assert len(events) == 1, "Should yield the event"
+    assert events[0].tool_call_id == "test_call"
+    assert len(strings) == 0, "Should not yield final JSON in streaming mode"
+
+
+@pytest.mark.asyncio
+async def test_wiki_update_streaming_with_commit_note(tmp_path: Path):
+    """Streaming update yields events + commit note, no content duplication.
+
+    This tests the WikiContextProvider-specific behavior where:
+    1. Sub-agent events are streamed (content captured by models/base.py)
+    2. Commit note is yielded as a plain string at the end
+    3. No final JSON answer (would duplicate content)
+    """
+    from unittest.mock import AsyncMock
+
+    from agno.context.wiki.backend import CommitSummary
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+
+    class _StubWriteAgent:
+        async def arun(self, message: str, **kwargs):
+            yield RunContentEvent(content="Updated ")
+            yield RunContentEvent(content="the wiki")
+            yield RunOutput(content="Updated the wiki")
+
+    p._write_agent = _StubWriteAgent()
+
+    # Mock commit to return a summary
+    async def mock_commit(*args, **kwargs):
+        return CommitSummary(sha="abc12345", message="Auto-commit", files_changed=1)
+
+    p.backend.commit_after_write = mock_commit
+    p.backend.sync = AsyncMock()
+
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="update page")
+
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    # Should have 2 RunContentEvent (content deltas)
+    assert len(events) == 2, f"Expected 2 events, got {len(events)}"
+    assert all(isinstance(e, RunContentEvent) for e in events)
+
+    # Should have 1 string (just the commit note, not full JSON)
+    assert len(strings) == 1, f"Expected 1 string (commit note), got {len(strings)}"
+    assert "Committed abc12345" in strings[0]
+    assert "1 file(s)" in strings[0]
+
+    # Simulate models/base.py accumulation — content should appear once
+    accumulated = ""
+    for e in events:
+        accumulated += e.content or ""
+    for s in strings:
+        accumulated += s
+
+    expected = "Updated the wiki\n\nCommitted abc12345 (1 file(s)): Auto-commit"
+    assert accumulated == expected, f"Expected '{expected}', got '{accumulated}'"
+
+
+@pytest.mark.asyncio
+async def test_wiki_update_non_streaming_includes_commit_in_json(tmp_path: Path):
+    """Non-streaming update yields single JSON with content + commit note."""
+    from unittest.mock import AsyncMock
+
+    from agno.context.wiki.backend import CommitSummary
+    from agno.run.agent import RunOutput
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), stream_sub_agent_events=False)
+
+    class _StubWriteAgent:
+        async def arun(self, message: str, **kwargs):
+            return RunOutput(content="Updated the wiki")
+
+    p._write_agent = _StubWriteAgent()
+
+    async def mock_commit(*args, **kwargs):
+        return CommitSummary(sha="def67890", message="Auto-commit", files_changed=2)
+
+    p.backend.commit_after_write = mock_commit
+    p.backend.sync = AsyncMock()
+
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="update page")
+
+    outputs = []
+    async for chunk in gen:
+        outputs.append(chunk)
+
+    assert len(outputs) == 1, "Non-streaming should yield exactly one item"
+    payload = json.loads(outputs[0])
+    expected_text = "Updated the wiki\n\nCommitted def67890 (2 file(s)): Auto-commit"
+    assert payload.get("text") == expected_text
+
+
+@pytest.mark.asyncio
+async def test_wiki_update_no_commit_streaming(tmp_path: Path):
+    """When nothing to commit, streaming yields only events (no note)."""
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+
+    class _StubWriteAgent:
+        async def arun(self, message: str, **kwargs):
+            yield RunContentEvent(content="No changes")
+            yield RunOutput(content="No changes")
+
+    p._write_agent = _StubWriteAgent()
+
+    # No commit (nothing staged)
+    async def mock_commit(*args, **kwargs):
+        return None
+
+    p.backend.commit_after_write = mock_commit
+    p.backend.sync = AsyncMock()
+
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="check status")
+
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    assert len(events) == 1, "Should yield the content event"
+    assert len(strings) == 0, "No commit = no note string"
 
 
 @pytest.mark.asyncio

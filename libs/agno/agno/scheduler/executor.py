@@ -2,21 +2,24 @@
 
 import asyncio
 import json
-import re
 import time
 from typing import Any, Dict, List, Optional, Union
+from urllib.parse import quote
 from uuid import uuid4
 
-from agno.db.schemas.scheduler import Schedule
+from agno.db.schemas.scheduler import (
+    RESERVED_RUN_METADATA_KEYS,
+    RUN_ENDPOINT_RE,
+    SCHEDULE_OWNER_HEADER,
+    Schedule,
+    match_run_endpoint,
+)
 from agno.utils.log import log_error, log_info, log_warning
 
 try:
     import httpx
 except ImportError:
     httpx = None  # type: ignore[assignment]
-
-# Regex to detect run endpoints and capture resource type + ID
-_RUN_ENDPOINT_RE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs/?$")
 
 # Terminal run statuses (RunStatus enum values from agno.run.base)
 _TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
@@ -107,6 +110,66 @@ class ScheduleExecutor:
 
         try:
             schedule_id = sched.id
+            # A control-plane-managed schedule must fire the exact component its
+            # provenance names: a repointed endpoint under an old target is
+            # refused rather than executed. The refusal must be visible, so it
+            # is recorded as a failed run and the schedule is disabled with a
+            # reason instead of silently re-arming on every tick.
+            if sched.managed_by is not None and sched.target_type and sched.target_id:
+                if not match_run_endpoint(sched.endpoint, sched.target_type, sched.target_id):
+                    last_error = (
+                        f"Schedule {sched.id} endpoint {sched.endpoint!r} does not match its "
+                        f"provenance target {sched.target_type}:{sched.target_id}; refusing to execute"
+                    )
+                    log_error(last_error)
+
+                    run_record_id = str(uuid4())
+                    now = int(time.time())
+                    run_dict = {
+                        "id": run_record_id,
+                        "schedule_id": schedule_id,
+                        "attempt": 1,
+                        "triggered_at": now,
+                        "completed_at": None,
+                        "status": "running",
+                        "status_code": None,
+                        "run_id": None,
+                        "session_id": None,
+                        "error": None,
+                        "input": None,
+                        "output": None,
+                        "requirements": None,
+                        # Denormalised from the parent Schedule so the runs router can scope without a JOIN
+                        "user_id": sched.user_id,
+                        "created_at": now,
+                    }
+                    if asyncio.iscoroutinefunction(getattr(db, "create_schedule_run", None)):
+                        await db.create_schedule_run(run_dict)
+                    else:
+                        db.create_schedule_run(run_dict)
+
+                    drift_updates: Dict[str, Any] = {
+                        "completed_at": int(time.time()),
+                        "status": "failed",
+                        "error": last_error,
+                    }
+                    if asyncio.iscoroutinefunction(getattr(db, "update_schedule_run", None)):
+                        await db.update_schedule_run(run_record_id, **drift_updates)
+                    else:
+                        db.update_schedule_run(run_record_id, **drift_updates)
+
+                    disabled_reason = f"endpoint_drift:{sched.endpoint}!={sched.target_type}:{sched.target_id}"
+                    try:
+                        if asyncio.iscoroutinefunction(getattr(db, "update_schedule", None)):
+                            await db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                        else:
+                            db.update_schedule(schedule_id, enabled=False, disabled_reason=disabled_reason)
+                    except Exception as exc:
+                        log_error(f"Failed to disable schedule {schedule_id} after endpoint drift: {exc}")
+
+                    final_run = dict(run_dict)
+                    final_run.update(drift_updates)
+                    return final_run
             max_attempts = max(1, (sched.max_retries or 0) + 1)
             retry_delay = sched.retry_delay_seconds or 60
             for attempt in range(1, max_attempts + 1):
@@ -127,6 +190,8 @@ class ScheduleExecutor:
                     "input": None,
                     "output": None,
                     "requirements": None,
+                    # Denormalised from the parent Schedule so the runs router can scope without a JOIN
+                    "user_id": sched.user_id,
                     "created_at": now,
                 }
 
@@ -225,7 +290,7 @@ class ScheduleExecutor:
                     )
                 except Exception as e:
                     log_warning(
-                        f"Failed to compute next_run_at for schedule {schedule_id}; : {e}"
+                        f"Failed to compute next_run_at for schedule {schedule_id}; "
                         f"disabling schedule to prevent it from becoming stuck: {e}",
                     )
 
@@ -255,19 +320,63 @@ class ScheduleExecutor:
         timeout_seconds = schedule.timeout_seconds or self.timeout
         url = f"{self.base_url}{endpoint}"
 
-        match = _RUN_ENDPOINT_RE.match(endpoint)
+        match = RUN_ENDPOINT_RE.match(endpoint)
         is_run_endpoint = match is not None and method == "POST"
 
         headers: Dict[str, str] = {
             "Authorization": f"Bearer {self.internal_service_token}",
         }
+        if schedule.user_id is not None:
+            # Percent-encoded: header values must be latin-1, and padded ids stay distinct from bare ones
+            headers[SCHEDULE_OWNER_HEADER] = quote(schedule.user_id, safe="")
 
         client = await self._get_client()
 
         if is_run_endpoint and match is not None:
-            form_payload = {k: _to_form_value(v) for k, v in payload.items() if k not in ("stream", "background")}
+            # "version" is stripped: schedules always fire the live published
+            # version, so a payload-smuggled pin must not turn a schedule into
+            # a draft-preview channel. The same draft pin also rides in run
+            # metadata (``agno_component_version``), which the run-start route
+            # carries onto the run, so scrub it from any forwarded metadata -
+            # and from the top level - or a crafted schedule smuggles a draft
+            # preview the lifecycle routes would then re-resolve. The other
+            # runtime-owned keys (the dispatch lineage pair) get the same
+            # scrub: schedule payloads are builder-writable, so they are an
+            # inbound channel for a forged chain.
+            sanitized_payload = dict(payload)
+            raw_metadata = sanitized_payload.get("metadata")
+            if isinstance(raw_metadata, str):
+                try:
+                    raw_metadata = json.loads(raw_metadata)
+                except (ValueError, TypeError):
+                    raw_metadata = None
+            if isinstance(raw_metadata, dict):
+                sanitized_payload["metadata"] = {
+                    k: v for k, v in raw_metadata.items() if k not in RESERVED_RUN_METADATA_KEYS
+                }
+            elif "metadata" in sanitized_payload:
+                # The run routes accept only a JSON object here and answer 4xx
+                # for anything else. A schedule stored with a non-object
+                # metadata would then fail on every attempt of every tick,
+                # forever, with no tick able to repair it - so drop the field
+                # rather than fire a request that can only fail.
+                sanitized_payload.pop("metadata")
+                log_warning(
+                    f"Schedule {schedule.id}: dropping non-object metadata from the payload; "
+                    "run endpoints accept a JSON object."
+                )
+            form_payload = {
+                k: _to_form_value(v)
+                for k, v in sanitized_payload.items()
+                if k not in ("stream", "background", "version", *RESERVED_RUN_METADATA_KEYS)
+            }
             form_payload["stream"] = "false"
             form_payload["background"] = "true"
+
+            # The owner wins over the user-controlled payload: a crafted schedule must not run as another user
+            form_payload.pop("user_id", None)
+            if schedule.user_id is not None:
+                form_payload["user_id"] = schedule.user_id
 
             resource_type = match.group(1)
             resource_id = match.group(2)
@@ -416,7 +525,7 @@ class ScheduleExecutor:
                     params={"session_id": session_id},
                 )
             except Exception as exc:
-                log_warning(f"Poll request failed for run {run_id}: {exc}: {exc}")
+                log_warning(f"Poll request failed for run {run_id}: {exc}")
                 continue
 
             if resp.status_code == 404:

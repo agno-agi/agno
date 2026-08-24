@@ -7,6 +7,7 @@ from agno.exceptions import PathSecurityError
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
 from agno.utils.path_safety import safe_join_relative_path
+from agno.utils.string import generate_id_from_name
 
 # Groups a Toolkit by what it contributes rather than by object identity.
 # Agent.deep_copy / Team.deep_copy clone a Toolkit list entry while the
@@ -114,6 +115,7 @@ class Toolkit:
     def __init__(
         self,
         name: str = "toolkit",
+        id: Optional[str] = None,
         tools: Optional[Sequence[Union[Callable[..., Any], Function]]] = None,
         async_tools: Optional[Sequence[tuple[Callable[..., Any], str]]] = None,
         instructions: Optional[str] = None,
@@ -134,6 +136,7 @@ class Toolkit:
 
         Args:
             name: A descriptive name for the toolkit
+            id: A unique identifier for the toolkit. If not provided, one is generated from the name.
             tools: List of tools to include in the toolkit (can be callables or Function objects from @tool decorator)
             async_tools: List of (async_callable, tool_name) tuples for async variants.
                         Used when async methods have different names than sync methods.
@@ -158,6 +161,7 @@ class Toolkit:
             show_result_tools (Optional[List[str]]): List of function names whose results should be shown.
         """
         self.name: str = name
+        self.id: str = id if id is not None else generate_id_from_name(name)
         self.tools: Sequence[Union[Callable[..., Any], Function]] = tools or []
         self._async_tools: Sequence[tuple[Callable[..., Any], str]] = async_tools or []
         # Functions dict - used by agent.run() and agent.print_response()
@@ -494,7 +498,7 @@ class Toolkit:
             return False, base_dir
 
     def __repr__(self):
-        return f"<{self.__class__.__name__} name={self.name} functions={list(self.functions.keys())}>"
+        return f"<{self.__class__.__name__} id={self.id} name={self.name} functions={list(self.functions.keys())}>"
 
     def __str__(self):
         return self.__repr__()

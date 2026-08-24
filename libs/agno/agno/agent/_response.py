@@ -14,7 +14,6 @@ from typing import (
     Type,
     Union,
     cast,
-    get_args,
 )
 from uuid import uuid4
 
@@ -23,6 +22,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._tools import result_store_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
@@ -31,10 +31,10 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
-from agno.run.agent import Followups, RunEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, Followups, RunEvent, RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.run.requirement import RunRequirement
-from agno.run.team import TeamRunOutputEvent
+from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutputEvent
 from agno.session import AgentSession
 from agno.tools.function import Function
 from agno.utils.events import (
@@ -74,7 +74,7 @@ from agno.utils.string import parse_response_dict_str, parse_response_model_str
 def handle_reasoning(
     agent: Agent, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if agent.reasoning or agent.reasoning_model is not None:
+    if agent.reasoning_model is not None:
         reasoning_generator = reason(
             agent=agent,
             run_response=run_response,
@@ -94,7 +94,7 @@ def handle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: Optional[bool] = None,
 ) -> Iterator[RunOutputEvent]:
-    if agent.reasoning or agent.reasoning_model is not None:
+    if agent.reasoning_model is not None:
         reasoning_generator = reason(
             agent=agent,
             run_response=run_response,
@@ -108,7 +108,7 @@ def handle_reasoning_stream(
 async def ahandle_reasoning(
     agent: Agent, run_response: RunOutput, run_messages: RunMessages, run_context: Optional[RunContext] = None
 ) -> None:
-    if agent.reasoning or agent.reasoning_model is not None:
+    if agent.reasoning_model is not None:
         reason_generator = areason(
             agent=agent,
             run_response=run_response,
@@ -128,7 +128,7 @@ async def ahandle_reasoning_stream(
     run_context: Optional[RunContext] = None,
     stream_events: Optional[bool] = None,
 ) -> AsyncIterator[RunOutputEvent]:
-    if agent.reasoning or agent.reasoning_model is not None:
+    if agent.reasoning_model is not None:
         reason_generator = areason(
             agent=agent,
             run_response=run_response,
@@ -258,28 +258,18 @@ def reason(
     """
     Run reasoning using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = agent.reasoning_model
-    if reasoning_model is None and agent.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(agent.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=agent.reasoning_agent,
-            min_steps=agent.reasoning_min_steps,
-            max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
-            tool_call_limit=agent.tool_call_limit,
-            use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
@@ -305,28 +295,18 @@ async def areason(
     """
     Run reasoning asynchronously using the ReasoningManager.
 
-    Handles both native reasoning models (DeepSeek, Anthropic, etc.) and
-    default Chain-of-Thought reasoning with a clean, unified interface.
+    Handles native reasoning models (DeepSeek-R1, OpenAI o1/o3, Anthropic Claude
+    with thinking, Gemini Flash Thinking, etc.).
     """
     from agno.reasoning.manager import ReasoningConfig, ReasoningManager
 
-    # Get the reasoning model (use copy of main model if not provided)
     reasoning_model: Optional[Model] = agent.reasoning_model
-    if reasoning_model is None and agent.model is not None:
-        from copy import deepcopy
-
-        reasoning_model = deepcopy(agent.model)
 
     # Create reasoning manager with config
     manager = ReasoningManager(
         ReasoningConfig(
             reasoning_model=reasoning_model,
             reasoning_agent=agent.reasoning_agent,
-            min_steps=agent.reasoning_min_steps,
-            max_steps=agent.reasoning_max_steps,
-            tools=agent.tools if isinstance(agent.tools, list) else None,
-            tool_call_limit=agent.tool_call_limit,
-            use_json_mode=agent.use_json_mode,
             telemetry=agent.telemetry,
             debug_mode=agent.debug_mode,
             debug_level=agent.debug_level,
@@ -1087,6 +1067,7 @@ def handle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        **result_store_kwargs(agent),
         after_tool_results=build_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1247,6 +1228,7 @@ async def ahandle_model_response_stream(
         run_response=run_response,
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
+        **result_store_kwargs(agent),
         after_tool_results=abuild_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1379,12 +1361,12 @@ def handle_model_response_chunk(
     session_state: Optional[Dict[str, Any]] = None,
     run_context: Optional[RunContext] = None,
 ) -> Iterator[RunOutputEvent]:
-    from agno.run.workflow import WorkflowRunOutputEvent
+    from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 
     if (
-        isinstance(model_response_event, tuple(get_args(RunOutputEvent)))
-        or isinstance(model_response_event, tuple(get_args(TeamRunOutputEvent)))
-        or isinstance(model_response_event, tuple(get_args(WorkflowRunOutputEvent)))
+        isinstance(model_response_event, RUN_OUTPUT_EVENT_TYPES)
+        or isinstance(model_response_event, TEAM_RUN_OUTPUT_EVENT_TYPES)
+        or isinstance(model_response_event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES)
     ):
         if model_response_event.event == RunEvent.custom_event:  # type: ignore
             model_response_event.agent_id = agent.id  # type: ignore
