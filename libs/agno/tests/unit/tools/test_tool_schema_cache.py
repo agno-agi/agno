@@ -367,3 +367,86 @@ def test_per_run_copies_share_the_wrapped_entrypoint_but_validate_independently(
     # runs is safe and skips pydantic schema generation on every run.
     assert first.entrypoint is second.entrypoint
     assert first.entrypoint(a=1, b=2) == 3
+
+
+def test_per_run_closures_are_not_pinned_by_the_caches():
+    """A tool built from a closure (per-run factory products close over the
+    run's output, session and agent) must not be retained by the caches: a
+    bounded cache of dead closures would still pin hundreds of run graphs."""
+    import gc
+    import weakref
+
+    def make():
+        state = {"who": "run-scoped"}
+
+        def dynamic_tool(a: int) -> int:
+            """Add.
+
+            Args:
+                a: A number.
+            """
+            return a + len(state)
+
+        return dynamic_tool
+
+    dynamic = make()
+    parsed = Function.from_callable(dynamic)
+    parsed.process_entrypoint()
+    assert "a" in parsed.parameters["properties"]
+    assert parsed.entrypoint is not None and parsed.entrypoint(a=1) == 2
+
+    finalizer = weakref.ref(dynamic)
+    del dynamic, parsed
+    gc.collect()
+    assert finalizer() is None
+
+
+def test_transient_introspection_failure_heals_on_the_next_run():
+    """A derivation that fails is replayed, never frozen: a forward reference
+    defined after the tool (notebook cell order, late class registration) must
+    yield the real schema on the next parse, as it did before the caches."""
+
+    def eventually(agent, a: "DefinedLater") -> int:  # type: ignore[name-defined] # noqa: F821
+        """Count.
+
+        Args:
+            a: A number.
+        """
+        return 1
+
+    first = Function.from_callable(eventually)
+    assert first.parameters["properties"] == {}
+
+    globals()["DefinedLater"] = int
+    try:
+        second = Function.from_callable(eventually)
+        assert "a" in second.parameters["properties"]
+
+        # The process_entrypoint path heals the same way.
+        manual = Function(name="eventually", entrypoint=eventually)
+        manual.process_entrypoint()
+        assert "a" in manual.parameters["properties"]
+        assert "a" not in (manual._framework_params or set())
+    finally:
+        del globals()["DefinedLater"]
+
+
+def test_closure_tools_still_parse_and_run_without_the_cache():
+    def make(suffix: str):
+        def lookup(query: str) -> str:
+            """Look something up.
+
+            Args:
+                query: What to look for.
+            """
+            return query + suffix
+
+        return lookup
+
+    model = MockModel()
+    agent = Agent(model=model, tools=[make("-one")], telemetry=False)
+    response, context, session = _run_args("r1", "s1", "u1")
+    functions = determine_tools_for_model(agent, model, agent.tools, response, context, session)
+    assert functions[0].name == "lookup"
+    assert functions[0].entrypoint(query="q") == "q-one"
+    assert functions[0]._run_context is context

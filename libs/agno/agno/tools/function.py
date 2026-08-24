@@ -648,9 +648,12 @@ def get_entrypoint_docstring(entrypoint: Callable) -> str:
 
 
 def _copy_jsonish(value: Any) -> Any:
-    if isinstance(value, dict):
+    # Exact types only: a dict or list SUBCLASS (OrderedDict, a user's mapping
+    # type in a hand-authored schema) keeps its class by taking the deepcopy
+    # branch, as the previous deep copy preserved it.
+    if type(value) is dict:
         return {key: _copy_jsonish(val) for key, val in value.items()}
-    if isinstance(value, list):
+    if type(value) is list:
         return [_copy_jsonish(val) for val in value]
     if isinstance(value, (str, int, float, bool)) or value is None:
         return value
@@ -689,6 +692,33 @@ class _CallableIdentity:
 
     def __eq__(self, other: Any) -> bool:
         return isinstance(other, _CallableIdentity) and self.obj is other.obj
+
+
+_WRAPPED_WALK_CAP = 10
+
+
+def _cache_stable(c: Callable) -> bool:
+    """Whether this callable is safe and useful to hold in the module caches.
+
+    A callable with captured state -- a closure cell anywhere under its
+    wrapper/partial chain -- is usually a per-run factory product: an
+    identity-keyed cache can never hit it (the object is new each run), and
+    the entry would pin everything the closure captured (run output, session,
+    agent) until eviction. Those skip the caches and are derived directly,
+    exactly as before the caches existed. Module functions, bound methods,
+    and decorator wrappers over them have no cells; they are the long-lived
+    tools the caches exist for."""
+    for _ in range(_WRAPPED_WALK_CAP):
+        if isinstance(c, partial):
+            c = c.func
+            continue
+        wrapped = getattr(c, "__wrapped__", None)
+        if wrapped is not None:
+            c = wrapped
+            continue
+        break
+    c = getattr(c, "__func__", c)
+    return getattr(c, "__closure__", None) is None
 
 
 @dataclass(frozen=True)
@@ -846,11 +876,16 @@ def _derive_entrypoint_schema(
         parameters["required"] = [name for name in parameters["required"] if name in parameters["properties"]]
 
         user_params_reached = True
-        user_required_candidates = tuple(
-            name
-            for name, param in sig.parameters.items()
-            if param.default == param.empty and name != "self" and name not in excluded_params
-        )
+        if not strict:
+            # Only the non-strict user-schema rebuild reads these, and the
+            # strict path never compared defaults before -- a default whose
+            # __eq__ misbehaves (a numpy array) must not fail a strict
+            # derivation that used to succeed.
+            user_required_candidates = tuple(
+                name
+                for name, param in sig.parameters.items()
+                if param.default == param.empty and name != "self" and name not in excluded_params
+            )
 
         description = get_entrypoint_docstring(entrypoint)
         description_computed = True
@@ -870,32 +905,60 @@ def _derive_entrypoint_schema(
     )
 
 
-@lru_cache(maxsize=512)
+# Sized for multi-agent servers: per-tool demand is one entry per cache, and
+# an LRU over a cyclically-revisited working set larger than the cache decays
+# to zero hits, so the bound sits far above any realistic count of distinct
+# long-lived tools. Entries only hold stable callables (see _cache_stable),
+# whose object graphs are alive in the registering agent anyway.
+_INTROSPECTION_CACHE_SIZE = 4096
+
+
+class _DerivationFailed(Exception):
+    """Carries a derivation that raised partway, so the failure is replayed on
+    the next call instead of being frozen into a cache. A failure can be
+    transient -- a forward reference whose name is defined after the tool --
+    and the pre-cache code healed on the next run, so the caches must too:
+    lru_cache never stores a call that raises."""
+
+    def __init__(self, payload: Any):
+        self.payload = payload
+
+
+@lru_cache(maxsize=_INTROSPECTION_CACHE_SIZE)
 def _cached_entrypoint_schema(
     key: _CallableIdentity,
     strict: bool,
     requires_user_input: bool,
     user_input_fields: Optional[Tuple[str, ...]],
 ) -> _EntrypointSchema:
-    return _derive_entrypoint_schema(key.obj, strict, requires_user_input, user_input_fields)
+    record = _derive_entrypoint_schema(key.obj, strict, requires_user_input, user_input_fields)
+    if record.error is not None:
+        raise _DerivationFailed(record)
+    return record
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=_INTROSPECTION_CACHE_SIZE)
 def _cached_wrapped_entrypoint(key: _CallableIdentity) -> Callable:
     return Function._wrap_callable_uncached(key.obj)
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=_INTROSPECTION_CACHE_SIZE)
 def _cached_framework_params(key: _CallableIdentity) -> frozenset:
-    return frozenset(_compute_framework_params(key.obj))
+    params, failed = _compute_framework_params(key.obj)
+    if failed:
+        raise _DerivationFailed(params)
+    return frozenset(params)
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=_INTROSPECTION_CACHE_SIZE)
 def _cached_from_callable_template(cls: type, key: _CallableIdentity, name: Optional[str], strict: bool) -> "Function":
-    return cls._build_from_callable(key.obj, name=name, strict=strict)  # type: ignore[attr-defined]
+    template, error = cls._build_from_callable(key.obj, name=name, strict=strict)  # type: ignore[attr-defined]
+    if error is not None:
+        raise _DerivationFailed(template)
+    return template
 
 
-@lru_cache(maxsize=512)
+@lru_cache(maxsize=_INTROSPECTION_CACHE_SIZE)
 def _cached_entrypoint_accepts_media(key: _CallableIdentity) -> bool:
     from inspect import signature
 
@@ -903,31 +966,55 @@ def _cached_entrypoint_accepts_media(key: _CallableIdentity) -> bool:
     return any(name in parameters for name in MEDIA_INJECTED_PARAMS)
 
 
+def _clear_tool_introspection_caches() -> None:
+    """Drop every cached tool derivation.
+
+    For tests and live-editing sessions (a notebook redefining a tool's
+    docstring or annotations in place); the caches otherwise treat a callable
+    object's introspectable surface as immutable."""
+    _cached_entrypoint_schema.cache_clear()
+    _cached_wrapped_entrypoint.cache_clear()
+    _cached_framework_params.cache_clear()
+    _cached_from_callable_template.cache_clear()
+    _cached_entrypoint_accepts_media.cache_clear()
+
+
 def entrypoint_accepts_media(entrypoint: Callable) -> bool:
     """Whether the entrypoint declares a reserved media parameter
     (images/videos/audios/files), so the run's media must be collected for it."""
+    if not _cache_stable(entrypoint):
+        from inspect import signature
+
+        parameters = signature(entrypoint).parameters
+        return any(name in parameters for name in MEDIA_INJECTED_PARAMS)
     return _cached_entrypoint_accepts_media(_CallableIdentity(entrypoint))
 
 
-def _compute_framework_params(entrypoint: Callable) -> Set[str]:
-    """Names in the entrypoint signature that the framework supplies, not the model.
+def _compute_framework_params(entrypoint: Callable) -> Tuple[Set[str], bool]:
+    """Names in the entrypoint signature that the framework supplies, not the model,
+    plus whether the resolution FAILED partway.
 
     Covers both rules process_entrypoint uses to hide a parameter from the
     schema: the reserved names, and the framework-typed annotations of issue #6344.
+    A partial result from a failed signature or type-hint resolution feeds the
+    injection guard for this call but is not cached: the failure may be
+    transient, and freezing it would leave type-owned parameters unguarded for
+    the process lifetime. The per-annotation fallback below is not a failure --
+    it fails closed (the parameter is treated as owned) and may be cached.
     """
     from inspect import signature
 
     try:
         sig = signature(entrypoint)
     except Exception:
-        return set()
+        return set(), True
 
     reserved = {"return", "self", *FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS}
     found = {name for name in sig.parameters if name in reserved}
     try:
         hints = get_type_hints(entrypoint)
     except Exception:
-        return found
+        return found, True
     for param_name, hint in hints.items():
         if param_name not in sig.parameters:
             continue
@@ -947,7 +1034,7 @@ def _compute_framework_params(entrypoint: Callable) -> Set[str]:
             owned = True  # Cannot classify it, so do not hand it to the model.
         if owned:
             found.add(param_name)
-    return found
+    return found, False
 
 
 @dataclass
@@ -1313,13 +1400,12 @@ class Function(BaseModel):
             from copy import deepcopy
 
             copied.user_input_schema = deepcopy(self.user_input_schema)
-        copied._agent = None
-        copied._team = None
-        copied._run_context = None
-        copied._images = None
-        copied._videos = None
-        copied._audios = None
-        copied._files = None
+        # Every private attribute -- subclass-declared ones included -- starts
+        # from its class default, as the model_construct-based copy used to
+        # guarantee; only the shared-entrypoint description survives, as a set
+        # of the caller's own.
+        for private_name, private_attr in type(self).__private_attributes__.items():
+            setattr(copied, private_name, private_attr.get_default())
         copied._framework_params = set(self._framework_params) if self._framework_params is not None else None
         return copied
 
@@ -1330,13 +1416,23 @@ class Function(BaseModel):
         The derivation is cached per (class, callable identity, name, strict);
         every call returns an isolated copy of the cached template, so callers
         can mutate the result freely and nothing a run writes into one copy
-        can reach another run's.
+        can reach another run's. A callable carrying captured state skips the
+        cache (see _cache_stable) and is built directly, as before; so does a
+        callable whose introspection failed, since the failure may be
+        transient and must replay on the next call.
         """
-        template = _cached_from_callable_template(cls, _CallableIdentity(c), name, strict)
+        if not _cache_stable(c):
+            return cls._build_from_callable(c, name=name, strict=strict)[0]
+        try:
+            template = _cached_from_callable_template(cls, _CallableIdentity(c), name, strict)
+        except _DerivationFailed as failed:
+            return failed.payload
         return template._per_run_copy()
 
     @classmethod
-    def _build_from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
+    def _build_from_callable(
+        cls, c: Callable, name: Optional[str] = None, strict: bool = False
+    ) -> Tuple["Function", Optional[str]]:
         from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
@@ -1344,6 +1440,7 @@ class Function(BaseModel):
         function_name = name or c.__name__
         parameters = {"type": "object", "properties": {}, "required": []}
         resolved_framework_params: Set[str] = set()
+        build_error: Optional[str] = None
         try:
             sig = signature(c)
             type_hints = get_type_hints(c)
@@ -1444,7 +1541,8 @@ class Function(BaseModel):
 
             # log_debug(f"JSON schema for {function_name}: {parameters}")
         except Exception as e:
-            log_warning(f"Could not parse args for {function_name}: {str(e)}")
+            build_error = str(e)
+            log_warning(f"Could not parse args for {function_name}: {build_error}")
 
         entrypoint = cls._wrap_callable(c)
 
@@ -1457,7 +1555,7 @@ class Function(BaseModel):
         # process_entrypoint sets this on the paths that run it; from_callable does not,
         # so set it here or the injection guard is inert for framework-typed params.
         func._framework_params = resolved_framework_params
-        return func
+        return func, build_error
 
     def _resolve_framework_params(self) -> Set[str]:
         """Names in the entrypoint signature that the framework supplies, not the model.
@@ -1469,7 +1567,12 @@ class Function(BaseModel):
         """
         if self.entrypoint is None:
             return set()
-        return set(_cached_framework_params(_CallableIdentity(self.entrypoint)))
+        if not _cache_stable(self.entrypoint):
+            return _compute_framework_params(self.entrypoint)[0]
+        try:
+            return set(_cached_framework_params(_CallableIdentity(self.entrypoint)))
+        except _DerivationFailed as failed:
+            return failed.payload
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
@@ -1498,13 +1601,20 @@ class Function(BaseModel):
         # requires_user_input, user_input_fields) and applied to this
         # Function; only the pieces that depend on this instance's own state
         # (a user-authored schema, the description, fresh UserInputFields)
-        # are (re)built here.
-        derived = _cached_entrypoint_schema(
-            _CallableIdentity(self.entrypoint),
+        # are (re)built here. Entrypoints carrying captured state skip the
+        # cache (see _cache_stable) and are derived directly.
+        derive_key = (
             strict,
             bool(self.requires_user_input),
             tuple(self.user_input_fields) if self.user_input_fields else None,
         )
+        if not _cache_stable(self.entrypoint):
+            derived = _derive_entrypoint_schema(self.entrypoint, *derive_key)
+        else:
+            try:
+                derived = _cached_entrypoint_schema(_CallableIdentity(self.entrypoint), *derive_key)
+            except _DerivationFailed as failed:
+                derived = failed.payload
 
         for param_name in derived.hidden_media_params:
             _warn_hidden_media(self.name, param_name)
@@ -1560,8 +1670,11 @@ class Function(BaseModel):
 
         One wrapper per callable object: building one runs pydantic schema
         generation, and the wrapper holds no per-call state, so every run
-        shares it.
+        shares it. Callables carrying captured state skip the cache (see
+        _cache_stable) and are wrapped directly, as before.
         """
+        if not _cache_stable(func):
+            return Function._wrap_callable_uncached(func)
         return _cached_wrapped_entrypoint(_CallableIdentity(func))
 
     @staticmethod
