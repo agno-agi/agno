@@ -302,7 +302,8 @@ class Workspace(Toolkit):
     | -------- | -------------------- | --------------------------------------- |
     | ``read``   | ``read_file``        | Read a file (line-numbered)             |
     | ``list``   | ``list_files``       | List a directory (recursive option)     |
-    | ``search`` | ``search_content``   | Recursive content grep                  |
+    | ``search`` | ``search_content``   | Recursive content search (substring)    |
+    | ``grep``   | ``grep_content``     | Regex search with line numbers          |
     | ``write``  | ``write_file``       | Create or overwrite a file (atomic)     |
     | ``edit``   | ``edit_file``        | Replace a substring (with ``replace_all``)|
     | ``move``   | ``move_file``        | Move or rename a file                   |
@@ -363,7 +364,7 @@ class Workspace(Toolkit):
     this session. Catches the "agent hallucinated the file's contents" bug class.
     """
 
-    READ_TOOLS: List[str] = ["read", "list", "search"]
+    READ_TOOLS: List[str] = ["read", "list", "search", "grep"]
     WRITE_TOOLS: List[str] = ["write", "edit", "move", "delete", "shell"]
     ALL_TOOLS: List[str] = READ_TOOLS + WRITE_TOOLS
 
@@ -372,6 +373,7 @@ class Workspace(Toolkit):
         "read": "read_file",
         "list": "list_files",
         "search": "search_content",
+        "grep": "grep_content",
         "write": "write_file",
         "edit": "edit_file",
         "move": "move_file",
@@ -850,6 +852,134 @@ class Workspace(Toolkit):
             log_error(f"search_content failed: {e}")
             return f"Error searching content: {e}"
 
+    def grep_content(
+        self,
+        pattern: str,
+        directory: str = ".",
+        ignore_case: bool = False,
+        context_lines: int = 0,
+        files_only: bool = False,
+        limit: int = 100,
+    ) -> str:
+        """Regex search with line numbers across text files in the workspace.
+
+        Returns matches in ``path:line:text`` format, grouped by file with context lines.
+        Use ``files_only=True`` for a quick list of matching files without content.
+
+        :param pattern: Regex pattern to search for.
+        :param directory: Subdirectory to scope the search to (default ".").
+        :param ignore_case: Case-insensitive matching (default False).
+        :param context_lines: Lines of context before and after each match (default 0).
+        :param files_only: Return only file paths, not matching lines (default False).
+        :param limit: Maximum number of matches to return (default 100).
+        :return: Matching lines as ``path:line:text``, or file paths if ``files_only``.
+        """
+        try:
+            if not pattern or not pattern.strip():
+                return "Error: pattern cannot be empty"
+
+            # 1. Compile regex
+            flags = re.IGNORECASE if ignore_case else 0
+            try:
+                rx = re.compile(pattern, flags)
+            except re.error as exc:
+                return f"Error: invalid regex pattern: {exc}"
+
+            # 2. Resolve directory
+            err, search_dir = self._resolve(directory, what="directory")
+            if err:
+                return err
+            if not search_dir.is_dir():
+                return f"Error: not a directory: {directory}"
+
+            max_file_size = 500 * 1024
+            out_lines: List[str] = []
+            files_with_matches: List[str] = []
+            total_matches = 0
+
+            # 3. Walk the directory tree
+            for dirpath, dirnames, filenames in os.walk(search_dir):
+                if total_matches >= limit:
+                    break
+                # Prune excluded directories
+                dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+
+                for filename in filenames:
+                    if total_matches >= limit:
+                        break
+                    file_path = Path(dirpath) / filename
+
+                    # Skip hidden/excluded files
+                    if self._hidden(file_path):
+                        continue
+                    if file_path.suffix.lower() not in TEXT_EXTENSIONS:
+                        continue
+                    try:
+                        if file_path.stat().st_size > max_file_size:
+                            continue
+                    except OSError:
+                        continue
+
+                    # Read and search
+                    try:
+                        content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
+
+                    lines = content.splitlines()
+                    hits = [idx for idx, line in enumerate(lines) if rx.search(line)]
+
+                    if not hits:
+                        continue
+
+                    rel_path = file_path.relative_to(self.root).as_posix()
+                    files_with_matches.append(rel_path)
+
+                    if files_only:
+                        continue
+
+                    # Collect matches with context
+                    shown: Set[int] = set()
+                    file_output: List[str] = []
+
+                    for hit in hits:
+                        if total_matches >= limit:
+                            break
+                        # Calculate context range
+                        start = max(0, hit - context_lines)
+                        end = min(len(lines), hit + context_lines + 1)
+
+                        for j in range(start, end):
+                            if j not in shown:
+                                shown.add(j)
+                                file_output.append(f"{rel_path}:{j + 1}:{lines[j]}")
+
+                        total_matches += 1
+
+                    if file_output:
+                        out_lines.extend(file_output)
+                        if context_lines > 0:
+                            out_lines.append("--")
+
+            # 4. Format output
+            if files_only:
+                if files_with_matches:
+                    result = "\n".join(files_with_matches)
+                    return f"{result}\n({len(files_with_matches)} files)"
+                return f"No files match pattern: {pattern}"
+
+            if out_lines:
+                # Remove trailing separator
+                if out_lines and out_lines[-1] == "--":
+                    out_lines.pop()
+                truncated = f"\n(showing {total_matches} matches, limit={limit})" if total_matches >= limit else ""
+                return "\n".join(out_lines) + truncated
+            return f"No matches for pattern: {pattern}"
+
+        except Exception as e:
+            log_error(f"grep_content failed: {e}")
+            return f"Error in grep: {e}"
+
     # ------------------------------------------------------------------
     # Write operations (require confirmation by default)
     # ------------------------------------------------------------------
@@ -1075,6 +1205,20 @@ class Workspace(Toolkit):
     async def asearch_content(self, query: str, directory: str = ".", limit: int = 10) -> str:
         """Async variant of ``search_content``."""
         return await asyncio.to_thread(self.search_content, query, directory, limit)
+
+    async def agrep_content(
+        self,
+        pattern: str,
+        directory: str = ".",
+        ignore_case: bool = False,
+        context_lines: int = 0,
+        files_only: bool = False,
+        limit: int = 100,
+    ) -> str:
+        """Async variant of ``grep_content``."""
+        return await asyncio.to_thread(
+            self.grep_content, pattern, directory, ignore_case, context_lines, files_only, limit
+        )
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Async variant of ``write_file``."""
