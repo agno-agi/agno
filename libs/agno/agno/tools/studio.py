@@ -109,6 +109,27 @@ _NAME_MATCH_LIMIT = 20
 _NAME_MATCH_PAGES = 10
 
 
+def _version_or_latest(version: Optional[int]) -> Optional[int]:
+    """Read a "which version" argument, treating 0 as omitted.
+
+    Version numbers start at 1, so on an argument that selects a version 0 is never
+    valid and only ever means the model defaulted an optional integer it should have
+    left out. Every such argument is documented "omit for the latest", so 0 is answered
+    the way omitting it is answered rather than with a version that does not exist.
+
+    Booleans are not versions: ``False == 0`` in Python and a lax JSON coercion can
+    deliver one, so it is refused here the same way the live-pointer guard refuses it.
+
+    This is only for arguments that name a version to act on. It must never be applied
+    to ``expected_current_version``, where 0 is the compare-and-set spelling for "I
+    expect no live version" (``agno.db.base.NO_LIVE_VERSION``) and carries a real guard.
+    """
+    if isinstance(version, bool) or version != 0:
+        return version
+    log_debug("StudioTools: version=0 is not a version; reading it as omitted (the latest).")
+    return None
+
+
 def _own_row_across_pages(list_components, actor: Optional[str], **query: Any) -> tuple:
     """(rows, total) for a name query, paged until the actor's own row is seen.
 
@@ -1753,6 +1774,7 @@ class StudioTools(Toolkit):
             steps, context flags). 'tools' lists exactly what is stored: a
             single function stays a single function, never its whole toolkit.
         """
+        version = _version_or_latest(version)
         actor = _actor_id(_agno_run_context)
         code_tiers = (
             ("agent", self._iter_agents),
@@ -2591,6 +2613,10 @@ class StudioTools(Toolkit):
         append a new version (draft, or published when ``publish``). ``warnings``
         is the list ``mutate`` appends its disclosures to; it rides on the
         success envelope."""
+        # expected_version compares against the latest stored version, and anything
+        # editable has at least v1, so 0 can only ever be a guard that no writer can
+        # satisfy -- an unset argument, not a compare-and-set the caller meant.
+        expected_version = _version_or_latest(expected_version)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3002,15 +3028,19 @@ class StudioTools(Toolkit):
             component_id (str): Exact component id.
             version (Optional[int]): The draft to publish; omit for the latest draft.
             expected_current_version (Optional[int]): Compare-and-set guard on
-                the live pointer being replaced; omit to skip the check. A
-                component that has never been published has no live pointer,
-                so on a first publish omit this or pass 0 ("nothing is live
-                yet"); any other value can never match.
+                the live pointer being replaced. Omit it unless you are
+                deliberately guarding against a concurrent publish. A component
+                that has never been published has no live pointer, so on a
+                first publish the only value that can ever match is 0.
 
         Returns:
             str: StudioResult JSON; data is {id, version}; status "published" or
             "already_published".
         """
+        # `version` names the draft to publish, so 0 reads as omitted. The
+        # expected_current_version guard beside it does NOT: 0 is its "nothing is
+        # live yet" spelling and stays a guard.
+        version = _version_or_latest(version)
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3258,9 +3288,10 @@ class StudioTools(Toolkit):
             component_id (str): Exact id of a stored component. Display names
                 do not resolve for destructive operations.
             expected_current_version (Optional[int]): Compare-and-set guard on
-                the live pointer; omit to skip the check. A component that has
-                never been published has no live pointer, so pass 0 ("nothing
-                is live") or omit it; any other value can never match.
+                the live pointer. Omit it unless you are deliberately guarding
+                against a concurrent write. A component that has never been
+                published has no live pointer, so for one of those the only
+                value that can ever match is 0.
 
         Returns:
             str: StudioResult JSON; data is {id}; warnings report side effects.
@@ -3402,6 +3433,7 @@ class StudioTools(Toolkit):
             valid: true} on success; validation_failed carries the exact
             problem otherwise.
         """
+        version = _version_or_latest(version)
         row, resolved_id, err = self._component_row(component_id, _actor_id(_agno_run_context))
         if err is not None:
             return err
@@ -3503,6 +3535,7 @@ class StudioTools(Toolkit):
         caller_agent: Any = None,
         caller_team: Any = None,
     ) -> str:
+        version = _version_or_latest(version)
         runner_calls = {
             "agent": self._runner_tools.run_agent,
             "team": self._runner_tools.run_team,
@@ -3582,6 +3615,7 @@ class StudioTools(Toolkit):
         run being pushed to a thread; only the sync DB reads are off-loaded."""
         import asyncio
 
+        version = _version_or_latest(version)
         runner_calls = {
             "agent": self._runner_tools.arun_agent,
             "team": self._runner_tools.arun_team,
