@@ -554,7 +554,9 @@ def _http_request_or_none() -> Optional[Any]:
         return None
 
 
-async def _assert_session_writable_mcp(os_app, component, session_id: str, user_id: Optional[str], session_type) -> None:
+async def _assert_session_writable_mcp(
+    os_app, component, session_id: str, user_id: Optional[str], session_type
+) -> None:
     """Refuse an MCP run into a session owned by another user.
 
     Same rule the REST run routes apply. MCP tools surface plain exceptions, so the
@@ -566,13 +568,15 @@ async def _assert_session_writable_mcp(os_app, component, session_id: str, user_
     from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin
 
     request = _http_request_or_none()
+    # No in-flight request (e.g. stdio transport) means no scopes to read, so no admin.
+    is_admin = caller_is_admin(request) if request is not None else False
     try:
         await assert_session_writable(
             getattr(component, "db", None) or os_app.db,
             session_id,
             user_id or getattr(component, "user_id", None),
             session_type=session_type,
-            is_admin=bool(request) and caller_is_admin(request),
+            is_admin=is_admin,
         )
     except HTTPException as e:
         raise Exception(e.detail if isinstance(e.detail, str) else str(e.detail))

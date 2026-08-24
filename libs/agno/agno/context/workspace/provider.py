@@ -87,7 +87,11 @@ class WorkspaceContextProvider(ContextProvider):
         if not self.exclude_patterns:
             return "No paths are excluded."
         if list(self.exclude_patterns) == list(DEFAULT_EXCLUDE_PATTERNS):
-            what = "Common dependency, build, and agent scratch folders and env files"
+            what = (
+                "Common dependency, build, and agent scratch folders, env files, and credential "
+                "files (private keys and certificates, .ssh/.aws/.kube directories, registry and "
+                "host tokens, credentials/secrets data files, service accounts, Terraform inputs)"
+            )
         else:
             what = "Paths matching the configured exclude patterns"
         return f"{what} are excluded: they are hidden from listings and cannot be read by name."

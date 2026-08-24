@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
-from fnmatch import fnmatch
+import re
+from fnmatch import translate
+from functools import lru_cache
+from os.path import normcase
 from pathlib import Path
-from typing import List, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Optional, Sequence, Tuple
 
 # A pattern starting with this prefix names an exemption rather than an exclusion:
 # a path component matching it is never excluded, whichever pattern it also matches.
@@ -32,6 +35,9 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "!.env.template",
     "!.env.dist",
     "!example.env",
+    "!sample.env",
+    "!template.env",
+    "!dist.env",
     "!env.example",
     # Private keys, certificates and keystores
     "*.pem",
@@ -45,7 +51,6 @@ DEFAULT_EXCLUDE_PATTERNS = [
     "*.jks",
     "*.jceks",
     "*.keystore",
-    "*.asc",
     "*.gpg",
     "*.ppk",
     "*.kdbx",
@@ -189,14 +194,10 @@ DEFAULT_EXCLUDE_PATTERNS = [
 ]
 
 
-def split_exclude_patterns(exclude_patterns: Sequence[str]) -> Tuple[List[str], List[str]]:
-    """Split exclude patterns into the deny list and the exemption list.
-
-    An entry starting with ``!`` names an exemption: a path component matching it is
-    never excluded, whatever deny pattern it also matches. Exemptions are
-    order-independent — an exemption always wins. A bare ``!`` names no pattern and is
-    treated as a literal deny entry.
-    """
+@lru_cache(maxsize=32)
+def _split_exclude_patterns(exclude_patterns: Tuple[str, ...]) -> Tuple[List[str], List[str]]:
+    """Cached deny/exempt split, keyed on the pattern tuple: a caller that passes the
+    same list for every path in an ``os.walk`` pays the split once, not per path."""
     deny: List[str] = []
     exempt: List[str] = []
     for pattern in exclude_patterns:
@@ -207,6 +208,54 @@ def split_exclude_patterns(exclude_patterns: Sequence[str]) -> Tuple[List[str], 
     return deny, exempt
 
 
+def split_exclude_patterns(exclude_patterns: Sequence[str]) -> Tuple[List[str], List[str]]:
+    """Split exclude patterns into the deny list and the exemption list.
+
+    An entry starting with ``!`` names an exemption: a path component matching it is
+    never excluded, whatever deny pattern it also matches. Exemptions are
+    order-independent — an exemption always wins. A bare ``!`` names no pattern and is
+    treated as a literal deny entry.
+
+    The ``!`` prefix is reserved, so a component whose name literally begins with ``!``
+    cannot be spelled as a deny pattern and there is no escape for it. Name its parent
+    directory instead, or reach it with a wildcard such as ``?name``.
+
+    The returned lists are cached and shared; callers must not mutate them.
+    """
+    return _split_exclude_patterns(tuple(exclude_patterns))
+
+
+_FOLDS: Dict[str, Callable[[str], str]] = {
+    # fnmatch() folds both operands with normcase; fnmatchcase() folds neither.
+    "normcase": normcase,
+    "casefold": str.casefold,
+    "none": lambda name: name,
+}
+
+
+@lru_cache(maxsize=64)
+def compile_exclude_patterns(exclude_patterns: Tuple[str, ...], fold: str) -> Tuple[Optional[Any], Optional[Any]]:
+    """Compile the deny and exempt halves into one alternation each, so a path component
+    is tested with a single regex match instead of one ``fnmatch`` call per pattern.
+
+    ``fold`` names how the caller normalizes a component before matching: ``normcase``
+    reproduces ``fnmatch``, ``casefold`` a case-insensitive filesystem, ``none`` an exact
+    match. The fold and the translate happen once per (pattern list, fold) rather than
+    once per path, which is what makes a large default list affordable on a tree walk.
+
+    Returns ``(deny, exempt)``, either of which is ``None`` when that half is empty.
+    """
+    fold_name = _FOLDS[fold]
+
+    def compile_half(patterns: List[str]) -> Optional[Any]:
+        if not patterns:
+            return None
+        return re.compile("|".join(translate(fold_name(pattern)) for pattern in patterns))
+
+    deny, exempt = _split_exclude_patterns(exclude_patterns)
+    return compile_half(deny), compile_half(exempt)
+
+
 def path_matches_exclude(path: Path, root: Path, exclude_patterns: Sequence[str]) -> bool:
     """Return True when a path component matches a deny pattern and no exemption."""
     if not exclude_patterns:
@@ -215,8 +264,10 @@ def path_matches_exclude(path: Path, root: Path, exclude_patterns: Sequence[str]
         rel = path.relative_to(root)
     except ValueError:
         return False
-    deny, exempt = split_exclude_patterns(exclude_patterns)
+    deny, exempt = compile_exclude_patterns(tuple(exclude_patterns), "normcase")
+    if deny is None:
+        return False
     return any(
-        any(fnmatch(part, pattern) for pattern in deny) and not any(fnmatch(part, pattern) for pattern in exempt)
-        for part in rel.parts
+        deny.match(folded) is not None and (exempt is None or exempt.match(folded) is None)
+        for folded in (normcase(part) for part in rel.parts)
     )
