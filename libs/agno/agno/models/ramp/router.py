@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Tuple, Type, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -91,6 +91,15 @@ class RampRouter(OpenResponses):
     allow_flex_tier: Optional[bool] = None
     provider_timeout: Optional[float] = None
     timeout_before_headers: Optional[float] = None
+
+    # Routing config must survive to_dict/get_model_from_dict: `models` decides what actually
+    # runs, so dropping it on rehydration would silently route on the default id.
+    _extra_serialized_fields: ClassVar[Tuple[str, ...]] = (
+        "models",
+        "allow_flex_tier",
+        "provider_timeout",
+        "timeout_before_headers",
+    )
 
     # `_using_reasoning_model()` is deliberately inherited from OpenResponses, which returns False.
     # Router's catalog is full of ids that OpenAIResponses' prefix match would classify as reasoning

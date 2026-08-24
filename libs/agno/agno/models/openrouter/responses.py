@@ -1,6 +1,6 @@
 from dataclasses import dataclass
 from os import getenv
-from typing import Any, Dict, List, Optional, Type, Union
+from typing import Any, ClassVar, Dict, List, Optional, Tuple, Type, Union
 
 from pydantic import BaseModel
 
@@ -60,6 +60,10 @@ class OpenRouterResponses(OpenResponses):
 
     # OpenRouter's Responses API is stateless
     store: Optional[bool] = False
+
+    # Routing candidates must survive to_dict/get_model_from_dict, or a rehydrated model
+    # silently falls back to the primary id alone.
+    _extra_serialized_fields: ClassVar[Tuple[str, ...]] = ("models",)
 
     def _set_reasoning_request_param(self, base_params: Dict[str, Any]) -> Dict[str, Any]:
         """
