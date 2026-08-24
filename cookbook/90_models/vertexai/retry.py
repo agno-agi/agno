@@ -1,7 +1,7 @@
 """Example demonstrating how to set up retries with Vertex AI."""
 
 from agno.agent import Agent
-from agno.models.vertexai import Claude
+from agno.models.vertexai.claude import Claude
 
 # ---------------------------------------------------------------------------
 # Create Agent

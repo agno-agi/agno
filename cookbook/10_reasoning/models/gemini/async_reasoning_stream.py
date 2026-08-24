@@ -22,7 +22,7 @@ def run_example() -> None:
         # Note: For Gemini, you MUST set thinking_budget to enable thinking mode
         agent = Agent(
             reasoning_model=Gemini(
-                id="gemini-2.5-flash",
+                id="gemini-3.7-flash",
                 thinking_budget=1024,  # Required to enable thinking mode
                 include_thoughts=True,  # Include thought summaries in response
             ),

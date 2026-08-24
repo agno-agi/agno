@@ -1,10 +1,11 @@
 # Test Log: 22_studio
 
-Tested live on 2026-07-24 against Agno source commit
-`45bfff9f2aa6ec11b7386c3cd3bf6d1141d005dc`.
+The first five entries and the Validation section record the 2026-07-24 pass
+against Agno source commit `45bfff9f2aa6ec11b7386c3cd3bf6d1141d005dc`, loaded
+through `PYTHONPATH=/Users/ab/code/worktrees/agno-agent-os-rewrite/libs/agno`.
+The two `studio_runner_*` entries record the 2026-08-06 pass against the
+`feat/studio-runner-tools` worktree; each carries its own provenance.
 
-Every process loaded Agno from this worktree through
-`PYTHONPATH=/Users/ab/code/worktrees/agno-agent-os-rewrite/libs/agno`.
 Provider credentials were loaded with `direnv exec .`; no credential values
 were recorded. Server-backed examples used port `7792` to avoid interfering
 with other AgentOS lessons, and the listener was stopped after every run.
@@ -93,12 +94,46 @@ with HTTP 404.
 
 ---
 
-## Validation
+### studio_runner_dispatcher.py
 
-- All five Python targets passed worktree-pinned compilation and targeted Ruff
-  format/check.
-- Recursive inventory and pattern validation checked exactly five Python files
-  with zero violations.
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Tested 2026-08-06 against the `feat/studio-runner-tools`
+worktree via `PYTHONPATH=/Users/ab/code/agno-worktrees/studio-runners/libs/agno`.
+Built a Haiku Writer component with StudioTools, then asked a runner-only
+Dispatcher Agent to discover and delegate to it through StudioRunnerTools.
+
+**Result:** The dispatcher called list_agents/list_teams/list_workflows, then
+run_agent(agent_id=haiku-writer) and returned the delegated haiku. No mutation
+tools were exposed to the dispatcher.
+
+---
+
+### studio_runner_direct.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Tested 2026-08-06 against the `feat/studio-runner-tools`
+worktree. Called StudioRunnerTools methods directly: list_agents, run_agent by
+exact id, and a registry-less run_agent against a tool-bearing component.
+
+**Result:** Listing returned both built components, the greeter run completed
+with content, and the registry-less runner refused the calculator agent with
+"references registry-backed resources (tools); construct StudioRunnerTools
+with the registry to run it."
+
+---
+
+## Validation (2026-07-24 pass)
+
+- All five Python targets of that pass passed worktree-pinned compilation and
+  targeted Ruff format/check; the two 2026-08-06 `studio_runner_*` additions
+  were format/pattern-checked in their own pass (seven files total now check
+  clean).
 - The focused StudioTools, Registry-router, and Components-router unit suites
   passed all 157 tests.
 - All five capability-specific examples were executed live; the two HITL
