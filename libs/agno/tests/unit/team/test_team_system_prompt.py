@@ -188,3 +188,31 @@ def test_sub_team_member_renders_its_role():
     content = _team(members=[sub]).get_system_message(session=_session()).content
     assert 'type="team"' in content
     assert "Role: Handles all research" in content
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_opening_states_delegation_as_need_not_as_self_assessment(mode):
+    """The opening tells the leader to delegate when a member is needed, not when the
+    member would do it better than the leader.
+
+    A comparison invites the leader to rate its own ability against the roster, and a
+    small model rates itself well enough to keep the parts it thinks it can do and skip
+    the member the request named for them. The need rule ties delegation to the request.
+    """
+    content = _team(mode=mode).get_system_message(session=_session()).content
+    block = content[content.index("<team>") : content.index("<team_members>")]
+
+    assert "Delegate to members when their expertise or tools are needed" in block
+    assert "better than" not in block
+    assert "fit it better" not in content
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_opening_makes_no_identity_claim(mode):
+    """The opening states what the leader has, not who it is; identity is the user's."""
+    content = _team(mode=mode, description="A team that researches.").get_system_message(session=_session()).content
+    opening = content[content.index("<team>") + len("<team>\n") :].split("\n", 1)[0]
+
+    assert opening.startswith("You have a team of specialists")
+    for claim in ("You are", "You coordinate", "You act as"):
+        assert claim not in opening
