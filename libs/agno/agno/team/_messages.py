@@ -141,11 +141,16 @@ def _get_opening_prompt() -> str:
 
     States what the leader has, not who it is. An identity claim here would compete
     with the description, role and instructions the user wrote.
+
+    The delegation rule is stated as need, never as a comparison with the leader's own
+    ability. Asked whether a member fits a sub-task "better than yours", a small model
+    keeps every part it believes it can do itself and skips the member the request
+    named for it; asked whether the member is needed, it follows the request.
     """
     return (
         "You have a team of specialists, listed below. "
-        "Hand work to members when their expertise or tools fit it better than yours; "
-        "answer directly — including with your own tools — when they do not.\n"
+        "Delegate to members when their expertise or tools are needed; "
+        "answer directly — including with your own tools — when they are not.\n"
     )
 
 
