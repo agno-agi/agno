@@ -1351,6 +1351,35 @@ class TestRespondDirectlyMemberContinuation:
         assert events == [content_event]
         assert member_results == [f"[Member 1]: {self.cancellation}"]
 
+    def test_sync_direct_stream_replaces_stale_content_without_final_output(self):
+        from agno.team._run import _route_requirements_to_members_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        run_response.content_type = "application/json"
+        member.continue_run = MagicMock(return_value=iter([]))
+        member_results = []
+
+        with (
+            patch(
+                "agno.team._run._group_requirements_for_continue",
+                return_value=[(member, member_run_output, [requirement])],
+            ),
+            patch("agno.team._run.register_member_run"),
+        ):
+            events = list(
+                _route_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                )
+            )
+
+        assert events == []
+        assert member_results == ["[Member 1]: Task completed (no final output)"]
+        assert run_response.content == "Task completed (no final output)"
+        assert run_response.content_type == "str"
+
     def test_sync_stream_respond_directly_emits_team_terminal_without_leader(self):
         from agno.run import RunContext
         from agno.run.agent import RunOutput
@@ -1685,6 +1714,43 @@ class TestRespondDirectlyMemberContinuation:
 
             assert events == [content_event]
             assert member_results == [f"[Member 1]: {self.cancellation}"]
+
+        asyncio.run(_exercise())
+
+    def test_async_direct_stream_replaces_stale_content_without_final_output(self):
+        from agno.team._run import _aroute_requirements_to_members_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        run_response.content_type = "application/json"
+        member_results = []
+
+        async def _member_stream(*args, **kwargs):
+            if False:
+                yield None
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+
+        async def _exercise():
+            with (
+                patch(
+                    "agno.team._run._group_requirements_for_continue",
+                    return_value=[(member, member_run_output, [requirement])],
+                ),
+                patch("agno.team._run.aregister_member_run", new=AsyncMock()),
+            ):
+                events = []
+                async for event in _aroute_requirements_to_members_stream(
+                    team,
+                    run_response=run_response,
+                    session=session,
+                    member_results=member_results,
+                ):
+                    events.append(event)
+
+            assert events == []
+            assert member_results == ["[Member 1]: Task completed (no final output)"]
+            assert run_response.content == "Task completed (no final output)"
+            assert run_response.content_type == "str"
 
         asyncio.run(_exercise())
 

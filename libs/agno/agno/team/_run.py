@@ -6675,7 +6675,8 @@ def _route_requirements_to_members_stream(
 
         if member_response is None:
             log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
-            member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
+            content = _record_missing_member_continuation_result(team, run_response)
+            member_results.append(f"[{member.name or member_id}]: {content}")
         elif getattr(member_response, "is_paused", False):
             from agno.team._tools import _propagate_member_pause
 
@@ -6880,7 +6881,8 @@ async def _aroute_requirements_to_members_stream(
 
         if member_response is None:
             log_warning(f"Member {member_id} streaming did not yield a final RunOutput")
-            member_results.append(f"[{member.name or member_id}]: Task completed (no final output)")
+            content = _record_missing_member_continuation_result(team, run_response)
+            member_results.append(f"[{member.name or member_id}]: {content}")
         elif getattr(member_response, "is_paused", False):
             from agno.team._tools import _propagate_member_pause
 
@@ -6895,6 +6897,15 @@ async def _aroute_requirements_to_members_stream(
         # Clear _member_run_response references to allow GC of the member RunOutput
         for req in reqs:
             req._member_run_response = None
+
+
+def _record_missing_member_continuation_result(team: "Team", run_response: TeamRunOutput) -> str:
+    """Record a direct-response placeholder when a member stream has no final output."""
+    content = "Task completed (no final output)"
+    if team.respond_directly:
+        run_response.content = content
+        run_response.content_type = "str"
+    return content
 
 
 def _record_member_continuation_result(
