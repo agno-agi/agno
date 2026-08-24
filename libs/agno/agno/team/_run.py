@@ -10556,8 +10556,11 @@ async def _acontinue_run_stream(
                     yield run_response
                 break
 
-            except ValueError:
-                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+            except (ValueError, RunNotFoundError):
+                # Validation errors (e.g. cancelled run, unknown run id, missing
+                # args) propagate to the caller. RunNotFoundError must NOT fall
+                # through to the generic handler below: that one stamps a terminal
+                # ERROR run row over the target run.
                 raise
             except Exception as e:
                 if run_response is None:

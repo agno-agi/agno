@@ -5122,8 +5122,12 @@ async def _acontinue_run(
                 if isinstance(cancel_exc, asyncio.CancelledError):
                     raise
                 return run_response
-            except ValueError:
-                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+            except (ValueError, RunNotFoundError):
+                # Validation errors (e.g. cancelled run, unknown run id, missing
+                # args) propagate to the caller. RunNotFoundError must NOT fall
+                # through to the generic handler below: that one stamps a terminal
+                # ERROR run row, which for an unresolvable run_id overwrites the
+                # target run (owner, status and content) or fabricates a junk row.
                 raise
             except Exception as e:
                 run_response = cast(RunOutput, run_response)
@@ -5173,7 +5177,8 @@ async def _acontinue_run(
         await disconnect_mcp_tools(agent)
 
         # Always clean up the run tracking
-        await acleanup_run(run_response.run_id)  # type: ignore
+        if run_response is not None and run_response.run_id:
+            await acleanup_run(run_response.run_id)
     return run_response  # type: ignore
 
 
@@ -5736,8 +5741,12 @@ async def _acontinue_run_stream(
                     yield run_response
                 break
 
-            except ValueError:
-                # Validation errors (e.g. cancelled run, missing args) propagate to the caller
+            except (ValueError, RunNotFoundError):
+                # Validation errors (e.g. cancelled run, unknown run id, missing
+                # args) propagate to the caller. RunNotFoundError must NOT fall
+                # through to the generic handler below: that one stamps a terminal
+                # ERROR run row, which for an unresolvable run_id overwrites the
+                # target run (owner, status and content) or fabricates a junk row.
                 raise
             except Exception as e:
                 if run_response is None:
