@@ -85,6 +85,25 @@ def _package_absent(package: str, *reimport: str):
                 sys.modules[name] = module
 
 
+def _ffmpeg(present: bool):
+    """Force the answer for the ffmpeg binary, leaving every other lookup alone.
+
+    Pinned in both directions on purpose: docling's media formats need the binary as well as
+    a speech package, so a test that let PATH decide would assert one thing on a developer
+    machine that has ffmpeg and another on a runner that does not.
+    """
+    import shutil as shutil_module
+
+    real_which = shutil_module.which
+
+    def fake(name, *args, **kwargs):
+        if name == "ffmpeg":
+            return "/usr/bin/ffmpeg" if present else None
+        return real_which(name, *args, **kwargs)
+
+    return patch("agno.knowledge.reader.docling_reader.shutil.which", side_effect=fake)
+
+
 def test_excel_reader_is_not_advertised_when_neither_engine_is_installed():
     with _specs(absent=("openpyxl", "xlrd")):
         with pytest.raises(ValueError, match=r"^Reader 'excel' has missing dependencies:.*openpyxl"):
@@ -257,7 +276,7 @@ def test_every_hard_function_scoped_reader_import_is_declared():
 
 def test_docling_does_not_advertise_audio_it_cannot_transcribe():
     """docling loads its speech engine at read time, so the class import proves nothing."""
-    with _specs(absent=("whisper", "mlx_whisper", "whisper_s2t")):
+    with _ffmpeg(present=True), _specs(absent=("whisper", "mlx_whisper", "whisper_s2t")):
         info = get_reader_info("docling")
 
     assert ContentType.AUDIO_MP3.value not in info["content_types"]
@@ -266,7 +285,7 @@ def test_docling_does_not_advertise_audio_it_cannot_transcribe():
 
 
 def test_docling_advertises_audio_when_the_engine_is_installed():
-    with _specs(present=("whisper",)):
+    with _ffmpeg(present=True), _specs(present=("whisper",)):
         info = get_reader_info("docling")
 
     assert ContentType.AUDIO_MP3.value in info["content_types"]
@@ -338,20 +357,9 @@ def test_availability_is_answered_by_a_single_sweep():
     assert len(available) + len(unavailable) == len(calls)
 
 
-def _no_ffmpeg():
-    """PATH without ffmpeg, leaving every other lookup alone."""
-    import shutil as shutil_module
-
-    real_which = shutil_module.which
-    return patch(
-        "agno.knowledge.reader.docling_reader.shutil.which",
-        side_effect=lambda name, *a, **kw: None if name == "ffmpeg" else real_which(name, *a, **kw),
-    )
-
-
 def test_docling_media_needs_ffmpeg_not_just_a_speech_package():
     """Docling fails outright without the binary, whatever Python packages are installed."""
-    with _no_ffmpeg(), _specs(present=("whisper",)):
+    with _ffmpeg(present=False), _specs(present=("whisper",)):
         info = get_reader_info("docling")
 
     assert ContentType.AUDIO_WAV.value not in info["content_types"]
@@ -362,7 +370,7 @@ def test_docling_media_needs_ffmpeg_not_just_a_speech_package():
 
 def test_docling_media_accepts_any_speech_backend():
     """Docling picks its backend by hardware, so requiring one package would hide a working one."""
-    with _specs(absent=("whisper", "whisper_s2t"), present=("mlx_whisper",)):
+    with _ffmpeg(present=True), _specs(absent=("whisper", "whisper_s2t"), present=("mlx_whisper",)):
         info = get_reader_info("docling")
 
     assert ContentType.AUDIO_WAV.value in info["content_types"]
@@ -370,7 +378,7 @@ def test_docling_media_accepts_any_speech_backend():
 
 
 def test_docling_media_names_a_backend_that_works_everywhere():
-    with _specs(absent=("whisper", "mlx_whisper", "whisper_s2t")):
+    with _ffmpeg(present=True), _specs(absent=("whisper", "mlx_whisper", "whisper_s2t")):
         info = get_reader_info("docling")
 
     assert ContentType.AUDIO_WAV.value not in info["content_types"]
