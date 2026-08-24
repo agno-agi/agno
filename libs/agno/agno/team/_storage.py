@@ -796,16 +796,18 @@ def to_dict(team: "Team") -> Dict[str, Any]:
     if team.store_history_messages:  # default is False
         config["store_history_messages"] = team.store_history_messages
 
-    # --- Compression settings ---
-    if team.compress_tool_results:
-        config["compress_tool_results"] = team.compress_tool_results
+    # --- Compaction settings ---
+    if team.compact_tools:
+        config["compact_tools"] = team.compact_tools
+    if team.compact_context:
+        config["compact_context"] = team.compact_context
 
     # --- Result offloading settings ---
     if team.offload_tool_results is not None:
         config["offload_tool_results"] = _offload_to_config(team.offload_tool_results)
-    # TODO: implement compression manager serialization
-    # if team.compression_manager is not None:
-    #     config["compression_manager"] = team.compression_manager.to_dict()
+    # TODO: implement compaction manager serialization
+    # if team.compaction_manager is not None:
+    #     config["compaction_manager"] = team.compaction_manager.to_dict()
 
     # --- Reasoning settings ---
     if team.reasoning_model is not None:
@@ -1379,9 +1381,10 @@ def from_dict(
             num_history_runs=config.get("num_history_runs"),
             num_history_messages=config.get("num_history_messages"),
             max_tool_calls_from_history=config.get("max_tool_calls_from_history"),
-            # --- Compression settings ---
-            compress_tool_results=config.get("compress_tool_results", False),
-            # compression_manager=config.get("compression_manager"),  # TODO
+            # --- Compaction settings (with backward compat for old config keys) ---
+            compact_tools=config.get("compact_tools") or config.get("compress_tool_results", False),
+            compact_context=config.get("compact_context", False),
+            # compaction_manager=config.get("compaction_manager"),  # TODO
             # --- Result offloading settings ---
             offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
             # --- Reasoning settings ---

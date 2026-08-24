@@ -1026,7 +1026,7 @@ def _handle_model_response_stream(
         stream_model_response=stream_model_response,
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compression_manager=team.compaction_manager if team.compact_tools else None,
         **result_store_kwargs(team),
         after_tool_results=build_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context
@@ -1187,7 +1187,7 @@ async def _ahandle_model_response_stream(
         stream_model_response=stream_model_response,
         send_media_to_model=team.send_media_to_model,
         run_response=run_response,
-        compression_manager=team.compression_manager if team.compress_tool_results else None,
+        compression_manager=team.compaction_manager if team.compact_tools else None,
         **result_store_kwargs(team),
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, session, run_messages, run_context

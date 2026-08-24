@@ -23,7 +23,7 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -333,11 +333,13 @@ class Team:
     # Add learnings context to system prompt
     add_learnings_to_context: bool = True
 
-    # --- Context Compression ---
-    # If True, compress tool call results to save context
-    compress_tool_results: bool = False
-    # Compression manager for compressing tool call results
-    compression_manager: Optional["CompressionManager"] = None
+    # --- Context Compaction ---
+    # If True, compact tool call results to save context
+    compact_tools: bool = False
+    # If True, compact conversation history to save context
+    compact_context: bool = False
+    # Compaction manager for tool results and/or conversation history
+    compaction_manager: Optional["CompactionManager"] = None
 
     # --- Result Offloading ---
     # Store tool results and member answers longer than a threshold as files
@@ -551,8 +553,12 @@ class Team:
         add_session_summary_to_context: Optional[bool] = None,
         learning: Optional[Union[bool, LearningMachine]] = None,
         add_learnings_to_context: bool = True,
-        compress_tool_results: bool = False,
-        compression_manager: Optional["CompressionManager"] = None,
+        compact_tools: bool = False,
+        compact_context: bool = False,
+        compaction_manager: Optional["CompactionManager"] = None,
+        # Deprecated aliases
+        compress_tool_results: Optional[bool] = None,
+        compression_manager: Optional["CompactionManager"] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
@@ -670,6 +676,9 @@ class Team:
             add_session_summary_to_context=add_session_summary_to_context,
             learning=learning,
             add_learnings_to_context=add_learnings_to_context,
+            compact_tools=compact_tools,
+            compact_context=compact_context,
+            compaction_manager=compaction_manager,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             offload_tool_results=offload_tool_results,

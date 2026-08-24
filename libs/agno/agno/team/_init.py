@@ -28,7 +28,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent import Agent
-from agno.compression.manager import CompressionManager
+from agno.compression.manager import CompactionManager
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
@@ -155,8 +155,12 @@ def __init__(
     add_session_summary_to_context: Optional[bool] = None,
     learning: Optional[Union[bool, LearningMachine]] = None,
     add_learnings_to_context: bool = True,
-    compress_tool_results: bool = False,
-    compression_manager: Optional["CompressionManager"] = None,
+    compact_tools: bool = False,
+    compact_context: bool = False,
+    compaction_manager: Optional["CompactionManager"] = None,
+    # Deprecated aliases
+    compress_tool_results: Optional[bool] = None,
+    compression_manager: Optional["CompactionManager"] = None,
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
@@ -335,9 +339,18 @@ def __init__(
     team.learning = learning
     team.add_learnings_to_context = add_learnings_to_context
 
-    # Context compression settings
-    team.compress_tool_results = compress_tool_results
-    team.compression_manager = compression_manager
+    # Context compaction settings (with backward compat)
+    if compress_tool_results is not None:
+        log_debug("compress_tool_results is deprecated, use compact_tools")
+        team.compact_tools = compress_tool_results
+    else:
+        team.compact_tools = compact_tools
+    team.compact_context = compact_context
+    if compression_manager is not None:
+        log_debug("compression_manager is deprecated, use compaction_manager")
+        team.compaction_manager = compression_manager
+    else:
+        team.compaction_manager = compaction_manager
 
     # Result offloading settings
     team.offload_tool_results = offload_tool_results
@@ -614,10 +627,10 @@ def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> Non
         # A compressing member cannot take the team's store: compression
         # rewrites the tool messages that hold stored-result envelopes. The
         # member has to opt out of one of the two.
-        if getattr(member, "compress_tool_results", False):
+        if getattr(member, "compact_tools", False):
             member_name = member.name or member.id or "member"
             raise ValueError(
-                f"Member '{member_name}' has compress_tool_results enabled and would inherit the "
+                f"Member '{member_name}' has compact_tools enabled and would inherit the "
                 "team's result store; the two cannot run together. Set offload_tool_results=False "
                 "on the member or disable its compression."
             )
@@ -657,9 +670,9 @@ def _set_result_store(team: "Team") -> None:
 
     # Compression rewrites the tool messages that hold stored-result
     # envelopes, so the two features refuse to run together.
-    if team.compress_tool_results and team.offload_tool_results:
+    if team.compact_tools and team.offload_tool_results:
         raise ValueError(
-            "offload_tool_results and compress_tool_results cannot be enabled together: "
+            "offload_tool_results and compact_tools cannot be enabled together: "
             "compression rewrites the tool messages that hold stored-result envelopes. "
             "Disable one of the two."
         )
@@ -692,20 +705,26 @@ def _ensure_result_store(team: "Team") -> None:
     _set_result_store(team)
 
 
-def _set_compression_manager(team: "Team") -> None:
-    if team.compress_tool_results and team.compression_manager is None:
-        team.compression_manager = CompressionManager(
+def _set_compaction_manager(team: "Team") -> None:
+    """Initialize compaction_manager for tool and/or history compaction."""
+    # Auto-create if either compaction flag is set
+    if (team.compact_tools or team.compact_context) and team.compaction_manager is None:
+        team.compaction_manager = CompactionManager(
             model=team.model,
+            compact_tools=team.compact_tools,
+            compact_context=team.compact_context,
         )
-    elif team.compression_manager is not None and team.compression_manager.model is None:
-        # If compression manager exists but has no model, use the team's model
-        team.compression_manager.model = team.model
 
-    if team.compression_manager is not None:
-        if team.compression_manager.model is None:
-            team.compression_manager.model = team.model
-        if team.compression_manager.compress_tool_results:
-            team.compress_tool_results = True
+    # If manager exists, sync the compact_context flag
+    if team.compaction_manager is not None and team.compact_context:
+        team.compaction_manager.compact_context = True
+
+    if team.compaction_manager is not None:
+        if team.compaction_manager.model is None:
+            team.compaction_manager.model = team.model
+        # Sync compact_tools flag from manager back to team
+        if team.compaction_manager.compact_tools:
+            team.compact_tools = True
 
 
 def _set_learning_machine(team: "Team") -> None:
@@ -865,17 +884,17 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_memory_manager(team)
     if team.enable_session_summaries or team.session_summary_manager is not None:
         _set_session_summary_manager(team)
-    if team.compress_tool_results or team.compression_manager is not None:
-        _set_compression_manager(team)
+    if team.compact_tools or team.compact_context or team.compaction_manager is not None:
+        _set_compaction_manager(team)
     # Offloading and tool-result compression cannot run together: compression
     # rewrites the tool messages that hold stored-result envelopes. Refuse the
     # combination loudly instead of silently favouring one of them.
     # Resolved when a setting is present or when a store exists.
     if team.offload_tool_results or team._result_store is not None:
-        if team.compress_tool_results:
+        if team.compact_tools:
             raise ValueError(
-                "offload_tool_results and compress_tool_results cannot be enabled together: "
-                "compression rewrites the tool messages that hold stored-result envelopes. "
+                "offload_tool_results and compact_tools cannot be enabled together: "
+                "compaction rewrites the tool messages that hold stored-result envelopes. "
                 "Disable one of the two."
             )
         _ensure_result_store(team)
