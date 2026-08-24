@@ -752,8 +752,8 @@ class Workflow:
         """Resolve run-level params: call-site > self.<field> > None.
 
         ``session_metadata`` is the session-stored metadata read by the dispatch
-        function; it sits between call-site values and workflow defaults in the
-        metadata merge (call-site < session < self).
+        function; it sits between workflow defaults and call-site values in the
+        metadata merge (self < session < call-site).
 
         Returns a dict of resolved values ready to pass to RunContext().
         """
