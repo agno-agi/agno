@@ -1292,3 +1292,404 @@ def test_allow_paths_does_not_cover_siblings_or_parents():
         assert "ok" in ws.read_file(".venv/lib/ok.py")
         assert ws.read_file(".venv/pyvenv.cfg") == "Error: path is excluded from this workspace: .venv/pyvenv.cfg"
         assert ws.list_files(".venv") == "Error: directory is excluded from this workspace: .venv"
+
+
+# ------------------------------------------------------------------
+# Default credential excludes: the default list is the access boundary
+# ------------------------------------------------------------------
+
+# Files a real repository or home directory conventionally keeps credentials in.
+CREDENTIAL_PATHS = [
+    "id_rsa",
+    "id_rsa.pub",
+    "id_dsa",
+    "id_ecdsa",
+    "id_ed25519",
+    "server.pem",
+    "private.key",
+    "server.crt",
+    "ca.cer",
+    "ca.der",
+    "signing.p8",
+    "cert.p12",
+    "cert.pfx",
+    "keystore.jks",
+    "store.jceks",
+    "my.keystore",
+    "private.gpg",
+    "server.ppk",
+    "vault.kdbx",
+    "krb5.keytab",
+    "known_hosts",
+    "authorized_keys",
+    ".npmrc",
+    ".pypirc",
+    ".netrc",
+    "_netrc",
+    ".git-credentials",
+    ".dockercfg",
+    ".pgpass",
+    ".my.cnf",
+    ".boto",
+    ".s3cfg",
+    "rclone.conf",
+    "kubeconfig",
+    ".htpasswd",
+    "htpasswd",
+    "credentials.json",
+    "credentials.yaml",
+    "credentials.yml",
+    "credentials.ini",
+    "credentials.cfg",
+    "credentials.csv",
+    "credentials.toml",
+    "credentials.xml",
+    "credentials.properties",
+    "aws-credentials.json",
+    "db_credentials.yaml",
+    "application_default_credentials.json",
+    "secret.json",
+    "secret.yaml",
+    "secret.yml",
+    "secrets.json",
+    "secrets.yaml",
+    "secrets.yml",
+    "secrets.ini",
+    "secrets.cfg",
+    "secrets.toml",
+    "secrets.properties",
+    "app-secrets.yaml",
+    "token.json",
+    "tokens.json",
+    "accessKeys.csv",
+    "azureProfile.json",
+    "service_account.json",
+    "service_account_key.json",
+    "serviceAccount.json",
+    "serviceAccountKey.json",
+    "service-account.json",
+    "gcp-service-account.json",
+    "terraform.tfvars",
+    "prod.tfvars.json",
+    ".ssh/id_ed25519",
+    ".aws/credentials",
+    ".gnupg/secring.gpg",
+    ".kube/config",
+    ".docker/config.json",
+    ".azure/azureProfile.json",
+    ".m2/settings.xml",
+    ".cargo/credentials.toml",
+    ".composer/auth.json",
+    "config/credentials.json",
+]
+
+# Ordinary source and documentation. A workspace toolkit exists to read these, and the
+# obvious `credentials.*` / `secrets.*` spelling of the patterns above would refuse them.
+SOURCE_PATHS = [
+    "credentials.py",
+    "credentials.ts",
+    "credentials.go",
+    "credentials.rs",
+    "credentials.md",
+    "credentials.test.js",
+    "credentials_test.go",
+    "secrets.py",
+    "secrets.ts",
+    "secrets.tf",
+    "secrets.md",
+    "secrets_manager.py",
+    "aws-credentials.md",
+    "app/auth/credentials.py",
+    "docs/secrets.md",
+    "src/credentials/loader.py",
+    "lib/credentials/__init__.py",
+    "keystore.py",
+    "keystore/index.ts",
+    "key.py",
+    "keys.py",
+    "cert.ts",
+    "pem.md",
+    "crt.go",
+    "docs/keys.md",
+    "terraform.tfvars.example",
+]
+
+# Committed env templates: placeholders by definition, and where a repo documents its
+# environment variables.
+ENV_TEMPLATES = [
+    ".env.example",
+    ".env.sample",
+    ".env.template",
+    ".env.dist",
+    "example.env",
+    "sample.env",
+    "template.env",
+    "dist.env",
+    "env.example",
+    "packages/api/.env.example",
+]
+
+ENV_SECRETS = [".env", ".env.local", ".env.production", ".env.development", ".env.vault", ".envrc"]
+
+
+def _write(base: Path, rel: str, content: str) -> Path:
+    path = base / rel
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
+    return path
+
+
+@pytest.mark.parametrize("rel", CREDENTIAL_PATHS)
+def test_default_excludes_block_conventional_credential_files(rel):
+    """Since exclusion refuses reads, the default list is the control. Content must not
+    reach the tool result through any of the three read surfaces."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, rel, "ZQMARKER-SECRET\n")
+        ws = Workspace(tmp_dir)
+
+        assert ws.read_file(rel) == f"Error: path is excluded from this workspace: {rel}"
+        assert "ZQMARKER-SECRET" not in ws.read_file(rel)
+        listed = [e["path"] for e in json.loads(ws.list_files(recursive=True))["files"]]
+        assert rel not in listed
+        found = json.loads(ws.search_content("ZQMARKER-SECRET"))
+        assert found["matches_found"] == 0
+
+
+@pytest.mark.parametrize("rel", SOURCE_PATHS)
+def test_default_excludes_do_not_block_source_files(rel):
+    """The trap: `credentials.*` and `secrets.*` are the obvious spelling and would
+    refuse every one of these. A bare `credentials` entry would take the two package
+    directories with it."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, rel, "ZQMARKER-SOURCE\n")
+        ws = Workspace(tmp_dir)
+
+        assert "ZQMARKER-SOURCE" in ws.read_file(rel)
+        listed = [e["path"] for e in json.loads(ws.list_files(recursive=True))["files"]]
+        assert rel in listed
+
+
+def test_credential_refusal_covers_every_path_spelling():
+    """A refusal that only knows the bare name is not a boundary."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, "credentials.json", "ZQMARKER-SECRET\n")
+        _write(base, "src/app.py", "print('app')\n")
+        ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS)
+
+        for spelling in (
+            "credentials.json",
+            "./credentials.json",
+            "src/../credentials.json",
+            str(base / "credentials.json"),
+        ):
+            out = ws.read_file(spelling)
+            assert out == f"Error: path is excluded from this workspace: {spelling}"
+            assert "ZQMARKER-SECRET" not in out
+        assert ws.write_file("credentials.json", "X").startswith("Error: path is excluded")
+        assert ws.delete_file("credentials.json").startswith("Error: path is excluded")
+
+
+def test_credential_directories_are_refused_as_directories():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, ".ssh/id_ed25519", "ZQMARKER-SECRET\n")
+        ws = Workspace(tmp_dir)
+        assert ws.list_files(".ssh") == "Error: directory is excluded from this workspace: .ssh"
+        assert ws.search_content("ZQMARKER", directory=".ssh") == (
+            "Error: directory is excluded from this workspace: .ssh"
+        )
+
+
+def test_allow_paths_still_re_admits_an_excluded_credential_file():
+    """The escape hatch for anyone whose agent legitimately reads one of these."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, "credentials.json", "ZQMARKER-ALLOWED\n")
+        _write(base, "secrets.yaml", "ZQMARKER-STILL-BLOCKED\n")
+        ws = Workspace(tmp_dir, allow_paths=["credentials.json"])
+        assert "ZQMARKER-ALLOWED" in ws.read_file("credentials.json")
+        assert ws.read_file("secrets.yaml") == "Error: path is excluded from this workspace: secrets.yaml"
+
+
+# ------------------------------------------------------------------
+# Exemptions: "!" entries keep committed env templates readable
+# ------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("rel", ENV_TEMPLATES)
+def test_committed_env_templates_are_readable(rel):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, rel, "OPENAI_API_KEY=\n")
+        ws = Workspace(tmp_dir)
+
+        assert "OPENAI_API_KEY" in ws.read_file(rel)
+        listed = [e["path"] for e in json.loads(ws.list_files(recursive=True))["files"]]
+        assert rel in listed
+        assert json.loads(ws.search_content("OPENAI_API_KEY"))["matches_found"] == 1
+
+
+@pytest.mark.parametrize("rel", ENV_SECRETS)
+def test_real_env_files_stay_blocked(rel):
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, rel, "OPENAI_API_KEY=sk-live-secret\n")
+        ws = Workspace(tmp_dir)
+        assert ws.read_file(rel) == f"Error: path is excluded from this workspace: {rel}"
+        assert json.loads(ws.search_content("sk-live-secret"))["matches_found"] == 0
+
+
+def test_exemption_does_not_reach_inside_an_excluded_directory():
+    """An exemption clears the component it names, not the directory above it."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, ".venv/cfg/.env.example", "OPENAI_API_KEY=\n")
+        ws = Workspace(tmp_dir)
+        assert ws.read_file(".venv/cfg/.env.example") == (
+            "Error: path is excluded from this workspace: .venv/cfg/.env.example"
+        )
+
+
+def test_exemptions_can_be_dropped_by_filtering_the_defaults():
+    from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, ".env.example", "OPENAI_API_KEY=\n")
+        strict = [p for p in DEFAULT_EXCLUDE_PATTERNS if not p.startswith("!")]
+        ws = Workspace(tmp_dir, exclude_patterns=strict)
+        assert ws.read_file(".env.example") == "Error: path is excluded from this workspace: .env.example"
+
+
+def test_custom_exclude_patterns_get_no_exemptions_they_did_not_ask_for():
+    """You took control: the surface is exactly what you specified."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, ".env.example", "OPENAI_API_KEY=\n")
+        ws = Workspace(tmp_dir, exclude_patterns=[".env*"])
+        assert ws.read_file(".env.example") == "Error: path is excluded from this workspace: .env.example"
+
+
+def test_bare_exemption_prefix_is_rejected():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        with pytest.raises(ValueError, match="names no pattern"):
+            Workspace(tmp_dir, exclude_patterns=["!"])
+
+
+def test_exemption_wins_regardless_of_order():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, "keep.json", "ZQMARKER\n")
+        after = Workspace(tmp_dir, exclude_patterns=["*.json", "!keep.json"])
+        before = Workspace(tmp_dir, exclude_patterns=["!keep.json", "*.json"])
+        assert "ZQMARKER" in after.read_file("keep.json")
+        assert "ZQMARKER" in before.read_file("keep.json")
+
+
+def test_mutating_exclude_patterns_after_construction_takes_effect():
+    """exclude_patterns is public and mutable, so the deny/exempt split cannot be a
+    one-shot snapshot taken in __init__."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, ".env.example", "OPENAI_API_KEY=\n")
+        ws = Workspace(tmp_dir)
+        assert "OPENAI_API_KEY" in ws.read_file(".env.example")
+        ws.exclude_patterns = [".env*"]
+        assert ws.read_file(".env.example") == "Error: path is excluded from this workspace: .env.example"
+
+
+def test_compiled_matcher_agrees_with_a_pattern_by_pattern_fnmatch():
+    """The deny/exempt halves are compiled into one alternation each for speed. Pin the
+    equivalence to the loop it replaces, on both case branches, so a translate-level
+    difference cannot slip in unseen."""
+    from fnmatch import fnmatch, fnmatchcase
+
+    from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, split_exclude_patterns
+
+    names = [
+        ".env",
+        ".env.example",
+        ".env.production",
+        "example.env",
+        "dist.env",
+        "env.example",
+        "id_rsa",
+        "id_rsa.pub",
+        "id_rsa_helper.go",
+        "credentials.json",
+        "credentials.py",
+        "credentials",
+        "secrets.py",
+        "secrets.yaml",
+        "server.pem",
+        "key.py",
+        "app.py",
+        ".ssh",
+        ".aws",
+        ".venv",
+        "build",
+        "BUILD",
+        ".ENV",
+        "Credentials.json",
+        "x.TFVARS",
+        "service-account.json",
+        "serviceAccount.json",
+        "known_hosts",
+        "!secret.txt",
+        "README.md",
+        ".DS_Store",
+        "x.egg-info",
+        "[weird]",
+        "a b",
+        "*.py",
+    ]
+    deny, exempt = split_exclude_patterns(DEFAULT_EXCLUDE_PATTERNS)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for fold in (True, False):
+            ws = Workspace(tmp_dir)
+            ws._fold_case = fold
+            match = (lambda a, b: fnmatchcase(a.casefold(), b.casefold())) if fold else fnmatch
+            for name in names:
+                expected = any(match(name, d) for d in deny) and not any(match(name, e) for e in exempt)
+                assert ws._component_excluded(name) is expected, (name, fold)
+
+
+def test_path_matches_exclude_agrees_with_a_pattern_by_pattern_fnmatch():
+    """The FileTools half of the same matcher."""
+    from fnmatch import fnmatch
+
+    from agno.tools._local_file_utils import (
+        DEFAULT_EXCLUDE_PATTERNS,
+        path_matches_exclude,
+        split_exclude_patterns,
+    )
+
+    deny, exempt = split_exclude_patterns(DEFAULT_EXCLUDE_PATTERNS)
+    root = Path("/r")
+    for parts in (
+        ("app.py",),
+        (".env",),
+        (".env.example",),
+        ("pkg", ".env.example"),
+        ("credentials", "loader.py"),
+        ("id_rsa",),
+        ("src", "secrets.py"),
+        (".venv", "cfg", ".env.example"),
+        ("!secret.txt",),
+    ):
+        expected = any(
+            any(fnmatch(part, d) for d in deny) and not any(fnmatch(part, e) for e in exempt) for part in parts
+        )
+        assert path_matches_exclude(root.joinpath(*parts), root, DEFAULT_EXCLUDE_PATTERNS) is expected, parts
+
+
+def test_empty_deny_list_with_only_exemptions_excludes_nothing():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, ".env", "SECRET=1\n")
+        ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
+        assert "SECRET=1" in ws.read_file(".env")

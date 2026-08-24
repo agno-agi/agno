@@ -29,7 +29,13 @@ from agno.os.interfaces.a2a.utils import (
     map_run_output_to_a2a_task,
     stream_a2a_response_with_error_handling,
 )
-from agno.os.middleware.user_scope import get_scoped_user_id, resolve_run_user_id, verify_run_in_session
+from agno.os.middleware.user_scope import (
+    assert_session_writable,
+    caller_is_admin,
+    get_scoped_user_id,
+    resolve_run_user_id,
+    verify_run_in_session,
+)
 from agno.os.utils import get_agent_by_id, get_request_kwargs, get_team_by_id, get_workflow_by_id
 from agno.team import RemoteTeam, Team
 from agno.workflow import RemoteWorkflow, Workflow
@@ -144,6 +150,16 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         user_id = _resolve_a2a_user_id(request, request_body)
+
+        # contextId is client-supplied and becomes the session id, so a caller can
+        # name another user's session. Refuse before dispatch: the run would otherwise
+        # be persisted into that session and replayed as the owner's history.
+        await assert_session_writable(
+            getattr(agent, "db", None),
+            context_id,
+            user_id or getattr(agent, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
 
         # 3. Check if non-blocking execution is requested
         blocking = request_body.get("params", {}).get("configuration", {}).get("blocking", True)
@@ -348,6 +364,16 @@ def attach_routes(
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         user_id = _resolve_a2a_user_id(request, request_body)
 
+        # contextId is client-supplied and becomes the session id, so a caller can
+        # name another user's session. Refuse before dispatch: the run would otherwise
+        # be persisted into that session and replayed as the owner's history.
+        await assert_session_writable(
+            getattr(agent, "db", None),
+            context_id,
+            user_id or getattr(agent, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
+
         # 3. Run the Agent and stream the response
         try:
             event_stream = agent.arun(
@@ -455,6 +481,16 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=False)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         user_id = _resolve_a2a_user_id(request, request_body)
+
+        # contextId is client-supplied and becomes the session id, so a caller can
+        # name another user's session. Refuse before dispatch: the run would otherwise
+        # be persisted into that session and replayed as the owner's history.
+        await assert_session_writable(
+            getattr(team, "db", None),
+            context_id,
+            user_id or getattr(team, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
 
         # 3. Check if non-blocking execution is requested
         blocking = request_body.get("params", {}).get("configuration", {}).get("blocking", True)
@@ -655,6 +691,16 @@ def attach_routes(
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         user_id = _resolve_a2a_user_id(request, request_body)
 
+        # contextId is client-supplied and becomes the session id, so a caller can
+        # name another user's session. Refuse before dispatch: the run would otherwise
+        # be persisted into that session and replayed as the owner's history.
+        await assert_session_writable(
+            getattr(team, "db", None),
+            context_id,
+            user_id or getattr(team, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
+
         # 3. Run the Team and stream the response
         try:
             event_stream = team.arun(
@@ -763,6 +809,16 @@ def attach_routes(
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         user_id = _resolve_a2a_user_id(request, request_body)
 
+        # contextId is client-supplied and becomes the session id, so a caller can
+        # name another user's session. Refuse before dispatch: the run would otherwise
+        # be persisted into that session and replayed as the owner's history.
+        await assert_session_writable(
+            getattr(workflow, "db", None),
+            context_id,
+            user_id or getattr(workflow, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
+
         # 3. Run the Workflow
         try:
             response = await workflow.arun(
@@ -845,6 +901,16 @@ def attach_routes(
         run_input = await map_a2a_request_to_run_input(request_body, stream=True)
         context_id = request_body.get("params", {}).get("message", {}).get("contextId")
         user_id = _resolve_a2a_user_id(request, request_body)
+
+        # contextId is client-supplied and becomes the session id, so a caller can
+        # name another user's session. Refuse before dispatch: the run would otherwise
+        # be persisted into that session and replayed as the owner's history.
+        await assert_session_writable(
+            getattr(workflow, "db", None),
+            context_id,
+            user_id or getattr(workflow, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
 
         # 3. Run the Workflow and stream the response
         try:

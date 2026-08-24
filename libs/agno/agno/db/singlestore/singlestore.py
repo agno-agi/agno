@@ -379,7 +379,6 @@ class SingleStoreDb(BaseDb):
                             )
                             exists = sess.execute(exists_query, {"index_name": idx.name}).scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in {table_ref}, skipping creation")
                             continue
 
                     idx.create(self.db_engine)

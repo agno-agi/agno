@@ -54,6 +54,7 @@ from agno.utils.log import log_warning
 if TYPE_CHECKING:
     from agno.agent import Agent, RemoteAgent
     from agno.agent.protocol import AgentProtocol
+    from agno.db.base import SessionType
     from agno.os.app import AgentOS
     from agno.team import RemoteTeam, Team
     from agno.workflow import RemoteWorkflow, Workflow
@@ -67,6 +68,7 @@ WORKFLOW_ID_REQUIRED_RECONNECT = "workflow_id is required to reconnect to a work
 SESSION_ID_REQUIRED_RECONNECT = "session_id is required to reconnect to a workflow run"
 INSUFFICIENT_PERMISSIONS_WS_RECONNECT = "Insufficient permissions to reconnect to this workflow"
 MISSING_USER_IDENTITY = "Authenticated request is missing a user identity"
+SESSION_NOT_FOUND = "Session not found"
 
 
 def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bool:
@@ -76,6 +78,20 @@ def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bo
     request.state.admin_scope) and falls back to the default ``agent_os:admin``.
     """
     return (admin_scope or AgentOSScope.ADMIN.value) in scopes
+
+
+def caller_is_admin(request: Request) -> bool:
+    """True when the caller holds the configured (or default) admin scope.
+
+    Not the same as ``get_scoped_user_id(request) is None``: that returns None for
+    admins *and* for every caller on a non-isolated deployment (the default), so it
+    cannot stand in for an admin check.
+    """
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    return _has_admin_scope(
+        list(getattr(request.state, "scopes", None) or []),
+        admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
+    )
 
 
 def get_scoped_user_id(request: Request) -> Optional[str]:
@@ -400,6 +416,63 @@ def assert_session_matches_component(
     """
     if not session_matches_component(session, component_type, component_id):
         raise HTTPException(status_code=404, detail=not_found_detail)
+
+
+async def assert_session_writable(
+    db: Union["BaseDb", "AsyncBaseDb", "RemoteDb", None],
+    session_id: Optional[str],
+    effective_user_id: Optional[str],
+    *,
+    session_type: Optional["SessionType"] = None,
+    is_admin: bool = False,
+) -> None:
+    """Raise 404 if ``session_id`` already exists and belongs to a different user.
+
+    Mirrors the ownership predicate every adapter's ``upsert_session`` already applies
+    on ON CONFLICT (``user_id = :uid OR user_id IS NULL``), so a run route refuses what
+    the session write would have silently dropped. Without this the run still lands in
+    the runs table, which carries no such predicate, and the owner's next run replays
+    the intruder's turn as history.
+
+    ``effective_user_id`` is the id the run will actually be attributed with: the
+    route's resolved ``user_id`` when there is one, else the component's own ``user_id``
+    default. Passing the raw route value instead would 404 every second run of a
+    component that sets its own ``user_id``.
+
+    Allows the run when there is no db or ``session_id``, when the caller is an admin,
+    for a ``RemoteDb`` (the downstream AgentOS enforces its own), when the session does
+    not exist yet, when the session is unowned (``user_id IS NULL`` — the shared-session
+    case the storage predicate already admits, which also covers anonymous dev runs and
+    the eval suite), and when it is already owned by ``effective_user_id``.
+
+    Deliberately NOT on that list: ``effective_user_id is None``. An identity-less run
+    into an *owned* session is refused; an identity-less run into an *unowned* session is
+    already allowed by the ``owner is None`` branch, which is what keeps dev mode working.
+    """
+    if db is None or not session_id or is_admin:
+        return
+    if isinstance(db, RemoteDb):
+        # The downstream AgentOS owns its own enforcement and already receives the
+        # caller's forwarded bearer; a second check here would need another round trip.
+        return
+
+    # user_id is deliberately NOT passed: the probe must see the row regardless of owner.
+    # deserialize=False keeps it a raw dict; runs_limit=1 bounds the run attach.
+    if isinstance(db, AsyncBaseDb):
+        row = await db.get_session(session_id=session_id, session_type=session_type, deserialize=False, runs_limit=1)
+    else:
+        row = db.get_session(session_id=session_id, session_type=session_type, deserialize=False, runs_limit=1)
+    if not row:
+        return
+    owner = row.get("user_id") if isinstance(row, dict) else getattr(row, "user_id", None)
+    if owner is None or owner == effective_user_id:
+        return
+
+    log_warning(
+        f"user_scope: refused a run into session_id={session_id!r} owned by "
+        f"user_id={owner!r} from a caller scoped to user_id={effective_user_id!r}."
+    )
+    raise HTTPException(status_code=404, detail=SESSION_NOT_FOUND)
 
 
 async def verify_run_in_session(

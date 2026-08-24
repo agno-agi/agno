@@ -21,7 +21,7 @@ from agno.agent.agent import Agent
 from agno.agent.factory import AgentFactory
 from agno.agent.protocol import AgentProtocol
 from agno.agent.remote import RemoteAgent
-from agno.db.base import BaseDb
+from agno.db.base import BaseDb, SessionType
 from agno.db.schemas.jobs import QueuedJob
 from agno.exceptions import (
     ComponentRehydrationError,
@@ -55,6 +55,8 @@ from agno.os.job_queue import (
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
+    assert_session_writable,
+    caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
     verify_run_in_session,
@@ -730,6 +732,20 @@ def get_agent_router(
         # the run itself (run metadata), so the lifecycle routes can reload
         # the SAME version later instead of whatever is current by then.
         stamp_component_version(kwargs, version)
+
+        # A run must not enter a session owned by someone else: the runs table has no
+        # ownership predicate, so an unguarded write is replayed into the owner's history.
+        # ``effective_user_id`` is what will actually stamp the session row - the route's
+        # user_id, else the component's own default. Passing the raw ``user_id`` here would
+        # 404 every second run of a component that sets one.
+        effective_user_id = user_id or getattr(agent, "user_id", None)
+        await assert_session_writable(
+            getattr(agent, "db", None) or os.db,
+            session_id,
+            effective_user_id,
+            session_type=SessionType.AGENT,
+            is_admin=caller_is_admin(request),
+        )
 
         if session_id is None or session_id == "":
             log_debug("Creating new session")

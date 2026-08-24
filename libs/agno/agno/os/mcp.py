@@ -554,6 +554,34 @@ def _http_request_or_none() -> Optional[Any]:
         return None
 
 
+async def _assert_session_writable_mcp(
+    os_app, component, session_id: str, user_id: Optional[str], session_type
+) -> None:
+    """Refuse an MCP run into a session owned by another user.
+
+    Same rule the REST run routes apply. MCP tools surface plain exceptions, so the
+    helper's HTTPException is mapped here: an unmapped one would reach the client as an
+    opaque internal error.
+    """
+    from fastapi import HTTPException
+
+    from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin
+
+    request = _http_request_or_none()
+    # No in-flight request (e.g. stdio transport) means no scopes to read, so no admin.
+    is_admin = caller_is_admin(request) if request is not None else False
+    try:
+        await assert_session_writable(
+            getattr(component, "db", None) or os_app.db,
+            session_id,
+            user_id or getattr(component, "user_id", None),
+            session_type=session_type,
+            is_admin=is_admin,
+        )
+    except HTTPException as e:
+        raise Exception(e.detail if isinstance(e.detail, str) else str(e.detail))
+
+
 def _session_id_or_new(session_id: Optional[str]) -> str:
     """Return the caller's session_id, or mint a fresh one when it is omitted.
 
@@ -861,6 +889,7 @@ def build_mcp_server(
         agent = await _resolve_run_component(os, "agents", agent_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         session_id = _session_id_or_new(session_id)
+        await _assert_session_writable_mcp(os, agent, session_id, user_id, SessionType.AGENT)
         run_output = await _run_agentic_component(
             ctx, agent, message, user_id, session_id, label=f"Agent {agent.name or agent_id}"
         )
@@ -887,6 +916,7 @@ def build_mcp_server(
         team = await _resolve_run_component(os, "teams", team_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         session_id = _session_id_or_new(session_id)
+        await _assert_session_writable_mcp(os, team, session_id, user_id, SessionType.TEAM)
         run_output = await _run_agentic_component(
             ctx, team, message, user_id, session_id, label=f"Team {team.name or team_id}"
         )
@@ -916,6 +946,7 @@ def build_mcp_server(
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         session_id = _session_id_or_new(session_id)
+        await _assert_session_writable_mcp(os, workflow, session_id, user_id, SessionType.WORKFLOW)
         # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
         with _detached_trace_context():
             if isinstance(workflow, RemoteWorkflow):

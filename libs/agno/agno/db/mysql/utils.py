@@ -84,9 +84,6 @@ def is_table_available(session: Session, table_name: str, db_schema: str) -> boo
             "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
         )
         exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
-        if not exists:
-            log_debug(f"Table {db_schema}.{table_name} {'exists' if exists else 'does not exist'}")
-
         return exists
 
     except Exception as e:
@@ -414,9 +411,6 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
         )
         result = await session.execute(exists_query, {"schema": db_schema, "table": table_name})
         exists = result.scalar() is not None
-        if not exists:
-            log_debug(f"Table {db_schema}.{table_name} {'exists' if exists else 'does not exist'}")
-
         return exists
 
     except Exception as e:

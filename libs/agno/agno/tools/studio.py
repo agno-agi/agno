@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Union
 
 from agno.exceptions import SchemaMismatchError
 from agno.run import RunContext
@@ -107,6 +107,27 @@ _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 _NAME_MATCH_LIMIT = 20
 
 _NAME_MATCH_PAGES = 10
+
+
+def _version_or_latest(version: Optional[int]) -> Optional[int]:
+    """Read a "which version" argument, treating 0 as omitted.
+
+    Version numbers start at 1, so on an argument that selects a version 0 is never
+    valid and only ever means the model defaulted an optional integer it should have
+    left out. Every such argument is documented "omit for the latest", so 0 is answered
+    the way omitting it is answered rather than with a version that does not exist.
+
+    Booleans are not versions: ``False == 0`` in Python and a lax JSON coercion can
+    deliver one, so it is refused here the same way the live-pointer guard refuses it.
+
+    This is only for arguments that name a version to act on. It must never be applied
+    to ``expected_current_version``, where 0 is the compare-and-set spelling for "I
+    expect no live version" (``agno.db.base.NO_LIVE_VERSION``) and carries a real guard.
+    """
+    if isinstance(version, bool) or version != 0:
+        return version
+    log_debug("StudioTools: version=0 is not a version; reading it as omitted (the latest).")
+    return None
 
 
 def _own_row_across_pages(list_components, actor: Optional[str], **query: Any) -> tuple:
@@ -228,6 +249,19 @@ class StudioTools(Toolkit):
             deliberately. denied_tools still wins over both.
         denied_tools: Names no caller may build with, whatever their source.
             A denied toolkit covers its member functions too.
+        max_dispatch_depth: How many runner-dispatch hops one request may
+            chain through the run tools (default 2). 1 means components this
+            toolkit runs may not dispatch further; 0 disables dispatch while
+            keeping discovery. Bounds depth, not fan-out. The cycle guard --
+            no component runs again while it is already running in the same
+            dispatch tree -- is always on regardless.
+        self_dispatch: "never" (default) refuses a component dispatching
+            itself outright. "once" allows a self-run one nested level deep
+            (a clean-context self-consult on its own derived session); the
+            nested run inherits its caller in the dispatch lineage, so it can
+            never re-enter, and indirect cycles stay refused in both modes.
+            Per dispatch call, not per conversation: a run that calls the
+            tool twice starts two such bounded self-runs.
     """
 
     def __init__(
@@ -248,6 +282,7 @@ class StudioTools(Toolkit):
         allowed_tools: Optional[List[str]] = None,
         denied_tools: Optional[List[str]] = None,
         max_dispatch_depth: int = 2,
+        self_dispatch: Literal["never", "once"] = "never",
         **kwargs: Any,
     ):
         self.registry = registry
@@ -312,6 +347,7 @@ class StudioTools(Toolkit):
             # That same reach is what makes an unbounded dispatch chain
             # reachable from one message, so the bound rides along with it.
             max_dispatch_depth=max_dispatch_depth,
+            self_dispatch=self_dispatch,
             list_limit=list_limit,
         )
 
@@ -1753,6 +1789,7 @@ class StudioTools(Toolkit):
             steps, context flags). 'tools' lists exactly what is stored: a
             single function stays a single function, never its whole toolkit.
         """
+        version = _version_or_latest(version)
         actor = _actor_id(_agno_run_context)
         code_tiers = (
             ("agent", self._iter_agents),
@@ -2591,6 +2628,10 @@ class StudioTools(Toolkit):
         append a new version (draft, or published when ``publish``). ``warnings``
         is the list ``mutate`` appends its disclosures to; it rides on the
         success envelope."""
+        # expected_version is NOT coerced here even though 0 can never match a latest
+        # version. Refusing is the safe direction for a compare-and-set: reading 0 as
+        # "unset" would turn a guard the caller asked for into an unguarded append, and
+        # the REST guard (`guard.latest_version`) would still refuse the same value.
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3002,15 +3043,27 @@ class StudioTools(Toolkit):
             component_id (str): Exact component id.
             version (Optional[int]): The draft to publish; omit for the latest draft.
             expected_current_version (Optional[int]): Compare-and-set guard on
-                the live pointer being replaced; omit to skip the check. A
-                component that has never been published has no live pointer,
-                so on a first publish omit this or pass 0 ("nothing is live
-                yet"); any other value can never match.
+                the live pointer being replaced. Omit it unless you are
+                deliberately guarding against a concurrent publish. A component
+                that has never been published has no live pointer, so on a
+                first publish the only value that can ever match is 0.
 
         Returns:
             str: StudioResult JSON; data is {id, version}; status "published" or
             "already_published".
         """
+        # `version` names the draft to publish, so 0 reads as omitted. The
+        # expected_current_version guard beside it does NOT: 0 is its "nothing is
+        # live yet" spelling and stays a guard.
+        coerced_version = _version_or_latest(version)
+        # This one moves the live pointer, so a caller whose argument was
+        # reinterpreted hears about it on the envelope, not only in a debug log.
+        version_warnings = (
+            []
+            if coerced_version == version
+            else ["Ignored version=0, which is not a version, and published the latest draft instead."]
+        )
+        version = coerced_version
         db_err = self._require_db()
         if db_err is not None:
             return db_err
@@ -3084,7 +3137,7 @@ class StudioTools(Toolkit):
                 # the live pointer names, so re-projecting this one would make
                 # the row describe a version that is not live; moving the
                 # pointer backwards is set_current_version's job, not publish's.
-                return ok_result("already_published", id=component_id, version=target)
+                return ok_result("already_published", warnings=version_warnings, id=component_id, version=target)
             try:
                 result = self.db.upsert_config(
                     component_id=component_id,
@@ -3103,7 +3156,7 @@ class StudioTools(Toolkit):
                     return self._denied_error(denied)
                 raise
             published_version = result.get("version", target)
-            warnings = self._sync_component_row_after_commit(component_id, published_version)
+            warnings = version_warnings + self._sync_component_row_after_commit(component_id, published_version)
             return ok_result("published", warnings=warnings, id=component_id, version=published_version)
         except Exception as e:
             return self._error_from_exception(e, "Failed to publish component")
@@ -3258,9 +3311,10 @@ class StudioTools(Toolkit):
             component_id (str): Exact id of a stored component. Display names
                 do not resolve for destructive operations.
             expected_current_version (Optional[int]): Compare-and-set guard on
-                the live pointer; omit to skip the check. A component that has
-                never been published has no live pointer, so pass 0 ("nothing
-                is live") or omit it; any other value can never match.
+                the live pointer. Omit it unless you are deliberately guarding
+                against a concurrent write. A component that has never been
+                published has no live pointer, so for one of those the only
+                value that can ever match is 0.
 
         Returns:
             str: StudioResult JSON; data is {id}; warnings report side effects.
@@ -3402,6 +3456,7 @@ class StudioTools(Toolkit):
             valid: true} on success; validation_failed carries the exact
             problem otherwise.
         """
+        version = _version_or_latest(version)
         row, resolved_id, err = self._component_row(component_id, _actor_id(_agno_run_context))
         if err is not None:
             return err
@@ -3503,6 +3558,7 @@ class StudioTools(Toolkit):
         caller_agent: Any = None,
         caller_team: Any = None,
     ) -> str:
+        version = _version_or_latest(version)
         runner_calls = {
             "agent": self._runner_tools.run_agent,
             "team": self._runner_tools.run_team,
@@ -3582,6 +3638,7 @@ class StudioTools(Toolkit):
         run being pushed to a thread; only the sync DB reads are off-loaded."""
         import asyncio
 
+        version = _version_or_latest(version)
         runner_calls = {
             "agent": self._runner_tools.arun_agent,
             "team": self._runner_tools.arun_team,

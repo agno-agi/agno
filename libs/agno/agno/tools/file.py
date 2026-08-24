@@ -61,6 +61,15 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
 class FileTools(Toolkit):
     """Toolkit for read/write access to a local directory tree.
 
+    ``exclude_patterns`` here is a **listing filter, not an access boundary**: results
+    from ``list_files``, ``search_files`` and ``search_content`` skip matching paths,
+    but ``read_file``, ``read_file_chunk``, ``save_file``, ``replace_file_chunk`` and
+    ``delete_file`` do not consult it — an agent that names an excluded path directly
+    still reads or writes it. The shared default list includes credential files, so an
+    agent given ``FileTools`` over a directory holding secrets can still read them by
+    name. Use ``agno.tools.workspace.Workspace`` where exclusion has to be enforced:
+    there the same patterns refuse every path the agent names.
+
     By default, results from ``list_files``, ``search_files``, and ``search_content``
     skip common noise directories (``.venv``, ``.venvs``, ``.context``,
     ``.git``, ``__pycache__``, ``node_modules``, etc.). See
@@ -73,7 +82,11 @@ class FileTools(Toolkit):
     Each pattern is matched with ``fnmatch`` against *any path component* of the
     file's path relative to ``base_dir``. A file is excluded if any component
     matches any pattern, so ``.git`` will exclude both ``.git/`` at the root
-    and ``vendor/thing/.git/`` nested deep.
+    and ``vendor/thing/.git/`` nested deep. An entry prefixed with ``!`` is an
+    exemption: a component matching it is never excluded, whatever else it
+    matches. The defaults use this to keep committed env templates
+    (``.env.example`` and friends) listed while real env files stay out of
+    listings.
 
     Note: ``exclude_patterns`` does not parse ``.gitignore`` files — it only
     applies the literal patterns provided.

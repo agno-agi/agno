@@ -208,13 +208,20 @@ def test_opening_states_delegation_as_need_not_as_self_assessment(mode):
 
 
 @pytest.mark.parametrize("mode", MODES)
-def test_opening_makes_no_identity_claim(mode):
-    """The opening states what the leader has, not who it is; identity is the user's."""
+def test_opening_states_purpose_never_persona(mode):
+    """The opening may say what the leader's job is, never who the leader is.
+
+    The user's description, role and instructions render before this block, so a purpose
+    statement does not stand ahead of them. The coordinator sentence is load-bearing on
+    small models: without it a leader consulting a panel of similar members stops early.
+    A persona claim ("You are ...") is still the user's alone.
+    """
     content = _team(mode=mode, description="A team that researches.").get_system_message(session=_session()).content
     opening = content[content.index("<team>") + len("<team>\n") :].split("\n", 1)[0]
 
-    assert opening.startswith("You have a team of specialists")
-    for claim in ("You are", "You coordinate", "You act as"):
+    assert opening.startswith("You coordinate this team to fulfill the user's request.")
+    assert content.index("A team that researches.") < content.index("<team>")
+    for claim in ("You are", "You act as", "Your name is"):
         assert claim not in opening
 
 
@@ -250,3 +257,29 @@ def test_tasks_block_matches_the_loop_it_runs():
     content = _team(mode=TeamMode.tasks.value).get_system_message(session=_session()).content
     assert "an empty one never" not in content
     assert "finishes at once instead of after a reminder" in content
+
+
+def test_inner_members_of_a_sub_team_render_without_ids():
+    """Only a directly delegable member shows an id.
+
+    An inner member's id is not a valid delegation target for the outer leader, and a
+    leader shown one joins it into ids like "sub-team.member" that always fail.
+    """
+    sub = Team(
+        name="Research Team",
+        id="research-team",
+        model=OpenAIChat("gpt-4o"),
+        role="Handles all research",
+        members=[Agent(name="Inner", id="inner", model=OpenAIChat("gpt-4o"), role="Digs")],
+    )
+    content = _team(members=[sub]).get_system_message(session=_session()).content
+    roster = content[content.index("<team_members>") : content.index("</team_members>")]
+
+    assert 'id="research-team"' in roster
+    assert 'id="inner"' not in roster
+    assert '<member name="Inner">' in roster
+    assert "Role: Digs" in roster
+
+    # The sub-team's own prompt keeps its members' ids: there they are delegable.
+    sub_content = sub.get_system_message(session=_session()).content
+    assert 'id="inner"' in sub_content

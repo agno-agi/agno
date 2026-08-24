@@ -99,7 +99,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Set, Tuple
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import (
@@ -292,6 +292,7 @@ class StudioRunnerTools(Toolkit):
         run_workflows: bool = True,
         include_all_components: bool = False,
         max_dispatch_depth: int = 2,
+        self_dispatch: Literal["never", "once"] = "never",
         list_limit: int = 100,
         name: str = "studio_runners",
         **kwargs: Any,
@@ -302,6 +303,15 @@ class StudioRunnerTools(Toolkit):
         if max_dispatch_depth < 0:
             raise ValueError(f"max_dispatch_depth must be >= 0, got {max_dispatch_depth}")
         self.max_dispatch_depth = max_dispatch_depth
+        # "once" lets the calling component dispatch ITSELF one nested level
+        # deep -- a clean-context self-consult on its own derived session. The
+        # nested run inherits the caller in its lineage, so it can never
+        # re-enter; "never" refuses even that first hop. There is no deeper
+        # setting: self re-entry past one level is the runaway this toolkit
+        # refuses by design.
+        if self_dispatch not in ("never", "once"):
+            raise ValueError(f"self_dispatch must be 'never' or 'once', got {self_dispatch!r}")
+        self.self_dispatch = self_dispatch
         self.registry = registry
         # The explicit db wins; otherwise the registry's is adopted lazily on
         # first access (see the db property). An __init__ snapshot would be
@@ -2470,16 +2480,24 @@ class StudioRunnerTools(Toolkit):
                 "composes deeper sets max_dispatch_depth on StudioRunnerTools."
             )
 
-    @staticmethod
-    def _require_no_cycle(running: List[str], component_type: str, component_id: str) -> str:
+    def _require_no_cycle(
+        self, running: List[str], inherited: List[str], component_type: str, component_id: str
+    ) -> str:
         """The target's lineage token, after refusing re-entry.
 
         Tests the RESOLVED id, so a display name or slug alias cannot evade
-        the guard, against the running set (inherited lineage plus the calling components):
-        a component may not be dispatched while it is already running in this
-        tree, at any depth."""
+        the guard, against the running set (inherited lineage plus the calling
+        components): a component may not be dispatched while it is already
+        running in this tree, at any depth.
+
+        Under self_dispatch="once" the calling components are exempt from the
+        membership test, so a component may dispatch ITSELF from a top-level
+        run -- but they still ride the outgoing lineage, so the nested run
+        inherits the caller and can never re-enter it, and A -> B -> A stays
+        closed in both modes."""
         target = f"{component_type}:{component_id}"
-        if target in running:
+        blocked = inherited if self.self_dispatch == "once" else running
+        if target in blocked:
             raise DispatchCycleError(
                 f"Refusing to dispatch {component_type} '{component_id}': it is already running this "
                 f"request ({' -> '.join([*running, target])}). Answer directly, delegate to a different "
@@ -2553,7 +2571,7 @@ class StudioRunnerTools(Toolkit):
         inherited, depth = self._inherited_dispatch_state(run_context)
         self._require_dispatch_budget(depth, component_type, component_id)
         running = self._dedup([*inherited, *self._caller_tokens(caller_agent, caller_team)])
-        target = self._require_no_cycle(running, component_type, component_id)
+        target = self._require_no_cycle(running, inherited, component_type, component_id)
         return self._outgoing_metadata(run_context, running, depth, target)
 
     def _cross_namespace_hint(self, component_type: str, identifier: str, actor: Optional[str] = None) -> str:
@@ -2638,7 +2656,7 @@ class StudioRunnerTools(Toolkit):
         component_id = getattr(agent, "id", None) or agent_id
         try:
             running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
-            target = self._require_no_cycle(running, "agent", component_id)
+            target = self._require_no_cycle(running, inherited, "agent", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2702,7 +2720,7 @@ class StudioRunnerTools(Toolkit):
         component_id = getattr(team, "id", None) or team_id
         try:
             running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
-            target = self._require_no_cycle(running, "team", component_id)
+            target = self._require_no_cycle(running, inherited, "team", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2766,7 +2784,7 @@ class StudioRunnerTools(Toolkit):
         component_id = getattr(wf, "id", None) or workflow_id
         try:
             running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
-            target = self._require_no_cycle(running, "workflow", component_id)
+            target = self._require_no_cycle(running, inherited, "workflow", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2822,7 +2840,7 @@ class StudioRunnerTools(Toolkit):
         component_id = getattr(agent, "id", None) or agent_id
         try:
             running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
-            target = self._require_no_cycle(running, "agent", component_id)
+            target = self._require_no_cycle(running, inherited, "agent", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2875,7 +2893,7 @@ class StudioRunnerTools(Toolkit):
         component_id = getattr(team, "id", None) or team_id
         try:
             running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
-            target = self._require_no_cycle(running, "team", component_id)
+            target = self._require_no_cycle(running, inherited, "team", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2930,7 +2948,7 @@ class StudioRunnerTools(Toolkit):
         component_id = getattr(wf, "id", None) or workflow_id
         try:
             running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
-            target = self._require_no_cycle(running, "workflow", component_id)
+            target = self._require_no_cycle(running, inherited, "workflow", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})

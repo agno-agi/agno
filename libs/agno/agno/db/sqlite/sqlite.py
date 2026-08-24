@@ -532,7 +532,6 @@ class SqliteDb(BaseDb):
                         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = :index_name")
                         exists = sess.execute(exists_query, {"index_name": idx.name}).scalar() is not None
                         if exists:
-                            log_debug(f"Index {idx.name} already exists in table {table_name}, skipping creation")
                             continue
 
                     idx.create(self.db_engine)

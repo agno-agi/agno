@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.0.0a4"
+version = "3.0.0a5"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -218,12 +218,21 @@ chonkie = [
 csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
-# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
-# the venv lives inside the CWD, breaking the unstructured import chain.
-markdown = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown", "aiofiles"]
-pdf = ["pypdf", "rapidocr_onnxruntime"]
+markdown = ["aiofiles"]
+pdf = ["pypdf"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
+# The website and llms_txt readers both import bs4 at module scope.
+website = ["beautifulsoup4"]
+
+# Engines a reader reaches only on its heavier path; agno[knowledge-full] adds them all.
+
+# Gates MarkdownChunking, not MarkdownReader, which falls back to fixed-size chunking.
+# nltk!=3.10.1: its inisec import hook blocks site-packages imports from a venv inside the CWD.
+markdown-chunking = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown"]
+
+# OCR for scanned pages; PDFReader reads a text layer with pypdf alone.
+pdf-ocr = ["rapidocr_onnxruntime"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
@@ -372,17 +381,25 @@ vectordbs = [
   "agno[weaviate]",
 ]
 
-# All knowledge
+# The document readers, with no OCR, layout or deep-learning engines. See knowledge-full.
 knowledge = [
   "agno[chonkie]",
   "agno[csv]",
-  "agno[docling]",  # also a tool; parses docs for knowledge
   "agno[docx]",
   "agno[excel]",
   "agno[markdown]",
   "agno[pdf]",
   "agno[pptx]",
   "agno[text]",
+  "agno[website]",
+]
+
+# Every knowledge capability, including docling, OCR and unstructured.
+knowledge-full = [
+  "agno[knowledge]",
+  "agno[docling]",  # also a tool; parses docs for knowledge
+  "agno[markdown-chunking]",
+  "agno[pdf-ocr]",
 ]
 
 # All embedders
@@ -400,7 +417,8 @@ tests = [
     "agno[tools]",
     "agno[storage]",
     "agno[vectordbs]",
-    "agno[knowledge]",
+    # The full set: CI exercises docling, OCR and unstructured too.
+    "agno[knowledge-full]",
     "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",

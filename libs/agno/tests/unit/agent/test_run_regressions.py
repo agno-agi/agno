@@ -3,6 +3,8 @@ from typing import Any, Optional
 
 import pytest
 
+from agno.exceptions import RunNotFoundError
+
 from agno.agent import _init, _messages, _response, _run, _session, _storage, _tools
 from agno.agent.agent import Agent
 from agno.db.base import SessionType
@@ -149,17 +151,17 @@ async def test_acontinue_run_dispatch_handles_none_session_runs(monkeypatch: pyt
     monkeypatch.setattr(_init, "disconnect_connectable_tools", lambda agent: None)
     monkeypatch.setattr(_init, "disconnect_mcp_tools", fake_disconnect_mcp_tools)
 
-    response = await _run.acontinue_run_dispatch(
-        agent=agent,
-        run_id="missing-run",
-        requirements=[],
-        session_id="session-1",
-        stream=False,
-    )
-
-    assert response.status == RunStatus.error
-    assert isinstance(response.content, str)
-    assert "No runs found for run ID missing-run" in response.content
+    # An unresolvable run_id must RAISE, not return a terminal error run. The old
+    # behaviour fell through to the generic handler, which stamped an ERROR row over
+    # the target run (owner, status and content) or fabricated a junk row.
+    with pytest.raises(RunNotFoundError, match="No runs found for run ID missing-run"):
+        await _run.acontinue_run_dispatch(
+            agent=agent,
+            run_id="missing-run",
+            requirements=[],
+            session_id="session-1",
+            stream=False,
+        )
 
 
 @pytest.mark.asyncio
@@ -188,21 +190,21 @@ async def test_acontinue_run_stream_yields_error_event_without_attribute_error(
         session_state={},
     )
 
+    # The streaming path raises for the same reason: persisting a terminal ERROR
+    # run for a run_id that was never found corrupts the target row. The HTTP layer
+    # turns this into a RunError SSE event, so the wire contract is unchanged.
     events = []
-    async for event in _run._acontinue_run_stream(
-        agent=agent,
-        session_id="session-1",
-        run_context=run_context,
-        run_id=run_id,
-        requirements=[],
-    ):
-        events.append(event)
+    with pytest.raises(RunNotFoundError, match="No runs found for run ID missing-stream-run"):
+        async for event in _run._acontinue_run_stream(
+            agent=agent,
+            session_id="session-1",
+            run_context=run_context,
+            run_id=run_id,
+            requirements=[],
+        ):
+            events.append(event)
 
-    assert len(events) == 1
-    assert isinstance(events[0], RunErrorEvent)
-    assert events[0].run_id == run_id
-    assert events[0].content is not None
-    assert "No runs found for run ID missing-stream-run" in events[0].content
+    assert events == []
 
 
 @pytest.mark.asyncio

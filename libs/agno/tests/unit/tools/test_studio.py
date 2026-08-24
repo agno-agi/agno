@@ -2376,6 +2376,184 @@ class TestVersioning:
 
 
 # ----------------------------------------------------------------------
+# version: 0 -- models fill an Optional[int] documented "omit for the
+# latest" with 0. Versions start at 1, so on a "which version" argument 0
+# only ever means "unset"; on the expected_current_version guard it means
+# "nothing is live" and must keep meaning that.
+# ----------------------------------------------------------------------
+
+
+class TestVersionZero:
+    def _published(self, studio, name="tutor"):
+        studio.create_agent(name=name, instructions="orig", model_id="gpt-5.4", publish=True)
+
+    def test_get_component_treats_version_zero_as_latest(self, studio):
+        """0 reads like an omitted argument instead of failing version_not_found."""
+        self._published(studio)
+        data = _data(studio.get_component("tutor", version=0))
+        assert data["version"] == 1
+        assert data["instructions"] == "orig"
+
+    def test_get_component_version_zero_matches_omitting_it(self, studio):
+        """Same answer as the documented spelling, drafts included."""
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        assert _data(studio.get_component("tutor", version=0)) == _data(studio.get_component("tutor"))
+
+    def test_explicit_version_still_pins(self, studio):
+        """The coercion is for 0 alone: a real version still selects itself."""
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        assert _data(studio.get_component("tutor", version=1))["instructions"] == "orig"
+        assert _data(studio.get_component("tutor", version=2))["instructions"] == "updated"
+
+    def test_negative_version_is_still_an_error(self, studio):
+        """-1 is a wrong number, not an unset argument; it must not be coerced."""
+        self._published(studio)
+        assert _error(studio.get_component("tutor", version=-1))["code"] == "version_not_found"
+
+    def test_unknown_version_is_still_an_error(self, studio):
+        self._published(studio)
+        assert _error(studio.get_component("tutor", version=99))["code"] == "version_not_found"
+
+    @pytest.mark.asyncio
+    async def test_aget_component_treats_version_zero_as_latest(self, studio):
+        self._published(studio)
+        assert _data(await studio.aget_component("tutor", version=0))["version"] == 1
+
+    def test_publish_component_treats_version_zero_as_latest_draft(self, studio):
+        """publish_component(version=0) publishes the newest draft, the same
+        as omitting it, instead of failing version_not_found."""
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        assert _data(studio.publish_component("tutor", version=0))["version"] == 2
+
+    def test_publish_component_says_it_reinterpreted_version_zero(self, studio):
+        """Publishing moves the live pointer, so a caller whose argument was
+        reinterpreted hears it on the envelope, not only in a debug log."""
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        out = _loads(studio.publish_component("tutor", version=0))
+        assert any("version=0" in w for w in out["warnings"])
+
+    def test_publish_component_is_silent_when_the_version_was_not_reinterpreted(self, studio):
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        out = _loads(studio.publish_component("tutor", version=2))
+        assert not any("version=0" in w for w in out.get("warnings") or [])
+
+    @pytest.mark.asyncio
+    async def test_apublish_component_treats_version_zero_as_latest_draft(self, studio):
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        assert _data(await studio.apublish_component("tutor", version=0))["version"] == 2
+
+    def test_validate_component_treats_version_zero_as_latest(self, studio):
+        studio.create_agent(name="clean", instructions="i", model_id="gpt-5.4")
+        data = _data(studio.validate_component("clean", version=0))
+        assert data["valid"] is True
+        assert data["version"] == 1
+
+    @pytest.mark.asyncio
+    async def test_avalidate_component_treats_version_zero_as_latest(self, studio):
+        studio.create_agent(name="clean", instructions="i", model_id="gpt-5.4")
+        assert _data(await studio.avalidate_component("clean", version=0))["version"] == 1
+
+    @pytest.mark.parametrize("tool_name", ["edit_agent", "edit_team", "edit_workflow"])
+    def test_edit_expected_version_zero_is_still_refused(self, studio, tool_name):
+        """expected_version is a compare-and-set, not a version selector. 0 can
+        never match a latest version, and refusing is the safe direction: reading
+        it as "unset" would turn a guard the caller asked for into an unguarded
+        append."""
+        studio.create_agent(name="member", instructions="m", model_id="gpt-5.4", publish=True)
+        targets = {
+            "edit_agent": lambda: studio.create_agent(name="cas", instructions="i", model_id="gpt-5.4"),
+            "edit_team": lambda: studio.create_team(name="cas", instructions="i", member_ids=["member"]),
+            "edit_workflow": lambda: studio.create_workflow(name="cas", steps=[{"name": "s1", "agent_id": "member"}]),
+        }
+        targets[tool_name]()
+        error = _error(getattr(studio, tool_name)("cas", description="second", expected_version=0))
+        assert error["code"] == "version_conflict"
+        # Nothing was appended: the refusal is not a partial write.
+        assert _data(studio.list_versions("cas"))["count"] == 1
+
+    def test_edit_expected_version_still_guards(self, studio):
+        """The coercion must not blunt a real compare-and-set."""
+        studio.create_agent(name="cas", instructions="i", model_id="gpt-5.4")
+        assert _error(studio.edit_agent("cas", description="x", expected_version=7))["code"] == "version_conflict"
+        assert _data(studio.edit_agent("cas", description="x", expected_version=1))["draft_version"] == 2
+
+    @pytest.mark.asyncio
+    async def test_aedit_agent_expected_version_zero_is_still_refused(self, studio):
+        studio.create_agent(name="cas", instructions="i", model_id="gpt-5.4")
+        error = _error(await studio.aedit_agent("cas", description="x", expected_version=0))
+        assert error["code"] == "version_conflict"
+
+    def test_run_agent_version_zero_dispatches_unpinned(self, studio, monkeypatch):
+        """The run tools take the same "omit for the latest" argument. 0 must
+        reach the ordinary dispatch, not the exact-version preview path that
+        answers version_not_found."""
+        studio.create_agent(name="member", instructions="m", model_id="gpt-5.4", publish=True)
+        seen = []
+
+        def _runner(identifier, message, **kwargs):
+            seen.append((identifier, message))
+            return json.dumps({"agent_id": identifier, "content": "ok"})
+
+        monkeypatch.setattr(studio._runner_tools, "run_agent", _runner)
+        out = _loads(studio.run_agent("member", "hi", version=0))
+        assert seen == [("member", "hi")]
+        assert out["content"] == "ok"
+
+    @pytest.mark.asyncio
+    async def test_arun_agent_version_zero_dispatches_unpinned(self, studio, monkeypatch):
+        """The async twin has its own dispatch body, so it needs its own pin."""
+        studio.create_agent(name="member", instructions="m", model_id="gpt-5.4", publish=True)
+        seen = []
+
+        async def _runner(identifier, message, **kwargs):
+            seen.append((identifier, message))
+            return json.dumps({"agent_id": identifier, "content": "ok"})
+
+        monkeypatch.setattr(studio._runner_tools, "arun_agent", _runner)
+        out = _loads(await studio.arun_agent("member", "hi", version=0))
+        assert seen == [("member", "hi")]
+        assert out["content"] == "ok"
+
+    def test_run_agent_explicit_version_still_previews(self, studio):
+        """Guard against the coercion swallowing a real pin."""
+        studio.create_agent(name="member", instructions="m", model_id="gpt-5.4", publish=True)
+        assert _error(studio.run_agent("member", "hi", version=9))["code"] == "version_not_found"
+
+    def test_first_publish_guard_zero_still_means_nothing_is_live(self, studio):
+        """expected_current_version is NOT a "which version" argument: 0 is
+        the documented "I expect no live version" guard and stays a guard."""
+        studio.create_agent(name="tutor", instructions="i", model_id="gpt-5.4")
+        assert _data(studio.publish_component("tutor", version=1, expected_current_version=0))["version"] == 1
+
+    def test_archive_guard_zero_still_conflicts_against_a_live_pointer(self, studio):
+        """The counterpart: 0 against a published component is a real
+        conflict, not a skipped check."""
+        self._published(studio)
+        error = _error(studio.archive_component("tutor", expected_current_version=0))
+        assert error["code"] == "version_conflict"
+        assert studio.db.get_component("tutor") is not None
+
+    def test_required_version_argument_rejects_zero(self, studio):
+        """set_current_version and delete_version name a version to act on and
+        have no "latest" default, so 0 stays the error it is."""
+        self._published(studio)
+        assert _error(studio.set_current_version("tutor", 0))["code"] == "version_not_found"
+        assert _error(studio.delete_version("tutor", 0))["code"] == "version_not_found"
+
+    def test_version_zero_coercion_does_not_swallow_false(self, studio):
+        """False == 0 in Python but a boolean is not an omitted version; the
+        sentinel helper already refuses it and the coercion must too."""
+        self._published(studio)
+        assert _error(studio.get_component("tutor", version=False))["code"] == "version_not_found"
+
+
+# ----------------------------------------------------------------------
 # Validation (dry-run rebuild)
 # ----------------------------------------------------------------------
 

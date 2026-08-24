@@ -4358,3 +4358,116 @@ class TestDispatchCancelCascade:
         )
         assert "error" in out
         assert get_member_run_ids("caller-run") == set()
+
+
+# ----------------------------------------------------------------------
+# self_dispatch="once": one nested self-run, never a second
+# ----------------------------------------------------------------------
+
+
+class TestSelfDispatchOnce:
+    def test_never_is_the_default(self, db):
+        assert StudioRunnerTools(db=db).self_dispatch == "never"
+
+    def test_invalid_value_rejected_at_construction(self, db):
+        with pytest.raises(ValueError, match="self_dispatch"):
+            StudioRunnerTools(db=db, self_dispatch="always")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _CALLER_TOOLS)
+    async def test_once_allows_the_first_self_dispatch(self, db, kind, use_async):
+        # The caller is exempt from the membership test exactly once: the
+        # top-level run inherited nothing, so its own token does not block it.
+        stub, runner = _guarded_stub(kind, db, self_dispatch="once")
+        out = await _dispatch(runner, kind, use_async, context=_context(), **_caller_kwargs(kind, stub))
+        assert "error" not in out
+        assert stub.seen is not None
+        assert stub.seen_metadata == {_CHAIN_KEY: [f"{kind}:{stub.id}"], _DEPTH_KEY: 1}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _CALLER_TOOLS)
+    async def test_once_refuses_the_second_self_dispatch(self, db, kind, use_async):
+        # The first self-run inherits its caller in the lineage, so the same
+        # dispatch from INSIDE it is a cycle, not another "once".
+        stub, runner = _guarded_stub(kind, db, self_dispatch="once")
+        out = await _dispatch(runner, kind, use_async, context=_context(), **_caller_kwargs(kind, stub))
+        assert "error" not in out
+
+        nested = _context()
+        nested.metadata = dict(stub.seen_metadata)
+        stub.seen = None
+        out = await _dispatch(runner, kind, use_async, context=nested, **_caller_kwargs(kind, stub))
+        assert "already running" in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_once_keeps_ping_pong_closed(self, db, use_async):
+        # "once" exempts only the CALLER's own token; a component already in
+        # the inherited lineage stays refused, so A -> B -> A is a cycle in
+        # both modes.
+        a = _StubTeam()
+        a.id, a.name = "a", "A"
+        b = _StubTeam()
+        b.id, b.name = "b", "B"
+        runner = StudioRunnerTools(db=db, include_teams=[a, b], max_dispatch_depth=3, self_dispatch="once")
+
+        out = await _dispatch(runner, "team", use_async, identifier="b", context=_context(), caller_team=a)
+        assert "error" not in out
+
+        nested = _context()
+        nested.metadata = dict(b.seen_metadata)
+        out = await _dispatch(runner, "team", use_async, identifier="a", context=nested, caller_team=b)
+        assert "already running" in out["error"]
+        assert a.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_once_covers_a_member_agents_parent_team(self, db, use_async):
+        # Both caller tokens are exempt: a member agent's toolkit may start
+        # one nested run of its own parent team.
+        team, runner = _guarded_stub("team", db, self_dispatch="once")
+        agent = _StubAgent()
+        out = await _dispatch(runner, "team", use_async, context=_context(), caller_agent=agent, caller_team=team)
+        assert "error" not in out
+        # The member's own token rides the outgoing lineage too, so the nested
+        # team cannot dispatch the member back either.
+        assert team.seen_metadata[_CHAIN_KEY] == ["team:stub-team", "agent:stub"]
+
+    def test_studio_tools_forwards_self_dispatch(self, registry, db):
+        assert StudioTools(registry=registry, db=db)._runner_tools.self_dispatch == "never"
+        assert StudioTools(registry=registry, db=db, self_dispatch="once")._runner_tools.self_dispatch == "once"
+
+
+class TestEndToEndSelfDispatchOnce:
+    def test_once_terminates_at_exactly_one_nested_level(self, db, tmp_path):
+        # Same driver as TestEndToEndSelfDispatch, with the opt-in: the
+        # top-level self-dispatch now executes, the nested run's re-dispatch
+        # is refused as a cycle, and the tree ends there -- one consult, no
+        # loop. The recorder's ceiling still fails loudly if unbounded
+        # recursion ever comes back.
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+
+        model = _build_self_dispatch_model()
+        member = Agent(id="bystander", name="Bystander", model=model.__deepcopy__({}))
+        dispatchable: List[Any] = []
+        toolkit = StudioRunnerTools(db=db, include_teams=dispatchable, self_dispatch="once")
+        team = Team(
+            id="looper",
+            name="Looper",
+            model=model,
+            members=[member],
+            tools=[toolkit],
+            db=db,
+        )
+        dispatchable.append(team)
+
+        output = team.run("go", session_id="probe-sess", user_id="probe", stream=False)
+
+        # The nested level finished first, and it finished REFUSED; the top
+        # level completed normally on the nested result. Four provider calls:
+        # two runs, two calls each.
+        assert model.recorder["finals"] == ["saw-refusal", "saw-success"]
+        assert output.content == "saw-success"
+        assert model.recorder["provider_calls"] == 4
