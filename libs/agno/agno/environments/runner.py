@@ -496,7 +496,7 @@ _ISOLATE_FIELD_ACTIONS: Dict[str, str] = {
     "learning": "writes-severed-copy",  # global reads keep the caller's db; every write engine cut
     "memory_manager": "fresh-db-rebind",  # per-user state: reads come from the attempt's empty db
     "session_summary_manager": "isolated-copy",  # resolution binds the attempt model on the copy
-    "compression_manager": "isolated-copy",
+    "compaction_manager": "isolated-copy",
     "fallback_config": "cache-off-copies",
     "reasoning_agent": "recursive-isolate",
     "save_response_to_file": "nulled",
@@ -871,9 +871,9 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
             )
             agent.learning = None
 
-    compression_manager = getattr(agent, "compression_manager", None)
-    if compression_manager is not None:
-        agent.compression_manager = _isolated_manager_copy(compression_manager, reset_stats=True)
+    compaction_manager = getattr(agent, "compaction_manager", None)
+    if compaction_manager is not None:
+        agent.compaction_manager = _isolated_manager_copy(compaction_manager, reset_stats=True)
 
     # A manager this block has never seen is nulled loudly, BEFORE resolution
     # can bind anything onto it: managers bind db and model by pattern, and

@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -526,7 +528,24 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Generate a response from the Model (includes running function calls)
+                # 9. Pre-loop compaction: compress history BEFORE first model call
+                # Two-list architecture: messages for DB, compacted_messages for model
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
+                    log_debug(f"[RUN-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    compaction_result = agent.compaction_manager.compact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        log_debug(
+                            f"[RUN-SYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
+                        )
+                    else:
+                        log_debug("[RUN-SYNC] Pre-loop compaction: no compaction needed")
+
+                # 10. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
 
                 model_response: ModelResponse = call_model_with_fallback(
@@ -539,7 +558,9 @@ def _run(
                     response_format=response_format,
                     run_response=run_response,
                     send_media_to_model=agent.send_media_to_model,
-                    compression_manager=agent.compaction_manager if agent.compact_tools else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tools else None,
+                    compacted_messages=run_messages.compacted_messages,
+                    compaction_callback=build_compaction_callback(agent, run_messages, run_response),
                     **result_store_kwargs(agent),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
@@ -1656,7 +1677,24 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Generate a response from the Model (includes running function calls)
+                # 9. Pre-loop compaction: compress history BEFORE first model call
+                # Two-list architecture: messages for DB, compacted_messages for model
+                if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
+                    log_debug(f"[RUN-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    compaction_result = await agent.compaction_manager.acompact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        log_debug(
+                            f"[RUN-ASYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
+                        )
+                    else:
+                        log_debug("[RUN-ASYNC] Pre-loop compaction: no compaction needed")
+
+                # 10. Generate a response from the Model (includes running function calls)
                 model_response: ModelResponse = await acall_model_with_fallback(
                     agent.model,
                     agent.fallback_config,
@@ -1667,7 +1705,9 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=agent.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=agent.compaction_manager if agent.compact_tools else None,
+                    compaction_manager=agent.compaction_manager if agent.compact_tools else None,
+                    compacted_messages=run_messages.compacted_messages,
+                    compaction_callback=await abuild_compaction_callback(agent, run_messages, run_response),
                     **result_store_kwargs(agent),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
@@ -3641,6 +3681,7 @@ def continue_run_dispatch(
         session=agent_session,
         add_history_to_context=agent.add_history_to_context,
         run_context=run_context,
+        run_response=run_response,
     )
 
     # Reset the run state
@@ -4928,6 +4969,8 @@ async def _acontinue_run(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    run_context=run_context,
+                    run_response=run_response,
                 )
 
                 # Reset the run state
@@ -5428,6 +5471,8 @@ async def _acontinue_run_stream(
                     input=input_messages,
                     session=agent_session,
                     add_history_to_context=agent.add_history_to_context,
+                    run_context=run_context,
+                    run_response=run_response,
                 )
 
                 # Reset the run state
@@ -6347,6 +6392,69 @@ async def acheckpoint_run(
     run_response.last_checkpoint_at_message_index = len(run_response.messages or [])
     _mark_checkpoint_message(run_response)
     await apersist_run_in_session(agent, run_response, session, run_context)
+
+
+def build_compaction_callback(
+    agent: Agent,
+    run_messages: RunMessages,
+    run_response: RunOutput,
+) -> Optional[Callable[[], Optional[List[Message]]]]:
+    """Build the sync mid-loop compaction callback.
+
+    Returns ``None`` when context compaction is not enabled.
+
+    Called by the model loop after each tool batch to check if context exceeds
+    the threshold. If compaction triggers, returns the new shorter message list;
+    the model loop rebinds its local variable from the return value.
+    """
+    compaction_manager = agent.compaction_manager
+    if compaction_manager is None:
+        return None
+
+    def _callback() -> Optional[List[Message]]:
+        # Compact the smaller list if pre-loop compaction already ran
+        messages_to_compact = (
+            run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+        )
+        result = compaction_manager.compact(
+            messages_to_compact,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if result.summary:
+            run_messages.compacted_messages = result.compacted_messages
+            return result.compacted_messages
+        return None
+
+    return _callback
+
+
+async def abuild_compaction_callback(
+    agent: Agent,
+    run_messages: RunMessages,
+    run_response: RunOutput,
+) -> Optional[Callable[[], Awaitable[Optional[List[Message]]]]]:
+    """Async variant of :func:`build_compaction_callback`."""
+    compaction_manager = agent.compaction_manager
+    if compaction_manager is None:
+        return None
+
+    async def _callback() -> Optional[List[Message]]:
+        # Compact the smaller list if pre-loop compaction already ran
+        messages_to_compact = (
+            run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+        )
+        result = await compaction_manager.acompact(
+            messages_to_compact,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if result.summary:
+            run_messages.compacted_messages = result.compacted_messages
+            return result.compacted_messages
+        return None
+
+    return _callback
 
 
 def build_after_tool_results_callback(

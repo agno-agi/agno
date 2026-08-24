@@ -5401,6 +5401,7 @@ def _build_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Build a RunMessages object from the existing conversation messages.
 
@@ -5438,7 +5439,28 @@ def _build_continue_run_messages(
         run_messages.messages.append(system_message)
 
     if add_history_to_context and session is not None and not input_has_history:
+        from copy import deepcopy
+
         from agno.utils.message import copy_history_message, filter_tool_calls
+
+        # Get compaction state for point-in-time filtering (time-travel for continue_run)
+        compaction_state = None
+        if run_response is not None:
+            compaction_state = run_response.compaction_state
+            if compaction_state is None:
+                lookup_id = run_response.forked_from_run_id or run_response.run_id
+                compaction_state = session.get_compaction_state(run_id=lookup_id)
+                # Seed run_response so mid-loop compaction can merge with prior state
+                if compaction_state is not None:
+                    run_response.compaction_state = deepcopy(compaction_state)
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state is not None:
+            log_debug(
+                f"[TEAM-RUN] continue_run: injecting compaction summary: "
+                f"total={compaction_state.total_compactions}, ids={len(compaction_state.compacted_message_ids)}"
+            )
+            run_messages.messages.append(compaction_state.get_summary_message())
 
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
@@ -5447,13 +5469,14 @@ def _build_continue_run_messages(
             limit=team.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             team_id=team.id if team.parent_team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
             history_copy = [copy_history_message(msg) for msg in history]
             if team.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, team.max_tool_calls_from_history)
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[TEAM-RUN] Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
 
     # Add remaining input messages (skip system to avoid duplication)
@@ -5474,12 +5497,13 @@ def _get_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Build the messages that resume a paused run, reading offloaded media back first.
 
     The paused run's own messages come off the database carrying a reference and no bytes.
     """
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context, run_response)
     if team.media_storage is not None:
         from agno.utils.media_offload import refresh_messages_media
 
@@ -5493,9 +5517,10 @@ async def _aget_continue_run_messages(
     session: Optional[TeamSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[TeamRunOutput] = None,
 ) -> RunMessages:
     """Async variant of :func:`_get_continue_run_messages`."""
-    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(team, input, session, add_history_to_context, run_context, run_response)
     if team.media_storage is not None:
         from agno.utils.media_offload import arefresh_messages_media
 
@@ -7711,6 +7736,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         log_debug(f"Team Continue Run (forked): {run_response.run_id}", center=True)
@@ -7955,6 +7981,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         # Handle tool call updates (execute confirmed tools, etc.)
@@ -8027,6 +8054,7 @@ def continue_run_dispatch(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         # Prepare for member HITL continuation
@@ -8189,6 +8217,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         _handle_team_tool_call_updates(team, run_response=run_response, run_messages=run_messages, tools=_tools)
@@ -8240,6 +8269,7 @@ def _continue_run_dispatch_stream_with_member_events(
             session=team_session,
             add_history_to_context=team.add_history_to_context,
             run_context=run_context,
+            run_response=run_response,
         )
 
         _prepare_member_hitl_continuation(run_response, run_messages, member_results)
