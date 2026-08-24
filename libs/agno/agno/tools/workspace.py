@@ -34,7 +34,7 @@ from typing import Dict, List, Optional, Set, Tuple, Union
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
-from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS
+from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, EXEMPT_PREFIX, split_exclude_patterns
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 
@@ -56,6 +56,12 @@ TEXT_EXTENSIONS = {
     ".ini",
     ".env",
     ".editorconfig",
+    # Committed template suffixes: `.env.example` has suffix `.example`, so without
+    # these search_content skips the very files the exclude exemptions make readable.
+    ".example",
+    ".sample",
+    ".template",
+    ".dist",
     # Python
     ".py",
     ".pyi",
@@ -191,10 +197,16 @@ def _validate_exclude_patterns(exclude_patterns: Optional[List[str]]) -> List[st
     """Return ``exclude_patterns`` as a list, or the defaults when ``None``.
 
     Raises ``ValueError`` for a pattern containing a path separator: patterns are matched
-    against single path components, so such a pattern can never match.
+    against single path components, so such a pattern can never match. Also raises for a
+    bare ``!``, which names no pattern to exempt.
     """
     patterns = list(exclude_patterns) if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
     for pattern in patterns:
+        if pattern == EXEMPT_PREFIX:
+            raise ValueError(
+                "exclude_patterns entry '!' names no pattern. A leading '!' exempts the rest of the "
+                "entry from exclusion, for example '!.env.example'."
+            )
         if "/" in pattern or "\\" in pattern:
             raise ValueError(
                 f"exclude_patterns entry {pattern!r} contains a path separator. Patterns are matched against "
@@ -318,8 +330,22 @@ class Workspace(Toolkit):
     containing a path separator raises ``ValueError``. Hard links to an excluded file are
     not detected. The default set covers common noise directories
     (``.venv``, ``.venvs``, ``.context``, ``.git``, ``__pycache__``, ``node_modules``,
-    etc.) and env files (``.env*``, ``*.env``). Pass ``exclude_patterns=[...]`` to
-    override, or ``exclude_patterns=[]`` to disable.
+    etc.), env files (``.env*``, ``*.env``) and the credential files a repository or a
+    home directory conventionally holds — private keys and keystores (``*.pem``,
+    ``*.key``, ``id_rsa*``), credential directories (``.ssh``, ``.aws``, ``.kube``),
+    registry and host tokens (``.npmrc``, ``.netrc``, ``.git-credentials``), credential
+    data files (``credentials.json``, ``secrets.yaml``, ``service_account*.json``) and
+    Terraform inputs (``*.tfvars``). Deliberately absent are ``credentials.*`` and
+    ``secrets.*``, which would also refuse ordinary source such as ``credentials.py``.
+    Pass ``exclude_patterns=[...]`` to override, or ``exclude_patterns=[]`` to disable.
+
+    An entry prefixed with ``!`` is an exemption: a component matching it is never
+    excluded, whatever else it matches. The defaults use this to keep committed env
+    templates readable (``!.env.example``, ``!.env.sample``, ``!.env.template``,
+    ``!.env.dist``, ``!example.env``, ``!env.example``) while real env files stay
+    refused. Exemptions are order-independent and always win; a bare ``!`` raises
+    ``ValueError``. To drop them, filter the defaults:
+    ``[p for p in DEFAULT_EXCLUDE_PATTERNS if not p.startswith("!")]``.
 
     ``allow_paths`` names workspace-relative files or directories that stay visible and
     reachable even when they match an exclude pattern, for example ``[".env.example"]``.
@@ -380,6 +406,11 @@ class Workspace(Toolkit):
         # Components below root of each allow_paths entry, as written and resolved; rebuilt when allow_paths changes.
         self._allow_snapshot: Optional[Tuple[str, ...]] = None
         self._allowed_parts: List[Tuple[str, ...]] = []
+        # Deny/exempt halves of exclude_patterns; rebuilt when exclude_patterns changes.
+        # exclude_patterns is public and mutable, so this cannot be a one-shot __init__ split.
+        self._pattern_snapshot: Optional[Tuple[str, ...]] = None
+        self._deny_patterns: List[str] = []
+        self._exempt_patterns: List[str] = []
         # Whether names that differ only by case are the same entry on root's filesystem.
         self._fold_case: Optional[bool] = None
         # Tracks which paths have been read this session — used by require_read_before_write.
@@ -508,6 +539,21 @@ class Workspace(Toolkit):
             return fnmatchcase(part.casefold(), pattern.casefold())
         return fnmatch(part, pattern)
 
+    def _split_patterns(self) -> Tuple[List[str], List[str]]:
+        """Deny and exempt halves of ``exclude_patterns``, recomputed when it changes."""
+        snapshot = tuple(self.exclude_patterns)
+        if snapshot != self._pattern_snapshot:
+            self._deny_patterns, self._exempt_patterns = split_exclude_patterns(snapshot)
+            self._pattern_snapshot = snapshot
+        return self._deny_patterns, self._exempt_patterns
+
+    def _component_excluded(self, part: str) -> bool:
+        """Whether one path component is excluded: it matches a deny pattern and no exemption."""
+        deny, exempt = self._split_patterns()
+        if not any(self._matches(part, pattern) for pattern in deny):
+            return False
+        return not any(self._matches(part, pattern) for pattern in exempt)
+
     def _relative_parts(self, path: Path) -> Optional[Tuple[str, ...]]:
         """Components of ``path`` below ``root``, or ``None`` when ``path`` is not under ``root``."""
         try:
@@ -531,6 +577,7 @@ class Workspace(Toolkit):
     def _is_excluded(self, path: Path) -> bool:
         """Return True if a component of ``path`` below ``root`` matches an exclude pattern.
 
+        A component matching a ``!``-prefixed entry is exempt and never excluded.
         Components at or above an ``allow_paths`` entry covering ``path`` are not tested;
         components beneath a directory entry still are. On a case-insensitive filesystem
         patterns and ``allow_paths`` match case-insensitively.
@@ -538,12 +585,12 @@ class Workspace(Toolkit):
         parts = self._relative_parts(path)
         if not parts or not self.exclude_patterns:
             return False
-        if not any(self._matches(part, pattern) for part in parts for pattern in self.exclude_patterns):
+        if not any(self._component_excluded(part) for part in parts):
             return False
         depth = self._allowed_depth(parts)
         if depth == 0:
             return True
-        return any(self._matches(part, pattern) for part in parts[depth:] for pattern in self.exclude_patterns)
+        return any(self._component_excluded(part) for part in parts[depth:])
 
     def _hidden(self, entry: Path) -> bool:
         """Return True if a listing or search must skip ``entry``.
