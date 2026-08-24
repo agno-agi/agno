@@ -218,14 +218,21 @@ chonkie = [
 csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
-# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
-# the venv lives inside the CWD, breaking the unstructured import chain.
-markdown = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown", "aiofiles"]
-pdf = ["pypdf", "rapidocr_onnxruntime"]
+markdown = ["aiofiles"]
+pdf = ["pypdf"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
 # The website and llms_txt readers both import bs4 at module scope.
 website = ["beautifulsoup4"]
+
+# Engines a reader loads only for the heavier path, kept out of the plain reader
+# extras above so that reading a file does not install a document-AI stack.
+# MarkdownChunking; MarkdownReader itself falls back to fixed-size chunking without it.
+# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
+# the venv lives inside the CWD, breaking the unstructured import chain.
+markdown-chunking = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown"]
+# OCR for scanned pages, used by PDFImageReader and by PDFReader(read_images=True).
+pdf-ocr = ["rapidocr_onnxruntime"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
@@ -374,11 +381,12 @@ vectordbs = [
   "agno[weaviate]",
 ]
 
-# All knowledge
+# The document readers. Deliberately free of OCR, layout and deep-learning engines:
+# installing a way to read a .docx should not install torch. Everything left out is
+# in knowledge-full below.
 knowledge = [
   "agno[chonkie]",
   "agno[csv]",
-  "agno[docling]",  # also a tool; parses docs for knowledge
   "agno[docx]",
   "agno[excel]",
   "agno[markdown]",
@@ -386,6 +394,15 @@ knowledge = [
   "agno[pptx]",
   "agno[text]",
   "agno[website]",
+]
+
+# Every knowledge capability, including the heavy engines: docling's layout and
+# vision models, OCR for scanned PDFs, and unstructured's markdown partitioning.
+knowledge-full = [
+  "agno[knowledge]",
+  "agno[docling]",  # also a tool; parses docs for knowledge
+  "agno[markdown-chunking]",
+  "agno[pdf-ocr]",
 ]
 
 # All embedders
@@ -403,7 +420,8 @@ tests = [
     "agno[tools]",
     "agno[storage]",
     "agno[vectordbs]",
-    "agno[knowledge]",
+    # The full set: CI must exercise docling, OCR and unstructured, not just the light readers.
+    "agno[knowledge-full]",
     "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
