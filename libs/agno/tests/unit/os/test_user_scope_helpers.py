@@ -7,20 +7,25 @@ isolation-flag short-circuit — are now expressed as explicit calls to the
 helpers in routers, so the unit tests follow the helpers.
 """
 
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import HTTPException
 
+from agno.db.base import AsyncBaseDb, SessionType
 from agno.db.schemas.scheduler import SCHEDULE_OWNER_HEADER
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID
 from agno.os.middleware.user_scope import (
+    SESSION_NOT_FOUND,
     apply_scope_to_kwargs,
+    assert_session_writable,
+    caller_is_admin,
     enforce_owner_on_entity,
     get_scoped_user_id,
     get_scoped_user_id_for_ws,
     resolve_db_and_scope,
 )
+from agno.remote.base import RemoteDb
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -489,3 +494,185 @@ class TestGetScopedUserIdFromParts:
     def test_no_user_id_is_unscoped_when_isolation_off(self):
         assert get_scoped_user_id_for_ws(None, jwt_enabled=True, is_admin=False, user_isolation_enabled=False) is None
         assert get_scoped_user_id_for_ws(None, jwt_enabled=False, is_admin=False, user_isolation_enabled=True) is None
+
+
+# ---------------------------------------------------------------------------
+# caller_is_admin
+# ---------------------------------------------------------------------------
+
+
+class TestCallerIsAdmin:
+    """The admin answer on its own — ``get_scoped_user_id`` cannot stand in for
+    it, because that returns None for admins *and* for every caller on a
+    deployment with isolation off."""
+
+    def test_default_admin_scope(self):
+        assert caller_is_admin(_make_request(user_id="u", scopes=["agent_os:admin"])) is True
+
+    def test_plain_caller_is_not_admin(self):
+        assert caller_is_admin(_make_request(user_id="u", scopes=["agents:run"])) is False
+
+    def test_configured_admin_scope_is_honoured(self):
+        request = _make_request(user_id="u", scopes=["custom:admin"])
+        request.state.admin_scope = "custom:admin"
+        assert caller_is_admin(request) is True
+        # ...and the default name no longer grants it
+        assert caller_is_admin(_make_request(user_id="u", scopes=["agent_os:admin"])) is True
+
+    def test_missing_state_fails_closed(self):
+        request = MagicMock()
+        request.state = MagicMock(spec=[])
+        assert caller_is_admin(request) is False
+
+
+# ---------------------------------------------------------------------------
+# assert_session_writable
+# ---------------------------------------------------------------------------
+
+
+def _sync_db(row):
+    db = MagicMock()
+    db.get_session = MagicMock(return_value=row)
+    return db
+
+
+class TestAssertSessionWritable:
+    """Pins the ownership predicate the run entrypoints apply before dispatching.
+
+    The rule mirrors what every adapter's ``upsert_session`` already enforces on
+    ON CONFLICT: a run may enter a session that does not exist, that is unowned,
+    or that the run's effective user already owns. Anything else is a 404.
+    """
+
+    @pytest.mark.asyncio
+    async def test_missing_session_is_allowed(self):
+        db = _sync_db(None)
+        assert await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT) is None
+
+    @pytest.mark.asyncio
+    async def test_owner_is_allowed(self):
+        db = _sync_db({"user_id": "user-a"})
+        assert await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT) is None
+
+    @pytest.mark.asyncio
+    async def test_unowned_session_is_allowed(self):
+        # user_id IS NULL is the shared case the storage predicate already admits.
+        db = _sync_db({"user_id": None})
+        assert await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT) is None
+
+    @pytest.mark.asyncio
+    async def test_foreign_session_raises_404(self):
+        db = _sync_db({"user_id": "user-b"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT)
+        assert exc.value.status_code == 404
+        assert exc.value.detail == SESSION_NOT_FOUND
+
+    @pytest.mark.asyncio
+    async def test_foreign_session_never_raises_403(self):
+        # 403 is spoken for on these routes by RBAC; reusing it would make
+        # "your token lacks the scope" and "that session is not yours"
+        # indistinguishable in client code.
+        db = _sync_db({"user_id": "user-b"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT)
+        assert exc.value.status_code != 403
+
+    @pytest.mark.asyncio
+    async def test_refusal_body_does_not_name_the_owner(self):
+        db = _sync_db({"user_id": "user-b"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT)
+        assert "user-b" not in str(exc.value.detail)
+
+    @pytest.mark.asyncio
+    async def test_identity_less_caller_into_owned_session_raises_404(self):
+        # The identity-less variant: with user_id=None the read side applies no
+        # owner filter, so this caller would read the owner's whole history.
+        # An implementation that short-circuits on ``effective_user_id is None``
+        # passes every other row in this class and still leaks.
+        db = _sync_db({"user_id": "user-b"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_session_writable(db, "s1", None, session_type=SessionType.AGENT)
+        assert exc.value.status_code == 404
+
+    @pytest.mark.asyncio
+    async def test_identity_less_caller_into_unowned_session_is_allowed(self):
+        # Dev mode and the eval suite ride this branch, not a None short-circuit.
+        db = _sync_db({"user_id": None})
+        assert await assert_session_writable(db, "s1", None, session_type=SessionType.AGENT) is None
+
+    @pytest.mark.asyncio
+    async def test_admin_bypasses_without_touching_the_db(self):
+        db = _sync_db({"user_id": "user-b"})
+        assert await assert_session_writable(db, "s1", "user-a", is_admin=True) is None
+        db.get_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_no_db_is_allowed(self):
+        assert await assert_session_writable(None, "s1", "user-a") is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("session_id", [None, ""])
+    async def test_blank_session_id_is_allowed(self, session_id):
+        db = _sync_db({"user_id": "user-b"})
+        assert await assert_session_writable(db, session_id, "user-a") is None
+        db.get_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_probe_does_not_filter_by_user_id(self):
+        # The probe must see the row whoever owns it. A probe scoped to the
+        # caller can never see a foreign owner, which is the whole point.
+        db = _sync_db({"user_id": "user-a"})
+        await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT)
+        call = db.get_session.call_args
+        assert call.kwargs.get("user_id") is None
+        # ...and not positionally either: user_id is get_session's 3rd parameter.
+        assert call.args == ()
+
+    @pytest.mark.asyncio
+    async def test_probe_is_bounded(self):
+        db = _sync_db({"user_id": "user-a"})
+        await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT)
+        assert db.get_session.call_args.kwargs["runs_limit"] == 1
+        assert db.get_session.call_args.kwargs["deserialize"] is False
+
+    @pytest.mark.asyncio
+    async def test_async_db_is_awaited(self):
+        db = MagicMock(spec=AsyncBaseDb)
+        db.get_session = AsyncMock(return_value={"user_id": "user-b"})
+        with pytest.raises(HTTPException) as exc:
+            await assert_session_writable(db, "s1", "user-a", session_type=SessionType.AGENT)
+        assert exc.value.status_code == 404
+        db.get_session.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_remote_db_is_skipped(self):
+        # The downstream AgentOS enforces its own ownership and already receives
+        # the forwarded bearer; a second check here needs a second round trip.
+        db = MagicMock(spec=RemoteDb)
+        assert await assert_session_writable(db, "s1", "user-a") is None
+        db.get_session.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_row_without_user_id_key_is_allowed(self):
+        # A partial row (an adapter that projects, a legacy shape) must not be
+        # read as "owned by someone else".
+        db = _sync_db({"session_id": "s1"})
+        assert await assert_session_writable(db, "s1", "user-a") is None
+
+    @pytest.mark.asyncio
+    async def test_empty_string_owner_is_treated_as_unowned(self):
+        # The session writers map "" to the component default before stamping,
+        # so a row holding "" is unclaimed. Reading it as an owner would make
+        # the session permanently unreachable for everyone.
+        db = _sync_db({"user_id": ""})
+        assert await assert_session_writable(db, "s1", "user-a") is None
+
+    @pytest.mark.asyncio
+    async def test_non_string_owner_is_not_read_as_a_foreign_owner(self):
+        # An object row whose attribute is not an id (a stub, a projection, an
+        # ORM sentinel) cannot answer the ownership question, and must not 404 a
+        # legitimate run.
+        db = _sync_db(MagicMock(spec=[]))
+        assert await assert_session_writable(db, "s1", "user-a") is None

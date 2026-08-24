@@ -31,7 +31,8 @@ from agno.os.interfaces.agui.input import (
 )
 from agno.os.interfaces.agui.resume import resume_paused_run
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
-from agno.os.middleware.user_scope import resolve_run_user_id
+from agno.db.base import SessionType
+from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
 from agno.run.base import RunContext
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
@@ -138,6 +139,18 @@ def attach_routes(
         # Resolve identity before streaming so rejection is a proper 403
         client_user_id = run_input.forwarded_props.get("user_id") if run_input.forwarded_props else None
         user_id = resolve_run_user_id(request, client_user_id)
+
+        # A run may not enter a session another user owns. ``thread_id`` is the
+        # client's session id. Checked here rather than inside ``run_entity``,
+        # whose ``except`` would emit the refusal as a RunErrorEvent inside a
+        # 200 SSE stream instead of a 404.
+        await assert_session_writable(
+            getattr(entity, "db", None),
+            run_input.thread_id,
+            user_id or getattr(entity, "user_id", None),
+            session_type=SessionType.TEAM if isinstance(entity, (Team, RemoteTeam)) else SessionType.AGENT,
+            is_admin=caller_is_admin(request),
+        )
 
         async def event_generator():
             async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore

@@ -573,6 +573,37 @@ def _session_id_or_new(session_id: Optional[str]) -> str:
     return session_id
 
 
+async def _assert_session_writable_for_tool(
+    os: "AgentOS",
+    component: Any,
+    session_id: Optional[str],
+    user_id: Optional[str],
+    session_type: SessionType,
+) -> None:
+    """Refuse a run into a session another user owns, as a plain tool error.
+
+    The REST run routes raise ``HTTPException``; MCP tools surface plain
+    exceptions, so an unmapped one would reach the client as an opaque internal
+    error. ``_resolve_run_component`` maps its own resolver errors inside its
+    own try/except and does not cover anything a tool body calls afterwards.
+    """
+    from fastapi import HTTPException
+
+    from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin
+
+    request = _http_request_or_none()
+    try:
+        await assert_session_writable(
+            getattr(component, "db", None) or os.db,
+            session_id,
+            user_id or getattr(component, "user_id", None),
+            session_type=session_type,
+            is_admin=caller_is_admin(request) if request is not None else False,
+        )
+    except HTTPException as e:
+        raise Exception(e.detail if isinstance(e.detail, str) else str(e.detail))
+
+
 def _classify_lifecycle_target(
     agent_id: Optional[str], team_id: Optional[str], workflow_id: Optional[str]
 ) -> "tuple[Literal['agents', 'teams', 'workflows'], str]":
@@ -859,6 +890,7 @@ def build_mcp_server(
         _require_tool_scopes("POST", f"/agents/{agent_id}/runs")
         user_id = _resolve_user_id(user_id)
         agent = await _resolve_run_component(os, "agents", agent_id, user_id=user_id, session_id=session_id)
+        await _assert_session_writable_for_tool(os, agent, session_id, user_id, SessionType.AGENT)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         session_id = _session_id_or_new(session_id)
         run_output = await _run_agentic_component(
@@ -885,6 +917,7 @@ def build_mcp_server(
         _require_tool_scopes("POST", f"/teams/{team_id}/runs")
         user_id = _resolve_user_id(user_id)
         team = await _resolve_run_component(os, "teams", team_id, user_id=user_id, session_id=session_id)
+        await _assert_session_writable_for_tool(os, team, session_id, user_id, SessionType.TEAM)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         session_id = _session_id_or_new(session_id)
         run_output = await _run_agentic_component(
@@ -914,6 +947,7 @@ def build_mcp_server(
         _require_tool_scopes("POST", f"/workflows/{workflow_id}/runs")
         user_id = _resolve_user_id(user_id)
         workflow = await _resolve_run_component(os, "workflows", workflow_id, user_id=user_id, session_id=session_id)
+        await _assert_session_writable_for_tool(os, workflow, session_id, user_id, SessionType.WORKFLOW)
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         session_id = _session_id_or_new(session_id)
         # Detach from FastMCP's tool-call span so the workflow run is its own root trace.

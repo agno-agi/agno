@@ -19,7 +19,7 @@ from fastapi import (
 from fastapi.responses import JSONResponse, StreamingResponse
 from pydantic import BaseModel
 
-from agno.db.base import BaseDb
+from agno.db.base import BaseDb, SessionType
 from agno.db.schemas.jobs import QueuedJob
 from agno.exceptions import (
     ComponentRehydrationError,
@@ -53,6 +53,8 @@ from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
     assert_session_matches_component,
+    assert_session_writable,
+    caller_is_admin,
     get_scoped_user_id,
     get_scoped_user_id_for_ws,
     run_matches_component,
@@ -301,6 +303,24 @@ async def handle_workflow_via_websocket(
                 session_id = workflow.session_id
             else:
                 session_id = str(uuid4())
+
+        # A run may not enter a session another user owns. Checked after the
+        # default above so the component's own sticky session_id is covered
+        # too, and before the queue submission below so one guard serves both
+        # the durable and the inline path.
+        try:
+            await assert_session_writable(
+                getattr(workflow, "db", None) or os.db,
+                session_id,
+                user_id or getattr(workflow, "user_id", None),
+                session_type=SessionType.WORKFLOW,
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+            )
+        except HTTPException as e:
+            await websocket.send_text(
+                json.dumps({"event": "error", "error": e.detail if isinstance(e.detail, str) else str(e.detail)})
+            )
+            return
 
         # Durable WS submission: the queue row is the acceptance, execution
         # happens on whichever worker claims it, and this socket becomes a
@@ -1712,6 +1732,17 @@ def get_workflow_router(
         # the run itself (run metadata), so the lifecycle routes can reload
         # the SAME version later instead of whatever is current by then.
         stamp_component_version(kwargs, version)
+
+        # A run may not enter a session another user owns. The id the run will
+        # actually be attributed with is the route's resolved user_id, or the
+        # component's own default when the route resolved none.
+        await assert_session_writable(
+            getattr(workflow, "db", None) or os.db,
+            session_id,
+            user_id or getattr(workflow, "user_id", None),
+            session_type=SessionType.WORKFLOW,
+            is_admin=caller_is_admin(request),
+        )
 
         if session_id:
             logger.debug(f"Continuing session: {session_id}")

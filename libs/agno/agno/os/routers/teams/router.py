@@ -17,7 +17,7 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agno.db.base import BaseDb
+from agno.db.base import BaseDb, SessionType
 from agno.db.schemas.jobs import QueuedJob
 from agno.exceptions import (
     ComponentRehydrationError,
@@ -51,6 +51,8 @@ from agno.os.job_queue import (
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
+    assert_session_writable,
+    caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
     verify_run_in_session,
@@ -701,6 +703,17 @@ def get_team_router(
         # Without this, API continue cannot reliably reload member tool state from the DB.
         if not isinstance(team, RemoteTeam):
             team.store_member_responses = True
+
+        # A run may not enter a session another user owns. The id the run will
+        # actually be attributed with is the route's resolved user_id, or the
+        # component's own default when the route resolved none.
+        await assert_session_writable(
+            getattr(team, "db", None) or os.db,
+            session_id,
+            user_id or getattr(team, "user_id", None),
+            session_type=SessionType.TEAM,
+            is_admin=caller_is_admin(request),
+        )
 
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")

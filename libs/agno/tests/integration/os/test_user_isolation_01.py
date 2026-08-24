@@ -20,6 +20,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.team.team import Team
@@ -525,3 +528,343 @@ class TestListingEndpointRbacByAction:
         assert resp.status_code == 200, resp.text
         ids = [a.get("id") for a in resp.json()]
         assert "test-agent" in ids
+
+
+# ---------------------------------------------------------------------------
+# Session write ownership — regression for session-cross-user-history-bleed
+# ---------------------------------------------------------------------------
+
+SECRET_TEXT = "wire-transfer PIN GRIMSBY-8807"
+
+
+class ScriptedModel(Model):
+    """A model that answers without a provider call.
+
+    The shared ``test_agent`` fixture has no model and no
+    ``add_history_to_context``, neither of which is enough to observe a replay.
+    """
+
+    def __init__(self, model_id: str, reply: str):
+        super().__init__(id=model_id, name=model_id, provider="test")
+        self._reply = reply
+
+    def _resp(self) -> ModelResponse:
+        return ModelResponse(content=self._reply, role="assistant", response_usage=MessageMetrics())
+
+    def invoke(self, *args, **kwargs):
+        return self._resp()
+
+    async def ainvoke(self, *args, **kwargs):
+        return self._resp()
+
+    def invoke_stream(self, *args, **kwargs):
+        yield self._resp()
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield self._resp()
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def _parse_provider_response(self, response, **kwargs):
+        return self._resp()
+
+    def _parse_provider_response_delta(self, response):
+        return self._resp()
+
+
+@pytest.fixture
+def history_agent(shared_db):
+    """Replays history and needs no provider."""
+    return Agent(
+        id="history-agent",
+        name="history-agent",
+        db=shared_db,
+        model=ScriptedModel("scripted-1", "ok"),
+        add_history_to_context=True,
+        num_history_runs=5,
+    )
+
+
+@pytest.fixture
+def history_team(shared_db, history_agent):
+    return Team(id="history-team", name="history-team", members=[history_agent], db=shared_db)
+
+
+@pytest.fixture
+def history_workflow(shared_db, history_agent):
+    return Workflow(
+        id="history-workflow",
+        name="history-workflow",
+        db=shared_db,
+        steps=[Step(name="step1", description="noop", agent=history_agent)],
+    )
+
+
+def _ownership_client(*, user_isolation: bool, agents=None, teams=None, workflows=None, db=None) -> TestClient:
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=agents,
+        teams=teams,
+        workflows=workflows,
+        db=db,
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[JWT_SECRET],
+            algorithm="HS256",
+            user_isolation=user_isolation,
+        ),
+    )
+    return TestClient(agent_os.get_app())
+
+
+def _open_client(*, agents=None, teams=None, workflows=None, db=None) -> TestClient:
+    """No authorization middleware — ``user_id`` is whatever the form field says,
+    or absent. The configuration the identity-less variant needs."""
+    agent_os = AgentOS(id=TEST_OS_ID, agents=agents, teams=teams, workflows=workflows, db=db, telemetry=False)
+    return TestClient(agent_os.get_app(), raise_server_exceptions=False)
+
+
+def _run(client, path, token=None, **fields):
+    data = {"stream": "false", **fields}
+    headers = auth_header(token) if token else {}
+    return client.post(path, data=data, headers=headers)
+
+
+def _history(response):
+    return [m for m in (response.json().get("messages") or []) if m.get("from_history")]
+
+
+class TestSessionWriteOwnership:
+    """A run posted to another user's ``session_id`` must be refused, and must
+    never reach the owner's history.
+
+    Both isolation states are exercised on purpose: the defect reproduced under
+    ``user_isolation=True`` as well, because the missing check was on
+    ``session_id``, not on ``user_id``.
+    """
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_non_owner_run_into_foreign_session_is_refused(self, history_agent, isolation):
+        client = _ownership_client(user_isolation=isolation, agents=[history_agent], db=history_agent.db)
+        sid = "owned-by-c"
+        assert (
+            _run(client, "/agents/history-agent/runs", create_token("user-c"), message="opened by C", session_id=sid)
+        ).status_code == 200
+
+        resp = _run(
+            client,
+            "/agents/history-agent/runs",
+            create_token("user-d"),
+            message=f"My private {SECRET_TEXT}",
+            session_id=sid,
+        )
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == "Session not found"
+        # The refusal must not disclose who does own it.
+        assert "user-c" not in resp.text
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_owner_history_never_carries_a_foreign_turn(self, history_agent, isolation):
+        client = _ownership_client(user_isolation=isolation, agents=[history_agent], db=history_agent.db)
+        sid = "owned-by-c-2"
+        _run(client, "/agents/history-agent/runs", create_token("user-c"), message="opened by C", session_id=sid)
+        _run(
+            client,
+            "/agents/history-agent/runs",
+            create_token("user-d"),
+            message=f"My private {SECRET_TEXT}",
+            session_id=sid,
+        )
+
+        resp = _run(
+            client, "/agents/history-agent/runs", create_token("user-c"), message="what did I say?", session_id=sid
+        )
+        assert resp.status_code == 200, resp.text
+        history = _history(resp)
+        assert history, "owner must still replay their own history"
+        assert not any(SECRET_TEXT in str(m.get("content")) for m in history)
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_no_foreign_run_row_reaches_the_session(self, history_agent, isolation):
+        """Storage-level twin: the refusal happens before ``upsert_run``, not
+        only before the history read."""
+        client = _ownership_client(user_isolation=isolation, agents=[history_agent], db=history_agent.db)
+        sid = "owned-by-c-3"
+        _run(client, "/agents/history-agent/runs", create_token("user-c"), message="opened by C", session_id=sid)
+        _run(
+            client,
+            "/agents/history-agent/runs",
+            create_token("user-d"),
+            message=f"My private {SECRET_TEXT}",
+            session_id=sid,
+        )
+        runs = history_agent.db.get_runs(session_id=sid, deserialize=False)[0]
+        assert {r["user_id"] for r in runs} == {"user-c"}
+
+    @pytest.mark.parametrize("stream", ["true", "false"])
+    def test_refusal_is_a_plain_404_on_every_variant(self, history_agent, stream):
+        """``stream`` defaults to True on these routes: the guard must sit before
+        the streaming and background branches, so the refusal is a JSON 404 and
+        never an SSE frame or a queued ticket."""
+        client = _ownership_client(user_isolation=True, agents=[history_agent], db=history_agent.db)
+        sid = "owned-by-c-stream"
+        _run(client, "/agents/history-agent/runs", create_token("user-c"), message="opened by C", session_id=sid)
+
+        resp = client.post(
+            "/agents/history-agent/runs",
+            data={"message": "intrude", "stream": stream, "session_id": sid},
+            headers=auth_header(create_token("user-d")),
+        )
+        assert resp.status_code == 404, resp.text
+        assert resp.headers["content-type"].startswith("application/json")
+
+    def test_owner_can_still_continue_their_own_session(self, history_agent):
+        """Regression guard: the common path must not become a 404."""
+        client = _ownership_client(user_isolation=True, agents=[history_agent], db=history_agent.db)
+        sid = "owned-by-c-4"
+        token = create_token("user-c")
+        assert _run(client, "/agents/history-agent/runs", token, message="one", session_id=sid).status_code == 200
+        resp = _run(client, "/agents/history-agent/runs", token, message="two", session_id=sid)
+        assert resp.status_code == 200
+        assert any("one" in str(m.get("content")) for m in _history(resp))
+
+    def test_new_session_id_is_created_not_refused(self, history_agent):
+        """A session id nobody owns must 200 and create — the guard must not turn
+        every client-supplied id into a 404."""
+        client = _ownership_client(user_isolation=True, agents=[history_agent], db=history_agent.db)
+        resp = _run(
+            client, "/agents/history-agent/runs", create_token("user-c"), message="hello", session_id="brand-new-id"
+        )
+        assert resp.status_code == 200, resp.text
+
+    def test_admin_may_run_into_any_session(self, history_agent):
+        """Admins bypass scoping everywhere else on this surface; keep it true here."""
+        client = _ownership_client(user_isolation=True, agents=[history_agent], db=history_agent.db)
+        sid = "owned-by-c-5"
+        _run(client, "/agents/history-agent/runs", create_token("user-c"), message="opened by C", session_id=sid)
+        resp = _run(client, "/agents/history-agent/runs", create_admin_token(), message="admin here", session_id=sid)
+        assert resp.status_code == 200, resp.text
+
+    def test_unowned_session_is_claimed_by_the_first_identified_writer(self, history_agent):
+        """``user_id IS NULL`` is writable by anyone — but only until someone
+        identified writes, because ``upsert_session`` carries ``user_id`` in its
+        ON CONFLICT SET list. The guard then treats the row as owned, which is
+        the same rule storage applies."""
+        db = history_agent.db
+        open_client = _open_client(agents=[history_agent], db=db)
+        sid = "unowned-then-claimed"
+        # An identity-less run creates the row unowned...
+        assert _run(open_client, "/agents/history-agent/runs", message="anon one", session_id=sid).status_code == 200
+        assert db.get_session(session_id=sid, deserialize=False)["user_id"] is None
+
+        auth_client = _ownership_client(user_isolation=True, agents=[history_agent], db=db)
+        # ...the first identified writer is admitted, and claims it...
+        assert (
+            _run(auth_client, "/agents/history-agent/runs", create_token("user-c"), message="c", session_id=sid)
+        ).status_code == 200
+        assert db.get_session(session_id=sid, deserialize=False)["user_id"] == "user-c"
+        # ...and the next identified writer is a non-owner.
+        assert (
+            _run(auth_client, "/agents/history-agent/runs", create_token("user-d"), message="d", session_id=sid)
+        ).status_code == 404
+
+    def test_guard_uses_the_component_db_when_agentos_has_none(self, history_agent):
+        """Components commonly carry their own db while ``AgentOS`` gets none.
+        An implementation that reads only ``os.db`` silently no-ops there."""
+        client = _ownership_client(user_isolation=True, agents=[history_agent], db=None)
+        sid = "component-db-only"
+        assert (
+            _run(client, "/agents/history-agent/runs", create_token("user-c"), message="opened by C", session_id=sid)
+        ).status_code == 200
+        resp = _run(client, "/agents/history-agent/runs", create_token("user-d"), message="intrude", session_id=sid)
+        assert resp.status_code == 404, resp.text
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_team_route_refuses_a_foreign_session(self, history_team, isolation):
+        client = _ownership_client(user_isolation=isolation, teams=[history_team], db=history_team.db)
+        sid = "team-owned-by-c"
+        assert (
+            _run(client, "/teams/history-team/runs", create_token("user-c"), message="opened by C", session_id=sid)
+        ).status_code == 200
+        resp = _run(client, "/teams/history-team/runs", create_token("user-d"), message="intrude", session_id=sid)
+        assert resp.status_code == 404, resp.text
+        runs = history_team.db.get_runs(session_id=sid, deserialize=False)[0]
+        assert {r["user_id"] for r in runs} == {"user-c"}
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_workflow_route_refuses_a_foreign_session(self, history_workflow, isolation):
+        client = _ownership_client(user_isolation=isolation, workflows=[history_workflow], db=history_workflow.db)
+        sid = "wf-owned-by-c"
+        assert (
+            _run(
+                client,
+                "/workflows/history-workflow/runs",
+                create_token("user-c"),
+                message="opened by C",
+                session_id=sid,
+            )
+        ).status_code == 200
+        resp = _run(
+            client, "/workflows/history-workflow/runs", create_token("user-d"), message="intrude", session_id=sid
+        )
+        assert resp.status_code == 404, resp.text
+        runs = history_workflow.db.get_runs(session_id=sid, deserialize=False)[0]
+        assert {r["user_id"] for r in runs} == {"user-c"}
+
+
+class TestIdentityLessRunOwnership:
+    """The identity-less variant. A run carrying no ``user_id`` skips the
+    read-side owner filter too, so the intruder reads the owner's history in
+    their own response and their run row is stamped with the owner's id — which
+    is why the guard must not short-circuit on ``effective_user_id is None``.
+    """
+
+    def test_identity_less_run_into_owned_session_is_refused(self, history_agent):
+        client = _open_client(agents=[history_agent], db=history_agent.db)
+        sid = "owned-by-c-6"
+        _run(client, "/agents/history-agent/runs", message="opened by C", session_id=sid, user_id="specUserC")
+        before = history_agent.db.get_session(session_id=sid, deserialize=False)
+
+        resp = _run(client, "/agents/history-agent/runs", message=f"My private {SECRET_TEXT}", session_id=sid)
+
+        assert resp.status_code == 404, resp.text
+        assert not _history(resp)
+        runs = history_agent.db.get_runs(session_id=sid, deserialize=False)[0]
+        assert len(runs) == 1
+        # The refused caller must not have rewritten the owner's session row
+        # either — an identity-less write passes upsert_session's predicate.
+        after = history_agent.db.get_session(session_id=sid, deserialize=False)
+        assert after["user_id"] == before["user_id"] == "specUserC"
+        assert after.get("session_data") == before.get("session_data")
+
+    def test_identity_less_run_into_unowned_session_still_works(self, history_agent):
+        """The branch that keeps dev mode and the eval suite alive: a session
+        created with no identity stores ``user_id`` NULL, so the owner-is-None
+        branch admits every later identity-less run."""
+        client = _open_client(agents=[history_agent], db=history_agent.db)
+        sid = "nobody-owns-this"
+        assert _run(client, "/agents/history-agent/runs", message="one", session_id=sid).status_code == 200
+        resp = _run(client, "/agents/history-agent/runs", message="two", session_id=sid)
+        assert resp.status_code == 200, resp.text
+        assert any("one" in str(m.get("content")) for m in _history(resp))
+
+    def test_component_user_id_default_is_not_locked_out(self, shared_db):
+        """The component carries ``user_id`` while the route resolves None, so
+        the session row is owned by that default. The guard must compare against
+        the EFFECTIVE id or every second run of such a component 404s."""
+        agent = Agent(
+            id="history-agent",
+            name="history-agent",
+            db=shared_db,
+            model=ScriptedModel("scripted-1", "ok"),
+            user_id="anonymous-user",
+            add_history_to_context=True,
+            num_history_runs=5,
+        )
+        client = _open_client(agents=[agent], db=shared_db)
+        sid = "template-session"
+        assert _run(client, "/agents/history-agent/runs", message="one", session_id=sid).status_code == 200
+        assert shared_db.get_session(session_id=sid, deserialize=False)["user_id"] == "anonymous-user"
+        assert _run(client, "/agents/history-agent/runs", message="two", session_id=sid).status_code == 200
