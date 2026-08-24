@@ -2428,6 +2428,20 @@ class TestVersionZero:
         studio.edit_agent("tutor", instructions="updated")
         assert _data(studio.publish_component("tutor", version=0))["version"] == 2
 
+    def test_publish_component_says_it_reinterpreted_version_zero(self, studio):
+        """Publishing moves the live pointer, so a caller whose argument was
+        reinterpreted hears it on the envelope, not only in a debug log."""
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        out = _loads(studio.publish_component("tutor", version=0))
+        assert any("version=0" in w for w in out["warnings"])
+
+    def test_publish_component_is_silent_when_the_version_was_not_reinterpreted(self, studio):
+        self._published(studio)
+        studio.edit_agent("tutor", instructions="updated")
+        out = _loads(studio.publish_component("tutor", version=2))
+        assert not any("version=0" in w for w in out.get("warnings") or [])
+
     @pytest.mark.asyncio
     async def test_apublish_component_treats_version_zero_as_latest_draft(self, studio):
         self._published(studio)
@@ -2446,10 +2460,11 @@ class TestVersionZero:
         assert _data(await studio.avalidate_component("clean", version=0))["version"] == 1
 
     @pytest.mark.parametrize("tool_name", ["edit_agent", "edit_team", "edit_workflow"])
-    def test_edit_expected_version_zero_is_treated_as_unset(self, studio, tool_name):
-        """expected_version compares against the LATEST version, which is at
-        least 1 for anything editable, so 0 could only ever be a failed CAS
-        against a component the caller meant to edit unguarded."""
+    def test_edit_expected_version_zero_is_still_refused(self, studio, tool_name):
+        """expected_version is a compare-and-set, not a version selector. 0 can
+        never match a latest version, and refusing is the safe direction: reading
+        it as "unset" would turn a guard the caller asked for into an unguarded
+        append."""
         studio.create_agent(name="member", instructions="m", model_id="gpt-5.4", publish=True)
         targets = {
             "edit_agent": lambda: studio.create_agent(name="cas", instructions="i", model_id="gpt-5.4"),
@@ -2457,8 +2472,10 @@ class TestVersionZero:
             "edit_workflow": lambda: studio.create_workflow(name="cas", steps=[{"name": "s1", "agent_id": "member"}]),
         }
         targets[tool_name]()
-        data = _data(getattr(studio, tool_name)("cas", description="second", expected_version=0))
-        assert data["draft_version"] == 2
+        error = _error(getattr(studio, tool_name)("cas", description="second", expected_version=0))
+        assert error["code"] == "version_conflict"
+        # Nothing was appended: the refusal is not a partial write.
+        assert _data(studio.list_versions("cas"))["count"] == 1
 
     def test_edit_expected_version_still_guards(self, studio):
         """The coercion must not blunt a real compare-and-set."""
@@ -2467,9 +2484,10 @@ class TestVersionZero:
         assert _data(studio.edit_agent("cas", description="x", expected_version=1))["draft_version"] == 2
 
     @pytest.mark.asyncio
-    async def test_aedit_agent_expected_version_zero_is_treated_as_unset(self, studio):
+    async def test_aedit_agent_expected_version_zero_is_still_refused(self, studio):
         studio.create_agent(name="cas", instructions="i", model_id="gpt-5.4")
-        assert _data(await studio.aedit_agent("cas", description="x", expected_version=0))["draft_version"] == 2
+        error = _error(await studio.aedit_agent("cas", description="x", expected_version=0))
+        assert error["code"] == "version_conflict"
 
     def test_run_agent_version_zero_dispatches_unpinned(self, studio, monkeypatch):
         """The run tools take the same "omit for the latest" argument. 0 must

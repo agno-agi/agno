@@ -28,13 +28,13 @@ import re
 import subprocess
 import sys
 import unicodedata
-from fnmatch import fnmatch, fnmatchcase
+from fnmatch import fnmatch
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
-from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, EXEMPT_PREFIX, split_exclude_patterns
+from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, EXEMPT_PREFIX, compile_exclude_patterns
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 
@@ -406,11 +406,6 @@ class Workspace(Toolkit):
         # Components below root of each allow_paths entry, as written and resolved; rebuilt when allow_paths changes.
         self._allow_snapshot: Optional[Tuple[str, ...]] = None
         self._allowed_parts: List[Tuple[str, ...]] = []
-        # Deny/exempt halves of exclude_patterns; rebuilt when exclude_patterns changes.
-        # exclude_patterns is public and mutable, so this cannot be a one-shot __init__ split.
-        self._pattern_snapshot: Optional[Tuple[str, ...]] = None
-        self._deny_patterns: List[str] = []
-        self._exempt_patterns: List[str] = []
         # Whether names that differ only by case are the same entry on root's filesystem.
         self._fold_case: Optional[bool] = None
         # Tracks which paths have been read this session — used by require_read_before_write.
@@ -533,26 +528,18 @@ class Workspace(Toolkit):
             self._fold_case = _is_case_insensitive_fs(self.root)
         return self._fold_case
 
-    def _matches(self, part: str, pattern: str) -> bool:
-        """Match one path component against one exclude pattern."""
-        if self._case_insensitive():
-            return fnmatchcase(part.casefold(), pattern.casefold())
-        return fnmatch(part, pattern)
-
-    def _split_patterns(self) -> Tuple[List[str], List[str]]:
-        """Deny and exempt halves of ``exclude_patterns``, recomputed when it changes."""
-        snapshot = tuple(self.exclude_patterns)
-        if snapshot != self._pattern_snapshot:
-            self._deny_patterns, self._exempt_patterns = split_exclude_patterns(snapshot)
-            self._pattern_snapshot = snapshot
-        return self._deny_patterns, self._exempt_patterns
-
     def _component_excluded(self, part: str) -> bool:
-        """Whether one path component is excluded: it matches a deny pattern and no exemption."""
-        deny, exempt = self._split_patterns()
-        if not any(self._matches(part, pattern) for pattern in deny):
+        """Whether one path component is excluded: it matches a deny pattern and no exemption.
+
+        The patterns are compiled once per (list, case rule) rather than matched one at a
+        time, because this runs for every entry of every listing and tree walk.
+        """
+        fold = "casefold" if self._case_insensitive() else "none"
+        deny, exempt = compile_exclude_patterns(tuple(self.exclude_patterns), fold)
+        if deny is None:
             return False
-        return not any(self._matches(part, pattern) for pattern in exempt)
+        folded = part.casefold() if fold == "casefold" else part
+        return deny.match(folded) is not None and (exempt is None or exempt.match(folded) is None)
 
     def _relative_parts(self, path: Path) -> Optional[Tuple[str, ...]]:
         """Components of ``path`` below ``root``, or ``None`` when ``path`` is not under ``root``."""

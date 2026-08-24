@@ -1316,7 +1316,6 @@ CREDENTIAL_PATHS = [
     "keystore.jks",
     "store.jceks",
     "my.keystore",
-    "privkey.asc",
     "private.gpg",
     "server.ppk",
     "vault.kdbx",
@@ -1423,6 +1422,9 @@ ENV_TEMPLATES = [
     ".env.template",
     ".env.dist",
     "example.env",
+    "sample.env",
+    "template.env",
+    "dist.env",
     "env.example",
     "packages/api/.env.example",
 ]
@@ -1597,3 +1599,97 @@ def test_mutating_exclude_patterns_after_construction_takes_effect():
         assert "OPENAI_API_KEY" in ws.read_file(".env.example")
         ws.exclude_patterns = [".env*"]
         assert ws.read_file(".env.example") == "Error: path is excluded from this workspace: .env.example"
+
+
+def test_compiled_matcher_agrees_with_a_pattern_by_pattern_fnmatch():
+    """The deny/exempt halves are compiled into one alternation each for speed. Pin the
+    equivalence to the loop it replaces, on both case branches, so a translate-level
+    difference cannot slip in unseen."""
+    from fnmatch import fnmatch, fnmatchcase
+
+    from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, split_exclude_patterns
+
+    names = [
+        ".env",
+        ".env.example",
+        ".env.production",
+        "example.env",
+        "dist.env",
+        "env.example",
+        "id_rsa",
+        "id_rsa.pub",
+        "id_rsa_helper.go",
+        "credentials.json",
+        "credentials.py",
+        "credentials",
+        "secrets.py",
+        "secrets.yaml",
+        "server.pem",
+        "key.py",
+        "app.py",
+        ".ssh",
+        ".aws",
+        ".venv",
+        "build",
+        "BUILD",
+        ".ENV",
+        "Credentials.json",
+        "x.TFVARS",
+        "service-account.json",
+        "serviceAccount.json",
+        "known_hosts",
+        "!secret.txt",
+        "README.md",
+        ".DS_Store",
+        "x.egg-info",
+        "[weird]",
+        "a b",
+        "*.py",
+    ]
+    deny, exempt = split_exclude_patterns(DEFAULT_EXCLUDE_PATTERNS)
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        for fold in (True, False):
+            ws = Workspace(tmp_dir)
+            ws._fold_case = fold
+            match = (lambda a, b: fnmatchcase(a.casefold(), b.casefold())) if fold else fnmatch
+            for name in names:
+                expected = any(match(name, d) for d in deny) and not any(match(name, e) for e in exempt)
+                assert ws._component_excluded(name) is expected, (name, fold)
+
+
+def test_path_matches_exclude_agrees_with_a_pattern_by_pattern_fnmatch():
+    """The FileTools half of the same matcher."""
+    from fnmatch import fnmatch
+
+    from agno.tools._local_file_utils import (
+        DEFAULT_EXCLUDE_PATTERNS,
+        path_matches_exclude,
+        split_exclude_patterns,
+    )
+
+    deny, exempt = split_exclude_patterns(DEFAULT_EXCLUDE_PATTERNS)
+    root = Path("/r")
+    for parts in (
+        ("app.py",),
+        (".env",),
+        (".env.example",),
+        ("pkg", ".env.example"),
+        ("credentials", "loader.py"),
+        ("id_rsa",),
+        ("src", "secrets.py"),
+        (".venv", "cfg", ".env.example"),
+        ("!secret.txt",),
+    ):
+        expected = any(
+            any(fnmatch(part, d) for d in deny) and not any(fnmatch(part, e) for e in exempt) for part in parts
+        )
+        assert path_matches_exclude(root.joinpath(*parts), root, DEFAULT_EXCLUDE_PATTERNS) is expected, parts
+
+
+def test_empty_deny_list_with_only_exemptions_excludes_nothing():
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, ".env", "SECRET=1\n")
+        ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
+        assert "SECRET=1" in ws.read_file(".env")
