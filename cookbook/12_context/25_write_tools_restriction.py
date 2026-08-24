@@ -202,7 +202,7 @@ async def demo_with_timeout():
     print("Gmail provider configured with:")
     print("  - write_tools: draft-only (no send)")
     print("  - query_timeout: 30s")
-    print("  - Tools available:", [t.__name__ for t in gmail.get_tools()])
+    print("  - Tools available:", [t.name for t in gmail.get_tools()])
 
 
 # ---------------------------------------------------------------------------

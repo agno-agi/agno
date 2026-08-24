@@ -59,15 +59,13 @@ team = Team(
 # Run Team
 # ---------------------------------------------------------------------------
 async def run_async_demo() -> None:
-    print("\n=== Async run with all three layers ===")
+    print("\n=== Async run with call-site override ===")
     result = await team.arun(
         input="Say 'async test'",
-        session_id="demo-session",
         metadata={"user_tier": "vip"},
     )
     print(f"Metadata: {result.metadata}")
     print(f"  user_tier = '{result.metadata['user_tier']}' (call-site wins)")
-    print(f"  session_pref = '{result.metadata['session_pref']}' (from session)")
     print(f"  team_env = '{result.metadata['team_env']}' (from team)")
 
 
