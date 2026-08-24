@@ -100,9 +100,16 @@ from __future__ import annotations
 import asyncio
 import json
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Set, Tuple
+from uuid import uuid4
 
+from agno.db.schemas.scheduler import (
+    DISPATCH_CHAIN_METADATA_KEY,
+    DISPATCH_DEPTH_METADATA_KEY,
+    strip_reserved_run_metadata,
+)
 from agno.exceptions import ComponentPinError, ComponentRehydrationError
 from agno.run import RunContext
+from agno.run.cancel import aregister_member_run, register_member_run
 from agno.run.utils import run_status_string, serialized_paused_requirements
 from agno.tools.toolkit import Toolkit
 from agno.utils.log import logger
@@ -187,6 +194,35 @@ class DispatchCopyError(StudioRunnerError, RuntimeError):
     deep_copy that rebuilds it, or store the component in the database."""
 
 
+class DispatchCycleError(ComponentNotDispatchableError):
+    """The dispatch target is already running in this dispatch lineage.
+
+    Every dispatched run carries the components already running in its
+    dispatch tree in run metadata, and the wielding component joins that set
+    at dispatch time. Re-entering one of them can only repeat work, and
+    unchecked it is a self-sustaining loop: one message can keep a component
+    re-dispatching itself indefinitely, outliving the HTTP caller and stopping
+    only with the process. A nested run has no other signal that it is nested,
+    so the refusal has to live here in the runtime, not in the prompt."""
+
+
+class DispatchDepthExceededError(ComponentNotDispatchableError):
+    """The dispatch tree is already ``max_dispatch_depth`` hops deep.
+
+    The cycle guard refuses re-entry; this bounds trees that never repeat a
+    component. Raise ``max_dispatch_depth`` on the toolkit when a deployment
+    genuinely composes deeper."""
+
+
+class DispatchStateError(ComponentNotDispatchableError):
+    """The inbound dispatch lineage or hop count is malformed.
+
+    Both keys are runtime-written, so a value of the wrong shape is evidence
+    of tampering or corruption, and treating it as absent would reset the
+    counter -- exactly what a forged value would want. Absent keys are NOT
+    malformed: that is the ordinary top-level run."""
+
+
 def _reference_configs(component_type: str, config: Dict[str, Any]) -> List[Dict[str, Any]]:
     """The dicts in a stored config that can name another component.
 
@@ -255,10 +291,17 @@ class StudioRunnerTools(Toolkit):
         teams: bool = True,
         workflows: bool = True,
         include_all_components: bool = False,
+        max_dispatch_depth: int = 2,
         list_limit: int = 100,
         name: str = "studio_runners",
         **kwargs: Any,
     ):
+        # 0 disables dispatch outright and is a valid posture; "unlimited" is
+        # deliberately not offered, because an unbounded dispatch chain is a
+        # self-sustaining loop waiting for one message (see DispatchCycleError).
+        if max_dispatch_depth < 0:
+            raise ValueError(f"max_dispatch_depth must be >= 0, got {max_dispatch_depth}")
+        self.max_dispatch_depth = max_dispatch_depth
         self.registry = registry
         # The explicit db wins; otherwise the registry's is adopted lazily on
         # first access (see the db property). An __init__ snapshot would be
@@ -305,6 +348,12 @@ class StudioRunnerTools(Toolkit):
                 "repeat runs continue where they left off. Call a given component sequentially within a "
                 "turn: parallel calls to the same component share one session and can overwrite each other.",
             ]
+            if len(enabled) > 1:
+                instruction_lines.append(
+                    "Agents, teams and workflows are separate rosters and a run tool searches only its "
+                    "own. When you do not know which kind a name is, check every list tool before "
+                    "concluding it does not exist."
+                )
 
         # Toolkit instructions are only injected into the system message when
         # add_instructions is set, so default it on.
@@ -2196,10 +2245,13 @@ class StudioRunnerTools(Toolkit):
         Returns:
             str: JSON object with 'agents' (each {id, name, description}; a row
                 with status 'draft' has no published version yet, so it will
-                not dispatch until published), 'count' (returned) and 'total'
+                not dispatch until published), 'count' (returned), 'total'
                 (every component this runner can run; total > count means the
                 list is capped -- components beyond the cap still run by
-                exact id).
+                exact id) and 'other_components' (how many runnable teams and
+                workflows exist -- this list is agents only, so check the
+                sibling list tools before concluding a component does not
+                exist).
         """
         return self._list_payload("agent", "agents", actor=getattr(_agno_run_context, "user_id", None))
 
@@ -2213,10 +2265,13 @@ class StudioRunnerTools(Toolkit):
         Returns:
             str: JSON object with 'teams' (each {id, name, description}; a row
                 with status 'draft' has no published version yet, so it will
-                not dispatch until published), 'count' (returned) and 'total'
+                not dispatch until published), 'count' (returned), 'total'
                 (every component this runner can run; total > count means the
                 list is capped -- components beyond the cap still run by
-                exact id).
+                exact id) and 'other_components' (how many runnable agents and
+                workflows exist -- this list is teams only, so check the
+                sibling list tools before concluding a component does not
+                exist).
         """
         return self._list_payload("team", "teams", actor=getattr(_agno_run_context, "user_id", None))
 
@@ -2230,10 +2285,13 @@ class StudioRunnerTools(Toolkit):
         Returns:
             str: JSON object with 'workflows' (each {id, name, description}; a row
                 with status 'draft' has no published version yet, so it will
-                not dispatch until published), 'count' (returned) and 'total'
+                not dispatch until published), 'count' (returned), 'total'
                 (every component this runner can run; total > count means the
                 list is capped -- components beyond the cap still run by
-                exact id).
+                exact id) and 'other_components' (how many runnable agents and
+                teams exist -- this list is workflows only, so check the
+                sibling list tools before concluding a component does not
+                exist).
         """
         return self._list_payload("workflow", "workflows", actor=getattr(_agno_run_context, "user_id", None))
 
@@ -2243,7 +2301,9 @@ class StudioRunnerTools(Toolkit):
             # A code allowlist runs without a database, so it has to be findable
             # without one too; only the database half is unavailable here.
             if admitted:
-                return json.dumps({key: admitted, "count": len(admitted), "total": len(admitted)})
+                payload = {key: admitted, "count": len(admitted), "total": len(admitted)}
+                payload.update(self._sibling_namespace_disclosure(component_type, actor=actor))
+                return json.dumps(payload)
             return json.dumps({"error": "StudioRunnerTools has no db configured; cannot list components."})
         try:
             items, total = self._list_db_component_rows(component_type, user_id=actor)
@@ -2259,10 +2319,44 @@ class StudioRunnerTools(Toolkit):
             items = admitted + [entry for entry in items if entry.get("id") not in seen_ids]
             # A code component shadows the stored one it shares an id with, so
             # the pair is one component to run, not two to count.
-            return json.dumps({key: items, "count": len(items), "total": total + len(admitted) - shadowed})
+            payload = {key: items, "count": len(items), "total": total + len(admitted) - shadowed}
+            payload.update(self._sibling_namespace_disclosure(component_type, actor=actor))
+            return json.dumps(payload)
         except Exception as e:
             logger.exception("Failed to list %s", key)
             return json.dumps({"error": str(e) or type(e).__name__})
+
+    def _sibling_namespace_disclosure(self, component_type: str, actor: Optional[str] = None) -> Dict[str, Any]:
+        """{"other_components": {"teams": 1, ...}} for the OTHER namespaces this
+        toolkit registered run tools for, or {} when there are none.
+
+        Agents, teams and workflows are separate namespaces with separate list
+        tools, and a caller who lists one gets a plausible-looking roster with
+        no signal that it has seen a third of the components -- so it concludes
+        "not on the roster" means "does not exist". A count is enough to break
+        that false negative; the sibling's own list tool holds the roster.
+        Counts use the same arithmetic as that tool's total. A count that
+        cannot be computed is omitted rather than failing the listing."""
+        counts: Dict[str, int] = {}
+        namespaces: List[Tuple[str, str, bool]] = [
+            ("agent", "agents", self.enable_agents),
+            ("team", "teams", self.enable_teams),
+            ("workflow", "workflows", self.enable_workflows),
+        ]
+        for sibling_type, plural, enabled in namespaces:
+            if sibling_type == component_type or not enabled:
+                continue
+            try:
+                admitted = self._admitted_code_components(sibling_type)
+                total = len(admitted)
+                if self.db is not None:
+                    _, db_total = self._list_db_component_rows(sibling_type, user_id=actor)
+                    shadowed = sum(1 for entry in admitted if self._db_component_exists(sibling_type, entry["id"]))
+                    total += db_total - shadowed
+                counts[plural] = total
+            except Exception:
+                logger.warning("Failed to count %s for list disclosure", plural, exc_info=True)
+        return {"other_components": counts} if counts else {}
 
     def _admitted_code_components(self, component_type: str) -> List[Dict[str, Any]]:
         """The code-defined components this runner will dispatch, as list rows.
@@ -2297,13 +2391,218 @@ class StudioRunnerTools(Toolkit):
     # Execution
     # ------------------------------------------------------------------
 
-    def run_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+    # The dispatch guard, shared by all six run tools here and by StudioTools'
+    # version-pinned dispatch branch. Lineage semantics: the inbound metadata
+    # carries every component already running in this dispatch tree (the
+    # lineage; membership is the cycle test) and the number of dispatches that
+    # produced this run (the hop count; the depth test). They are two keys
+    # because the lineage records wielders as well as targets, so its length
+    # is not the hop count. The wielding component arrives through the
+    # framework's identity injection (_agno_agent/_agno_team) and joins the
+    # lineage at dispatch time -- an inherited-only chain is empty at the top
+    # level, which is exactly the reported repro (a team dispatching itself
+    # from a run a human started).
+
+    @staticmethod
+    def _dedup(tokens: List[str]) -> List[str]:
+        return list(dict.fromkeys(tokens))
+
+    @staticmethod
+    def _wielder_tokens(wielder_agent: Any, wielder_team: Any) -> List[str]:
+        """Lineage tokens for the components wielding this toolkit.
+
+        A toolkit on a team leader contributes the team; a toolkit on a member
+        agent contributes both its parent team and itself, outer frame first --
+        both are genuinely running and both are cycle targets. A wielder with
+        no usable id contributes nothing."""
+        tokens: List[str] = []
+        for component_type, wielder in (("team", wielder_team), ("agent", wielder_agent)):
+            component_id = getattr(wielder, "id", None)
+            if isinstance(component_id, str) and component_id:
+                tokens.append(f"{component_type}:{component_id}")
+        return tokens
+
+    def _inherited_dispatch_state(self, run_context: Optional[RunContext]) -> Tuple[List[str], int]:
+        """The (lineage, hop count) this run inherited, ([], 0) for a top-level
+        run. Raises DispatchStateError -- refusing, not resetting -- when either
+        value is malformed: both keys are runtime-written, so a wrong shape is
+        tampering or corruption, and treating it as absent would zero the
+        counter, which is exactly what a forged value would want. Only the
+        ABSENT pair (or absent metadata) is the ordinary top-level run; a half
+        pair is refused too, because the runtime always writes both."""
+        metadata = getattr(run_context, "metadata", None)
+        if not isinstance(metadata, dict):
+            return [], 0
+        if DISPATCH_CHAIN_METADATA_KEY not in metadata and DISPATCH_DEPTH_METADATA_KEY not in metadata:
+            return [], 0
+        chain = metadata.get(DISPATCH_CHAIN_METADATA_KEY)
+        if not isinstance(chain, list) or not all(isinstance(entry, str) for entry in chain):
+            raise DispatchStateError(
+                f"Refusing to dispatch: this run's '{DISPATCH_CHAIN_METADATA_KEY}' metadata is malformed. "
+                "The dispatch lineage is written by the runtime; do not supply or edit it. Do not retry."
+            )
+        depth = metadata.get(DISPATCH_DEPTH_METADATA_KEY)
+        if isinstance(depth, bool) or not isinstance(depth, int) or depth < 0:
+            raise DispatchStateError(
+                f"Refusing to dispatch: this run's '{DISPATCH_DEPTH_METADATA_KEY}' metadata is malformed. "
+                "The dispatch hop count is written by the runtime; do not supply or edit it. Do not retry."
+            )
+        return list(chain), depth
+
+    def _require_dispatch_budget(self, depth: int, component_type: str, identifier: str) -> None:
+        """Refuses when the inherited hop count has spent ``max_dispatch_depth``.
+
+        Runs before resolution: the hop count needs no target id, and
+        resolution deep-copies or rebuilds the component, which a refused
+        dispatch should never pay for."""
+        if depth >= self.max_dispatch_depth:
+            raise DispatchDepthExceededError(
+                f"Refusing to dispatch {component_type} '{identifier}': this dispatch tree is already "
+                f"{depth} hop(s) deep and this runner allows at most {self.max_dispatch_depth}. "
+                "Answer with the results you already have; do not retry this call. A deployment that "
+                "composes deeper sets max_dispatch_depth on StudioRunnerTools."
+            )
+
+    @staticmethod
+    def _require_no_cycle(running: List[str], component_type: str, component_id: str) -> str:
+        """The target's lineage token, after refusing re-entry.
+
+        Tests the RESOLVED id, so a display name or slug alias cannot evade
+        the guard, against the running set (inherited lineage plus wielders):
+        a component may not be dispatched while it is already running in this
+        tree, at any depth."""
+        target = f"{component_type}:{component_id}"
+        if target in running:
+            raise DispatchCycleError(
+                f"Refusing to dispatch {component_type} '{component_id}': it is already running this "
+                f"request ({' -> '.join([*running, target])}). Answer directly, delegate to a different "
+                "component, or tell the user to start a separate conversation with it. Do not retry this call."
+            )
+        return target
+
+    def _outgoing_metadata(
+        self,
+        run_context: Optional[RunContext],
+        running: List[str],
+        depth: int,
+        target: str,
+    ) -> Dict[str, Any]:
+        """The child run's metadata: the caller's metadata minus the keys the
+        runtime owns, the lineage extended with the running set and the target
+        (so the wielder is recorded, not just the target -- an inherited-only
+        chain would allow A -> B -> A), and the hop count incremented by one.
+
+        The version pin (``agno_component_version``) is deliberately not
+        forwarded: it describes the CALLER's run, and forwarding it would
+        stamp the child's run row so the lifecycle routes continue a paused
+        child on the wrong version of the child."""
+        inbound = getattr(run_context, "metadata", None)
+        if not isinstance(inbound, dict):
+            inbound = {}
+        child = dict(strip_reserved_run_metadata(inbound) or {})
+        child[DISPATCH_CHAIN_METADATA_KEY] = self._dedup([*running, target])
+        child[DISPATCH_DEPTH_METADATA_KEY] = depth + 1
+        return child
+
+    @staticmethod
+    def _registered_sub_run_id(run_context: Optional[RunContext]) -> str:
+        """A pre-minted run id for the dispatch, registered under the caller's
+        run when there is one, so a team or workflow caller's cancel_run
+        cascades into the dispatched sub-run the way it already does for
+        delegated member runs and workflow steps (Agent.cancel_run has no
+        cascade today). Registration precedes dispatch, mirroring member
+        delegation; the registry is TTL-bounded, so a dispatch that fails to
+        start leaves no lasting entry."""
+        sub_run_id = str(uuid4())
+        parent_run_id = getattr(run_context, "run_id", None)
+        if parent_run_id:
+            register_member_run(parent_run_id, sub_run_id)
+        return sub_run_id
+
+    @staticmethod
+    async def _aregistered_sub_run_id(run_context: Optional[RunContext]) -> str:
+        """Async twin of _registered_sub_run_id, on the async registrar."""
+        sub_run_id = str(uuid4())
+        parent_run_id = getattr(run_context, "run_id", None)
+        if parent_run_id:
+            await aregister_member_run(parent_run_id, sub_run_id)
+        return sub_run_id
+
+    def _dispatch_metadata(
+        self,
+        run_context: Optional[RunContext],
+        component_type: str,
+        component_id: str,
+        wielder_agent: Any = None,
+        wielder_team: Any = None,
+    ) -> Dict[str, Any]:
+        """The whole guard in dispatch order: inherited state (fail-closed),
+        depth budget, cycle test on the resolved id, outgoing metadata.
+        Raises the DispatchStateError / DispatchDepthExceededError /
+        DispatchCycleError family, which the run tools return as JSON errors,
+        never raise to the caller. The run tools call the pieces separately so
+        the depth test runs before resolution; this composition serves callers
+        that already hold the resolved id (StudioTools' version-pinned path)."""
+        inherited, depth = self._inherited_dispatch_state(run_context)
+        self._require_dispatch_budget(depth, component_type, component_id)
+        running = self._dedup([*inherited, *self._wielder_tokens(wielder_agent, wielder_team)])
+        target = self._require_no_cycle(running, component_type, component_id)
+        return self._outgoing_metadata(run_context, running, depth, target)
+
+    def _cross_namespace_hint(self, component_type: str, identifier: str, actor: Optional[str] = None) -> str:
+        """A pointer at the sibling run tool when the identifier resolves in
+        another namespace, or ''. run_agent/run_team/run_workflow resolve in
+        separate namespaces, so without this a caller who asks for a team by
+        way of run_agent gets a bare not-found and concludes the component
+        does not exist.
+
+        Only namespaces this toolkit registered tools for, and only components
+        the probe can resolve for dispatch, produce a hint -- the hint must
+        never name a component the caller cannot actually run. Probe failures
+        of any kind produce no hint rather than a second error: the hint is
+        best-effort decoration on an error path."""
+        probes: List[Tuple[str, bool, Callable[..., Any], str, str]] = [
+            ("agent", self.enable_agents, self._find_agent, "run_agent", "agent_id"),
+            ("team", self.enable_teams, self._find_team, "run_team", "team_id"),
+            ("workflow", self.enable_workflows, self._find_workflow, "run_workflow", "workflow_id"),
+        ]
+        for sibling_type, enabled, find, run_tool, param in probes:
+            if sibling_type == component_type or not enabled:
+                continue
+            try:
+                sibling = find(identifier, for_dispatch=True, actor=actor)
+            except Exception:
+                continue
+            if sibling is None:
+                continue
+            sibling_id = getattr(sibling, "id", None) or identifier
+            article = "An" if sibling_type == "agent" else "A"
+            # Appended to "X not found: <id>", which carries no trailing period.
+            return f". {article} {sibling_type} with this identifier exists -- use {run_tool}({param}='{sibling_id}')."
+        return ""
+
+    def _not_found_message(self, component_type: str, identifier: str, actor: Optional[str] = None) -> str:
+        """The not-found error for a run tool, with the sideways hint when the
+        identifier resolves in a sibling namespace the caller could run."""
+        hint = self._cross_namespace_hint(component_type, identifier, actor=actor)
+        return f"{component_type.capitalize()} not found: {identifier}{hint}"
+
+    def run_agent(
+        self,
+        agent_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
+    ) -> str:
         """Run an agent and return its result.
 
         The run executes as the current user and continues that user's
         per-conversation session with this agent. A PAUSED status means the run
         awaits human approval: the result carries the unresolved requirements
-        plus the run_id and session_id a continue call must address.
+        plus the run_id and session_id a continue call must address. A dispatch
+        refused for a cycle or the depth limit returns an error naming the
+        lineage; relay it -- do not retry.
 
         Args:
             agent_id (str): Id of the agent to run (a display name or its slug also resolves).
@@ -2313,8 +2612,14 @@ class StudioRunnerTools(Toolkit):
             str: JSON object with 'agent_id', 'run_id', 'session_id', 'status',
                 'content' and, when paused, 'requirements'.
         """
+        actor = getattr(_agno_run_context, "user_id", None)
         try:
-            agent = self._agent_for_run(agent_id, actor=getattr(_agno_run_context, "user_id", None))
+            # Depth first: a spent budget refuses before resolution pays for a
+            # copy or rebuild. Inside this try so a refusal is returned like
+            # every other deliberate refusal, never logged as a crash.
+            inherited, depth = self._inherited_dispatch_state(_agno_run_context)
+            self._require_dispatch_budget(depth, "agent", agent_id)
+            agent = self._agent_for_run(agent_id, actor=actor)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2322,27 +2627,46 @@ class StudioRunnerTools(Toolkit):
             logger.exception("Failed to resolve agent")
             return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
         if agent is None:
-            return json.dumps({"error": f"Agent not found: {agent_id}"})
+            return json.dumps({"error": self._not_found_message("agent", agent_id, actor=actor)})
         component_id = getattr(agent, "id", None) or agent_id
+        try:
+            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            target = self._require_no_cycle(running, "agent", component_id)
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
+            return json.dumps({"error": str(e)})
+        dispatch_metadata = self._outgoing_metadata(_agno_run_context, running, depth, target)
+        sub_run_id = self._registered_sub_run_id(_agno_run_context)
         try:
             response = agent.run(
                 message,
                 stream=False,
                 user_id=self._caller_user_id(_agno_run_context, agent),
                 session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
+                run_id=sub_run_id,
+                metadata=dispatch_metadata,
             )
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run agent")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    def run_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+    def run_team(
+        self,
+        team_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
+    ) -> str:
         """Run a team and return its result.
 
         The run executes as the current user and continues that user's
         per-conversation session with this team. A PAUSED status means the run
         awaits human approval: the result carries the unresolved requirements
-        plus the run_id and session_id a continue call must address.
+        plus the run_id and session_id a continue call must address. A dispatch
+        refused for a cycle or the depth limit returns an error naming the
+        lineage; relay it -- do not retry.
 
         Args:
             team_id (str): Id of the team to run (a display name or its slug also resolves).
@@ -2352,8 +2676,14 @@ class StudioRunnerTools(Toolkit):
             str: JSON object with 'team_id', 'run_id', 'session_id', 'status',
                 'content' and, when paused, 'requirements'.
         """
+        actor = getattr(_agno_run_context, "user_id", None)
         try:
-            team = self._team_for_run(team_id, actor=getattr(_agno_run_context, "user_id", None))
+            # Depth first: a spent budget refuses before resolution pays for a
+            # copy or rebuild. Inside this try so a refusal is returned like
+            # every other deliberate refusal, never logged as a crash.
+            inherited, depth = self._inherited_dispatch_state(_agno_run_context)
+            self._require_dispatch_budget(depth, "team", team_id)
+            team = self._team_for_run(team_id, actor=actor)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2361,27 +2691,46 @@ class StudioRunnerTools(Toolkit):
             logger.exception("Failed to resolve team")
             return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
         if team is None:
-            return json.dumps({"error": f"Team not found: {team_id}"})
+            return json.dumps({"error": self._not_found_message("team", team_id, actor=actor)})
         component_id = getattr(team, "id", None) or team_id
+        try:
+            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            target = self._require_no_cycle(running, "team", component_id)
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
+            return json.dumps({"error": str(e)})
+        dispatch_metadata = self._outgoing_metadata(_agno_run_context, running, depth, target)
+        sub_run_id = self._registered_sub_run_id(_agno_run_context)
         try:
             response = team.run(
                 message,
                 stream=False,
                 user_id=self._caller_user_id(_agno_run_context, team),
                 session_id=self._sub_session_id(_agno_run_context, "team", component_id),
+                run_id=sub_run_id,
+                metadata=dispatch_metadata,
             )
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run team")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    def run_workflow(self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+    def run_workflow(
+        self,
+        workflow_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
+    ) -> str:
         """Run a workflow and return its final result.
 
         The run executes as the current user and continues that user's
         per-conversation session with this workflow. A PAUSED status means the
         run awaits human approval: the result carries the unresolved
         requirements plus the run_id and session_id a continue call must address.
+        A dispatch refused for a cycle or the depth limit returns an error
+        naming the lineage; relay it -- do not retry.
 
         Args:
             workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
@@ -2391,8 +2740,14 @@ class StudioRunnerTools(Toolkit):
             str: JSON object with 'workflow_id', 'run_id', 'session_id', 'status',
                 'content' and, when paused, 'requirements'.
         """
+        actor = getattr(_agno_run_context, "user_id", None)
         try:
-            wf = self._workflow_for_run(workflow_id, actor=getattr(_agno_run_context, "user_id", None))
+            # Depth first: a spent budget refuses before resolution pays for a
+            # copy or rebuild. Inside this try so a refusal is returned like
+            # every other deliberate refusal, never logged as a crash.
+            inherited, depth = self._inherited_dispatch_state(_agno_run_context)
+            self._require_dispatch_budget(depth, "workflow", workflow_id)
+            wf = self._workflow_for_run(workflow_id, actor=actor)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2400,21 +2755,38 @@ class StudioRunnerTools(Toolkit):
             logger.exception("Failed to resolve workflow")
             return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
         if wf is None:
-            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
+            return json.dumps({"error": self._not_found_message("workflow", workflow_id, actor=actor)})
         component_id = getattr(wf, "id", None) or workflow_id
+        try:
+            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            target = self._require_no_cycle(running, "workflow", component_id)
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
+            return json.dumps({"error": str(e)})
+        dispatch_metadata = self._outgoing_metadata(_agno_run_context, running, depth, target)
+        sub_run_id = self._registered_sub_run_id(_agno_run_context)
         try:
             response = wf.run(
                 input=message,
                 stream=False,
                 user_id=self._caller_user_id(_agno_run_context, wf),
                 session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
+                run_id=sub_run_id,
+                metadata=dispatch_metadata,
             )
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run workflow")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    async def arun_agent(self, agent_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+    async def arun_agent(
+        self,
+        agent_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
+    ) -> str:
         """Async variant of run_agent.
 
         Args:
@@ -2422,10 +2794,13 @@ class StudioRunnerTools(Toolkit):
             message (str): The message to send.
         """
         # Resolution hits the DB synchronously; keep it off the event loop.
+        actor = getattr(_agno_run_context, "user_id", None)
         try:
-            agent = await asyncio.to_thread(
-                self._agent_for_run, agent_id, actor=getattr(_agno_run_context, "user_id", None)
-            )
+            # Depth first, before resolution -- pure in-memory work, no thread
+            # hop needed; a refusal is returned, never logged as a crash.
+            inherited, depth = self._inherited_dispatch_state(_agno_run_context)
+            self._require_dispatch_budget(depth, "agent", agent_id)
+            agent = await asyncio.to_thread(self._agent_for_run, agent_id, actor=actor)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2433,31 +2808,54 @@ class StudioRunnerTools(Toolkit):
             logger.exception("Failed to resolve agent")
             return json.dumps({"error": f"Failed to resolve agent '{agent_id}': {str(e) or type(e).__name__}"})
         if agent is None:
-            return json.dumps({"error": f"Agent not found: {agent_id}"})
+            # The probe reads the DB; keep it off the event loop like resolution.
+            return json.dumps(
+                {"error": await asyncio.to_thread(self._not_found_message, "agent", agent_id, actor=actor)}
+            )
         component_id = getattr(agent, "id", None) or agent_id
+        try:
+            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            target = self._require_no_cycle(running, "agent", component_id)
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
+            return json.dumps({"error": str(e)})
+        dispatch_metadata = self._outgoing_metadata(_agno_run_context, running, depth, target)
+        sub_run_id = await self._aregistered_sub_run_id(_agno_run_context)
         try:
             response = await agent.arun(
                 message,
                 stream=False,
                 user_id=self._caller_user_id(_agno_run_context, agent),
                 session_id=self._sub_session_id(_agno_run_context, "agent", component_id),
+                run_id=sub_run_id,
+                metadata=dispatch_metadata,
             )
             return self._run_payload("agent_id", component_id, response)
         except Exception as e:
             logger.exception("Failed to run agent")
             return json.dumps({"error": str(e) or type(e).__name__})
 
-    async def arun_team(self, team_id: str, message: str, _agno_run_context: Optional[RunContext] = None) -> str:
+    async def arun_team(
+        self,
+        team_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
+    ) -> str:
         """Async variant of run_team.
 
         Args:
             team_id (str): Id of the team to run (a display name or its slug also resolves).
             message (str): The message to send.
         """
+        actor = getattr(_agno_run_context, "user_id", None)
         try:
-            team = await asyncio.to_thread(
-                self._team_for_run, team_id, actor=getattr(_agno_run_context, "user_id", None)
-            )
+            # Depth first, before resolution -- pure in-memory work, no thread
+            # hop needed; a refusal is returned, never logged as a crash.
+            inherited, depth = self._inherited_dispatch_state(_agno_run_context)
+            self._require_dispatch_budget(depth, "team", team_id)
+            team = await asyncio.to_thread(self._team_for_run, team_id, actor=actor)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2465,14 +2863,25 @@ class StudioRunnerTools(Toolkit):
             logger.exception("Failed to resolve team")
             return json.dumps({"error": f"Failed to resolve team '{team_id}': {str(e) or type(e).__name__}"})
         if team is None:
-            return json.dumps({"error": f"Team not found: {team_id}"})
+            # The probe reads the DB; keep it off the event loop like resolution.
+            return json.dumps({"error": await asyncio.to_thread(self._not_found_message, "team", team_id, actor=actor)})
         component_id = getattr(team, "id", None) or team_id
+        try:
+            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            target = self._require_no_cycle(running, "team", component_id)
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
+            return json.dumps({"error": str(e)})
+        dispatch_metadata = self._outgoing_metadata(_agno_run_context, running, depth, target)
+        sub_run_id = await self._aregistered_sub_run_id(_agno_run_context)
         try:
             response = await team.arun(
                 message,
                 stream=False,
                 user_id=self._caller_user_id(_agno_run_context, team),
                 session_id=self._sub_session_id(_agno_run_context, "team", component_id),
+                run_id=sub_run_id,
+                metadata=dispatch_metadata,
             )
             return self._run_payload("team_id", component_id, response)
         except Exception as e:
@@ -2480,7 +2889,12 @@ class StudioRunnerTools(Toolkit):
             return json.dumps({"error": str(e) or type(e).__name__})
 
     async def arun_workflow(
-        self, workflow_id: str, message: str, _agno_run_context: Optional[RunContext] = None
+        self,
+        workflow_id: str,
+        message: str,
+        _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
     ) -> str:
         """Async variant of run_workflow.
 
@@ -2488,10 +2902,13 @@ class StudioRunnerTools(Toolkit):
             workflow_id (str): Id of the workflow to run (a display name or its slug also resolves).
             message (str): Input to pass to the first step.
         """
+        actor = getattr(_agno_run_context, "user_id", None)
         try:
-            wf = await asyncio.to_thread(
-                self._workflow_for_run, workflow_id, actor=getattr(_agno_run_context, "user_id", None)
-            )
+            # Depth first, before resolution -- pure in-memory work, no thread
+            # hop needed; a refusal is returned, never logged as a crash.
+            inherited, depth = self._inherited_dispatch_state(_agno_run_context)
+            self._require_dispatch_budget(depth, "workflow", workflow_id)
+            wf = await asyncio.to_thread(self._workflow_for_run, workflow_id, actor=actor)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
             return json.dumps({"error": str(e)})
@@ -2499,14 +2916,27 @@ class StudioRunnerTools(Toolkit):
             logger.exception("Failed to resolve workflow")
             return json.dumps({"error": f"Failed to resolve workflow '{workflow_id}': {str(e) or type(e).__name__}"})
         if wf is None:
-            return json.dumps({"error": f"Workflow not found: {workflow_id}"})
+            # The probe reads the DB; keep it off the event loop like resolution.
+            return json.dumps(
+                {"error": await asyncio.to_thread(self._not_found_message, "workflow", workflow_id, actor=actor)}
+            )
         component_id = getattr(wf, "id", None) or workflow_id
+        try:
+            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            target = self._require_no_cycle(running, "workflow", component_id)
+        except StudioRunnerError as e:
+            # Deliberate refusals with an actionable message; not failures to log.
+            return json.dumps({"error": str(e)})
+        dispatch_metadata = self._outgoing_metadata(_agno_run_context, running, depth, target)
+        sub_run_id = await self._aregistered_sub_run_id(_agno_run_context)
         try:
             response = await wf.arun(
                 input=message,
                 stream=False,
                 user_id=self._caller_user_id(_agno_run_context, wf),
                 session_id=self._sub_session_id(_agno_run_context, "workflow", component_id),
+                run_id=sub_run_id,
+                metadata=dispatch_metadata,
             )
             return self._run_payload("workflow_id", component_id, response)
         except Exception as e:

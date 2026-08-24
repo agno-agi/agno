@@ -2671,7 +2671,7 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 # High-level resolvers with error handling for routers
 # ---------------------------------------------------------------------------
 
-from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY  # noqa: E402
+from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY, RESERVED_RUN_METADATA_KEYS  # noqa: E402
 
 
 def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> None:
@@ -2681,13 +2681,14 @@ def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> N
     ``metadata`` dict (a copy - the request-state dict is never mutated).
 
     The stamp is authoritative for lifecycle re-resolution, so a caller must
-    never supply it. ``metadata`` is a caller-writable form field, so ANY
-    inbound ``agno_component_version`` is stripped first - otherwise a forged
-    key survives an unpinned run and lets ``/continue`` dispatch a draft the
-    caller was refused at run-start. The key is (re)written only when a
-    version was pinned via the route's own ``version`` parameter. No pinned
-    version means no stamp, so unpinned runs keep their legacy shape unless
-    the caller sent their own (now-sanitized) metadata.
+    never supply it. ``metadata`` is a caller-writable form field, so every
+    inbound runtime-owned key is stripped first - a forged version stamp
+    survives an unpinned run and lets ``/continue`` dispatch a draft the
+    caller was refused at run-start, and a forged dispatch lineage would
+    pre-seed or reset the runner's cycle guard. The version key is (re)written
+    only when a version was pinned via the route's own ``version`` parameter.
+    No pinned version means no stamp, so unpinned runs keep their legacy shape
+    unless the caller sent their own (now-sanitized) metadata.
     """
     inbound = kwargs.get("metadata")
     if inbound is not None and not isinstance(inbound, dict):
@@ -2702,8 +2703,10 @@ def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> N
         inbound = None
     had_metadata = inbound is not None
     metadata = dict(inbound or {})
-    # Strip any forged stamp before trusting the route's own pinned version.
-    metadata.pop(COMPONENT_VERSION_METADATA_KEY, None)
+    # Strip every forged runtime key before trusting the route's own pinned
+    # version; only the version key is (conditionally) rewritten below.
+    for reserved_key in RESERVED_RUN_METADATA_KEYS:
+        metadata.pop(reserved_key, None)
     if version is not None:
         metadata[COMPONENT_VERSION_METADATA_KEY] = version
     # Only touch kwargs when there is a stamp to write or metadata to sanitize;

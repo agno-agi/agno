@@ -49,6 +49,10 @@ StudioErrorCode = Literal[
     # migration, not configuration, and the message carries the command.
     "db_schema_stale",
     "validation_failed",
+    # The target is already on this dispatch chain, or the chain is at
+    # max_dispatch_depth. Deliberately not retryable: retrying the same
+    # dispatch is the loop the refusal exists to stop.
+    "dispatch_refused",
     "internal_error",
 ]
 

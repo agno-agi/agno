@@ -8,7 +8,7 @@ from urllib.parse import quote
 from uuid import uuid4
 
 from agno.db.schemas.scheduler import (
-    COMPONENT_VERSION_METADATA_KEY,
+    RESERVED_RUN_METADATA_KEYS,
     RUN_ENDPOINT_RE,
     SCHEDULE_OWNER_HEADER,
     Schedule,
@@ -339,7 +339,10 @@ class ScheduleExecutor:
             # metadata (``agno_component_version``), which the run-start route
             # carries onto the run, so scrub it from any forwarded metadata -
             # and from the top level - or a crafted schedule smuggles a draft
-            # preview the lifecycle routes would then re-resolve.
+            # preview the lifecycle routes would then re-resolve. The other
+            # runtime-owned keys (the dispatch lineage pair) get the same
+            # scrub: schedule payloads are builder-writable, so they are an
+            # inbound channel for a forged chain.
             sanitized_payload = dict(payload)
             raw_metadata = sanitized_payload.get("metadata")
             if isinstance(raw_metadata, str):
@@ -349,7 +352,7 @@ class ScheduleExecutor:
                     raw_metadata = None
             if isinstance(raw_metadata, dict):
                 sanitized_payload["metadata"] = {
-                    k: v for k, v in raw_metadata.items() if k != COMPONENT_VERSION_METADATA_KEY
+                    k: v for k, v in raw_metadata.items() if k not in RESERVED_RUN_METADATA_KEYS
                 }
             elif "metadata" in sanitized_payload:
                 # The run routes accept only a JSON object here and answer 4xx
@@ -365,7 +368,7 @@ class ScheduleExecutor:
             form_payload = {
                 k: _to_form_value(v)
                 for k, v in sanitized_payload.items()
-                if k not in ("stream", "background", "version", COMPONENT_VERSION_METADATA_KEY)
+                if k not in ("stream", "background", "version", *RESERVED_RUN_METADATA_KEYS)
             }
             form_payload["stream"] = "false"
             form_payload["background"] = "true"

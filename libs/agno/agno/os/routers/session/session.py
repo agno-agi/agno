@@ -6,6 +6,7 @@ from uuid import uuid4
 from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query, Request
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import deserialize_session_by_type, resolve_session_type
 from agno.exceptions import AgnoError
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -262,6 +263,13 @@ def attach_routes(
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db, _ = await resolve_db_and_scope(request, dbs, db_id)
 
+        # Session metadata merges into every run of the session and, on
+        # conflicting keys, wins over call-site metadata -- so a reserved key
+        # persisted here would forge a version stamp or reset the dispatch
+        # lineage from a caller-writable field. Scrub it the way the run-start
+        # routes and the scheduler executor already do.
+        sanitized_metadata = strip_reserved_run_metadata(create_session_request.metadata)
+
         # Get user_id from request state if available (from auth middleware).
         # For non-admin scoped callers the JWT sub wins via enforce_owner below.
         user_id = create_session_request.user_id
@@ -276,7 +284,7 @@ def attach_routes(
                 session_id=create_session_request.session_id,
                 session_name=create_session_request.session_name,
                 session_state=create_session_request.session_state,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 user_id=user_id,
                 agent_id=create_session_request.agent_id,
                 team_id=create_session_request.team_id,
@@ -357,7 +365,7 @@ def attach_routes(
                 agent_id=create_session_request.agent_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -367,7 +375,7 @@ def attach_routes(
                 team_id=create_session_request.team_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -377,7 +385,7 @@ def attach_routes(
                 workflow_id=create_session_request.workflow_id,
                 user_id=user_id,
                 session_data=session_data if session_data else None,
-                metadata=create_session_request.metadata,
+                metadata=sanitized_metadata,
                 created_at=current_time,
                 updated_at=current_time,
             )
@@ -1166,6 +1174,10 @@ def attach_routes(
     ) -> Union[AgentSessionDetailSchema, TeamSessionDetailSchema, WorkflowSessionDetailSchema]:
         db, effective_user_id = await resolve_db_and_scope(request, dbs, db_id, table, fallback_user_id=user_id)
 
+        # Same scrub as create_session: session metadata wins the merge into
+        # every run of this session, so reserved keys never enter through it.
+        sanitized_metadata = strip_reserved_run_metadata(update_data.metadata)
+
         if isinstance(db, RemoteDb):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
@@ -1174,7 +1186,7 @@ def attach_routes(
                 session_type=session_type,
                 session_name=update_data.session_name,
                 session_state=update_data.session_state,
-                metadata=update_data.metadata,
+                metadata=sanitized_metadata,
                 summary=update_data.summary,
                 user_id=effective_user_id,
                 db_id=db_id,
@@ -1213,7 +1225,7 @@ def attach_routes(
             existing_session.session_data["session_state"] = update_data.session_state  # type: ignore
 
         if update_data.metadata is not None:
-            existing_session.metadata = update_data.metadata  # type: ignore
+            existing_session.metadata = sanitized_metadata  # type: ignore
 
         if update_data.summary is not None:
             from agno.session.summary import SessionSummary

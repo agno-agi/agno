@@ -3040,10 +3040,10 @@ class _StubAgent:
     id = "stub"
     name = "Stub"
 
-    def run(self, message, stream=None, user_id=None, session_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         return _StubRunOutput()
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None):
+    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         return _StubRunOutput()
 
     def deep_copy(self):
@@ -3960,3 +3960,105 @@ class TestRoundThreeStudioFixes:
         out = _loads(studio.edit_agent("w", name="Loser", instructions="v2", publish=True, expected_version=99))
         assert out["error"]["code"] == "version_conflict"
         assert studio.db.get_component("w")["name"] == "Winner"
+
+
+# ----------------------------------------------------------------------
+# Dispatch guard on the StudioTools surface
+# ----------------------------------------------------------------------
+
+
+class _GuardStubTeam:
+    id = "stub-team"
+    name = "Stub Team"
+
+    def __init__(self):
+        self.seen = None
+        self.seen_metadata = None
+
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+        self.seen = {"message": message}
+        self.seen_metadata = metadata
+        return type("Out", (), {"run_id": "r", "session_id": "s", "status": "COMPLETED", "content": "done"})()
+
+    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
+        return self.run(message, stream=stream, user_id=user_id, session_id=session_id, metadata=metadata)
+
+    def deep_copy(self):
+        clone = object.__new__(type(self))
+        clone.__dict__ = self.__dict__
+        return clone
+
+
+class TestStudioToolsDispatchGuard:
+    """StudioTools is a second dispatch surface: its unversioned tools forward
+    to the runner, and its version-pinned branch dispatches directly. Both
+    halves must carry the guard, or holders of this toolkit keep the original
+    unbounded self-dispatch."""
+
+    def test_studio_run_team_refuses_top_level_self_dispatch(self, registry, db):
+        stub = _GuardStubTeam()
+        studio = StudioTools(registry=registry, db=db, include_teams=[stub])
+        out = _loads(studio.run_team("stub-team", "hi", _agno_team=stub))
+        assert "already running" in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    async def test_studio_arun_team_refuses_top_level_self_dispatch(self, registry, db):
+        stub = _GuardStubTeam()
+        studio = StudioTools(registry=registry, db=db, include_teams=[stub])
+        out = _loads(await studio.arun_team("stub-team", "hi", _agno_team=stub))
+        assert "already running" in out["error"]
+        assert stub.seen is None
+
+    def test_studio_version_pinned_run_is_guarded(self, registry, db):
+        # The version-pinned branch never reaches the runner's run tools, so
+        # an unguarded preview is the one door left open: version=N would walk
+        # straight past a runner-only guard.
+        studio = StudioTools(registry=registry, db=db)
+        created = _loads(studio.create_agent(name="loop-preview", instructions="i", model_id="gpt-5.4", publish=True))
+        assert created["data"]["id"] == "loop-preview"
+
+        wielder = type("W", (), {"id": "loop-preview"})()
+        out = _loads(studio.run_agent("loop-preview", "hi", version=1, _agno_agent=wielder))
+        assert out["error"]["code"] == "dispatch_refused"
+        assert "already running" in out["error"]["message"]
+
+    @pytest.mark.asyncio
+    async def test_studio_async_version_pinned_run_is_guarded(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="loop-preview", instructions="i", model_id="gpt-5.4", publish=True)
+
+        wielder = type("W", (), {"id": "loop-preview"})()
+        out = _loads(await studio.arun_agent("loop-preview", "hi", version=1, _agno_agent=wielder))
+        assert out["error"]["code"] == "dispatch_refused"
+
+    def test_studio_version_pinned_depth_is_guarded(self, registry, db):
+        from agno.db.schemas.scheduler import DISPATCH_CHAIN_METADATA_KEY, DISPATCH_DEPTH_METADATA_KEY
+        from agno.run import RunContext
+
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="deep-preview", instructions="i", model_id="gpt-5.4", publish=True)
+
+        context = RunContext(
+            run_id="caller-run",
+            session_id="caller-sess",
+            metadata={DISPATCH_CHAIN_METADATA_KEY: ["team:o1", "agent:o2"], DISPATCH_DEPTH_METADATA_KEY: 2},
+        )
+        out = _loads(studio.run_agent("deep-preview", "hi", version=1, _agno_run_context=context))
+        assert out["error"]["code"] == "dispatch_refused"
+
+    def test_studio_forwards_the_wielder_by_keyword(self, registry, db):
+        # The runner's injected parameters are keyword channels; a future
+        # positional call site would drop the wielder without an error.
+        from unittest.mock import patch
+
+        stub = _GuardStubTeam()
+        studio = StudioTools(registry=registry, db=db, include_teams=[stub])
+        with patch.object(studio._runner_tools, "run_team", return_value='{"ok": true}') as spy:
+            studio.run_team("stub-team", "hi", _agno_team=stub)
+        assert spy.call_count == 1
+        args, kwargs = spy.call_args
+        assert args == ("stub-team", "hi")
+        assert kwargs["_agno_team"] is stub
+        assert kwargs["_agno_agent"] is None
+        assert "_agno_run_context" in kwargs

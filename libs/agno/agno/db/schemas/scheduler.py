@@ -52,21 +52,38 @@ STUDIO_SCHEDULE_MANAGED_BY = "studio"
 # continues on the SAME version instead of whatever is current by then.
 COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
 
+# Run-metadata keys recording the dispatch lineage a run belongs to: every
+# component already running in this dispatch tree, oldest first, each entry
+# "<type>:<id>" (membership is the cycle test), and the number of runner
+# dispatches that produced it (the depth test). Two keys, because the lineage
+# carries wielders as well as targets, so its length is NOT the hop count.
+# Written by StudioRunnerTools/StudioTools on dispatch, read back by the nested
+# run's own runner tools. Runtime-owned: a caller or a stored config may never
+# supply either.
+DISPATCH_CHAIN_METADATA_KEY = "agno_dispatch_chain"
+DISPATCH_DEPTH_METADATA_KEY = "agno_dispatch_depth"
+
+# Every run-metadata key the runtime owns. Component metadata is merged OVER
+# call-site metadata, so a stored config carrying one of these would overwrite
+# the value the runtime just wrote: a forged version stamp would continue a
+# paused run on the wrong version, and a forged (or emptied) dispatch lineage
+# would reset the cycle guard on every hop and re-open unbounded self-dispatch.
+RESERVED_RUN_METADATA_KEYS = frozenset(
+    {COMPONENT_VERSION_METADATA_KEY, DISPATCH_CHAIN_METADATA_KEY, DISPATCH_DEPTH_METADATA_KEY}
+)
+
 
 def strip_reserved_run_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
     """A component's stored metadata without the keys the runtime owns.
 
-    ``agno_component_version`` records which version a run actually started
-    with, and the lifecycle routes trust it to continue a run on that same
-    version. Component metadata is merged OVER call-site metadata, so a stored
-    config carrying this key would both forge a stamp onto runs that were never
-    pinned and overwrite the one the route just wrote. Configs are user-supplied
-    and round-trip through the catalog, so the key is stripped where it enters
-    the object rather than trusted not to be there.
+    Configs are user-supplied and round-trip through the catalog, so the
+    reserved keys are stripped where they enter the object rather than trusted
+    not to be there (see ``RESERVED_RUN_METADATA_KEYS`` for what each forgery
+    would do).
     """
-    if not isinstance(metadata, dict) or COMPONENT_VERSION_METADATA_KEY not in metadata:
+    if not isinstance(metadata, dict) or not RESERVED_RUN_METADATA_KEYS.intersection(metadata):
         return metadata
-    cleaned = {key: value for key, value in metadata.items() if key != COMPONENT_VERSION_METADATA_KEY}
+    cleaned = {key: value for key, value in metadata.items() if key not in RESERVED_RUN_METADATA_KEYS}
     return cleaned or None
 
 

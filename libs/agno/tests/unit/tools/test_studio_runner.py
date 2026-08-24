@@ -12,6 +12,11 @@ from typing import Any, Dict, List, Optional
 import pytest
 from pydantic import BaseModel
 
+from agno.db.schemas.scheduler import (
+    COMPONENT_VERSION_METADATA_KEY,
+    DISPATCH_CHAIN_METADATA_KEY,
+    DISPATCH_DEPTH_METADATA_KEY,
+)
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.registry import Registry
@@ -20,6 +25,13 @@ from agno.run.base import RunStatus
 from agno.tools.function import FunctionCall
 from agno.tools.studio import StudioTools
 from agno.tools.studio_runner import StudioRunnerTools
+
+# Asserted as literals, not just used symbolically: the keys are persisted in
+# run metadata, so renaming either would orphan the lineage on stored runs.
+_CHAIN_KEY = "agno_dispatch_chain"
+_DEPTH_KEY = "agno_dispatch_depth"
+assert DISPATCH_CHAIN_METADATA_KEY == _CHAIN_KEY
+assert DISPATCH_DEPTH_METADATA_KEY == _DEPTH_KEY
 
 # ----------------------------------------------------------------------
 # Fixtures and stubs
@@ -46,6 +58,21 @@ def _loads(s: str) -> Dict[str, Any]:
 
 def _context(user_id: Optional[str] = "ash", session_id: str = "caller-sess") -> RunContext:
     return RunContext(run_id="caller-run", session_id=session_id, user_id=user_id)
+
+
+def _dispatched_context(
+    chain: Any, depth: Any = None, user_id: Optional[str] = "ash", session_id: str = "caller-sess"
+) -> RunContext:
+    """A caller that itself arrived through the runner.
+
+    ``depth`` defaults to len(chain) for the common well-formed case; pass it
+    explicitly to build a lineage and a hop count that disagree."""
+    context = _context(user_id=user_id, session_id=session_id)
+    context.metadata = {
+        _CHAIN_KEY: chain,
+        _DEPTH_KEY: len(chain) if depth is None and isinstance(chain, list) else depth,
+    }
+    return context
 
 
 def _sub_session(component_type: str, component_id: str, caller_session: str = "caller-sess") -> Optional[str]:
@@ -98,14 +125,20 @@ class _StubAgent:
     def __init__(self, output: Any = None):
         self._output = output or _StubRunOutput()
         self.seen: Optional[Dict[str, Any]] = None
+        self.seen_metadata: Optional[Dict[str, Any]] = None
+        self.seen_run_id: Optional[str] = None
         self.copied = False
 
-    def run(self, message, stream=None, user_id=None, session_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
+        self.seen_metadata = metadata
+        self.seen_run_id = run_id
         return self._output
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None):
+    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
+        self.seen_metadata = metadata
+        self.seen_run_id = run_id
         return self._output
 
     def deep_copy(self):
@@ -123,14 +156,20 @@ class _StubTeam:
 
     def __init__(self):
         self.seen: Optional[Dict[str, Any]] = None
+        self.seen_metadata: Optional[Dict[str, Any]] = None
+        self.seen_run_id: Optional[str] = None
         self.copied = False
 
-    def run(self, message, stream=None, user_id=None, session_id=None):
+    def run(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
+        self.seen_metadata = metadata
+        self.seen_run_id = run_id
         return _StubRunOutput()
 
-    async def arun(self, message, stream=None, user_id=None, session_id=None):
+    async def arun(self, message, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         self.seen = {"message": message, "stream": stream, "user_id": user_id, "session_id": session_id}
+        self.seen_metadata = metadata
+        self.seen_run_id = run_id
         return _StubRunOutput()
 
     def deep_copy(self):
@@ -148,14 +187,20 @@ class _StubWorkflow:
 
     def __init__(self):
         self.seen: Optional[Dict[str, Any]] = None
+        self.seen_metadata: Optional[Dict[str, Any]] = None
+        self.seen_run_id: Optional[str] = None
         self.copied = False
 
-    def run(self, input=None, stream=None, user_id=None, session_id=None):
+    def run(self, input=None, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
+        self.seen_metadata = metadata
+        self.seen_run_id = run_id
         return _StubRunOutput()
 
-    async def arun(self, input=None, stream=None, user_id=None, session_id=None):
+    async def arun(self, input=None, stream=None, user_id=None, session_id=None, metadata=None, run_id=None):
         self.seen = {"input": input, "stream": stream, "user_id": user_id, "session_id": session_id}
+        self.seen_metadata = metadata
+        self.seen_run_id = run_id
         return _StubRunOutput()
 
     def deep_copy(self):
@@ -438,6 +483,38 @@ class TestInjectionGuard:
         assert stub.seen is not None
         assert stub.seen["user_id"] == "ash"
 
+    def test_a_model_supplied_wielder_is_discarded(self, db):
+        # The wielder identity drives the cycle guard, so a model that could
+        # null it out would talk its way past the refusal. The injected value
+        # must win over anything in the tool-call arguments.
+        stub = _StubTeam()
+        runner = StudioRunnerTools(db=db, include_teams=[stub])
+        function = runner.functions["run_team"]
+        function.process_entrypoint()
+        function._run_context = _context()
+        function._team = stub
+        call = FunctionCall(
+            function=function,
+            arguments={"team_id": "stub-team", "message": "hi", "_agno_team": None},
+        )
+        result = call.execute()
+        assert result.status == "success"
+        assert "already running" in str(call.result)
+        assert stub.seen is None
+
+    def test_the_wielder_params_stay_out_of_the_model_schema(self, db):
+        # The description assertion is the tripwire for the annotation hazard:
+        # a forward-ref annotation on the injected params makes schema
+        # generation fail silently, shipping the tool with empty parameters
+        # AND an empty description at once.
+        runner = StudioRunnerTools(db=db)
+        for functions in (runner.functions, runner.async_functions):
+            function = functions["run_team"]
+            function.process_entrypoint()
+            properties = (function.parameters or {}).get("properties") or {}
+            assert set(properties) == {"team_id", "message"}
+            assert function.description
+
     def test_schema_visible_param_named_like_an_injected_one_keeps_the_model_value(self):
         # A tool whose schema declares a non-identity injected name -- a wrapper exposing
         # the wrapped tool's own "files" argument -- keeps the model-supplied value.
@@ -499,6 +576,89 @@ class TestResolution:
         runner = StudioRunnerTools(registry=registry, db=db)
         out = _loads(runner.run_agent("squad", "hi"))
         assert "error" in out
+
+    def test_run_agent_points_at_team_when_id_is_a_team(self, db):
+        stub = _StubTeam()
+        runner = StudioRunnerTools(db=db, include_teams=[stub])
+        out = _loads(runner.run_agent("stub-team", "hi"))
+        assert out == {
+            "error": "Agent not found: stub-team."
+            " A team with this identifier exists -- use run_team(team_id='stub-team')."
+        }
+        assert stub.seen is None
+
+    def test_run_team_points_at_agent_when_id_is_an_agent(self, db):
+        stub = _StubAgent()
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
+        out = _loads(runner.run_team("stub", "hi"))
+        assert out == {
+            "error": "Team not found: stub. An agent with this identifier exists -- use run_agent(agent_id='stub')."
+        }
+
+    def test_run_workflow_points_at_sibling(self, db):
+        stub = _StubAgent()
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
+        out = _loads(runner.run_workflow("stub", "hi"))
+        assert "use run_agent(agent_id='stub')" in out["error"]
+
+    @pytest.mark.asyncio
+    async def test_async_miss_points_at_sibling_too(self, db):
+        stub = _StubTeam()
+        runner = StudioRunnerTools(db=db, include_teams=[stub])
+        out = _loads(await runner.arun_agent("stub-team", "hi"))
+        assert "use run_team(team_id='stub-team')" in out["error"]
+
+    def test_hint_resolves_display_name_to_exact_id(self, db):
+        # The hint's whole job is to hand back a call that works, so it carries
+        # the resolved id even when the miss used a display name.
+        stub = _StubTeam()
+        runner = StudioRunnerTools(db=db, include_teams=[stub])
+        out = _loads(runner.run_agent("Stub Team", "hi"))
+        assert "use run_team(team_id='stub-team')" in out["error"]
+
+    def test_cross_hint_respects_dispatchability(self, registry, db):
+        # "squad" exists as a team but only as a draft, which dispatch refuses;
+        # a hint would name a component the caller cannot actually run.
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4")
+        studio.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        out = _loads(runner.run_agent("squad", "hi"))
+        assert out == {"error": "Agent not found: squad"}
+
+    def test_cross_hint_respects_include_all_opt_in(self, registry, db):
+        # A registry team is resolvable but not dispatchable without
+        # include_all_components; the hint follows dispatch, not resolution.
+        stub = _StubTeam()
+        registry.teams.append(stub)
+        runner = StudioRunnerTools(registry=registry, db=db)
+        out = _loads(runner.run_agent("stub-team", "hi"))
+        assert out == {"error": "Agent not found: stub-team"}
+
+        opted_in = StudioRunnerTools(registry=registry, db=db, include_all_components=True)
+        out = _loads(opted_in.run_agent("stub-team", "hi"))
+        assert "use run_team(team_id='stub-team')" in out["error"]
+
+    def test_a_disabled_type_is_never_suggested(self, db):
+        # With the team tools off, run_team does not exist on this toolkit; a
+        # hint naming it would point at a door that is not there.
+        stub = _StubTeam()
+        runner = StudioRunnerTools(db=db, include_teams=[stub], teams=False)
+        out = _loads(runner.run_agent("stub-team", "hi"))
+        assert out == {"error": "Agent not found: stub-team"}
+
+    def test_an_unknown_id_keeps_the_plain_message(self, db):
+        # No sibling resolves, so the hint machinery must add nothing.
+        runner = StudioRunnerTools(db=db)
+        assert _loads(runner.run_agent("nobody", "hi")) == {"error": "Agent not found: nobody"}
+        assert _loads(runner.run_team("nobody", "hi")) == {"error": "Team not found: nobody"}
+        assert _loads(runner.run_workflow("nobody", "hi")) == {"error": "Workflow not found: nobody"}
+
+    def test_the_instructions_say_the_rosters_are_separate(self, db):
+        assert "separate rosters" in StudioRunnerTools(db=db).instructions
+        # With a single kind enabled there is no sibling roster to point at.
+        assert "separate rosters" not in StudioRunnerTools(db=db, teams=False, workflows=False).instructions
 
     def test_exact_id_beats_code_defined_display_name(self, db):
         shadow = _StubAgent()
@@ -850,6 +1010,413 @@ class TestDispatchIsolation:
 
 
 # ----------------------------------------------------------------------
+# Dispatch cycle guard and depth cap
+# ----------------------------------------------------------------------
+
+
+_STUB_CLASSES = {"agent": _StubAgent, "team": _StubTeam, "workflow": _StubWorkflow}
+_INCLUDE_KWARG = {"agent": "include_agents", "team": "include_teams", "workflow": "include_workflows"}
+
+# Every dispatch tool, sync and async: the async paths are separate code, and
+# one left unguarded would reproduce the original runaway exactly.
+_DISPATCH_TOOLS = [
+    pytest.param("agent", False, id="run_agent"),
+    pytest.param("team", False, id="run_team"),
+    pytest.param("workflow", False, id="run_workflow"),
+    pytest.param("agent", True, id="arun_agent"),
+    pytest.param("team", True, id="arun_team"),
+    pytest.param("workflow", True, id="arun_workflow"),
+]
+
+# The two component kinds that can WIELD a toolkit (workflows hold no tools),
+# for the top-level self-dispatch case where the wielder IS the target.
+_WIELDER_TOOLS = [
+    pytest.param("agent", False, id="run_agent"),
+    pytest.param("team", False, id="run_team"),
+    pytest.param("agent", True, id="arun_agent"),
+    pytest.param("team", True, id="arun_team"),
+]
+
+
+def _guarded_stub(kind: str, db, **runner_kwargs):
+    stub = _STUB_CLASSES[kind]()
+    runner = StudioRunnerTools(db=db, **{_INCLUDE_KWARG[kind]: [stub]}, **runner_kwargs)
+    return stub, runner
+
+
+def _wielder_kwargs(kind: str, stub) -> Dict[str, Any]:
+    return {"wielder_agent": stub} if kind == "agent" else {"wielder_team": stub}
+
+
+async def _dispatch(
+    runner,
+    kind: str,
+    use_async: bool,
+    identifier: Optional[str] = None,
+    context=None,
+    wielder_agent=None,
+    wielder_team=None,
+):
+    identifier = identifier if identifier is not None else _STUB_CLASSES[kind].id
+    tool = getattr(runner, f"arun_{kind}" if use_async else f"run_{kind}")
+    result = tool(identifier, "go", _agno_run_context=context, _agno_agent=wielder_agent, _agno_team=wielder_team)
+    if use_async:
+        result = await result
+    return _loads(result)
+
+
+class TestDispatchCycleGuard:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _WIELDER_TOOLS)
+    async def test_top_level_self_dispatch_is_refused(self, db, kind, use_async):
+        # The reported repro: the wielding component dispatches ITSELF from a
+        # run a human started, where the inherited lineage is empty. Only the
+        # injected wielder identity can catch this.
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=_context(), **_wielder_kwargs(kind, stub))
+        assert stub.id in out["error"]
+        assert "already running" in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_self_dispatch_from_an_inherited_chain_is_refused(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        target = f"{kind}:{stub.id}"
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context([target]))
+        assert stub.id in out["error"]
+        assert target in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_a_member_agent_refuses_to_dispatch_its_parent_team(self, db, use_async):
+        # A toolkit on a member agent wields BOTH the member and its parent
+        # team: the parent is genuinely running, so it is a cycle target.
+        team, runner = _guarded_stub("team", db)
+        agent = _StubAgent()
+        out = await _dispatch(runner, "team", use_async, context=_context(), wielder_agent=agent, wielder_team=team)
+        assert "already running" in out["error"]
+        assert team.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_indirect_cycle_is_refused(self, db, kind, use_async):
+        # The target sits below the top of the lineage, and the depth limit
+        # alone would still admit this dispatch: only the cycle check refuses.
+        stub, runner = _guarded_stub(kind, db, max_dispatch_depth=5)
+        target = f"{kind}:{stub.id}"
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context([target, "team:radar"]))
+        assert "already running" in out["error"]
+        assert f"{target} -> team:radar -> {target}" in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_the_wielder_is_written_into_the_outgoing_lineage(self, db, kind, use_async):
+        # The wielder is recorded, not just the target: an inherited-only
+        # outgoing chain never contains the caller, so A -> B -> A stays open.
+        stub, runner = _guarded_stub(kind, db)
+        outer = _StubTeam()
+        outer.id = "outer"
+        out = await _dispatch(runner, kind, use_async, context=_context(), wielder_team=outer)
+        assert "error" not in out
+        assert stub.seen_metadata is not None
+        assert stub.seen_metadata[_CHAIN_KEY] == ["team:outer", f"{kind}:{stub.id}"]
+        assert stub.seen_metadata[_DEPTH_KEY] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_a_b_a_ping_pong_is_refused(self, db, use_async):
+        # The lineage must refuse re-entry across hops, not just direct
+        # self-dispatch: a's token rides the metadata a wrote into b's run, so
+        # when b turns around and dispatches a, the cycle is visible.
+        a = _StubTeam()
+        a.id = "a"
+        a.name = "A"
+        b = _StubTeam()
+        b.id = "b"
+        b.name = "B"
+        runner = StudioRunnerTools(db=db, include_teams=[a, b], max_dispatch_depth=3)
+
+        out = await _dispatch(runner, "team", use_async, identifier="b", context=_context(), wielder_team=a)
+        assert "error" not in out
+        assert b.seen_metadata == {_CHAIN_KEY: ["team:a", "team:b"], _DEPTH_KEY: 1}
+
+        nested = _context()
+        nested.metadata = dict(b.seen_metadata)
+        out = await _dispatch(runner, "team", use_async, identifier="a", context=nested, wielder_team=b)
+        assert "already running" in out["error"]
+        assert a.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_lineage_is_threaded_to_child(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=_context())
+        assert "error" not in out
+        assert stub.seen is not None
+        assert stub.seen_metadata == {_CHAIN_KEY: [f"{kind}:{stub.id}"], _DEPTH_KEY: 1}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_lineage_appends_not_replaces(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db, max_dispatch_depth=3)
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(["team:outer"]))
+        assert "error" not in out
+        assert stub.seen_metadata is not None
+        assert stub.seen_metadata[_CHAIN_KEY] == ["team:outer", f"{kind}:{stub.id}"]
+        assert stub.seen_metadata[_DEPTH_KEY] == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_lineage_entries_are_deduped(self, db, kind, use_async):
+        # A wielder already in the inherited lineage appears once, and the hop
+        # count still moves by exactly 1: it is its own key, not len(chain).
+        stub, runner = _guarded_stub(kind, db, max_dispatch_depth=3)
+        outer = _StubTeam()
+        outer.id = "outer"
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(["team:outer"]), wielder_team=outer)
+        assert "error" not in out
+        assert stub.seen_metadata is not None
+        assert stub.seen_metadata[_CHAIN_KEY] == ["team:outer", f"{kind}:{stub.id}"]
+        assert stub.seen_metadata[_DEPTH_KEY] == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_user_metadata_is_preserved(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        context = _context()
+        context.metadata = {"tenant": "acme"}
+        out = await _dispatch(runner, kind, use_async, context=context)
+        assert "error" not in out
+        assert stub.seen_metadata == {"tenant": "acme", _CHAIN_KEY: [f"{kind}:{stub.id}"], _DEPTH_KEY: 1}
+        # The caller's own metadata is read, never written: the lineage grows
+        # on the copy handed to the child.
+        assert context.metadata == {"tenant": "acme"}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _WIELDER_TOOLS)
+    async def test_resolved_id_is_used_not_alias(self, db, kind, use_async):
+        # The lineage carries resolved ids; dispatching the wielder by display
+        # name must hit the same guard, or an alias walks straight around it.
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(
+            runner, kind, use_async, identifier=stub.name, context=_context(), **_wielder_kwargs(kind, stub)
+        )
+        assert "error" in out
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_inherited_alias_does_not_evade_either(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(
+            runner, kind, use_async, identifier=stub.name, context=_dispatched_context([f"{kind}:{stub.id}"])
+        )
+        assert "error" in out
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_sessionless_caller_still_dispatches(self, db, kind, use_async):
+        # No caller context: the lineage starts empty, and the child still
+        # gets a one-element lineage so ITS dispatches are bounded.
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=None)
+        assert "error" not in out
+        assert stub.seen is not None
+        assert stub.seen_metadata == {_CHAIN_KEY: [f"{kind}:{stub.id}"], _DEPTH_KEY: 1}
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_a_malformed_chain_fails_closed(self, db, kind, use_async):
+        # Both keys are runtime-written; a wrong shape is tampering or
+        # corruption, and treating it as absent would reset the counter --
+        # exactly what a forged value would want.
+        stub, runner = _guarded_stub(kind, db)
+        for bad_chain, depth in (("not-a-list", 0), ([1, 2], 2)):
+            out = await _dispatch(runner, kind, use_async, context=_dispatched_context(bad_chain, depth=depth))
+            assert _CHAIN_KEY in out["error"]
+            assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_a_malformed_depth_fails_closed(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        for bad_depth in ("1", -1, True):
+            out = await _dispatch(runner, kind, use_async, context=_dispatched_context([], depth=bad_depth))
+            assert _DEPTH_KEY in out["error"]
+            assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_a_half_pair_fails_closed(self, db, kind, use_async):
+        # The runtime always writes both keys, so one without the other is as
+        # much evidence of tampering as a wrong shape.
+        stub, runner = _guarded_stub(kind, db)
+        chain_only = _context()
+        chain_only.metadata = {_CHAIN_KEY: ["team:outer"]}
+        out = await _dispatch(runner, kind, use_async, context=chain_only)
+        assert _DEPTH_KEY in out["error"]
+        assert stub.seen is None
+
+        depth_only = _context()
+        depth_only.metadata = {_DEPTH_KEY: 1}
+        out = await _dispatch(runner, kind, use_async, context=depth_only)
+        assert _CHAIN_KEY in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_absent_keys_are_not_malformed(self, db, kind, use_async):
+        # Metadata with neither key is the ordinary top-level run.
+        stub, runner = _guarded_stub(kind, db)
+        context = _context()
+        context.metadata = {"tenant": "acme"}
+        out = await _dispatch(runner, kind, use_async, context=context)
+        assert "error" not in out
+        assert stub.seen_metadata is not None and stub.seen_metadata[_DEPTH_KEY] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
+    async def test_a_different_component_is_unaffected(self, db, use_async):
+        stub = _StubAgent()
+        runner = StudioRunnerTools(db=db, include_agents=[stub])
+        out = await _dispatch(runner, "agent", use_async, context=_context(), wielder_team=_StubTeam())
+        assert out["status"] == "COMPLETED"
+        assert stub.seen is not None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_reserved_version_key_is_not_forwarded(self, db, kind, use_async):
+        # The version pin describes the CALLER's run. Forwarded, it would
+        # stamp the child's run row, and the lifecycle routes would continue a
+        # paused child on the wrong version of the child.
+        stub, runner = _guarded_stub(kind, db)
+        context = _context()
+        context.metadata = {COMPONENT_VERSION_METADATA_KEY: 7, "tenant": "acme"}
+        out = await _dispatch(runner, kind, use_async, context=context)
+        assert "error" not in out
+        assert stub.seen_metadata == {"tenant": "acme", _CHAIN_KEY: [f"{kind}:{stub.id}"], _DEPTH_KEY: 1}
+
+    def test_stored_config_cannot_forge_or_reset_the_chain(self, registry, db):
+        # Component metadata is merged OVER call-site metadata on run, so a
+        # stored config carrying the dispatch keys would reset the lineage on
+        # every hop and re-open unbounded self-dispatch. The rebuild strips
+        # them.
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
+        created = _loads(
+            studio.create_team(
+                name="forged",
+                instructions="i",
+                member_ids=["member"],
+                model_id="gpt-5.4",
+                metadata={_CHAIN_KEY: [], _DEPTH_KEY: 0, "tenant": "acme"},
+                publish=True,
+            )
+        )
+        assert created["data"]["id"] == "forged"
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        team = runner._team_for_run("forged")
+        assert team is not None
+        # The forged keys are gone; the config's own metadata survives, which
+        # also proves metadata reached the stored config at all.
+        assert team.metadata == {"tenant": "acme"}
+
+
+class TestDispatchDepthCap:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_default_depth_allows_two_hops(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        assert runner.max_dispatch_depth == 2
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(["team:outer"]))
+        assert "error" not in out
+        assert stub.seen_metadata is not None and stub.seen_metadata[_DEPTH_KEY] == 2
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_depth_limit_refuses_third_hop(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(["team:o1", "agent:o2"]))
+        assert "2 hop(s) deep" in out["error"]
+        assert "at most 2" in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_max_dispatch_depth_one_refuses_nested(self, db, kind, use_async):
+        stub, runner = _guarded_stub(kind, db, max_dispatch_depth=1)
+        out = await _dispatch(runner, kind, use_async, context=_context())
+        assert "error" not in out
+
+        stub.seen = None
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(["team:outer"]))
+        assert "at most 1" in out["error"]
+        assert stub.seen is None
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_max_dispatch_depth_zero_refuses_all_dispatch_but_not_listing(self, db, kind, use_async):
+        # 0 means dispatch is off, never "unlimited"; the sessionless path is
+        # covered too, or a missing context would be a bypass. Discovery keeps
+        # working: the posture is "look but do not run".
+        stub, runner = _guarded_stub(kind, db, max_dispatch_depth=0)
+        out = await _dispatch(runner, kind, use_async, context=_context())
+        assert "at most 0" in out["error"]
+        assert stub.seen is None
+
+        out = await _dispatch(runner, kind, use_async, context=None)
+        assert "at most 0" in out["error"]
+        assert stub.seen is None
+
+        listed = _loads(getattr(runner, f"list_{kind}s")())
+        assert listed["count"] == 1
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_depth_not_lineage_length_governs(self, db, kind, use_async):
+        # A member-agent first hop writes three wielder tokens plus the
+        # target; the cap must read the hop counter, not len(chain), or that
+        # legitimate second hop is refused.
+        stub, runner = _guarded_stub(kind, db)
+        lineage = ["team:t1", "agent:m1", "team:t2", "agent:m2"]
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(lineage, depth=1))
+        assert "error" not in out
+        assert stub.seen_metadata is not None and stub.seen_metadata[_DEPTH_KEY] == 2
+
+    def test_negative_depth_rejected_at_construction(self, db):
+        with pytest.raises(ValueError, match="max_dispatch_depth"):
+            StudioRunnerTools(db=db, max_dispatch_depth=-1)
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_refusal_is_returned_not_raised(self, db, kind, use_async, caplog):
+        # A raised refusal costs the calling run its retries and can kill it,
+        # and one routed through logger.exception prints a traceback for a
+        # deliberate refusal. The contract is a plain JSON error result.
+        import logging
+
+        stub, runner = _guarded_stub(kind, db)
+        tool = getattr(runner, f"arun_{kind}" if use_async else f"run_{kind}")
+        with caplog.at_level(logging.WARNING):
+            raw = tool(stub.id, "go", _agno_run_context=_dispatched_context([f"{kind}:{stub.id}"]))
+            if use_async:
+                raw = await raw
+        assert isinstance(raw, str)
+        assert "error" in json.loads(raw)
+        assert not any(record.exc_info for record in caplog.records)
+        assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+    def test_studio_tools_embedded_runner_carries_the_default(self, registry, db):
+        assert StudioTools(registry=registry, db=db)._runner_tools.max_dispatch_depth == 2
+        assert StudioTools(registry=registry, db=db, max_dispatch_depth=5)._runner_tools.max_dispatch_depth == 5
+
+
+# ----------------------------------------------------------------------
 # Discovery
 # ----------------------------------------------------------------------
 
@@ -937,7 +1504,52 @@ class TestDiscovery:
 
         runner = StudioRunnerTools(db=InMemoryDb())
         out = _loads(runner.list_agents())
-        assert out == {"agents": [], "count": 0, "total": 0}
+        assert out == {"agents": [], "count": 0, "total": 0, "other_components": {"teams": 0, "workflows": 0}}
+
+    def test_each_list_tool_discloses_the_other_namespaces(self, db):
+        # Three namespaces, three separate list tools: a model that calls one
+        # gets a plausible roster and no signal that it has seen a third of the
+        # components -- so "not on the roster" reads as "does not exist". The
+        # counts break that false negative.
+        runner = StudioRunnerTools(
+            db=db,
+            include_agents=[_StubAgent()],
+            include_teams=[_StubTeam()],
+            include_workflows=[_StubWorkflow()],
+        )
+        assert _loads(runner.list_agents())["other_components"] == {"teams": 1, "workflows": 1}
+        assert _loads(runner.list_teams())["other_components"] == {"agents": 1, "workflows": 1}
+        assert _loads(runner.list_workflows())["other_components"] == {"agents": 1, "teams": 1}
+
+    def test_disclosure_counts_stored_components_too(self, registry, db):
+        studio = StudioTools(registry=registry, db=db)
+        studio.create_agent(name="member", instructions="i", model_id="gpt-5.4", publish=True)
+        studio.create_team(name="squad", instructions="i", member_ids=["member"], model_id="gpt-5.4")
+
+        runner = StudioRunnerTools(registry=registry, db=db)
+        out = _loads(runner.list_workflows())
+        assert out["other_components"] == {"agents": 1, "teams": 1}
+
+    def test_disclosure_omits_disabled_namespaces(self, db):
+        # run_team is not registered on this toolkit, so a team count would
+        # advertise components the caller has no tool to run.
+        runner = StudioRunnerTools(db=db, include_agents=[_StubAgent()], include_teams=[_StubTeam()], teams=False)
+        out = _loads(runner.list_agents())
+        assert out["other_components"] == {"workflows": 0}
+
+    def test_disclosure_survives_a_missing_db(self):
+        # The code-allowlist half works without a database, and so must the
+        # disclosure riding on it.
+        runner = StudioRunnerTools(include_agents=[_StubAgent()], include_teams=[_StubTeam()])
+        out = _loads(runner.list_agents())
+        assert out["count"] == 1
+        assert out["other_components"] == {"teams": 1, "workflows": 0}
+
+    @pytest.mark.asyncio
+    async def test_async_list_discloses_too(self, db):
+        runner = StudioRunnerTools(db=db, include_teams=[_StubTeam()])
+        out = _loads(await runner.alist_agents())
+        assert out["other_components"] == {"teams": 1, "workflows": 0}
 
 
 def _nested_child_step(step_input):
@@ -3585,3 +4197,164 @@ class TestNestedWorkflowIsolationSpellings:
             lambda step: [Step(name="x", executor=lambda step_input: None)],
             workflow_agent=StickyAgent(id="wf_agent", name="WA"),
         )
+
+
+# ----------------------------------------------------------------------
+# End to end: a real team dispatching itself through the real tool loop
+# ----------------------------------------------------------------------
+
+
+def _build_self_dispatch_model():
+    from typing import AsyncIterator, Iterator
+
+    from agno.models.base import Model
+    from agno.models.message import MessageMetrics
+    from agno.models.response import ModelResponse
+
+    class SelfDispatchModel(Model):
+        """Drives the observed pathology: every fresh run immediately asks to
+        dispatch team 'looper' again, and only a tool RESULT makes it answer.
+
+        The final answer names what the tool result was, so the test can read
+        each nesting level's outcome off the shared recorder. The provider-call
+        ceiling turns an unbounded recursion (the unguarded behavior) into a
+        loud failure instead of a hang."""
+
+        def __init__(self, recorder=None):
+            super().__init__(id="self-dispatch-test", name="self-dispatch-test", provider="test")
+            self.recorder = recorder if recorder is not None else {"provider_calls": 0, "finals": []}
+
+        def __deepcopy__(self, memo):
+            # Dispatch runs on a deep copy of the team; the recorder must stay
+            # shared or the nested levels become invisible to the test.
+            return type(self)(recorder=self.recorder)
+
+        def _respond(self, messages) -> ModelResponse:
+            self.recorder["provider_calls"] += 1
+            if self.recorder["provider_calls"] > 12:
+                raise AssertionError("runaway self-dispatch: the guard did not stop the loop")
+            tool_results = [
+                str(getattr(m, "content", "")) for m in (messages or []) if getattr(m, "role", None) == "tool"
+            ]
+            if tool_results:
+                verdict = "saw-refusal" if "Refusing to dispatch" in tool_results[-1] else "saw-success"
+                self.recorder["finals"].append(verdict)
+                return ModelResponse(content=verdict, role="assistant", response_usage=MessageMetrics())
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "dispatch-1",
+                        "type": "function",
+                        "function": {
+                            "name": "run_team",
+                            "arguments": json.dumps({"team_id": "looper", "message": "keep going"}),
+                        },
+                    }
+                ],
+                response_usage=MessageMetrics(),
+            )
+
+        def invoke(self, messages=None, *args, **kwargs) -> ModelResponse:
+            return self._respond(messages)
+
+        async def ainvoke(self, messages=None, *args, **kwargs) -> ModelResponse:
+            return self._respond(messages)
+
+        def invoke_stream(self, messages=None, *args, **kwargs) -> Iterator[ModelResponse]:
+            yield self._respond(messages)
+
+        async def ainvoke_stream(self, messages=None, *args, **kwargs) -> AsyncIterator[ModelResponse]:
+            yield self._respond(messages)
+
+        def parse_args(self, *args, **kwargs):
+            return {}
+
+        def _parse_provider_response(self, response, **kwargs) -> ModelResponse:
+            return response
+
+        def _parse_provider_response_delta(self, response) -> ModelResponse:
+            return response
+
+    return SelfDispatchModel()
+
+
+class TestEndToEndSelfDispatch:
+    def test_the_observed_loop_never_starts(self, db, tmp_path):
+        # The 3.0.0a4 pathology in miniature: a team whose runner toolkit can
+        # reach the team itself, driven by a model that re-dispatches whenever
+        # it has no tool result yet. Unguarded, every nesting level starts
+        # another; the recorder's ceiling fails the test loudly if that comes
+        # back. Guarded, the framework injects the wielding team into the tool
+        # call, so the very FIRST self-dispatch is refused and no nested run
+        # ever exists -- this is the reported top-level repro, end to end
+        # through the real injection machinery.
+        from agno.agent.agent import Agent
+        from agno.team.team import Team
+
+        model = _build_self_dispatch_model()
+        member = Agent(id="bystander", name="Bystander", model=model.__deepcopy__({}))
+        dispatchable: List[Any] = []
+        toolkit = StudioRunnerTools(db=db, include_teams=dispatchable)
+        team = Team(
+            id="looper",
+            name="Looper",
+            model=model,
+            members=[member],
+            tools=[toolkit],
+            db=db,
+        )
+        dispatchable.append(team)
+
+        output = team.run("go", session_id="probe-sess", user_id="probe", stream=False)
+
+        # One run reached a model, twice: the dispatch attempt, then the final
+        # answer over the refusal. No nested run ever produced a final.
+        assert model.recorder["finals"] == ["saw-refusal"]
+        assert output.content == "saw-refusal"
+        assert model.recorder["provider_calls"] == 2
+
+
+# ----------------------------------------------------------------------
+# Cancel cascade: dispatched sub-runs register under the caller's run
+# ----------------------------------------------------------------------
+
+
+class TestDispatchCancelCascade:
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_sub_run_registers_under_the_caller_run(self, db, kind, use_async):
+        # A team or workflow caller's cancel_run cascades through
+        # get_member_run_ids; without registration an escaped dispatch is
+        # unstoppable from the outside, which is how the observed runaway
+        # outlived its HTTP client.
+        from agno.run.cancel import get_member_run_ids
+
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=_context())
+        assert "error" not in out
+        assert isinstance(stub.seen_run_id, str) and stub.seen_run_id
+        assert stub.seen_run_id in get_member_run_ids("caller-run")
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_sessionless_dispatch_still_gets_a_run_id(self, db, kind, use_async):
+        from agno.run.cancel import get_member_run_ids
+
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(runner, kind, use_async, context=None)
+        assert "error" not in out
+        assert isinstance(stub.seen_run_id, str) and stub.seen_run_id
+        assert get_member_run_ids("caller-run") == set()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
+    async def test_refused_dispatch_registers_nothing(self, db, kind, use_async):
+        from agno.run.cancel import get_member_run_ids
+
+        stub, runner = _guarded_stub(kind, db)
+        out = await _dispatch(
+            runner, kind, use_async, context=_dispatched_context([f"{kind}:{_STUB_CLASSES[kind].id}"])
+        )
+        assert "error" in out
+        assert get_member_run_ids("caller-run") == set()
