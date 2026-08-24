@@ -45,7 +45,8 @@ raises `ValueError`. The full alias mapping:
 | -------- | -------------------- | --------------------------------------- |
 | `read`   | `read_file`          | Read a file (line-numbered, optional range) |
 | `list`   | `list_files`         | List a directory (optional glob, optional recursive with `max_depth`) |
-| `search` | `search_content`     | Recursive content grep                  |
+| `search` | `search_content`     | Recursive content search (substring)    |
+| `grep`   | `grep_content`       | Regex search with line numbers          |
 | `write`  | `write_file`         | Create or overwrite a file (atomic)     |
 | `edit`   | `edit_file`          | Replace a substring (with `replace_all`)|
 | `move`   | `move_file`          | Move or rename a file                   |
@@ -95,6 +96,8 @@ tools = [Workspace(".", allow_paths=[".env.example"])]
   confirmations disabled so the demo runs end-to-end.
 - `with_confirmation.py` — same agent with the default safety on; you
   approve each write at the console.
+- `grep_content.py` — demonstrates regex search with line numbers, context
+  lines, and files-only mode for code navigation.
 
 ## Running
 
