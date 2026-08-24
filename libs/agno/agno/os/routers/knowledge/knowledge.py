@@ -57,6 +57,7 @@ from agno.utils.string import generate_id
 
 logger = logging.getLogger(__name__)
 
+
 def get_knowledge_router(
     knowledge_instances: List[Union[Knowledge, RemoteKnowledge]], settings: AgnoAPISettings = AgnoAPISettings()
 ) -> APIRouter:
