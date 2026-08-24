@@ -352,7 +352,7 @@ class ContextProvider(ABC):
         loop = asyncio.get_running_loop()
         deadline = loop.time() + timeout
         while True:
-            scope = asyncio.timeout_at(deadline)
+            scope = asyncio.timeout_at(deadline)  # type: ignore[attr-defined]
             try:
                 async with scope:
                     # The anext() builtin is 3.10+; the repo lints at py39.
@@ -364,7 +364,7 @@ class ContextProvider(ABC):
                     # Raised by the provider itself, not our deadline.
                     raise
                 try:
-                    async with asyncio.timeout(1):
+                    async with asyncio.timeout(1):  # type: ignore[attr-defined]
                         await stream.aclose()
                 except Exception:
                     pass
