@@ -20,7 +20,7 @@ from agno.os.interfaces.whatsapp.helpers import (
     typing_indicator_async,
     upload_and_send_media_async,
 )
-from agno.os.interfaces.whatsapp.security import validate_webhook_signature
+from agno.os.interfaces.whatsapp.security import validate_webhook_signature, verify_token_matches
 from agno.session.agent import AgentSession
 from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
@@ -171,7 +171,7 @@ def attach_routes(
         if not config.verify_token:
             raise HTTPException(status_code=500, detail="WHATSAPP_VERIFY_TOKEN is not set")
 
-        if mode == "subscribe" and token == config.verify_token:
+        if mode == "subscribe" and verify_token_matches(token, config.verify_token):
             if not challenge:
                 raise HTTPException(status_code=400, detail="No challenge received")
             return PlainTextResponse(content=challenge)
