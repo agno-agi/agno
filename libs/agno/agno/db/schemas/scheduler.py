@@ -87,6 +87,25 @@ def strip_reserved_run_metadata(metadata: Optional[Dict[str, Any]]) -> Optional[
     return cleaned or None
 
 
+def restore_reserved_run_metadata(
+    metadata: Optional[Dict[str, Any]], stored_run_metadata: Any
+) -> Optional[Dict[str, Any]]:
+    """Caller metadata for a resume, with the paused run's reserved keys restored.
+
+    The runtime-owned keys describe the run being resumed -- its dispatch
+    lineage, hop count and version pin -- and are persisted on the paused run
+    row. A resume that rebuilt them from caller input would present a nested
+    run as top-level, resetting the dispatch guard one approval at a time, so
+    the stored values win and caller-supplied reserved keys are dropped the
+    way every other seam drops them."""
+    stored = stored_run_metadata if isinstance(stored_run_metadata, dict) else {}
+    restored = {key: stored[key] for key in RESERVED_RUN_METADATA_KEYS if key in stored}
+    cleaned = strip_reserved_run_metadata(metadata)
+    base = dict(cleaned) if isinstance(cleaned, dict) else {}
+    base.update(restored)
+    return base or None
+
+
 # The columns a generic update_schedule may write. Everything else - ownership,
 # provenance, trigger and lock state - moves only through dedicated primitives,
 # so a name-keyed upsert can never repoint who a schedule belongs to or which
