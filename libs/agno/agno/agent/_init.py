@@ -19,9 +19,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.compression.manager import CompressionManager
-from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb
-from agno.learn.machine import LearningMachine
 from agno.memory import MemoryManager
 from agno.models.utils import get_model
 from agno.session import SessionSummaryManager
@@ -69,8 +67,7 @@ def set_checkpoint(agent: Agent) -> None:
     Constructor default is None so that OS-level inheritance can fill it. If still
     None at first run, fall back to "runs" (today's terminal-only behavior).
 
-    "tools" is reserved for 3.0 (see ADR-006 in specs/agno/features/checkpointing/decisions.md)
-    and raises NotImplementedError if requested.
+    "tools" is reserved for 3.0 and raises NotImplementedError if requested.
     """
     if agent.checkpoint is None:
         agent.checkpoint = "runs"
@@ -97,24 +94,6 @@ def set_default_model(agent: Agent) -> None:
 
         log_info("Setting default model to OpenAI Responses")
         agent.model = OpenAIResponses(id="gpt-5.4")
-
-
-def set_culture_manager(agent: Agent) -> None:
-    if agent.db is None:
-        log_warning("Database not provided. Cultural knowledge will not be stored.")
-
-    if agent.culture_manager is None:
-        agent.culture_manager = CultureManager(model=agent.model, db=agent.db)
-    else:
-        if agent.culture_manager.model is None:
-            agent.culture_manager.model = agent.model
-        if agent.culture_manager.db is None:
-            agent.culture_manager.db = agent.db
-
-    if agent.add_culture_to_context is None:
-        agent.add_culture_to_context = (
-            agent.enable_agentic_culture or agent.update_cultural_knowledge or agent.culture_manager is not None
-        )
 
 
 def set_memory_manager(agent: Agent) -> None:
@@ -145,6 +124,8 @@ def set_learning_machine(agent: Agent) -> None:
     - learning=False/None: Disabled
     - learning=LearningMachine(...): Use provided, inject db/model/knowledge
     """
+    from agno.learn.machine import LearningMachine
+
     agent._learning_init_attempted = True
 
     # Handle learning=False or learning=None
@@ -211,6 +192,45 @@ def set_compression_manager(agent: Agent) -> None:
         agent.compress_tool_results = True
 
 
+def set_result_store(agent: Agent) -> None:
+    """Resolve ``agent.offload_tool_results`` into the store the run uses.
+
+    A None store means offloading is off. The public setting keeps whatever
+    the caller passed, so a failure never rewrites their configuration.
+    """
+    # Offloading and tool-result compression cannot run together: compression
+    # sends tool messages to a model and rewrites them, which would replace a
+    # stored-result envelope with text whose result id may be gone, while the
+    # payload it pointed at lives on unreferenced. Refuse the combination
+    # loudly instead of silently favouring one of them.
+    if agent.compress_tool_results and (agent.offload_tool_results or agent._result_store is not None):
+        raise ValueError(
+            "offload_tool_results and compress_tool_results cannot be enabled together: "
+            "compression rewrites the tool messages that hold stored-result envelopes. "
+            "Disable one of the two."
+        )
+    # A store handed down by a team is the team's to manage.
+    if agent._result_store is not None and agent._result_store is agent._inherited_result_store:
+        return
+    if not agent.offload_tool_results:
+        agent._result_store = None
+        agent._result_store_setting = None
+        return
+    # Rebuild when the setting object or the db changed since the last build.
+    if (
+        agent._result_store is not None
+        and agent._result_store_setting is agent.offload_tool_results
+        and agent._result_store.db is agent.db
+    ):
+        return
+    from agno.offload.setup import build_result_store
+
+    agent._result_store = build_result_store(
+        setting=agent.offload_tool_results, db=agent.db, owner=agent, owner_kind="agent"
+    )
+    agent._result_store_setting = agent.offload_tool_results
+
+
 def _initialize_session_state(
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
@@ -272,17 +292,13 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_checkpoint(agent)
     if agent.update_memory_on_run or agent.enable_agentic_memory or agent.memory_manager is not None:
         set_memory_manager(agent)
-    if (
-        agent.add_culture_to_context
-        or agent.update_cultural_knowledge
-        or agent.enable_agentic_culture
-        or agent.culture_manager is not None
-    ):
-        set_culture_manager(agent)
     if agent.enable_session_summaries or agent.session_summary_manager is not None:
         set_session_summary_manager(agent)
     if agent.compress_tool_results or agent.compression_manager is not None:
         set_compression_manager(agent)
+    # Resolved when a setting is present or when a store exists.
+    if agent.offload_tool_results or agent._result_store is not None:
+        set_result_store(agent)
     if agent.learning is not None and agent.learning is not False:
         set_learning_machine(agent)
 
@@ -318,10 +334,10 @@ async def connect_mcp_tools(agent: Agent) -> None:
     """Connect the MCP tools to the agent."""
     if agent.tools and isinstance(agent.tools, list):
         for tool in agent.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
             if (
                 hasattr(type(tool), "__mro__")
-                and any(c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__)
+                and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
                 and not tool.initialized  # type: ignore
             ):
                 try:

@@ -1,9 +1,10 @@
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
 from agno.exceptions import RunCancelledException
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -28,7 +29,6 @@ from agno.workflow.types import (
     StepOutput,
     StepRequirement,
     StepType,
-    warn_session_state_param_deprecated,
 )
 
 # Constants for condition branch identifiers
@@ -111,47 +111,12 @@ class Condition:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    # Human-in-the-loop (HITL) configuration
-    # If True, the condition will pause before execution and require user confirmation
-    # User confirms -> execute `steps` (if branch)
-    # User rejects -> behavior depends on on_reject setting
-    requires_confirmation: bool = False
-    # Message to display to the user when requesting confirmation
-    confirmation_message: Optional[str] = None
-    # What to do when condition is rejected:
-    # - "else" (default): Execute else_steps branch if provided, otherwise skip
-    # - "skip": Skip entire condition (both branches)
-    # - "cancel": Cancel the workflow
-    on_reject: Union[OnReject, str] = OnReject.else_branch
-    # What to do when a sub-step encounters an error:
-    # - "skip" (default): Log error, add to results, and break execution
-    # - "fail": Re-raise the exception, causing workflow to fail
-    # - "pause": Pause workflow and allow user to decide (retry or skip) via HITL
-    on_error: Union[OnError, str] = OnError.skip
-
-    # HumanReview config (alternative to flat params above)
-    human_review: Optional[HumanReview] = None
+    human_review: HumanReview = field(default_factory=lambda: HumanReview(on_reject=OnReject.else_branch))
 
     def __post_init__(self) -> None:
-        if self.human_review is not None:
-            pass  # Use the explicit config
-        else:
-            self.human_review = HumanReview(
-                requires_confirmation=self.requires_confirmation,
-                confirmation_message=self.confirmation_message,
-                on_reject=self.on_reject,
-                on_error=self.on_error,
-            )
-
         from agno.workflow.types import validate_human_review_for_condition
 
         validate_human_review_for_condition(self.human_review)
-
-        # Backward compat attributes
-        self.requires_confirmation = self.human_review.requires_confirmation
-        self.confirmation_message = self.human_review.confirmation_message
-        self.on_reject = self.human_review.on_reject
-        self.on_error = self.human_review.on_error
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -194,18 +159,14 @@ class Condition:
         Returns:
             StepRequirement configured for this condition's HITL needs.
         """
-        on_reject = self.human_review.on_reject if self.human_review else self.on_reject
+        on_reject = self.human_review.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=self.name or f"condition_{step_index + 1}",
             step_index=step_index,
             step_type="Condition",
-            requires_confirmation=self.human_review.requires_confirmation
-            if self.human_review
-            else self.requires_confirmation,
-            confirmation_message=(
-                self.human_review.confirmation_message if self.human_review else self.confirmation_message
-            )
+            requires_confirmation=self.human_review.requires_confirmation,
+            confirmation_message=self.human_review.confirmation_message
             or f"Execute condition '{self.name or 'condition'}'? (yes=if branch, no=else branch)",
             on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             requires_user_input=False,
@@ -310,16 +271,13 @@ class Condition:
         else:
             raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
 
-        # Build HumanReview from serialized data
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            human_review = HumanReview(
-                requires_confirmation=data.get("requires_confirmation", False),
-                confirmation_message=data.get("confirmation_message"),
-                on_reject=data.get("on_reject", "else"),
-                on_error=data.get("on_error", "skip"),
-            )
+            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
+
+            drop_legacy_hitl_keys(data, StepType.CONDITION)
+            human_review = HumanReview(on_reject=OnReject.else_branch)
 
         return cls(
             evaluator=evaluator,
@@ -437,9 +395,6 @@ class Condition:
             kwargs: Dict[str, Any] = {}
             if run_context is not None and self._evaluator_has_run_context_param():
                 kwargs["run_context"] = run_context
-            if session_state is not None and self._evaluator_has_session_state_param():
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
 
             result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
@@ -483,9 +438,6 @@ class Condition:
             kwargs: Dict[str, Any] = {}
             if run_context is not None and self._evaluator_has_run_context_param():
                 kwargs["run_context"] = run_context
-            if session_state is not None and self._evaluator_has_session_state_param():
-                kwargs["session_state"] = session_state
-                warn_session_state_param_deprecated(self.evaluator, "Condition evaluator functions")
 
             if inspect.iscoroutinefunction(self.evaluator):
                 result = await self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
@@ -499,17 +451,6 @@ class Condition:
                 return False
 
         return False
-
-    def _evaluator_has_session_state_param(self) -> bool:
-        """Check if the evaluator function has a session_state parameter"""
-        if not callable(self.evaluator):
-            return False
-
-        try:
-            sig = inspect.signature(self.evaluator)
-            return "session_state" in sig.parameters
-        except Exception:
-            return False
 
     def _evaluator_has_run_context_param(self) -> bool:
         """Check if the evaluator function has a run_context parameter"""
@@ -533,6 +474,7 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -622,6 +564,7 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -683,7 +626,7 @@ class Condition:
                 logger.exception(f"Condition step {step_name} failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break
@@ -719,6 +662,7 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -870,6 +814,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
@@ -936,7 +881,7 @@ class Condition:
                 logger.exception(f"Condition step {step_name} streaming failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break
@@ -984,6 +929,7 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -1073,6 +1019,7 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -1132,7 +1079,7 @@ class Condition:
                 logger.exception(f"Condition step {step_name} async failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break
@@ -1168,6 +1115,7 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -1320,6 +1268,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
@@ -1386,7 +1335,7 @@ class Condition:
                 logger.exception(f"Condition step {step_name} async streaming failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break

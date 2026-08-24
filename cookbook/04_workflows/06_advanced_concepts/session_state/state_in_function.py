@@ -266,8 +266,9 @@ def custom_content_planning_function_stream(
 
 def content_summary_function_stream(
     step_input: StepInput,
-    session_state: dict,
+    run_context: RunContext,
 ) -> Iterator[StepOutput]:
+    session_state = run_context.session_state
     plans = session_state["content_plans"]
 
     summary = f"""

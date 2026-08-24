@@ -6,13 +6,21 @@ from typing import Any, Dict, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, File, Form, HTTPException, Path, Query, Request, UploadFile
 
 from agno.db.base import AsyncBaseDb
+from agno.exceptions import AgnoError
 from agno.knowledge.content import Content, FileData
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.remote_content.s3 import S3Config
-from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
+from agno.knowledge.utils import (
+    get_all_chunkers_info,
+    get_content_types_to_readers_mapping,
+    get_read_time_availability,
+    get_readers_availability,
+    get_unavailable_chunkers_info,
+)
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.knowledge.schemas import (
     ChunkerSchema,
     ConfigResponseSchema,
@@ -25,6 +33,8 @@ from agno.os.routers.knowledge.schemas import (
     SourceFileSchema,
     SourceFilesResponseSchema,
     SourceFolderSchema,
+    UnavailableChunkerSchema,
+    UnavailableReaderSchema,
     VectorDbSchema,
     VectorSearchRequestSchema,
     VectorSearchResult,
@@ -40,7 +50,7 @@ from agno.os.schema import (
     ValidationErrorResponse,
 )
 from agno.os.settings import AgnoAPISettings
-from agno.os.utils import get_knowledge_instance
+from agno.os.utils import AgnoHTTPException, get_knowledge_instance
 from agno.remote.base import RemoteKnowledge
 from agno.utils.log import log_debug, log_error, log_info
 from agno.utils.string import generate_id
@@ -61,6 +71,7 @@ def get_knowledge_router(
             404: {"description": "Not Found", "model": NotFoundResponse},
             422: {"description": "Validation Error", "model": ValidationErrorResponse},
             500: {"description": "Internal Server Error", "model": InternalServerErrorResponse},
+            503: {"description": "No knowledge base is configured on this AgentOS"},
         },
     )
     return attach_routes(router=router, knowledge_instances=knowledge_instances)
@@ -188,6 +199,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             elif url:
                 name = parsed_urls
 
+        # Pin the owner now: the background task runs after the response, with no ``request`` to read.
+        scoped_user_id = get_scoped_user_id(request)
+
         content = Content(
             name=name,
             description=description,
@@ -195,6 +209,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             metadata=parsed_metadata,
             file_data=file_data,
             size=file.size if file else None if text_content else None,
+            user_id=scoped_user_id,
         )
         content_hash = knowledge._build_content_hash(content)
         content.content_hash = content_hash
@@ -352,11 +367,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Set name from path if not provided
         content_name = name or path
 
+        # Pin the owner before queuing, same as the upload route: the background task has no ``request``.
+        scoped_user_id = get_scoped_user_id(request)
+
         content = Content(
             name=content_name,
             description=description,
             metadata=parsed_metadata,
             remote_content=remote_content,
+            user_id=scoped_user_id,
         )
         content_hash = knowledge._build_content_hash(content)
         content.content_hash = content_hash
@@ -452,11 +471,21 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             reader_id=reader_id if reader_id and reader_id.strip() else None,
         )
 
+        # Pre-check ownership: the scoped patch below would otherwise silently no-op.
+        scoped_user_id = get_scoped_user_id(request)
+        existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+        # Non-admins can read shared (unowned) content but not modify it.
+        if scoped_user_id is not None and existing.user_id is None:
+            raise HTTPException(status_code=403, detail="Cannot modify shared content")
+
         content = Content(
             id=content_id,
             name=update_data.name,
             description=update_data.description,
             metadata=update_data.metadata,
+            user_id=existing.user_id,
         )
 
         if update_data.reader_id:
@@ -469,9 +498,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         updated_content_dict = None
         try:
             if knowledge.contents_db is not None and isinstance(knowledge.contents_db, AsyncBaseDb):
-                updated_content_dict = await knowledge.apatch_content(content)
+                updated_content_dict = await knowledge.apatch_content(content, user_id=scoped_user_id)
             else:
-                updated_content_dict = knowledge.patch_content(content)
+                updated_content_dict = knowledge.patch_content(content, user_id=scoped_user_id)
+        except AgnoError as e:
+            raise AgnoHTTPException(e)
         except Exception as e:
             log_error(f"Error updating content: {str(e)}")
             raise HTTPException(status_code=500, detail=f"Error updating content: {str(e)}")
@@ -542,7 +573,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 headers=headers,
             )
 
-        contents, count = await knowledge.aget_content(limit=limit, page=page, sort_by=sort_by, sort_order=sort_order)
+        # Non-admin callers see their own rows plus shared (NULL) ones.
+        scoped_user_id = get_scoped_user_id(request)
+        contents, count = await knowledge.aget_content(
+            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
+        )
 
         return PaginatedResponse(
             data=[
@@ -614,7 +649,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_content_by_id(content_id=content_id, headers=headers)
 
-        content = await knowledge.aget_content_by_id(content_id=content_id)
+        # 404 (not 403) when the row exists but isn't the caller's, to mask its existence.
+        scoped_user_id = get_scoped_user_id(request)
+        content = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
         if not content:
             raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
         response = ContentResponseSchema.from_dict(
@@ -655,12 +692,20 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
     ) -> ContentResponseSchema:
         knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+        scoped_user_id = get_scoped_user_id(request)
         if isinstance(knowledge, RemoteKnowledge):
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             await knowledge.delete_content_by_id(content_id=content_id, headers=headers)
         else:
-            await knowledge.aremove_content_by_id(content_id=content_id)
+            # Pre-check existence under the caller's scope: the scoped delete below would silently succeed.
+            existing = await knowledge.aget_content_by_id(content_id=content_id, user_id=scoped_user_id)
+            if existing is None:
+                raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+            # Non-admins can read shared (unowned) content but not delete it.
+            if scoped_user_id is not None and existing.user_id is None:
+                raise HTTPException(status_code=403, detail="Cannot delete shared content")
+            await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
 
         return ContentResponseSchema(
             id=content_id,
@@ -691,7 +736,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.delete_all_content(headers=headers)
 
-        await knowledge.aremove_all_content()
+        # Admins clear everything; a non-admin clears only their own rows, never shared ones.
+        scoped_user_id = get_scoped_user_id(request)
+        await knowledge.aremove_all_content(user_id=scoped_user_id)
         return "success"
 
     @router.get(
@@ -736,7 +783,10 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_content_status(content_id=content_id, headers=headers)
 
-        knowledge_status, status_message = await knowledge.aget_content_status(content_id=content_id)
+        scoped_user_id = get_scoped_user_id(request)
+        knowledge_status, status_message = await knowledge.aget_content_status(
+            content_id=content_id, user_id=scoped_user_id
+        )
 
         # Handle the case where content is not found
         if knowledge_status is None:
@@ -841,8 +891,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         # Use max_results if specified, otherwise use a higher limit for search then paginate
         search_limit = request.max_results
 
+        # Scope vector retrieval to the caller's chunks plus the shared bucket.
+        scoped_user_id = get_scoped_user_id(http_request)
         results = await knowledge.asearch(
-            query=request.query, max_results=search_limit, filters=request.filters, search_type=request.search_type
+            query=request.query,
+            max_results=search_limit,
+            filters=request.filters,
+            search_type=request.search_type,
+            user_id=scoped_user_id,
         )
 
         # Calculate pagination
@@ -1080,7 +1136,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                 ".pptm": ["docling"],
                                 ".ppsm": ["docling"],
                                 ".potm": ["docling"],
-                                ".doc": ["docx"],
                                 ".json": ["json"],
                                 ".md": ["markdown", "docling"],
                                 ".pdf": ["pdf", "docling"],
@@ -1205,46 +1260,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_config(headers=headers)
 
-        # Get factory readers info (including custom readers from this knowledge instance)
-        readers_info = get_all_readers_info(knowledge)
-        reader_schemas = {}
-        # Add factory readers
-        for reader_info in readers_info:
-            reader_schemas[reader_info["id"]] = ReaderSchema(
-                id=reader_info["id"],
-                name=reader_info["name"],
-                description=reader_info.get("description"),
-                chunkers=reader_info.get("chunking_strategies", []),
-            )
-
-        # Add custom readers from knowledge.readers
-        readers_result: Any = knowledge.get_readers() or {}
-        # Ensure readers_dict is a dictionary (defensive check)
-        if not isinstance(readers_result, dict):
-            readers_dict: Dict[str, Reader] = {}
-        else:
-            readers_dict = readers_result
-        if readers_dict:
-            for reader_id, reader in readers_dict.items():
-                # Get chunking strategies from the reader
-                chunking_strategies = []
-                try:
-                    strategies = reader.get_supported_chunking_strategies()
-                    chunking_strategies = [strategy.value for strategy in strategies]
-                except Exception:
-                    chunking_strategies = []
-
-                # Check if this reader ID already exists in factory readers
-                if reader_id not in reader_schemas:
-                    reader_schemas[reader_id] = ReaderSchema(
-                        id=reader_id,
-                        name=getattr(reader, "name", reader.__class__.__name__),
-                        description=getattr(reader, "description", f"Custom {reader.__class__.__name__}"),
-                        chunkers=chunking_strategies,
-                    )
-
-        # Get content types to readers mapping (including custom readers from this knowledge instance)
-        types_of_readers = get_content_types_to_readers_mapping(knowledge)
         chunkers_list = get_all_chunkers_info()
 
         # Convert chunkers list to dictionary format expected by schema
@@ -1259,6 +1274,69 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     metadata=chunker_info.get("metadata", {}),
                 )
 
+        # One sweep: it imports every reader module, and the readers, the content-type mapping
+        # and the unavailable list are all read off it.
+        readers_info, unavailable_readers_info = get_readers_availability(knowledge)
+        reader_schemas = {}
+        # Add factory readers
+        for reader_info in readers_info:
+            reader_schemas[reader_info["id"]] = ReaderSchema(
+                id=reader_info["id"],
+                name=reader_info["name"],
+                description=reader_info.get("description"),
+                # A reader advertises only the chunkers this install can actually build.
+                chunkers=[c for c in reader_info.get("chunking_strategies", []) if c in chunkers_dict],
+                content_types=reader_info.get("content_types", []),
+                unavailable_content_types=reader_info.get("unavailable_content_types") or None,
+            )
+
+        # Add custom readers from knowledge.readers
+        readers_result: Any = knowledge.get_readers() or {}
+        # Ensure readers_dict is a dictionary (defensive check)
+        if not isinstance(readers_result, dict):
+            readers_dict: Dict[str, Reader] = {}
+        else:
+            readers_dict = readers_result
+        if readers_dict:
+            for reader_id, reader in readers_dict.items():
+                # Check if this reader ID already exists in factory readers
+                if reader_id in reader_schemas:
+                    continue
+
+                available_types, unavailable_types = get_read_time_availability(reader.__class__)
+                if unavailable_types and not available_types:
+                    # Every format this reader handles needs a package that is not installed.
+                    # The sweep above already recorded it in unavailable_readers.
+                    continue
+
+                # Get chunking strategies from the reader
+                chunking_strategies = []
+                try:
+                    strategies = reader.get_supported_chunking_strategies()
+                    chunking_strategies = [strategy.value for strategy in strategies]
+                except Exception:
+                    chunking_strategies = []
+
+                reader_schemas[reader_id] = ReaderSchema(
+                    id=reader_id,
+                    name=getattr(reader, "name", None) or reader.__class__.__name__,
+                    description=getattr(reader, "description", None) or f"Custom {reader.__class__.__name__}",
+                    chunkers=[c for c in chunking_strategies if c in chunkers_dict],
+                    # A reader whose content types are not the enum still has to render.
+                    content_types=[getattr(ct, "value", str(ct)) for ct in available_types],
+                    unavailable_content_types=unavailable_types or None,
+                )
+
+        # Get content types to readers mapping (including custom readers from this knowledge instance)
+        types_of_readers = get_content_types_to_readers_mapping(knowledge, readers_info=readers_info)
+
+        unavailable_readers = {r["id"]: UnavailableReaderSchema(**r) for r in unavailable_readers_info}
+        # A reader the sweep could not introspect is still published by the loop above, so it
+        # is dropped from here: the response never calls the same reader usable and missing.
+        for reader_id in reader_schemas:
+            unavailable_readers.pop(reader_id, None)
+        unavailable_chunkers = {c["id"]: UnavailableChunkerSchema(**c) for c in get_unavailable_chunkers_info()}
+
         vector_dbs = []
         if knowledge.vector_db:
             search_types = knowledge.vector_db.get_supported_search_types()
@@ -1272,7 +1350,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     search_types=search_types,
                 )
             )
-        filters = await knowledge.aget_valid_filters()
+        # Filter keys come from content rows, so scope them too
+        filters = await knowledge.aget_valid_filters(user_id=get_scoped_user_id(request))
 
         # Get remote content sources if available
         remote_content_sources = None
@@ -1297,6 +1376,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             chunkers=chunkers_dict,
             filters=filters,
             remote_content_sources=remote_content_sources,
+            unavailable_readers=unavailable_readers or None,
+            unavailable_chunkers=unavailable_chunkers or None,
         )
 
     @router.get(

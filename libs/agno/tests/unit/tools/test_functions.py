@@ -3296,22 +3296,36 @@ def test_cache_files_are_readable_by_their_owner_only(tmp_path):
 
 def test_a_result_that_cannot_be_copied_is_not_cached(tmp_path):
     """The cache keeps a copy of the tool's return because the hooks run after
-    it and may edit it in place. A value too deeply nested to copy leaves
-    nothing safe to keep, so the call is not cached rather than cached with the
-    hook's edit folded in."""
+    it and may edit it in place. A value that cannot be copied leaves nothing
+    safe to keep, so the call is not cached rather than cached with the hook's
+    edit folded in."""
+
+    class Unfoldable(dict):
+        """A value that refuses to be copied.
+
+        Nesting past the recursion limit would refuse a copy too, but that limit
+        is process-wide and any imported library may raise it: py_ecc, which
+        web3 pulls in, sets it to 100000 on import. Depth therefore pins
+        nothing, and refusing outright does."""
+
+        def __deepcopy__(self, memo):
+            raise TypeError("no copy")
 
     def enrich(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
         result = function_call(**arguments)
         result["items"].append("enriched")
         return result
 
-    def nested() -> dict:
-        deep: Any = []
-        for _ in range(600):
-            deep = [deep]
-        return {"items": ["raw"], "deep": deep}
+    def uncopyable() -> dict:
+        return {"items": ["raw"], "handle": Unfoldable(kind="live")}
 
-    func = Function(name="nested", entrypoint=nested, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[enrich])
+    func = Function(
+        name="uncopyable",
+        entrypoint=uncopyable,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[enrich],
+    )
 
     reported = []
     original = function_module.log_exception

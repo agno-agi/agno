@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -18,14 +19,16 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.offload.store import ResultStore
 
 from agno.db.base import BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import ComponentRehydrationError
 from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.registry.registry import Registry
+from agno.registry.registry import Registry, _memory_manager_resource_name
 from agno.run.agent import RunOutput
 from agno.session import AgentSession, TeamSession, WorkflowSession
 from agno.tools.function import Function
@@ -41,9 +44,227 @@ from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.merge_dict import merge_dictionaries
 from agno.utils.string import generate_id_from_name
 
+# MemoryManager.__init__ (agno/memory/manager.py) auto-generates
+# ``memory_manager_<8 hex>`` when no id is passed. Such an id is minted fresh
+# every process, so a config carrying it can never resolve against a registry
+# in a new process; it must not be written as a registry reference.
+_AUTO_MEMORY_MANAGER_ID_RE = re.compile(r"memory_manager_[0-9a-f]{8}")
+
+
+def is_auto_generated_memory_manager_id(manager_id: Any) -> bool:
+    """True when the id has the shape MemoryManager auto-generates per instance."""
+    return isinstance(manager_id, str) and _AUTO_MEMORY_MANAGER_ID_RE.fullmatch(manager_id) is not None
+
+
+# Keys a serialized memory_manager reference can carry. to_dict writes
+# ``registry_id``; a config authored against the registry listing carries the
+# resource's ``id`` or ``name`` the way a knowledge reference does. A bare
+# string is the id itself.
+_MEMORY_MANAGER_REF_KEYS = ("registry_id", "id", "name")
+
+
+def _memory_manager_ref_keys(manager_ref: Any) -> List[str]:
+    """Every registry key a serialized memory_manager reference carries.
+
+    The registry listing emits both an id and a name for each manager, so a
+    config authored from it carries both. Either one may be the key that still
+    resolves in the process doing the load, so all of them are candidates.
+    """
+    if isinstance(manager_ref, str):
+        return [manager_ref] if manager_ref else []
+    if isinstance(manager_ref, dict):
+        keys: List[str] = []
+        for key in _MEMORY_MANAGER_REF_KEYS:
+            value = manager_ref.get(key)
+            if isinstance(value, str) and value and value not in keys:
+                keys.append(value)
+        return keys
+    return []
+
+
+def _competing_memory_manager_ids(registry: Registry, name: str) -> List[str]:
+    """Ids of the registered managers a single listing name matches."""
+    return [
+        str(getattr(manager, "id", None))
+        for manager in (registry.memory_managers or [])
+        if _memory_manager_resource_name(manager) == name
+    ]
+
+
+def resolve_memory_manager_reference(
+    config: Dict[str, Any],
+    registry: Optional[Registry],
+    strict: bool,
+    component_label: str,
+) -> None:
+    """Replace ``config["memory_manager"]`` with the live instance it references.
+
+    Agents and teams write and read the reference identically, so both call
+    this. A reference that cannot be resolved is dropped, or refused under
+    strict when dropping it would lose memory the component asked for.
+    """
+    manager_ref = config.get("memory_manager")
+    if manager_ref is None:
+        return
+
+    ref_keys = _memory_manager_ref_keys(manager_ref)
+    resolved_manager = None
+    ambiguous_key: Optional[str] = None
+    if registry is not None:
+        # Keys are tried in priority order, and each is resolved as an id
+        # before a name: within one key an id match beats a name match, but an
+        # earlier key always outranks a later one. Resolving every key as an id
+        # first would let the reference's name field outrank its own
+        # registry_id whenever some unrelated manager's id equals that name.
+        for key in ref_keys:
+            resolved_manager = registry.get_memory_manager(key)
+            if resolved_manager is not None:
+                break
+            if registry.memory_manager_name_is_ambiguous(key):
+                # A name two distinct managers share could bind the wrong one.
+                # A strict load leaves it unresolved so the remaining keys
+                # decide; a lenient load stays lenient and takes the first
+                # match, naming the managers that competed.
+                if strict:
+                    if ambiguous_key is None:
+                        ambiguous_key = key
+                    continue
+                competing = ", ".join(_competing_memory_manager_ids(registry, key))
+                log_warning(
+                    f"Memory manager name '{key}' matches more than one registered manager "
+                    f"({competing}); binding the first."
+                )
+            resolved_manager = registry.get_memory_manager_by_name(key)
+            if resolved_manager is not None:
+                break
+
+    if resolved_manager is not None:
+        config["memory_manager"] = resolved_manager
+        return
+
+    # A reference carrying nothing but an auto-generated id (written by configs
+    # saved before ids were filtered) can never resolve in a new process, so
+    # refusing on it would 422 the component forever. That escape is weighed
+    # before any refusal, including the ambiguous-name one.
+    #
+    # There is deliberately no escape for "the component rebuilds a default
+    # manager anyway": the serializer writes this reference ONLY for a manager
+    # with a stable, deliberately-assigned id, so what a default rebuild
+    # produces is a different manager - the agent's own model, no capture
+    # instructions - writing memories under rules nobody asked for, while the
+    # caller is told the load succeeded. A missing model, knowledge or tool
+    # reference refuses on this same path; so does this one.
+    only_auto_ids = bool(ref_keys) and all(is_auto_generated_memory_manager_id(key) for key in ref_keys)
+    tried = " or ".join(f"'{key}'" for key in ref_keys) if ref_keys else repr(manager_ref)
+    if strict and not only_auto_ids:
+        if ambiguous_key is not None:
+            raise ComponentRehydrationError(
+                f"{component_label} references memory manager '{ambiguous_key}', but two distinct "
+                "managers are registered under that name, so the reference could bind the "
+                "wrong manager. Give the managers distinct names."
+            )
+        raise ComponentRehydrationError(
+            f"{component_label} references memory manager {tried} which was not "
+            "found in the registry. Register the manager in the process serving the component, or "
+            "pass strict=False to load the component without it."
+        )
+    if ambiguous_key is not None:
+        log_warning(
+            f"Memory manager name '{ambiguous_key}' matches two distinct registered managers; "
+            "loading the component without it."
+        )
+    else:
+        log_warning(f"Memory manager {tried} not found in registry; loading the component without it.")
+    config.pop("memory_manager", None)
+
+
+def is_learning_reference(value: Any) -> bool:
+    """True for the shape to_dict writes for a registry-declared machine.
+
+    A reference is ``{"name": <non-empty str>}`` and nothing else. ``{}`` and
+    any dict carrying a store or knob key is an inline machine config, which
+    LearningMachine.from_dict rebuilds; that includes every config written
+    before machines had names.
+    """
+    if not isinstance(value, dict) or set(value) != {"name"}:
+        return False
+    name = value.get("name")
+    return isinstance(name, str) and bool(name)
+
+
+def resolve_learning_reference(
+    config: Dict[str, Any],
+    registry: Optional[Registry],
+    strict: bool,
+    component_label: str,
+) -> None:
+    """Replace a ``config["learning"]`` reference with the registered machine.
+
+    Agents and teams write and read the reference identically, so both call
+    this. An inline machine config is left for LearningMachine.from_dict. A
+    reference that cannot be resolved is dropped, or refused under strict:
+    the registry is what a stored component's learning resolves through, so
+    loading without it would silently run the component with no learning.
+    """
+    reference = config.get("learning")
+    if not isinstance(reference, dict) or not is_learning_reference(reference):
+        return
+    name = reference["name"]
+
+    if registry is not None:
+        if registry.learning_name_is_ambiguous(name):
+            # A name two distinct machines share could bind the wrong one. A
+            # strict load refuses; a lenient load stays lenient and takes the
+            # first registered, saying so.
+            if strict:
+                raise ComponentRehydrationError(
+                    f"{component_label} references learning machine '{name}', but two distinct "
+                    "machines are registered under that name, so the reference could bind the "
+                    "wrong machine. Give the machines distinct names."
+                )
+            log_warning(f"Learning machine name '{name}' matches more than one registered machine; binding the first.")
+        machine = registry.get_learning(name)
+        if machine is not None:
+            config["learning"] = machine
+            return
+
+    if strict:
+        raise ComponentRehydrationError(
+            f"{component_label} references learning machine '{name}' which was not found in the "
+            "registry. Register the machine in the process serving the component, or pass "
+            "strict=False to load the component without it."
+        )
+    log_warning(f"Learning machine '{name}' not found in registry; loading the component without it.")
+    config.pop("learning", None)
+
+
 # ---------------------------------------------------------------------------
 # Run output accessors
 # ---------------------------------------------------------------------------
+
+
+def _offload_to_config(value: Any) -> Union[bool, Dict[str, Any]]:
+    """The offload_tool_results setting as it is stored: True, False, or the ResultStore settings."""
+    from agno.offload.store import ResultStore
+
+    if value is True or value is False:
+        return value
+    if isinstance(value, ResultStore):
+        return value.to_dict()
+    raise TypeError(
+        "offload_tool_results must be True, False, None or a ResultStore; set the threshold with ResultStore(threshold_chars=...)."
+    )
+
+
+def _offload_from_config(value: Any) -> Optional[Union[bool, "ResultStore"]]:
+    """The offload_tool_results setting from a stored config: unset, True, False, or a ResultStore."""
+    if value is None:
+        return None
+    if isinstance(value, dict):
+        from agno.offload.store import ResultStore
+
+        return ResultStore.from_dict(value)
+    return bool(value)
 
 
 def get_run_output(
@@ -132,46 +353,65 @@ async def aget_last_run_output(agent: Agent, session_id: Optional[str] = None) -
 
 
 def read_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
+    """Get a Session from the database.
 
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    Read errors propagate. Do NOT coerce failures to None here: an empty result
+    is indistinguishable from "row does not exist", and the caller will happily
+    create a fresh session with the same id and overwrite the real row on the
+    next write. This is how a transient Postgres failover wiped six weeks of
+    conversation history in a real incident. Let the exception surface and
+    fail the run loudly -- a failed run is recoverable, a wiped session is not.
+    """
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 async def aread_session(
-    agent: Agent, session_id: str, session_type: SessionType = SessionType.AGENT, user_id: Optional[str] = None
+    agent: Agent,
+    session_id: str,
+    session_type: SessionType = SessionType.AGENT,
+    user_id: Optional[str] = None,
+    runs_limit: Optional[int] = None,
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Get a Session from the database."""
+    """Async twin of :func:`read_session`. Same rationale: do NOT swallow errors."""
     from agno.agent import _init
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        if _init.has_async_db(agent):
-            return await agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-        else:
-            return agent.db.get_session(session_id=session_id, session_type=session_type, user_id=user_id)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error getting session from db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    # Every adapter accepts runs_limit; those that don't optimize it load the full
+    # history (a safe superset), so we can pass it unconditionally.
+    if _init.has_async_db(agent):
+        return await agent.db.get_session(  # type: ignore
+            session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+        )
+    return agent.db.get_session(  # type: ignore
+        session_id=session_id, session_type=session_type, user_id=user_id, runs_limit=runs_limit
+    )
 
 
 def upsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert the session row.
+
+    Runs are persisted independently via ``upsert_run()`` — this writes only the
+    session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to upsert.
+    """
 
     try:
         if not agent.db:
@@ -188,7 +428,15 @@ def upsert_session(
 async def aupsert_session(
     agent: Agent, session: Union[AgentSession, TeamSession, WorkflowSession]
 ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
-    """Upsert a Session into the database."""
+    """Upsert the session row.
+
+    Runs are persisted independently via ``upsert_run()`` — this writes only the
+    session row.
+
+    Args:
+        agent: The Agent instance.
+        session: The session to upsert.
+    """
     from agno.agent import _init
 
     try:
@@ -204,6 +452,96 @@ async def aupsert_session(
         traceback.print_exc(limit=3)
         log_warning(f"Error upserting session into db: {str(e)}")
         return None
+
+
+def upsert_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Upsert a single run to the database (O(1) operation).
+
+    This is optimized for updating existing runs (e.g., status changes in HITL
+    or background mode) without re-upserting all runs in the session.
+
+    Silently no-ops on adapters that have not been ported to v3 storage —
+    those adapters persist runs inline via ``upsert_session``.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to upsert.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    try:
+        if not agent.db:
+            return
+        from agno.run.status_persist import persist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # a zombie attempt's write is refused instead of clobbering the row
+        if persist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
+            return
+        agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        # Adapter has not been ported to v3 storage; runs are persisted inline
+        # via upsert_session instead. Silent no-op.
+        log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        log_warning(f"Error upserting run into db: {str(e)}")
+
+
+async def aupsert_run(
+    agent: Agent,
+    run: RunOutput,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> None:
+    """Upsert a single run to the database (O(1) operation).
+
+    This is the async version of upsert_run(). Optimized for updating existing
+    runs (e.g., status changes in HITL or background mode) without re-upserting
+    all runs in the session.
+
+    Silently no-ops on adapters that have not been ported to v3 storage —
+    those adapters persist runs inline via ``upsert_session``.
+
+    Args:
+        agent: The Agent instance.
+        run: The run to upsert.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Optional run index for new runs.
+    """
+    from agno.agent import _init
+
+    try:
+        if not agent.db:
+            return
+        from agno.run.status_persist import apersist_worker_owned_run
+
+        # Queue-worker-owned runs save through the attempt-fenced primitive;
+        # a zombie attempt's write is refused instead of clobbering the row
+        if await apersist_worker_owned_run(agent.db, run, session_id=session_id, user_id=user_id):
+            return
+        if _init.has_async_db(agent):
+            await agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr,misc]
+        else:
+            agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
+    except NotImplementedError:
+        log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
+    except Exception as e:
+        import traceback
+
+        traceback.print_exc(limit=3)
+        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
@@ -298,12 +636,9 @@ def read_or_create_session(
     from uuid import uuid4
 
     # Returning cached session if we have one
-    if (
-        agent._cached_session is not None
-        and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
-    ):
-        return agent._cached_session
+    cached_session = agent._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     agent_session = None
@@ -330,22 +665,31 @@ def read_or_create_session(
             created_at=int(time()),
         )
         if agent.introduction is not None:
-            agent_session.upsert_run(
-                RunOutput(
-                    run_id=str(uuid4()),
-                    session_id=session_id,
-                    agent_id=agent.id,
-                    agent_name=agent.name,
-                    user_id=user_id,
-                    content=agent.introduction,
-                    messages=[
-                        Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
-                    ],
-                )
+            introduction_run = RunOutput(
+                run_id=str(uuid4()),
+                session_id=session_id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                user_id=user_id,
+                content=agent.introduction,
+                messages=[
+                    Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
+                ],
             )
+            agent_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+                from agno.agent._session import save_session
+                from agno.agent._storage import upsert_run
+
+                save_session(agent, session=agent_session)
+                upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
-        agent._cached_session = agent_session
+        agent._set_cached_session(agent_session)
 
     return agent_session
 
@@ -361,12 +705,9 @@ async def aread_or_create_session(
     from agno.agent import _init
 
     # Returning cached session if we have one
-    if (
-        agent._cached_session is not None
-        and agent._cached_session.session_id == session_id
-        and (user_id is None or agent._cached_session.user_id == user_id)
-    ):
-        return agent._cached_session
+    cached_session = agent._get_cached_session(session_id, user_id=user_id)
+    if cached_session is not None:
+        return cached_session
 
     # Try to load from database
     agent_session = None
@@ -395,22 +736,35 @@ async def aread_or_create_session(
             created_at=int(time()),
         )
         if agent.introduction is not None:
-            agent_session.upsert_run(
-                RunOutput(
-                    run_id=str(uuid4()),
-                    session_id=session_id,
-                    agent_id=agent.id,
-                    agent_name=agent.name,
-                    user_id=user_id,
-                    content=agent.introduction,
-                    messages=[
-                        Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
-                    ],
-                )
+            introduction_run = RunOutput(
+                run_id=str(uuid4()),
+                session_id=session_id,
+                agent_id=agent.id,
+                agent_name=agent.name,
+                user_id=user_id,
+                content=agent.introduction,
+                messages=[
+                    Message(role=agent.model.assistant_message_role, content=agent.introduction)  # type: ignore
+                ],
             )
+            agent_session.upsert_run(introduction_run)
+
+            # v3: session.runs is in-memory; persist the intro to the runs table
+            # so a session reload picks it up (pre-3.0's save_session wrote the
+            # entire runs blob, so this happened for free).
+            if agent.db is not None and agent.team_id is None and agent.workflow_id is None:
+                from agno.agent._session import asave_session, save_session
+                from agno.agent._storage import aupsert_run, upsert_run
+
+                if _init.has_async_db(agent):
+                    await asave_session(agent, session=agent_session)
+                    await aupsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
+                else:
+                    save_session(agent, session=agent_session)
+                    upsert_run(agent, run=introduction_run, session_id=session_id, user_id=user_id, run_index=0)
 
     if agent.cache_session:
-        agent._cached_session = agent_session
+        agent._set_cached_session(agent_session)
 
     return agent_session
 
@@ -513,22 +867,45 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["add_dependencies_to_context"] = agent.add_dependencies_to_context
 
     # --- Agentic Memory settings ---
-    # TODO: implement agentic memory serialization
-    # if agent.memory_manager is not None:
-    # config["memory_manager"] = agent.memory_manager.to_dict()
+    # Stored as a registry reference by id, like knowledge: the manager holds
+    # a model and callables, so the config names it and the registry supplies
+    # the live object on load. An auto-generated id is minted fresh every
+    # process, so it can never resolve in a new one: writing it would poison
+    # every future strict load. Only a stable, user-assigned id is referenced.
+    if agent.memory_manager is not None:
+        memory_manager_id = getattr(agent.memory_manager, "id", None)
+        if memory_manager_id and not is_auto_generated_memory_manager_id(memory_manager_id):
+            config["memory_manager"] = {"registry_id": memory_manager_id}
+        elif agent.enable_agentic_memory or agent.update_memory_on_run:
+            # The default manager initialize_agent builds; it rebuilds itself
+            # from these flags on load, so there is nothing to reference.
+            log_debug("Agent memory_manager has an auto-generated id; not saved, the default rebuilds on load.")
+        else:
+            log_warning(
+                "Agent memory_manager has no stable id, so it cannot be referenced across processes and will "
+                "not be saved. Give the manager an explicit id and register it in the registry to keep it."
+            )
     if agent.enable_agentic_memory:
         config["enable_agentic_memory"] = agent.enable_agentic_memory
-    if agent.enable_user_memories:
-        config["enable_user_memories"] = agent.enable_user_memories
+    if agent.update_memory_on_run:
+        config["update_memory_on_run"] = agent.update_memory_on_run
     if agent.add_memories_to_context is not None:
         config["add_memories_to_context"] = agent.add_memories_to_context
 
     # --- Learning settings ---
+    # A named machine is a registry resource: stored as a reference by name,
+    # like knowledge, and resolved from the registry on load. Its config is
+    # never inlined, so a stored component cannot carry learning the deployer
+    # did not declare. An unnamed machine belongs to this component and is
+    # inlined in full.
     if agent.learning is not None:
+        learning_name = getattr(agent.learning, "name", None)
         if agent.learning is True:
             config["learning"] = True
         elif agent.learning is False:
             config["learning"] = False
+        elif isinstance(learning_name, str) and learning_name:
+            config["learning"] = {"name": learning_name}
         elif hasattr(agent.learning, "to_dict"):
             config["learning"] = agent.learning.to_dict()
         else:
@@ -629,18 +1006,12 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["tool_choice"] = agent.tool_choice
 
     # --- Reasoning settings ---
-    if agent.reasoning:
-        config["reasoning"] = agent.reasoning
     if agent.reasoning_model is not None:
         if isinstance(agent.reasoning_model, Model):
             config["reasoning_model"] = agent.reasoning_model.to_dict()
         else:
             config["reasoning_model"] = str(agent.reasoning_model)
     # Skip reasoning_agent to avoid circular serialization
-    if agent.reasoning_min_steps != 1:
-        config["reasoning_min_steps"] = agent.reasoning_min_steps
-    if agent.reasoning_max_steps != 10:
-        config["reasoning_max_steps"] = agent.reasoning_max_steps
 
     # --- Default tools settings ---
     if agent.read_chat_history:
@@ -760,7 +1131,7 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
         config["store_events"] = agent.store_events
     # Skip events_to_skip as it contains RunEvent enums
 
-    # --- Role and culture settings ---
+    # --- Role settings ---
     if agent.role is not None:
         config["role"] = agent.role
     # --- Team and workflow settings ---
@@ -776,6 +1147,10 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # --- Context compression settings ---
     if agent.compress_tool_results:
         config["compress_tool_results"] = agent.compress_tool_results
+
+    # --- Result offloading settings ---
+    if agent.offload_tool_results is not None:
+        config["offload_tool_results"] = _offload_to_config(agent.offload_tool_results)
     # TODO: implement compression manager serialization
     # if agent.compression_manager is not None:
     #     config["compression_manager"] = agent.compression_manager.to_dict()
@@ -829,13 +1204,8 @@ def from_dict(
         config["model"] = resolve_model(config["model"], registry)
 
     # --- Handle reasoning_model reconstruction ---
-    # TODO: implement reasoning model deserialization
-    # if "reasoning_model" in config:
-    #     model_data = config["reasoning_model"]
-    #     if isinstance(model_data, dict) and "id" in model_data:
-    #         config["reasoning_model"] = get_model(f"{model_data['provider']}:{model_data['id']}")
-    #     elif isinstance(model_data, str):
-    #         config["reasoning_model"] = get_model(model_data)
+    if config.get("reasoning_model") is not None:
+        config["reasoning_model"] = resolve_model(config["reasoning_model"], registry)
 
     # --- Handle parser_model reconstruction ---
     # TODO: implement parser model deserialization
@@ -934,22 +1304,13 @@ def from_dict(
             del config["output_schema"]
 
     # --- Handle MemoryManager reconstruction ---
-    # TODO: implement memory manager deserialization
-    # if "memory_manager" in config and isinstance(config["memory_manager"], dict):
-    #     from agno.memory import MemoryManager
-    #     config["memory_manager"] = MemoryManager.from_dict(config["memory_manager"])
+    resolve_memory_manager_reference(config, registry, strict, component_label)
 
     # --- Handle SessionSummaryManager reconstruction ---
     # TODO: implement session summary manager deserialization
     # if "session_summary_manager" in config and isinstance(config["session_summary_manager"], dict):
     #     from agno.session import SessionSummaryManager
     #     config["session_summary_manager"] = SessionSummaryManager.from_dict(config["session_summary_manager"])
-
-    # --- Handle CultureManager reconstruction ---
-    # TODO: implement culture manager deserialization
-    # if "culture_manager" in config and isinstance(config["culture_manager"], dict):
-    #     from agno.culture import CultureManager
-    #     config["culture_manager"] = CultureManager.from_dict(config["culture_manager"])
 
     # --- Handle Knowledge reconstruction ---
     # Knowledge is stored as a reference by name and resolved from the registry,
@@ -982,10 +1343,17 @@ def from_dict(
     #     config["compression_manager"] = CompressionManager.from_dict(config["compression_manager"])
 
     # --- Handle Learning reconstruction ---
+    # A named machine is stored as a reference and resolved from the registry;
+    # any other dict is an inline machine config and is rebuilt here.
+    resolve_learning_reference(config, registry, strict, component_label)
     if "learning" in config and isinstance(config["learning"], dict):
         from agno.learn.machine import LearningMachine
 
-        config["learning"] = LearningMachine.from_dict(config["learning"])
+        # An inline machine belongs to this component: a name on it is dropped
+        # so the rebuilt machine keeps round-tripping inline instead of being
+        # re-saved as a reference to a machine no registry declares.
+        inline = {key: value for key, value in config["learning"].items() if key != "name"}
+        config["learning"] = LearningMachine.from_dict(inline)
 
     # Remove keys that aren't constructor parameters
     config.pop("team_id", None)
@@ -1005,11 +1373,9 @@ def from_dict(
         enable_agentic_state=config.get("enable_agentic_state", False),
         overwrite_db_session_state=config.get("overwrite_db_session_state", False),
         cache_session=config.get("cache_session", False),
-        search_past_sessions=config.get("search_past_sessions", config.get("search_session_history", False)),
-        num_past_sessions_to_search=config.get("num_past_sessions_to_search", config.get("num_history_sessions")),
-        num_past_session_runs_in_search=config.get(
-            "num_past_session_runs_in_search", config.get("num_past_session_runs")
-        ),
+        search_past_sessions=config.get("search_past_sessions", False),
+        num_past_sessions_to_search=config.get("num_past_sessions_to_search"),
+        num_past_session_runs_in_search=config.get("num_past_session_runs_in_search"),
         enable_session_summaries=config.get("enable_session_summaries", False),
         add_session_summary_to_context=config.get("add_session_summary_to_context"),
         # session_summary_manager=config.get("session_summary_manager"),  # TODO
@@ -1017,9 +1383,9 @@ def from_dict(
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
         # --- Agentic Memory settings ---
-        # memory_manager=config.get("memory_manager"),  # TODO
+        memory_manager=config.get("memory_manager"),
         enable_agentic_memory=config.get("enable_agentic_memory", False),
-        enable_user_memories=config.get("enable_user_memories", False),
+        update_memory_on_run=config.get("update_memory_on_run", False),
         add_memories_to_context=config.get("add_memories_to_context"),
         # --- Learning settings ---
         learning=config.get("learning"),
@@ -1042,10 +1408,7 @@ def from_dict(
         tool_call_limit=config.get("tool_call_limit"),
         tool_choice=config.get("tool_choice"),
         # --- Reasoning settings ---
-        reasoning=config.get("reasoning", False),
-        # reasoning_model=config.get("reasoning_model"),  # TODO
-        reasoning_min_steps=config.get("reasoning_min_steps", 1),
-        reasoning_max_steps=config.get("reasoning_max_steps", 10),
+        reasoning_model=config.get("reasoning_model"),
         # --- Default tools settings ---
         read_chat_history=config.get("read_chat_history", False),
         search_knowledge=config.get("search_knowledge", True),
@@ -1096,13 +1459,13 @@ def from_dict(
         stream_events=config.get("stream_events"),
         store_events=config.get("store_events", False),
         role=config.get("role"),
-        # --- Culture settings ---
-        # culture_manager=config.get("culture_manager"),  # TODO
         # --- Metadata ---
-        metadata=config.get("metadata"),
+        metadata=strip_reserved_run_metadata(config.get("metadata")),
         # --- Compression settings ---
         compress_tool_results=config.get("compress_tool_results", False),
         # compression_manager=config.get("compression_manager"),  # TODO
+        # --- Result offloading settings ---
+        offload_tool_results=_offload_from_config(config.get("offload_tool_results")),
         # --- Debug and telemetry settings ---
         debug_mode=config.get("debug_mode", False),
         debug_level=config.get("debug_level", 1),
@@ -1180,6 +1543,7 @@ def load(
     label: Optional[str] = None,
     version: Optional[int] = None,
     strict: bool = False,
+    published_only: bool = False,
 ) -> Optional[Agent]:
     """
     Load an agent by id.
@@ -1197,6 +1561,15 @@ def load(
     Returns:
         The agent loaded from the database or None if not found.
     """
+
+    if published_only and version is None and label is None:
+        # Dispatch semantics on demand: resolve strictly through the live
+        # pointer instead of the current-or-latest-draft read fallback.
+        component_row = db.get_component(component_id=id)
+        current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+        if current_version is None:
+            return None
+        version = current_version
 
     data = db.get_config(component_id=id, label=label, version=version)
     if data is None:
@@ -1224,6 +1597,7 @@ def delete(
     *,
     db: Optional[BaseDb] = None,
     hard_delete: bool = False,
+    require_no_dependents: bool = True,
 ) -> bool:
     """
     Delete the agent component.
@@ -1232,9 +1606,17 @@ def delete(
         agent: The Agent instance.
         db: The database to delete the component from.
         hard_delete: Whether to hard delete the component.
+        require_no_dependents: Refuse when another component pins this one.
+            The default protects a composition from losing a member it cannot
+            rebuild; pass False to delete anyway and leave those parents
+            pointing at nothing.
 
     Returns:
-        True if the component was deleted, False otherwise.
+        True if the component was deleted, False if there was nothing to delete.
+
+    Raises:
+        ComponentDependencyError: If another component pins this one and
+            require_no_dependents is True.
     """
     db_ = db or agent.db
     if not db_:
@@ -1244,4 +1626,6 @@ def delete(
     if agent.id is None:
         raise ValueError("Cannot delete agent without an id")
 
-    return db_.delete_component(component_id=agent.id, hard_delete=hard_delete)
+    return db_.delete_component(
+        component_id=agent.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+    )

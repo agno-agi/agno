@@ -48,6 +48,8 @@ class Content:
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
     external_id: Optional[str] = None
+    # Uploader of this content. ``None`` means shared with all users; persisted to ``KnowledgeRow.user_id``.
+    user_id: Optional[str] = None
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Content":
@@ -71,4 +73,5 @@ class Content:
             created_at=data.get("created_at"),
             updated_at=data.get("updated_at"),
             external_id=data.get("external_id"),
+            user_id=data.get("user_id"),
         )

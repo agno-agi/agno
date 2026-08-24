@@ -11,7 +11,7 @@ from agno.run.agent import RunContentEvent
 from agno.run.base import RunStatus
 from agno.run.cancel import cancel_run
 from agno.run.workflow import WorkflowCancelledEvent
-from agno.workflow import Step, Workflow
+from agno.workflow import HumanReview, Step, Workflow
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.parallel import Parallel
@@ -673,7 +673,7 @@ class TestCancellationDoesNotAffectOnErrorSkip:
             name="On Error Skip Test",
             db=shared_db,
             steps=[
-                Step(name="failing_step", executor=failing_executor, on_error="skip"),
+                Step(name="failing_step", executor=failing_executor, human_review=HumanReview(on_error="skip")),
                 Step(name="success_step", executor=success_executor),
             ],
             telemetry=False,
@@ -712,7 +712,7 @@ class TestCancellationDoesNotAffectOnErrorSkip:
             name="Async On Error Skip Test",
             db=shared_db,
             steps=[
-                Step(name="failing_step", executor=failing_executor, on_error="skip"),
+                Step(name="failing_step", executor=failing_executor, human_review=HumanReview(on_error="skip")),
                 Step(name="success_step", executor=success_executor),
             ],
             telemetry=False,
