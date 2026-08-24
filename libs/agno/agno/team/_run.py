@@ -7000,6 +7000,26 @@ def _prepare_direct_member_continuation(
     return run_messages, direct_content
 
 
+async def _aprepare_direct_member_continuation(
+    team: "Team",
+    run_response: TeamRunOutput,
+    session: TeamSession,
+    run_context: RunContext,
+    member_results: List[str],
+) -> Tuple[RunMessages, Any]:
+    """Async variant of :func:`_prepare_direct_member_continuation`."""
+    direct_content = run_response.content
+    run_messages = await _aget_continue_run_messages(
+        team,
+        input=run_response.messages or [],
+        session=session,
+        add_history_to_context=team.add_history_to_context,
+        run_context=run_context,
+    )
+    _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+    return run_messages, direct_content
+
+
 async def _ahandle_model_response_for_continue(
     team: "Team",
     run_response: TeamRunOutput,
@@ -9861,7 +9881,7 @@ async def _acontinue_run(
 
                 elif member_results and team.respond_directly:
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    run_messages, _ = _prepare_direct_member_continuation(
+                    run_messages, _ = await _aprepare_direct_member_continuation(
                         team,
                         run_response,
                         team_session,
@@ -10456,7 +10476,7 @@ async def _acontinue_run_stream(
 
                 elif member_results and team.respond_directly:
                     await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    run_messages, _ = _prepare_direct_member_continuation(
+                    run_messages, _ = await _aprepare_direct_member_continuation(
                         team,
                         run_response,
                         team_session,

@@ -1149,8 +1149,13 @@ class TestRespondDirectlyMemberContinuation:
             stack.enter_context(patch("agno.team._tools._check_and_refresh_mcp_tools", new=AsyncMock()))
             stack.enter_context(patch("agno.team._tools._aget_learning_tools", new=AsyncMock(return_value=[])))
             stack.enter_context(patch("agno.team._tools._determine_tools_for_model", return_value=[]))
-            stack.enter_context(patch("agno.team._run._get_continue_run_messages", return_value=MagicMock(messages=[])))
-            yield
+            async_message_builder = stack.enter_context(
+                patch(
+                    "agno.team._run._aget_continue_run_messages",
+                    new=AsyncMock(return_value=MagicMock(messages=[])),
+                )
+            )
+            yield async_message_builder
 
     def test_sync_respond_directly_returns_member_cancellation_without_leader(self):
         from agno.team._run import continue_run_dispatch
@@ -1336,16 +1341,18 @@ class TestRespondDirectlyMemberContinuation:
 
     @pytest.mark.parametrize("respond_directly", [True, False])
     def test_async_member_continuation_respects_response_mode(self, respond_directly):
+        from agno.media.storage.base import AsyncMediaStorage
         from agno.team._run import _acontinue_run
 
         team, session, run_response, requirement, member, member_run_output, _ = self._make_case(
             respond_directly=respond_directly
         )
+        team.media_storage = MagicMock(spec=AsyncMediaStorage)
         run_context = MagicMock()
 
         async def _exercise():
             with (
-                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                self._async_dispatch_patches(session, member, member_run_output, requirement) as async_message_builder,
                 patch("agno.team._run.handle_event"),
                 patch(
                     "agno.team._run._ahandle_model_response_for_continue",
@@ -1367,6 +1374,15 @@ class TestRespondDirectlyMemberContinuation:
             assert result is run_response
             assert result.status == RunStatus.completed
             member.acontinue_run.assert_awaited_once()
+            expected_attempts = 2 if respond_directly else 1
+            assert async_message_builder.await_count == expected_attempts
+            async_message_builder.assert_awaited_with(
+                team,
+                input=[],
+                session=session,
+                add_history_to_context=False,
+                run_context=run_context,
+            )
             if respond_directly:
                 assert result.content == self.cancellation
                 assert self.cancellation in str(result.tools[0].result)
@@ -1378,11 +1394,13 @@ class TestRespondDirectlyMemberContinuation:
         asyncio.run(_exercise())
 
     def test_async_stream_respond_directly_emits_team_terminal_without_leader(self):
+        from agno.media.storage.base import AsyncMediaStorage
         from agno.run.agent import RunOutput
         from agno.run.team import RunCompletedEvent, RunContentCompletedEvent, RunContinuedEvent
         from agno.team._run import _acontinue_run_stream
 
         team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.media_storage = MagicMock(spec=AsyncMediaStorage)
         run_context = MagicMock()
         member_final = RunOutput(
             run_id="member-run-1",
@@ -1404,7 +1422,7 @@ class TestRespondDirectlyMemberContinuation:
 
         async def _exercise():
             with (
-                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                self._async_dispatch_patches(session, member, member_run_output, requirement) as async_message_builder,
                 patch("agno.team._response._ahandle_model_response_stream", new=leader_stream),
                 patch("agno.team._response.aparse_response_with_parser_model_stream", new=_empty_stream),
                 patch(
@@ -1431,6 +1449,14 @@ class TestRespondDirectlyMemberContinuation:
             assert run_response.status == RunStatus.completed
             assert run_response.content == self.cancellation
             member.acontinue_run.assert_called_once()
+            assert async_message_builder.await_count == 2
+            async_message_builder.assert_awaited_with(
+                team,
+                input=[],
+                session=session,
+                add_history_to_context=False,
+                run_context=run_context,
+            )
             leader_stream.assert_not_called()
             assert cleanup.await_count == 2
 
