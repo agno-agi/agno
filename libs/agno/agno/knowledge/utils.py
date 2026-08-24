@@ -132,8 +132,6 @@ def get_read_time_availability(
         return [], {}
 
     try:
-        if not reader_class.get_read_time_requirements():
-            return supported, {}
         available = reader_class.get_available_content_types()
         unavailable = {
             content_type.value: reader_class.get_missing_read_time_packages(content_type)
@@ -243,6 +241,29 @@ def _log_skip_once(message: str) -> None:
     log_debug(message)
 
 
+def _first_backticked_token(text: str) -> Optional[str]:
+    """The first backticked token in an import failure, which is where agno puts the package.
+
+    Wording varies -- "`pypdf` not installed" against "The `bs4` package is not installed" --
+    but the package name is the first backticked token in both. This is a hint: the caller
+    always keeps the verbatim message alongside it.
+    """
+    match = re.search(r"`([A-Za-z0-9_.\-]+)`", text)
+    return match.group(1) if match else None
+
+
+def _missing_packages_for(reader_class: Type[Reader], reason: str) -> List[str]:
+    """What a reader needs, from its own declaration when it has one, else from the message."""
+    try:
+        declared = reader_class.get_missing_read_time_packages()
+    except Exception:
+        declared = []
+    if declared:
+        return declared
+    package = _first_backticked_token(reason)
+    return [package] if package else []
+
+
 def get_readers_availability(knowledge_instance: Optional[Any] = None) -> Tuple[List[Dict], List[Dict]]:
     """One sweep over every reader, answering both halves of the question.
 
@@ -265,13 +286,27 @@ def get_readers_availability(knowledge_instance: Optional[Any] = None) -> Tuple[
         custom_readers = knowledge_instance.get_readers()
         if isinstance(custom_readers, dict):
             for reader_id, reader in custom_readers.items():
+                # Reserved before the probe, not after it. This reader is the one the runtime
+                # resolves for this id, so a factory reader of the same name must not take its
+                # place in the advertisement when it turns out to be unusable -- that would
+                # promise a reader no upload will ever reach.
+                seen_ids.add(reader_id)
                 try:
-                    reader_info = get_reader_info_from_instance(reader, reader_id)
-                    readers_info.append(reader_info)
-                    seen_ids.add(reader_id)
-                except ValueError as e:
-                    _log_skip_once(f"Skipping custom reader '{reader_id}': {e}")
+                    readers_info.append(get_reader_info_from_instance(reader, reader_id))
                     continue
+                except ValueError as e:
+                    reason = str(e)
+                    _log_skip_once(f"Skipping custom reader '{reader_id}': {reason}")
+
+                unavailable_info.append(
+                    {
+                        "id": reader_id,
+                        "name": getattr(reader, "name", None) or reader.__class__.__name__,
+                        "description": getattr(reader, "description", None),
+                        "missing_packages": _missing_packages_for(reader.__class__, reason),
+                        "reason": reason,
+                    }
+                )
 
     # 2. Add factory readers (skip if custom reader with same ID already exists)
     for key in ReaderFactory.get_all_reader_keys():
@@ -318,17 +353,6 @@ def get_all_readers_info(knowledge_instance: Optional[Any] = None) -> List[Dict]
         List of reader info dictionaries (custom readers first, then factory readers).
     """
     return get_readers_availability(knowledge_instance)[0]
-
-
-def _first_backticked_token(text: str) -> Optional[str]:
-    """The first backticked token in an import failure, which is where agno puts the package.
-
-    Wording varies -- "`pypdf` not installed" against "The `bs4` package is not installed" --
-    but the package name is the first backticked token in both. This is a hint: the caller
-    always keeps the verbatim message alongside it.
-    """
-    match = re.search(r"`([A-Za-z0-9_.\-]+)`", text)
-    return match.group(1) if match else None
 
 
 def get_unavailable_readers_info() -> List[Dict]:

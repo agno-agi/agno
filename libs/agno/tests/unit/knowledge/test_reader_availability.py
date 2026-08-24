@@ -257,11 +257,11 @@ def test_every_hard_function_scoped_reader_import_is_declared():
 
 def test_docling_does_not_advertise_audio_it_cannot_transcribe():
     """docling loads its speech engine at read time, so the class import proves nothing."""
-    with _specs(absent=("whisper",)):
+    with _specs(absent=("whisper", "mlx_whisper", "whisper_s2t")):
         info = get_reader_info("docling")
 
     assert ContentType.AUDIO_MP3.value not in info["content_types"]
-    assert info["unavailable_content_types"][ContentType.AUDIO_MP3.value] == ["whisper"]
+    assert info["unavailable_content_types"][ContentType.AUDIO_MP3.value] == ["openai-whisper"]
     assert ContentType.IMAGE_PNG.value in info["content_types"]
 
 
@@ -358,3 +358,90 @@ def test_availability_is_answered_by_a_single_sweep():
 
     assert len(calls) == len(ReaderFactory.get_all_reader_keys())
     assert len(available) + len(unavailable) == len(calls)
+
+
+def _no_ffmpeg():
+    """PATH without ffmpeg, leaving every other lookup alone."""
+    import shutil as shutil_module
+
+    real_which = shutil_module.which
+    return patch(
+        "agno.knowledge.reader.docling_reader.shutil.which",
+        side_effect=lambda name, *a, **kw: None if name == "ffmpeg" else real_which(name, *a, **kw),
+    )
+
+
+def test_docling_media_needs_ffmpeg_not_just_a_speech_package():
+    """Docling fails outright without the binary, whatever Python packages are installed."""
+    with _no_ffmpeg(), _specs(present=("whisper",)):
+        info = get_reader_info("docling")
+
+    assert ContentType.AUDIO_WAV.value not in info["content_types"]
+    assert info["unavailable_content_types"][ContentType.AUDIO_WAV.value] == ["ffmpeg"]
+    # Only the media types go; docling still reads documents.
+    assert ContentType.PDF.value in info["content_types"]
+
+
+def test_docling_media_accepts_any_speech_backend():
+    """Docling picks its backend by hardware, so requiring one package would hide a working one."""
+    with _specs(absent=("whisper", "whisper_s2t"), present=("mlx_whisper",)):
+        info = get_reader_info("docling")
+
+    assert ContentType.AUDIO_WAV.value in info["content_types"]
+    assert info["unavailable_content_types"] == {}
+
+
+def test_docling_media_names_a_backend_that_works_everywhere():
+    with _specs(absent=("whisper", "mlx_whisper", "whisper_s2t")):
+        info = get_reader_info("docling")
+
+    assert ContentType.AUDIO_WAV.value not in info["content_types"]
+    assert info["unavailable_content_types"][ContentType.AUDIO_WAV.value] == ["openai-whisper"]
+
+
+def test_an_unusable_custom_reader_is_not_replaced_by_the_factory_one():
+    """The runtime resolves the custom reader for this id, so the config cannot offer another."""
+    from agno.knowledge.knowledge import Knowledge
+
+    class UnrunnableTextReader(Reader):
+        @classmethod
+        def get_supported_chunking_strategies(cls):
+            return []
+
+        @classmethod
+        def get_supported_content_types(cls):
+            return [ContentType.TXT]
+
+        @classmethod
+        def get_read_time_requirements(cls):
+            return {ContentType.TXT: ["definitely_not_installed_xyz"]}
+
+    knowledge = Knowledge(name="Override KB")
+    knowledge.readers = {"text": UnrunnableTextReader()}
+
+    available, unavailable = __import__(
+        "agno.knowledge.utils", fromlist=["get_readers_availability"]
+    ).get_readers_availability(knowledge)
+
+    assert "text" not in {info["id"] for info in available}
+    assert {entry["id"] for entry in unavailable} >= {"text"}
+    by_id = {entry["id"]: entry for entry in unavailable}
+    assert by_id["text"]["missing_packages"] == ["definitely_not_installed_xyz"]
+    # ...and the runtime really would have used it, which is why the factory must not stand in.
+    assert type(knowledge._get_reader("text")).__name__ == "UnrunnableTextReader"
+
+
+def test_a_working_custom_reader_still_owns_its_id():
+    """Guards the reservation against shadowing a custom reader that works."""
+    from agno.knowledge.knowledge import Knowledge
+    from agno.knowledge.reader.text_reader import TextReader
+    from agno.knowledge.utils import get_readers_availability
+
+    knowledge = Knowledge(name="Working override KB")
+    knowledge.readers = {"text": TextReader(name="My Text Reader")}
+
+    available, unavailable = get_readers_availability(knowledge)
+    by_id = {info["id"]: info for info in available}
+
+    assert by_id["text"]["name"] == "My Text Reader"
+    assert "text" not in {entry["id"] for entry in unavailable}

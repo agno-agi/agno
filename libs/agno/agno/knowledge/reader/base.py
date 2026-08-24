@@ -139,8 +139,8 @@ class Reader:
         A reader that declares no read-time requirements returns its supported types unchanged.
         """
         supported = cls.get_supported_content_types()
-        if not cls.get_read_time_requirements():
-            return supported
+        # Asks get_missing_read_time_packages rather than reading the declaration directly: a
+        # reader whose requirement is not a package list overrides that method instead.
         return [content_type for content_type in supported if not cls.get_missing_read_time_packages(content_type)]
 
     def chunk_document(self, document: Document) -> List[Document]:
