@@ -1,7 +1,7 @@
 """Integration tests for the Metrics related methods of the AsyncPostgresDb class"""
 
 import time
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -152,8 +152,11 @@ async def test_get_metrics_with_date_filter(async_postgres_db_real: AsyncPostgre
     # Calculate metrics
     await async_postgres_db_real.calculate_metrics()
 
-    # Get metrics for yesterday
-    yesterday = date.fromordinal(date.today().toordinal() - 1)
+    # Get metrics for yesterday. The session above is placed 24 hours back and
+    # the metrics are bucketed by UTC date, so the day asked for has to be a UTC
+    # day too: date.today() is the local date and names the wrong day whenever
+    # the machine is not on UTC.
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
     metrics, latest_updated_at = await async_postgres_db_real.get_metrics(
         starting_date=yesterday, ending_date=yesterday
     )
