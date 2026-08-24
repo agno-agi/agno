@@ -43,6 +43,18 @@ INTERNAL_SERVICE_SCOPES: List[str] = [
 ]
 
 
+def _secret_matches(provided: str, expected: str) -> bool:
+    """Compare a bearer token against a configured secret in constant time.
+
+    A plain ``==`` short-circuits on the first differing byte, which lets a caller
+    recover the security key one character at a time from response timing. The values
+    are encoded first because ``hmac.compare_digest`` rejects non-ASCII ``str``
+    input: header values are latin-1 decoded by the ASGI server and the key comes from
+    the environment, so either side can carry non-ASCII characters.
+    """
+    return hmac.compare_digest(provided.encode("utf-8", "surrogateescape"), expected.encode("utf-8", "surrogateescape"))
+
+
 def get_auth_token_from_request(request: Request) -> Optional[str]:
     """
     Extract the JWT/Bearer token from the Authorization header.
@@ -253,7 +265,7 @@ def get_authentication_dependency(settings: AgnoAPISettings):
             return True
 
         # Verify the token against security key
-        if token != settings.os_security_key:
+        if not _secret_matches(token, settings.os_security_key):
             raise HTTPException(status_code=401, detail="Invalid authentication token")
 
         # A valid security key is a trusted, unscoped root. Mark it authenticated like the
@@ -293,7 +305,7 @@ def validate_websocket_token(token: str, settings: AgnoAPISettings) -> bool:
         return True
 
     # Verify the token matches the configured security key
-    return token == settings.os_security_key
+    return _secret_matches(token, settings.os_security_key)
 
 
 async def verify_websocket_service_account(
