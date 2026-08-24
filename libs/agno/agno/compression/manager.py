@@ -1,6 +1,6 @@
 """Unified compaction manager for tool results and conversation history."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Type, Union
 
 from pydantic import BaseModel
@@ -73,8 +73,6 @@ class CompactionManager:
     compact_context_keep_recent: int = 10
     compact_context_preserve_user_budget: Optional[int] = None
     compact_context_instructions: Optional[str] = None
-
-    stats: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         # Handle deprecated compress_tool_results -> compact_tools
@@ -177,31 +175,29 @@ class CompactionManager:
         self,
         messages: List[Message],
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> None:
-        """Compress uncompressed tool results."""
-        stats = compact_tools(
+    ) -> Dict[str, Any]:
+        """Compress uncompressed tool results. Returns stats for this call."""
+        return compact_tools(
             messages=messages,
             model=self.model,
             compact_tools_enabled=self.compact_tools,
             instructions=self.compact_tools_instructions,
             run_metrics=run_metrics,
         )
-        self._merge_stats(stats)
 
     async def acompact_tool_results(
         self,
         messages: List[Message],
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> None:
-        """Async compress uncompressed tool results."""
-        stats = await acompact_tools(
+    ) -> Dict[str, Any]:
+        """Async compress uncompressed tool results. Returns stats for this call."""
+        return await acompact_tools(
             messages=messages,
             model=self.model,
             compact_tools_enabled=self.compact_tools,
             instructions=self.compact_tools_instructions,
             run_metrics=run_metrics,
         )
-        self._merge_stats(stats)
 
     # --- Context compaction (delegates to _context.py) ---
 
@@ -277,12 +273,17 @@ class CompactionManager:
             run_metrics=run_metrics,
         )
 
-    # --- Stats ---
+    # --- Stats (deprecated - now returned per-call for async safety) ---
 
-    def _merge_stats(self, stats: Dict[str, Any]) -> None:
-        """Merge stats from tool compaction."""
-        for key, value in stats.items():
-            self.stats[key] = self.stats.get(key, 0) + value
+    @property
+    def stats(self) -> Dict[str, Any]:
+        """Deprecated: stats are now returned per-call from compact_tool_results().
+
+        Returns empty dict for backward compatibility with print_response code
+        that reads this property. In async environments, use the stats returned
+        from each compact_tool_results() call instead.
+        """
+        return {}
 
     # --- Deprecated method aliases (backward compat) ---
 
@@ -310,17 +311,17 @@ class CompactionManager:
         self,
         messages: List[Message],
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> None:
+    ) -> Dict[str, Any]:
         """Deprecated: use compact_tool_results()."""
-        self.compact_tool_results(messages, run_metrics)
+        return self.compact_tool_results(messages, run_metrics)
 
     async def acompress(
         self,
         messages: List[Message],
         run_metrics: Optional["RunMetrics"] = None,
-    ) -> None:
+    ) -> Dict[str, Any]:
         """Deprecated: use acompact_tool_results()."""
-        await self.acompact_tool_results(messages, run_metrics)
+        return await self.acompact_tool_results(messages, run_metrics)
 
 
 # Backward compatibility alias

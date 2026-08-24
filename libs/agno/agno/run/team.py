@@ -793,6 +793,8 @@ class TeamRunOutput:
 
     # Point-in-time compaction state for continue_run time travel
     compaction_state: Optional["CompactionState"] = None
+    # Per-run compression stats (async-safe, not shared across runs)
+    compression_stats: Optional[Dict[str, Any]] = None
 
     created_at: int = field(default_factory=lambda: int(time()))
 

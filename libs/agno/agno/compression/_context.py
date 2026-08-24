@@ -120,6 +120,7 @@ class CompactionResult:
 
     compacted_messages: List[Message]
     summary: Optional[str] = None
+    stats: Dict[str, Any] = field(default_factory=dict)
 
 
 # --- Pure functions ---
