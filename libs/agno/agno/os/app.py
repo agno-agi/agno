@@ -2027,10 +2027,6 @@ class AgentOS:
 
     def _auto_discover_knowledge_instances(self) -> None:
         """Auto-discover the knowledge instances used by all contextual agents, teams and workflows."""
-        # This runs on every construction, get_app() and resync(); the set keeps the warning
-        # below to one line per knowledge object rather than one per pass.
-        if not hasattr(self, "_knowledge_without_contents_db_warned"):
-            self._knowledge_without_contents_db_warned: set[int] = set()
         seen_instances: set[int] = set()  # Track by object identity
         knowledge_instances: List[Union[Knowledge, RemoteKnowledge]] = []
 
@@ -2039,15 +2035,6 @@ class AgentOS:
             # Only handle Knowledge and RemoteKnowledge instances that have contents_db
             contents_db = getattr(knowledge, "contents_db", None)
             if not contents_db:
-                # Dropping this silently is what leaves an operator staring at knowledge routes
-                # that report nothing configured while their Knowledge object sits right there.
-                if id(knowledge) not in self._knowledge_without_contents_db_warned:
-                    self._knowledge_without_contents_db_warned.add(id(knowledge))
-                    name = getattr(knowledge, "name", None) or knowledge.__class__.__name__
-                    log_warning(
-                        f"Knowledge '{name}' has no contents_db, so it is not served over /knowledge. "
-                        "Pass Knowledge(..., contents_db=<db>) to expose it."
-                    )
                 return
             # Deduplicate by object identity to allow multiple knowledge instances with the same contents_db
             if id(knowledge) in seen_instances:

@@ -8,7 +8,6 @@ rather than from whether the router was built.
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
@@ -59,17 +58,16 @@ def test_knowledge_routes_stay_mounted_without_a_knowledge_base():
     assert "/knowledge/content" in paths
 
 
-def test_a_knowledge_base_without_a_contents_db_is_reported(caplog: pytest.LogCaptureFixture):
-    """It is dropped from the routes either way; being told is the difference."""
+def test_a_knowledge_base_without_a_contents_db_is_not_served():
+    """It is a working knowledge base for agent search, just not one the routes can serve."""
     agent = Agent(name="KB Agent", id="kb-agent", knowledge=Knowledge(name="No DB KB"), telemetry=False)
+    client = TestClient(AgentOS(agents=[agent], telemetry=False).get_app())
 
-    with caplog.at_level("WARNING"):
-        client = TestClient(AgentOS(agents=[agent], telemetry=False).get_app())
+    response = client.get("/knowledge/config")
 
-    assert "contents_db" in caplog.text
-    # get_app() runs discovery again, so the line is said once per knowledge object, not per pass.
-    assert caplog.text.count("No DB KB") == 1
-    assert client.get("/knowledge/config").status_code == 503
+    assert response.status_code == 503
+    # The one place it is worth saying so is the request that went looking for it.
+    assert "contents_db" in response.json()["detail"]
 
 
 def test_single_knowledge_base_still_resolves_without_an_identifier(tmp_path: Path):
