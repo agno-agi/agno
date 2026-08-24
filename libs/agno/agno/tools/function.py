@@ -626,6 +626,330 @@ def get_entrypoint_docstring(entrypoint: Callable) -> str:
     return "\n".join(lines)
 
 
+# ---------------------------------------------------------------------------
+# Introspection caches
+# ---------------------------------------------------------------------------
+# Every run hands the model a fresh per-run Function for each registered tool,
+# and deriving one from a callable -- inspect.signature, get_type_hints,
+# docstring parsing, JSON-schema construction, pydantic validate_call -- costs
+# two orders of magnitude more than the rest of the run's bookkeeping. The
+# derivation is a pure function of the callable and the schema knobs, so it is
+# computed once here and each run receives a cheap copy that owns the two
+# structures later code writes into (parameters, user_input_schema).
+#
+# Keys hold the callable by IDENTITY, never by equality: two callables that
+# compare equal (bound methods of equal objects, instances with a custom
+# __eq__) may still dispatch to different objects, and a wrapped entrypoint
+# must call the exact object it was built from. The caches are bounded so
+# entries for short-lived callables (per-run closures over run state) are
+# evicted rather than accumulated; changing a live callable's introspectable
+# surface (its __doc__ or annotations) in place is not picked up -- register a
+# new callable object instead.
+
+
+def _copy_jsonish(value: Any) -> Any:
+    if isinstance(value, dict):
+        return {key: _copy_jsonish(val) for key, val in value.items()}
+    if isinstance(value, list):
+        return [_copy_jsonish(val) for val in value]
+    if isinstance(value, (str, int, float, bool)) or value is None:
+        return value
+    from copy import deepcopy
+
+    return deepcopy(value)
+
+
+def _copy_schema(parameters: Dict[str, Any]) -> Dict[str, Any]:
+    """A deep copy specialized for JSON-schema-shaped data.
+
+    Parameters schemas are dicts, lists and scalars almost without exception;
+    walking them directly skips deepcopy's per-object memo bookkeeping. Any
+    other value falls back to deepcopy, and a self-referential schema (which
+    deepcopy tolerates, though no model provider can serialize one) falls
+    back whole.
+    """
+    try:
+        return _copy_jsonish(parameters)
+    except RecursionError:
+        from copy import deepcopy
+
+        return deepcopy(parameters)
+
+
+class _CallableIdentity:
+    """A cache key that stands for one callable object, by identity."""
+
+    __slots__ = ("obj",)
+
+    def __init__(self, obj: Callable):
+        self.obj = obj
+
+    def __hash__(self) -> int:
+        return object.__hash__(self.obj)
+
+    def __eq__(self, other: Any) -> bool:
+        return isinstance(other, _CallableIdentity) and self.obj is other.obj
+
+
+@dataclass(frozen=True)
+class _EntrypointSchema:
+    """What ``process_entrypoint`` derives from an entrypoint by introspection.
+
+    Pure with respect to (entrypoint, strict, requires_user_input,
+    user_input_fields): one derivation serves every run. Values that later
+    code writes into (the parameters schema, ``UserInputField`` objects) are
+    copied at application time, never handed out by reference.
+    """
+
+    # Final derived schema, required list included. On a failed derivation
+    # this is the default empty schema, which is what the pre-cache code
+    # assigned after its except block.
+    parameters: Dict[str, Any]
+    # Names kept out of the model-facing schema, user_input_fields included.
+    excluded_params: frozenset
+    # Signature names without a default, in order, minus self and excluded
+    # names. The required-list rebuild for a user-authored schema filters
+    # these against that schema's own properties at application time.
+    user_required_candidates: Tuple[str, ...]
+    # (name, description, field_type) per user-input field. Fresh
+    # UserInputField objects are built from these on every application
+    # because the model layer writes the user's answers into them in place.
+    # None when the derivation failed before reaching the build, so a partial
+    # failure leaves the same fields untouched as an uncached run did.
+    user_input_schema: Optional[Tuple[Tuple[str, Optional[str], Any], ...]]
+    # Whether the derivation got past the schema build; the user-authored
+    # parameters rebuild and the description only apply when it did.
+    user_params_reached: bool
+    description: Optional[str]
+    description_computed: bool
+    # Bare-media-typed parameter names, re-warned per Function name.
+    hidden_media_params: Tuple[str, ...]
+    error: Optional[str]
+
+
+def _derive_entrypoint_schema(
+    entrypoint: Callable,
+    strict: bool,
+    requires_user_input: bool,
+    user_input_fields: Optional[Tuple[str, ...]],
+) -> _EntrypointSchema:
+    from inspect import getdoc, signature
+
+    from agno.utils.json_schema import get_json_schema
+
+    parameters: Dict[str, Any] = {"type": "object", "properties": {}, "required": []}
+    excluded_params: List[str] = []
+    user_required_candidates: Tuple[str, ...] = ()
+    user_input_schema: Optional[Tuple[Tuple[str, Optional[str], Any], ...]] = None
+    user_params_reached = False
+    description: Optional[str] = None
+    description_computed = False
+    hidden_media_params: List[str] = []
+    error: Optional[str] = None
+
+    try:
+        sig = signature(entrypoint)
+        type_hints = get_type_hints(entrypoint)
+
+        # If function has an the agent argument, remove the agent parameter from the type hints
+        if "agent" in sig.parameters and "agent" in type_hints:
+            del type_hints["agent"]
+        if "team" in sig.parameters and "team" in type_hints:
+            del type_hints["team"]
+        if "run_context" in sig.parameters and "run_context" in type_hints:
+            del type_hints["run_context"]
+        if "images" in sig.parameters and "images" in type_hints:
+            del type_hints["images"]
+        if "videos" in sig.parameters and "videos" in type_hints:
+            del type_hints["videos"]
+        if "audios" in sig.parameters and "audios" in type_hints:
+            del type_hints["audios"]
+        if "files" in sig.parameters and "files" in type_hints:
+            del type_hints["files"]
+
+        # Filter out return type and only process parameters
+        excluded_params = ["return", "self", *FRAMEWORK_INJECTED_PARAMS]
+        excluded_params.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
+
+        # Also exclude parameters whose types are framework-injected,
+        # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
+        try:
+            for param_name, hint in list(type_hints.items()):
+                # get_type_hints includes the return annotation under
+                # "return"; it is not an injectable parameter.
+                if param_name == "return":
+                    continue
+                if _is_schema_excluded(hint):
+                    del type_hints[param_name]
+                    excluded_params.append(param_name)
+                    if _is_bare_media_typed(hint):
+                        hidden_media_params.append(param_name)
+        except Exception:
+            pass
+
+        # Snapshot excluded_params before user_input_fields are added,
+        # so we can use it to filter user_input_schema later.
+        if requires_user_input:
+            _excluded_framework_params = list(excluded_params)
+
+        if requires_user_input and user_input_fields:
+            excluded_params.extend(user_input_fields)
+
+        # Get filtered list of parameter types
+        param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name not in excluded_params}
+
+        # Parse docstring for parameters
+        param_descriptions: Dict[str, Any] = {}
+        param_descriptions_clean: Dict[str, str] = {}
+        if docstring := getdoc(entrypoint):
+            parsed_doc = parse(docstring)
+            param_docs = parsed_doc.params
+
+            if param_docs is not None:
+                for param in param_docs:
+                    param_name = param.arg_name
+                    param_type = param.type_name
+
+                    if param_type:
+                        param_descriptions[param_name] = f"({param_type}) {param.description or ''}"
+                    else:
+                        param_descriptions[param_name] = param.description or ""
+                    param_descriptions_clean[param_name] = param.description or ""
+
+        # If the function requires user input, capture all parameters except
+        # framework-injected ones (using the snapshot taken before
+        # user_input_fields were added, since those stay in the schema).
+        if requires_user_input:
+            user_input_schema = tuple(
+                (name, param_descriptions_clean.get(name), type_hints.get(name, str))
+                for name in sig.parameters
+                if name not in _excluded_framework_params
+            )
+
+        # Get JSON schema for parameters only
+        parameters = get_json_schema(type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict)
+
+        # If strict=True mark all fields as required
+        # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
+        if strict:
+            parameters["required"] = [name for name in parameters["properties"] if name not in excluded_params]
+        else:
+            # Mark a field as required if it has no default value
+            parameters["required"] = [
+                name
+                for name, param in sig.parameters.items()
+                if param.default == param.empty and name != "self" and name not in excluded_params
+            ]
+
+        # A param whose type has no JSON schema (e.g. `fc: FunctionCall`) is skipped by
+        # get_json_schema, so requiring it would describe a property that does not exist.
+        parameters["required"] = [name for name in parameters["required"] if name in parameters["properties"]]
+
+        user_params_reached = True
+        user_required_candidates = tuple(
+            name
+            for name, param in sig.parameters.items()
+            if param.default == param.empty and name != "self" and name not in excluded_params
+        )
+
+        description = get_entrypoint_docstring(entrypoint)
+        description_computed = True
+    except Exception as e:
+        error = str(e)
+
+    return _EntrypointSchema(
+        parameters=parameters,
+        excluded_params=frozenset(excluded_params),
+        user_required_candidates=user_required_candidates,
+        user_input_schema=user_input_schema,
+        user_params_reached=user_params_reached,
+        description=description,
+        description_computed=description_computed,
+        hidden_media_params=tuple(hidden_media_params),
+        error=error,
+    )
+
+
+@lru_cache(maxsize=512)
+def _cached_entrypoint_schema(
+    key: _CallableIdentity,
+    strict: bool,
+    requires_user_input: bool,
+    user_input_fields: Optional[Tuple[str, ...]],
+) -> _EntrypointSchema:
+    return _derive_entrypoint_schema(key.obj, strict, requires_user_input, user_input_fields)
+
+
+@lru_cache(maxsize=512)
+def _cached_wrapped_entrypoint(key: _CallableIdentity) -> Callable:
+    return Function._wrap_callable_uncached(key.obj)
+
+
+@lru_cache(maxsize=512)
+def _cached_framework_params(key: _CallableIdentity) -> frozenset:
+    return frozenset(_compute_framework_params(key.obj))
+
+
+@lru_cache(maxsize=512)
+def _cached_from_callable_template(cls: type, key: _CallableIdentity, name: Optional[str], strict: bool) -> "Function":
+    return cls._build_from_callable(key.obj, name=name, strict=strict)  # type: ignore[attr-defined]
+
+
+@lru_cache(maxsize=512)
+def _cached_entrypoint_accepts_media(key: _CallableIdentity) -> bool:
+    from inspect import signature
+
+    parameters = signature(key.obj).parameters
+    return any(name in parameters for name in MEDIA_INJECTED_PARAMS)
+
+
+def entrypoint_accepts_media(entrypoint: Callable) -> bool:
+    """Whether the entrypoint declares a reserved media parameter
+    (images/videos/audios/files), so the run's media must be collected for it."""
+    return _cached_entrypoint_accepts_media(_CallableIdentity(entrypoint))
+
+
+def _compute_framework_params(entrypoint: Callable) -> Set[str]:
+    """Names in the entrypoint signature that the framework supplies, not the model.
+
+    Covers both rules process_entrypoint uses to hide a parameter from the
+    schema: the reserved names, and the framework-typed annotations of issue #6344.
+    """
+    from inspect import signature
+
+    try:
+        sig = signature(entrypoint)
+    except Exception:
+        return set()
+
+    reserved = {"return", "self", *FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS}
+    found = {name for name in sig.parameters if name in reserved}
+    try:
+        hints = get_type_hints(entrypoint)
+    except Exception:
+        return found
+    for param_name, hint in hints.items():
+        if param_name not in sig.parameters:
+            continue
+        # Per parameter, not per signature. One annotation this walk cannot
+        # read used to abort the loop, so a recursive alias sitting BEFORE
+        # `ctx: RunContext` left ctx unclassified and model-facing -- the
+        # parameter's own protection undone by an unrelated neighbour.
+        try:
+            # Identity only, not _is_schema_excluded. A bare media parameter is
+            # hidden from the schema, but dropping a value supplied for it
+            # displaces nothing: media is injected by reserved name alone, so the
+            # caller's own media never lands there under any behaviour. Dropping
+            # would only make the parameter unfillable by anything, which v2.8.7
+            # did not do.
+            owned = _is_framework_typed(hint)
+        except Exception:
+            owned = True  # Cannot classify it, so do not hand it to the model.
+        if owned:
+            found.add(param_name)
+    return found
+
+
 @dataclass
 class UserInputField:
     name: str
@@ -972,8 +1296,47 @@ class Function(BaseModel):
             # For shallow copy, use the default Pydantic behavior
             return super().model_copy(deep=False)
 
+    def _per_run_copy(self) -> "Function":
+        """The per-run Function handed to one run's model.
+
+        Same isolation contract as ``model_copy(deep=True)``, built for the
+        per-run hot path: the copy owns the two structures later code writes
+        into -- ``parameters`` (rebuilt in place for a user-authored schema)
+        and ``user_input_schema`` (the model layer writes the user's answers
+        into its fields) -- shares everything else by reference, and starts
+        with no per-run state, so nothing one run writes can reach another
+        run's copy.
+        """
+        copied = self.model_copy(deep=False)
+        copied.parameters = _copy_schema(self.parameters)
+        if self.user_input_schema is not None:
+            from copy import deepcopy
+
+            copied.user_input_schema = deepcopy(self.user_input_schema)
+        copied._agent = None
+        copied._team = None
+        copied._run_context = None
+        copied._images = None
+        copied._videos = None
+        copied._audios = None
+        copied._files = None
+        copied._framework_params = set(self._framework_params) if self._framework_params is not None else None
+        return copied
+
     @classmethod
     def from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
+        """A Function derived from a plain callable.
+
+        The derivation is cached per (class, callable identity, name, strict);
+        every call returns an isolated copy of the cached template, so callers
+        can mutate the result freely and nothing a run writes into one copy
+        can reach another run's.
+        """
+        template = _cached_from_callable_template(cls, _CallableIdentity(c), name, strict)
+        return template._per_run_copy()
+
+    @classmethod
+    def _build_from_callable(cls, c: Callable, name: Optional[str] = None, strict: bool = False) -> "Function":
         from inspect import getdoc, signature
 
         from agno.utils.json_schema import get_json_schema
@@ -1102,49 +1465,14 @@ class Function(BaseModel):
         Read by FunctionCall._drop_injected_overrides to reject model-supplied values for
         them. Covers both rules process_entrypoint uses to hide a parameter from the
         schema: the reserved names, and the framework-typed annotations of issue #6344.
+        Resolved once per entrypoint object; the returned set is the caller's own.
         """
-        from inspect import signature
-
         if self.entrypoint is None:
             return set()
-        try:
-            sig = signature(self.entrypoint)
-        except Exception:
-            return set()
-
-        reserved = {"return", "self", *FRAMEWORK_INJECTED_PARAMS, *AGNO_INJECTED_PARAMS}
-        found = {name for name in sig.parameters if name in reserved}
-        try:
-            hints = get_type_hints(self.entrypoint)
-        except Exception:
-            return found
-        for param_name, hint in hints.items():
-            if param_name not in sig.parameters:
-                continue
-            # Per parameter, not per signature. One annotation this walk cannot
-            # read used to abort the loop, so a recursive alias sitting BEFORE
-            # `ctx: RunContext` left ctx unclassified and model-facing -- the
-            # parameter's own protection undone by an unrelated neighbour.
-            try:
-                # Identity only, not _is_schema_excluded. A bare media parameter is
-                # hidden from the schema, but dropping a value supplied for it
-                # displaces nothing: media is injected by reserved name alone, so the
-                # caller's own media never lands there under any behaviour. Dropping
-                # would only make the parameter unfillable by anything, which v2.8.7
-                # did not do.
-                owned = _is_framework_typed(hint)
-            except Exception:
-                owned = True  # Cannot classify it, so do not hand it to the model.
-            if owned:
-                found.add(param_name)
-        return found
+        return set(_cached_framework_params(_CallableIdentity(self.entrypoint)))
 
     def process_entrypoint(self, strict: bool = False):
         """Process the entrypoint and make it ready for use by an agent."""
-        from inspect import getdoc, signature
-
-        from agno.utils.json_schema import get_json_schema
-
         # Record which parameters the framework owns before the early returns below:
         # Toolkit rebuilds each @tool method as a skip_entrypoint_processing Function, and
         # registry rehydration does the same, so this has to run on those paths too.
@@ -1158,151 +1486,65 @@ class Function(BaseModel):
         if self.entrypoint is None:
             return
 
-        parameters = {"type": "object", "properties": {}, "required": []}
-
         params_set_by_user = False
         # If the user set the parameters (i.e. they are different from the default), we should keep them
-        if self.parameters != parameters:
+        if self.parameters != {"type": "object", "properties": {}, "required": []}:
             params_set_by_user = True
 
         if self.requires_user_input:
             self.user_input_schema = self.user_input_schema or []
 
+        # The introspection is derived once per (entrypoint, strict,
+        # requires_user_input, user_input_fields) and applied to this
+        # Function; only the pieces that depend on this instance's own state
+        # (a user-authored schema, the description, fresh UserInputFields)
+        # are (re)built here.
+        derived = _cached_entrypoint_schema(
+            _CallableIdentity(self.entrypoint),
+            strict,
+            bool(self.requires_user_input),
+            tuple(self.user_input_fields) if self.user_input_fields else None,
+        )
+
+        for param_name in derived.hidden_media_params:
+            _warn_hidden_media(self.name, param_name)
+
         try:
-            sig = signature(self.entrypoint)
-            type_hints = get_type_hints(self.entrypoint)
-
-            # If function has an the agent argument, remove the agent parameter from the type hints
-            if "agent" in sig.parameters and "agent" in type_hints:
-                del type_hints["agent"]
-            if "team" in sig.parameters and "team" in type_hints:
-                del type_hints["team"]
-            if "run_context" in sig.parameters and "run_context" in type_hints:
-                del type_hints["run_context"]
-            if "images" in sig.parameters and "images" in type_hints:
-                del type_hints["images"]
-            if "videos" in sig.parameters and "videos" in type_hints:
-                del type_hints["videos"]
-            if "audios" in sig.parameters and "audios" in type_hints:
-                del type_hints["audios"]
-            if "files" in sig.parameters and "files" in type_hints:
-                del type_hints["files"]
-
-            # Filter out return type and only process parameters
-            excluded_params = ["return", "self", *FRAMEWORK_INJECTED_PARAMS]
-            excluded_params.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
-
-            # Also exclude parameters whose types are framework-injected,
-            # even if the parameter name differs (e.g. my_agent: Agent). See issue #6344.
-            try:
-                for param_name, hint in list(type_hints.items()):
-                    # get_type_hints includes the return annotation under
-                    # "return"; it is not an injectable parameter.
-                    if param_name == "return":
-                        continue
-                    if _is_schema_excluded(hint):
-                        del type_hints[param_name]
-                        excluded_params.append(param_name)
-                        if _is_bare_media_typed(hint):
-                            _warn_hidden_media(self.name, param_name)
-            except Exception:
-                pass
-
-            # Snapshot excluded_params before user_input_fields are added,
-            # so we can use it to filter user_input_schema later.
-            if self.requires_user_input:
-                _excluded_framework_params = list(excluded_params)
-
-            if self.requires_user_input and self.user_input_fields:
-                if len(self.user_input_fields) == 0:
-                    excluded_params.extend(list(type_hints.keys()))
-                else:
-                    excluded_params.extend(self.user_input_fields)
-
-            # Get filtered list of parameter types
-            param_type_hints = {name: type_hints.get(name) for name in sig.parameters if name not in excluded_params}
-
-            # Parse docstring for parameters
-            param_descriptions = {}
-            param_descriptions_clean = {}
-            if docstring := getdoc(self.entrypoint):
-                parsed_doc = parse(docstring)
-                param_docs = parsed_doc.params
-
-                if param_docs is not None:
-                    for param in param_docs:
-                        param_name = param.arg_name
-                        param_type = param.type_name
-
-                        if param_type:
-                            param_descriptions[param_name] = f"({param_type}) {param.description or ''}"
-                        else:
-                            param_descriptions[param_name] = param.description or ""
-                        param_descriptions_clean[param_name] = param.description or ""
-
-            # If the function requires user input, set user_input_schema to all parameters
-            # except framework-injected ones (using the snapshot taken before user_input_fields
-            # were added to excluded_params, since those should remain in the schema).
-            if self.requires_user_input:
+            # Fresh UserInputField objects every time: the model layer writes
+            # the user's answers into them in place.
+            if derived.user_input_schema is not None and self.requires_user_input:
                 self.user_input_schema = [
-                    UserInputField(
-                        name=name,
-                        description=param_descriptions_clean.get(name),
-                        field_type=type_hints.get(name, str),
-                    )
-                    for name in sig.parameters
-                    if name not in _excluded_framework_params
+                    UserInputField(name=name, description=field_description, field_type=field_type)
+                    for name, field_description, field_type in derived.user_input_schema
                 ]
 
-            # Get JSON schema for parameters only
-            parameters = get_json_schema(
-                type_hints=param_type_hints, param_descriptions=param_descriptions, strict=strict
-            )
-
-            # If strict=True mark all fields as required
-            # See: https://platform.openai.com/docs/guides/structured-outputs/supported-schemas#all-fields-must-be-required
-            if strict:
-                parameters["required"] = [name for name in parameters["properties"] if name not in excluded_params]
-            else:
-                # Mark a field as required if it has no default value
-                parameters["required"] = [
-                    name
-                    for name, param in sig.parameters.items()
-                    if param.default == param.empty and name != "self" and name not in excluded_params
-                ]
-
-            # A param whose type has no JSON schema (e.g. `fc: FunctionCall`) is skipped by
-            # get_json_schema, so requiring it would describe a property that does not exist.
-            parameters["required"] = [name for name in parameters["required"] if name in parameters["properties"]]
-
-            if params_set_by_user:
+            if derived.user_params_reached and params_set_by_user:
                 self.parameters["additionalProperties"] = False
-                # `parameters` is user-supplied here and may omit "properties"; read it
-                # defensively so a required-list rebuild degrades to empty rather than
-                # raising a KeyError that the broad except would swallow (dropping the
-                # description with it).
+                # The user-supplied schema may omit "properties"; read it
+                # defensively so a required-list rebuild degrades to empty rather
+                # than raising a KeyError that the broad except would swallow
+                # (dropping the description with it).
                 user_properties = self.parameters.get("properties") or {}
                 if strict:
-                    self.parameters["required"] = [name for name in user_properties if name not in excluded_params]
+                    self.parameters["required"] = [
+                        name for name in user_properties if name not in derived.excluded_params
+                    ]
                 else:
                     # Mark a field as required if it has no default value
                     self.parameters["required"] = [
-                        name
-                        for name, param in sig.parameters.items()
-                        if param.default == param.empty
-                        and name != "self"
-                        and name not in excluded_params
-                        and name in user_properties
+                        name for name in derived.user_required_candidates if name in user_properties
                     ]
 
-            self.description = self.description or get_entrypoint_docstring(self.entrypoint)
-
-            # log_debug(f"JSON schema for {self.name}: {parameters}")
+            if derived.description_computed:
+                self.description = self.description or derived.description
         except Exception as e:
             log_warning(f"Could not parse args for {self.name}: {str(e)}")
 
+        if derived.error is not None:
+            log_warning(f"Could not parse args for {self.name}: {derived.error}")
+
         if not params_set_by_user:
-            self.parameters = parameters
+            self.parameters = _copy_schema(derived.parameters)
 
         if strict:
             self.process_schema_for_strict()
@@ -1314,7 +1556,16 @@ class Function(BaseModel):
 
     @staticmethod
     def _wrap_callable(func: Callable) -> Callable:
-        """Wrap a callable with Pydantic's validate_call decorator, if relevant"""
+        """Wrap a callable with Pydantic's validate_call decorator, if relevant.
+
+        One wrapper per callable object: building one runs pydantic schema
+        generation, and the wrapper holds no per-call state, so every run
+        shares it.
+        """
+        return _cached_wrapped_entrypoint(_CallableIdentity(func))
+
+    @staticmethod
+    def _wrap_callable_uncached(func: Callable) -> Callable:
         from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
         pydantic_version = _get_pydantic_version()
