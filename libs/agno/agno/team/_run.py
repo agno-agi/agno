@@ -7207,7 +7207,12 @@ def _resolve_continue_from_team(
     raise ValueError("`continue_from` must be an integer message index, 'end', or 'last_user'.")
 
 
-def _restore_continue_context_metadata_team(run_context, run_response, run_id, session) -> None:
+def _restore_continue_context_metadata_team(
+    run_context: RunContext,
+    run_response: Optional["TeamRunOutput"],
+    run_id: Optional[str],
+    session: Optional[TeamSession],
+) -> None:
     """Reserved run-metadata for a resume comes from the paused run row, never
     from caller input: a rebuilt lineage presents a nested run as top-level and
     resets the dispatch guard one approval at a time. Safe at every continue
