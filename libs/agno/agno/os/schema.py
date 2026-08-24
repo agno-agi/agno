@@ -32,54 +32,74 @@ from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
-class BadRequestResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
+class ErrorResponse(BaseModel):
+    """Body of a non-validation error (4xx/5xx that carry a string ``detail``).
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+    Mirrors what ``agno.os.app._error_body`` actually emits: ``detail`` is always present;
+    ``error_id``/``error_type`` appear only when the error carries an identity
+    (``AgnoError``/``AgnoHTTPException`` subclasses), and a plain ``HTTPException`` (or the
+    auth middleware) yields ``detail`` alone. There is deliberately no ``error_code`` field:
+    no handler has ever emitted one, so documenting it advertised a key clients never receive.
+    """
 
-
-class NotFoundResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found", "error_code": "NOT_FOUND"}})
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class UnauthorizedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+    detail: str = Field(..., description="Human-readable error message")
+    error_id: Optional[str] = Field(
+        None, description="Stable identifier for the specific error, present only when the error carries one"
+    )
+    error_type: Optional[str] = Field(
+        None, description="Category of the error, present only when the error carries one"
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class BadRequestResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request"}})
 
 
-class UnauthenticatedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
-    )
+class NotFoundResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found"}})
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class UnauthorizedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthorized access"}})
+
+
+class UnauthenticatedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthenticated access"}})
+
+
+class InternalServerErrorResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Internal server error"}})
+
+
+class ValidationErrorDetail(BaseModel):
+    """One field-level error inside a 422 body, matching FastAPI's default shape."""
+
+    loc: List[Union[str, int]] = Field(..., description="Path to the offending field, e.g. ['body', 'endpoint']")
+    msg: str = Field(..., description="Human-readable error message")
+    type: str = Field(..., description="Error type identifier, e.g. 'value_error' or 'missing'")
 
 
 class ValidationErrorResponse(BaseModel):
+    """422 body as emitted by FastAPI's request-validation handler: a list of field-level
+    errors under ``detail`` (not a single string). Both built-in coercion errors and
+    custom-validator ``ValueError``s use this shape.
+    """
+
     model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+        json_schema_extra={
+            "example": {
+                "detail": [
+                    {
+                        "type": "value_error",
+                        "loc": ["body", "endpoint"],
+                        "msg": "Value error, Endpoint must be a path, not a full URL",
+                    }
+                ]
+            }
+        }
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class InternalServerErrorResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
-    )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+    detail: List[ValidationErrorDetail] = Field(..., description="Field-level validation errors")
 
 
 class ScopeItem(BaseModel):
