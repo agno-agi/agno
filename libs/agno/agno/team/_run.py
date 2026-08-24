@@ -365,7 +365,9 @@ def _run_tasks(
         model_response: Optional[ModelResponse] = None
 
         # === Iterative task loop ===
+        idle_answer_turns = 0
         for iteration in range(team.max_iterations):
+            n_tools_before_iteration = len(run_response.tools or [])
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
 
             # On subsequent iterations, inject current task state as a user message
@@ -431,6 +433,20 @@ def _run_tasks(
                     break
                 # If there are failures, continue to let model handle them
                 log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+            # A run that needs no tasks ends by answering: with an empty list, one reminder still
+            # goes out, and a second turn that writes text but calls no tool is final. Without this,
+            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+            if not task_list.tasks:
+                if len(run_response.tools or []) == n_tools_before_iteration:
+                    idle_answer_turns += 1
+                    if idle_answer_turns >= 2:
+                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                        break
+                else:
+                    idle_answer_turns = 0
+            else:
+                idle_answer_turns = 0
         else:
             # Loop exhausted without completing
             task_list = load_task_list(run_context.session_state)
@@ -712,7 +728,9 @@ def _run_tasks_stream(
         accumulated_messages = run_messages.messages
 
         # === Iterative task loop ===
+        idle_answer_turns = 0
         for iteration in range(team.max_iterations):
+            n_tools_before_iteration = len(run_response.tools or [])
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
 
             # Yield task iteration started event
@@ -864,6 +882,20 @@ def _run_tasks_stream(
                     break
                 # If there are failures, continue to let model handle them
                 log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+            # A run that needs no tasks ends by answering: with an empty list, one reminder still
+            # goes out, and a second turn that writes text but calls no tool is final. Without this,
+            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+            if not task_list.tasks:
+                if len(run_response.tools or []) == n_tools_before_iteration:
+                    idle_answer_turns += 1
+                    if idle_answer_turns >= 2:
+                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                        break
+                else:
+                    idle_answer_turns = 0
+            else:
+                idle_answer_turns = 0
         else:
             # Loop exhausted without completing
             task_list = load_task_list(run_context.session_state)
@@ -2224,7 +2256,9 @@ async def _arun_tasks(
         model_response: Optional[ModelResponse] = None
 
         # === Iterative task loop ===
+        idle_answer_turns = 0
         for iteration in range(team.max_iterations):
+            n_tools_before_iteration = len(run_response.tools or [])
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
 
             # On subsequent iterations, inject current task state as a user message
@@ -2288,6 +2322,20 @@ async def _arun_tasks(
                     log_debug("All tasks completed successfully, finishing task loop.")
                     break
                 log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+            # A run that needs no tasks ends by answering: with an empty list, one reminder still
+            # goes out, and a second turn that writes text but calls no tool is final. Without this,
+            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+            if not task_list.tasks:
+                if len(run_response.tools or []) == n_tools_before_iteration:
+                    idle_answer_turns += 1
+                    if idle_answer_turns >= 2:
+                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                        break
+                else:
+                    idle_answer_turns = 0
+            else:
+                idle_answer_turns = 0
         else:
             # Loop exhausted without completing
             task_list = load_task_list(run_context.session_state)
@@ -2606,7 +2654,9 @@ async def _arun_tasks_stream(
         accumulated_messages = run_messages.messages
 
         # === Iterative task loop ===
+        idle_answer_turns = 0
         for iteration in range(team.max_iterations):
+            n_tools_before_iteration = len(run_response.tools or [])
             log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
 
             # Yield task iteration started event
@@ -2757,6 +2807,20 @@ async def _arun_tasks_stream(
                     log_debug("All tasks completed successfully, finishing task loop.")
                     break
                 log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+            # A run that needs no tasks ends by answering: with an empty list, one reminder still
+            # goes out, and a second turn that writes text but calls no tool is final. Without this,
+            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+            if not task_list.tasks:
+                if len(run_response.tools or []) == n_tools_before_iteration:
+                    idle_answer_turns += 1
+                    if idle_answer_turns >= 2:
+                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                        break
+                else:
+                    idle_answer_turns = 0
+            else:
+                idle_answer_turns = 0
         else:
             # Loop exhausted without completing
             task_list = load_task_list(run_context.session_state)
