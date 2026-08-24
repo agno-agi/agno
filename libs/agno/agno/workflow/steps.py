@@ -1,8 +1,9 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
 from agno.exceptions import RunCancelledException
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -16,7 +17,7 @@ from agno.run.workflow import (
 )
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, logger
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
@@ -40,8 +41,7 @@ class Steps:
     """A pipeline of steps that execute in order.
 
     HITL Mode:
-        When `requires_confirmation=True`, the workflow pauses before executing
-        the steps pipeline and asks the user to confirm:
+        Pauses before executing the steps pipeline and asks the user to confirm:
         - User confirms -> execute all steps in the pipeline
         - User rejects -> skip the entire pipeline
     """
@@ -53,44 +53,24 @@ class Steps:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    # Human-in-the-loop (HITL) configuration
-    # If True, the steps pipeline will pause before execution and require user confirmation
-    requires_confirmation: bool = False
-    confirmation_message: Optional[str] = None
-    on_reject: Union[OnReject, str] = OnReject.skip
+    human_review: HumanReview = field(default_factory=HumanReview)
 
     def __init__(
         self,
         name: Optional[str] = None,
         description: Optional[str] = None,
         steps: Optional[List[Any]] = None,
-        requires_confirmation: bool = False,
-        confirmation_message: Optional[str] = None,
-        on_reject: Union[OnReject, str] = OnReject.skip,
         human_review: Optional[HumanReview] = None,
     ):
         self.name = name
         self.description = description
         self.steps = steps if steps else []
 
-        # Build HumanReview config
-        if human_review is not None:
-            self.human_review = human_review
-        else:
-            self.human_review = HumanReview(
-                requires_confirmation=requires_confirmation,
-                confirmation_message=confirmation_message,
-                on_reject=on_reject,
-            )
+        self.human_review = human_review or HumanReview()
 
         from agno.workflow.types import validate_human_review_for_steps
 
         validate_human_review_for_steps(self.human_review)
-
-        # Backward compat attributes
-        self.requires_confirmation = self.human_review.requires_confirmation
-        self.confirmation_message = self.human_review.confirmation_message
-        self.on_reject = self.human_review.on_reject
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -117,14 +97,16 @@ class Steps:
         Returns:
             StepRequirement configured for this steps pipeline's HITL needs.
         """
+        on_reject = self.human_review.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=self.name or f"steps_{step_index + 1}",
             step_index=step_index,
             step_type="Steps",
-            requires_confirmation=self.requires_confirmation,
-            confirmation_message=self.confirmation_message or f"Execute steps pipeline '{self.name or 'steps'}'?",
-            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            requires_confirmation=self.human_review.requires_confirmation,
+            confirmation_message=self.human_review.confirmation_message
+            or f"Execute steps pipeline '{self.name or 'steps'}'?",
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             requires_user_input=False,
             step_input=step_input,
         )
@@ -136,35 +118,49 @@ class Steps:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Steps":
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            human_review = HumanReview(
-                requires_confirmation=data.get("requires_confirmation", False),
-                confirmation_message=data.get("confirmation_message"),
-                on_reject=data.get("on_reject", "skip"),
-            )
+            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
+
+            drop_legacy_hitl_keys(data, StepType.STEPS)
+            human_review = HumanReview()
 
         return cls(
             name=data.get("name"),
@@ -250,6 +246,7 @@ class Steps:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -286,6 +283,7 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -357,6 +355,10 @@ class Steps:
 
         except RunCancelledException:
             raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
             logger.exception("Steps execution failed")
             return StepOutput(
@@ -378,6 +380,7 @@ class Steps:
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -444,6 +447,7 @@ class Steps:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     parent_step_id=steps_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -525,6 +529,10 @@ class Steps:
 
         except RunCancelledException:
             raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
             logger.exception("Steps streaming failed")
             error_result = StepOutput(
@@ -544,6 +552,7 @@ class Steps:
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
         num_history_runs: int = 3,
@@ -580,6 +589,7 @@ class Steps:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -650,6 +660,10 @@ class Steps:
 
         except RunCancelledException:
             raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
+            raise
         except Exception as e:
             logger.exception("Async steps execution failed")
             return StepOutput(
@@ -671,6 +685,7 @@ class Steps:
         stream_executor_events: bool = True,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         parent_step_id: Optional[str] = None,
         workflow_session: Optional[WorkflowSession] = None,
         add_workflow_history_to_steps: Optional[bool] = False,
@@ -737,6 +752,7 @@ class Steps:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     parent_step_id=steps_id,
                     workflow_session=workflow_session,
                     add_workflow_history_to_steps=add_workflow_history_to_steps,
@@ -816,6 +832,10 @@ class Steps:
             )
 
         except RunCancelledException:
+            raise
+        except UnresolvableCallableError:
+            # A placeholder for an unresolved reference can never succeed:
+            # converting it to a failed StepOutput would let the run complete.
             raise
         except Exception as e:
             logger.exception("Async steps streaming failed")

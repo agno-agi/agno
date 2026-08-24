@@ -15,6 +15,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    Set,
     Tuple,
     Union,
 )
@@ -33,6 +34,12 @@ from agno.run.team import (
 from agno.session import TeamSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.toolkit import (
+    ToolkitKey,
+    _emits_toolkit_instructions,
+    _group_source_toolkits,
+    _toolkit_key,
+)
 from agno.utils.agent import (
     collect_joint_audios,
     collect_joint_files,
@@ -43,6 +50,7 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
+from agno.utils.message import copy_history_message
 from agno.utils.team import (
     get_member_id,
     get_team_member_interactions_str,
@@ -88,10 +96,8 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Add provided tools - only if tools is a static list
     if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 if tool.refresh_connection:  # type: ignore
                     try:
                         is_alive = await tool.is_alive()  # type: ignore
@@ -137,6 +143,7 @@ def _determine_tools_for_model(
         _read_past_session_function,
         _search_past_sessions_function,
         _update_session_state_tool,
+        create_add_to_knowledge_tool,
         create_knowledge_search_tool,
     )
     from agno.team._init import _connect_connectable_tools
@@ -174,10 +181,8 @@ def _determine_tools_for_model(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 # Only add the tool if it successfully connected and built its tools
                 if check_mcp_tools and not tool.initialized:  # type: ignore
                     continue
@@ -204,6 +209,13 @@ def _determine_tools_for_model(
 
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
+
+    # Read-back tools for offloaded results
+    if team._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        _tools.append(get_read_result_function(team, run_context=run_context, async_mode=async_mode))
+        _tools.append(get_search_result_function(team, run_context=run_context, async_mode=async_mode))
 
     if team.search_past_sessions:
         _tools.append(
@@ -240,7 +252,7 @@ def _determine_tools_for_model(
         )
 
     if resolved_knowledge is not None and team.update_knowledge:
-        _tools.append(team.add_to_knowledge)
+        _tools.append(create_add_to_knowledge_tool(team, run_context=run_context))
 
     # Add tools for accessing skills
     if team.skills is not None:
@@ -261,7 +273,8 @@ def _determine_tools_for_model(
             run_context=run_context,
             session=session,
             team_run_context=team_run_context,
-            user_id=user_id,
+            # Members run as the user_id resolved on run_context, not the caller's argument
+            user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,
             async_mode=async_mode,
@@ -300,7 +313,8 @@ def _determine_tools_for_model(
             session=session,
             team_run_context=team_run_context,
             input=user_message_content,
-            user_id=user_id,
+            # Members run as the user_id resolved on run_context, not the caller's argument
+            user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,
             async_mode=async_mode,
@@ -324,7 +338,37 @@ def _determine_tools_for_model(
 
     _function_names = []
     _functions: List[Union[Function, dict]] = []
+    _toolkit_instruction_keys: Set[ToolkitKey] = set()
+    _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys = _group_source_toolkits(_tools)
     team._tool_instructions = []
+
+    def toolkit_key(toolkit: Toolkit) -> ToolkitKey:
+        # The key folds the toolkit's whole function surface; memoized so one
+        # collection pass computes it once per toolkit, not once per member.
+        key = _toolkit_keys.get(id(toolkit))
+        if key is None:
+            key = _toolkit_keys[id(toolkit)] = _toolkit_key(toolkit)
+        return key
+
+    def add_toolkit_instructions(toolkit: Toolkit) -> None:
+        key = toolkit_key(toolkit)
+        if key in _toolkit_instruction_keys:
+            return
+        if toolkit.add_instructions and toolkit.instructions is not None:
+            if team._tool_instructions is None:
+                team._tool_instructions = []
+            team._tool_instructions.append(toolkit.instructions)
+            _toolkit_instruction_keys.add(key)
+
+    def emits_toolkit_instructions(source_toolkit: Toolkit, index: int) -> bool:
+        return _emits_toolkit_instructions(
+            source_toolkit,
+            index,
+            key=toolkit_key(source_toolkit),
+            last_index=_source_toolkit_last_index,
+            members=_source_toolkit_members,
+            async_mode=async_mode,
+        )
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -339,7 +383,7 @@ def _determine_tools_for_model(
     ):
         strict = True
 
-    for tool in _tools:
+    for tool_index, tool in enumerate(_tools):
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent
@@ -377,14 +421,17 @@ def _determine_tools_for_model(
                     team._tool_instructions.append(_func.instructions)
 
             # Add instructions from the toolkit
-            if tool.add_instructions and tool.instructions is not None:
-                if team._tool_instructions is None:
-                    team._tool_instructions = []
-                team._tool_instructions.append(tool.instructions)
+            add_toolkit_instructions(tool)
 
         elif isinstance(tool, Function):
+            source_toolkit = tool.source_toolkit if isinstance(tool.source_toolkit, Toolkit) else None
+            emit_toolkit_instructions = source_toolkit is not None and emits_toolkit_instructions(
+                source_toolkit, tool_index
+            )
             if tool.name in _function_names:
                 log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
+                if emit_toolkit_instructions and source_toolkit is not None:
+                    add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
             tool = tool.model_copy(deep=True)
@@ -404,6 +451,13 @@ def _determine_tools_for_model(
                 if team._tool_instructions is None:
                     team._tool_instructions = []
                 team._tool_instructions.append(tool.instructions)
+
+            # DB-loaded toolkit members are bare Functions. Their live owning
+            # Toolkit is restored by Registry.rehydrate_function; add its
+            # guidance after all its member Functions, matching live Toolkit
+            # instruction order, and only once.
+            if emit_toolkit_instructions and source_toolkit is not None:
+                add_toolkit_instructions(source_toolkit)
 
         elif callable(tool):
             # We add the tools, which are callable functions
@@ -486,14 +540,7 @@ def _get_history_for_member_agent(
     )
 
     if len(history) > 0:
-        # Create a deep copy of the history messages to avoid modifying the original messages
-        history_copy = [deepcopy(msg) for msg in history]
-
-        # Tag each message as coming from history
-        for _msg in history_copy:
-            _msg.from_history = True
-
-        return history_copy
+        return [copy_history_message(msg) for msg in history]
     return []
 
 

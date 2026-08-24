@@ -14,10 +14,10 @@ from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import MessageMetrics
 from agno.models.base import Model, RetryableModelProviderError
 from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason, get_mime_type
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -83,7 +83,7 @@ class Gemini(Model):
     Based on https://googleapis.github.io/python-genai/
     """
 
-    id: str = "gemini-3.5-flash"
+    id: str = "gemini-3.7-flash"
     name: str = "Gemini"
     provider: str = "Google"
 
@@ -2014,7 +2014,7 @@ class Gemini(Model):
 
         Example:
             ```python
-            model = Gemini(id="gemini-2.5-flash")
+            model = Gemini(id="gemini-3.7-flash")
             model.delete_document("fileSearchStores/store-123/documents/doc-456")
             ```
         """

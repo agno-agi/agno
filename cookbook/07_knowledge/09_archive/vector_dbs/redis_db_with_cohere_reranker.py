@@ -10,13 +10,13 @@ from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reranker.cohere import CohereReranker
 from agno.models.openai import OpenAIChat
-from agno.vectordb.redis import RedisDB
+from agno.vectordb.redis import RedisDb
 
 # ---------------------------------------------------------------------------
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 knowledge = Knowledge(
-    vector_db=RedisDB(
+    vector_db=RedisDb(
         index_name="agno_docs",
         redis_url="redis://localhost:6379",
         embedder=OpenAIEmbedder(id="text-embedding-3-small"),

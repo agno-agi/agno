@@ -28,6 +28,8 @@ class SurrealDb(VectorDb):
         DEFINE FIELD IF NOT EXISTS content ON {collection} TYPE string;
         DEFINE FIELD IF NOT EXISTS embedding ON {collection} TYPE array<float>;
         DEFINE FIELD IF NOT EXISTS meta_data ON {collection} TYPE object FLEXIBLE;
+        DEFINE FIELD IF NOT EXISTS content_id ON {collection} TYPE option<string>;
+        DEFINE FIELD IF NOT EXISTS user_id ON {collection} TYPE option<string>;
         DEFINE INDEX IF NOT EXISTS vector_idx ON {collection} FIELDS embedding HNSW DIMENSION {dimensions} DIST {distance};
     """
 
@@ -39,41 +41,57 @@ class SurrealDb(VectorDb):
 
     ID_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
-        WHERE id = $id
+        WHERE id = type::record($table, $record_id)
         LIMIT 1
     """
 
     CONTENT_HASH_EXISTS_QUERY: Final[str] = """
         SELECT * FROM {collection}
         WHERE meta_data.content_hash = $content_hash
+        AND user_id = $user_id
         LIMIT 1
     """
 
     DELETE_BY_ID_QUERY: Final[str] = """
         DELETE FROM {collection}
-        WHERE id = $id
+        WHERE id = type::record($table, $record_id)
+        OR string::starts_with(record::id(id), $owned_prefix)
+        RETURN VALUE id
     """
 
     DELETE_BY_NAME_QUERY: Final[str] = """
         DELETE FROM {collection}
         WHERE meta_data.name = $name
+        RETURN VALUE id
     """
 
     DELETE_BY_METADATA_QUERY: Final[str] = """
         DELETE FROM {collection}
         WHERE {conditions}
+        RETURN VALUE id
     """
 
     DELETE_BY_CONTENT_ID_QUERY: Final[str] = """
         DELETE FROM {collection}
         WHERE content_id = $content_id
+        {scope_condition}
+        RETURN VALUE id
+    """
+
+    DELETE_BY_CONTENT_HASH_QUERY: Final[str] = """
+        DELETE FROM {collection}
+        WHERE meta_data.content_hash = $content_hash
+        AND user_id = $user_id
+        RETURN VALUE id
     """
 
     UPSERT_QUERY: Final[str] = """
-        UPSERT {thing}
+        UPSERT type::record($table, $record_id)
         SET content = $content,
             embedding = $embedding,
-            meta_data = $meta_data
+            meta_data = $meta_data,
+            content_id = $content_id,
+            user_id = $user_id
     """
 
     SEARCH_QUERY: Final[str] = """
@@ -83,6 +101,7 @@ class SurrealDb(VectorDb):
             vector::distance::knn() as distance
         FROM {collection}
         WHERE embedding <|{limit}, {search_ef}|> $query_embedding
+        {scope_condition}
         {filter_condition}
         ORDER BY distance ASC
         LIMIT {limit};
@@ -156,6 +175,9 @@ class SurrealDb(VectorDb):
         self.m = m
         self.search_ef = search_ef
 
+        # Whether the DEFINE statements have run for this instance
+        self._schema_ensured: bool = False
+
     @property
     def async_client(self) -> Union[AsyncWsSurrealConnection, AsyncHttpSurrealConnection]:
         """Check if the async client is initialized.
@@ -198,22 +220,113 @@ class SurrealDb(VectorDb):
         """
         if not filters:
             return ""
-        conditions = [f"meta_data.{key} = ${key}" for key in filters]
+        # Bind the key as well as the value: an interpolated key is caller data in the WHERE clause
+        conditions = [f"meta_data[$filter_key_{i}] = $filter_value_{i}" for i, _ in enumerate(filters.items())]
         return "AND " + " AND ".join(conditions)
 
+    @staticmethod
+    def _build_filter_params(filters: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Build the bound parameters for the placeholders ``_build_filter_condition`` emits.
+
+        Args:
+            filters: A dictionary of filters to apply to the query.
+
+        Returns:
+            The $filter_key_i / $filter_value_i bindings.
+
+        """
+        if not filters:
+            return {}
+        params: Dict[str, Any] = {}
+        for i, (key, value) in enumerate(filters.items()):
+            params[f"filter_key_{i}"] = key
+            params[f"filter_value_{i}"] = value
+        return params
+
+    @staticmethod
+    def _user_scope_condition(user_id: Optional[str]) -> str:
+        """Build the per-user scope predicate for the search WHERE clause.
+
+        An owner matches its own rows plus the shared (NONE) rows; None applies no scope.
+
+        """
+        if user_id is None:
+            return ""
+        return "AND (user_id = $scope_user_id OR user_id = NONE)"
+
+    @staticmethod
+    def _owner_scope_condition(user_id: Optional[str]) -> str:
+        """Build the owner-only scope predicate for a delete WHERE clause.
+
+        Unlike the search scope this never merges the shared rows in; None applies no scope.
+
+        """
+        if user_id is None:
+            return ""
+        return "AND user_id = $scope_user_id"
+
+    @staticmethod
+    def _escape_record_id_part(value: str) -> str:
+        """Percent-escape one half of a folded record id.
+
+        ':' is the fold delimiter and '%' the escape character, so both are encoded.
+
+        """
+        return value.replace("%", "%25").replace(":", "%3A")
+
+    @classmethod
+    def _fold_record_id(cls, doc_id: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the record id so two owners' identical content don't collide.
+
+        Both halves are escaped first — ("a:x", "y") and ("a", "x:y") would otherwise fold to the same
+        record, and so would an unfolded id that carries a ':' of its own.
+
+        """
+        if user_id is None:
+            return cls._escape_record_id_part(doc_id)
+        return f"{cls._escape_record_id_part(doc_id)}:{cls._escape_record_id_part(user_id)}"
+
     # Synchronous methods
-    def create(self) -> None:
-        """Create the vector collection and index."""
-        if not self.exists():
-            log_debug(f"Creating collection: {self.collection}")
-            query = self.CREATE_TABLE_QUERY.format(
+    def _ensure_schema(self) -> None:
+        """Run the DEFINE statements once for this instance.
+
+        Idempotent, and it must run on collections created before v3 too: the table is
+        SCHEMAFUL, so writes silently lose ``user_id``/``content_id`` until they are defined.
+
+        """
+        if self._schema_ensured:
+            return
+        log_debug(f"Ensuring schema for collection: {self.collection}")
+        self.client.query(
+            self.CREATE_TABLE_QUERY.format(
                 collection=self.collection,
                 distance=self.distance,
                 dimensions=self.dimensions,
                 efc=self.efc,
                 m=self.m,
             )
-            self.client.query(query)
+        )
+        self._schema_ensured = True
+
+    async def _async_ensure_schema(self) -> None:
+        """Async twin of ``_ensure_schema``."""
+        if self._schema_ensured:
+            return
+        log_debug(f"Ensuring schema for collection: {self.collection}")
+        await self.async_client.query(
+            self.CREATE_TABLE_QUERY.format(
+                collection=self.collection,
+                distance=self.distance,
+                dimensions=self.dimensions,
+                efc=self.efc,
+                m=self.m,
+            )
+        )
+        self._schema_ensured = True
+
+    def create(self) -> None:
+        """Create the vector collection and index."""
+        self._ensure_schema()
 
     def name_exists(self, name: str) -> bool:
         """Check if a document exists by its name.
@@ -240,64 +353,122 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Checking if document exists by ID: {id}")
-        result = self.client.query(self.ID_EXISTS_QUERY.format(collection=self.collection), {"id": id})
+        # Bind via type::record, the way the upsert writes it: a string never equals a record link
+        result = self.client.query(
+            self.ID_EXISTS_QUERY.format(collection=self.collection),
+            {"table": self.collection, "record_id": id},
+        )
         return bool(self._extract_result(result))
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if a document exists by its content hash.
 
         Args:
             content_hash: The content hash of the document to check.
+            user_id: The owner to check, so another owner's identical upload is not judged a
+                duplicate. None (default) checks the shared (NONE-owned) rows alone.
 
         Returns:
             True if the document exists, False otherwise.
 
         """
         log_debug(f"Checking if document exists by content hash: {content_hash}")
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
         result = self.client.query(
-            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection), {"content_hash": content_hash}
+            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
+            params,
         )
         return bool(self._extract_result(result))
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert documents into the vector store.
 
         Args:
             content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
+        # Writes ensure the schema too: ``create()`` only runs for collections that don't exist yet
+        self._ensure_schema()
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            if doc.name is not None:
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
+                meta_data.setdefault("name", doc.name)
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
             self.client.create(self.collection, data)
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Upsert documents into the vector store.
 
         Args:
             content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
+        # See ``insert``
+        self._ensure_schema()
+        # UPSERT replaces by record id, so clear this owner's chunks first or a shrunken document
+        # leaves its dropped chunks behind
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            if doc.name is not None:
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
+                meta_data.setdefault("name", doc.name)
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
-            thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            self.client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
+            if doc.id:
+                # ``type::record`` accepts a reader-assigned UUID; the fold keeps two owners' ids apart
+                data["table"] = self.collection
+                data["record_id"] = self._fold_record_id(doc.id, user_id)
+                self.client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
+            else:
+                self.client.create(self.collection, data)
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for similar documents.
 
@@ -305,6 +476,8 @@ class SurrealDb(VectorDb):
             query: The query to search for.
             limit: The maximum number of documents to return.
             filters: A dictionary of filters to apply to the query.
+            user_id: Restrict results to this user's chunks plus the shared (NONE-owned) chunks.
+                None (default) applies no scope.
 
         Returns:
             A list of documents that are similar to the query.
@@ -324,13 +497,16 @@ class SurrealDb(VectorDb):
             collection=self.collection,
             limit=limit,
             search_ef=self.search_ef,
+            scope_condition=self._user_scope_condition(user_id),
             filter_condition=filter_condition,
             distance=self.distance,
         )
         log_debug(f"Search query: {search_query}")
-        search_params: Any = (
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
-        )
+        search_params: Dict[str, Any] = {"query_embedding": query_embedding}
+        if filters:
+            search_params.update(self._build_filter_params(filters))
+        if user_id is not None:
+            search_params["scope_user_id"] = user_id
         response: Any = self.client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
 
@@ -351,6 +527,8 @@ class SurrealDb(VectorDb):
         """Drop the vector collection."""
         log_debug(f"Dropping collection: {self.collection}")
         self.client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
+        # The table is gone, so the next create()/write must re-run the DEFINEs
+        self._schema_ensured = False
 
     def exists(self) -> bool:
         """Check if the vector collection exists.
@@ -370,11 +548,15 @@ class SurrealDb(VectorDb):
         """Delete all documents from the vector store.
 
         Returns:
-            True if the collection was deleted, False otherwise.
+            True if the delete completed, False if it errored.
 
         """
-        self.client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
-        return True
+        try:
+            self.client.query(self.DELETE_ALL_QUERY.format(collection=self.collection))
+            return True
+        except Exception as e:
+            log_error(f"Error deleting all documents: {str(e)}")
+            return False
 
     def delete_by_id(self, id: str) -> bool:
         """Delete a document by its ID.
@@ -383,12 +565,23 @@ class SurrealDb(VectorDb):
             id: The ID of the document to delete.
 
         Returns:
-            True if the document was deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored. A bare DELETE
+            answers with an empty list either way, so the query asks for ``RETURN VALUE id``.
 
         """
         log_debug(f"Deleting document by ID: {id}")
-        result = self.client.query(self.DELETE_BY_ID_QUERY.format(collection=self.collection), {"id": id})
-        return bool(result)
+        try:
+            # The write folds the owner into the id, so match the shared record plus every owned
+            # fold of it: this method takes no user_id and clears the document for all owners
+            escaped = self._escape_record_id_part(id)
+            result = self.client.query(
+                self.DELETE_BY_ID_QUERY.format(collection=self.collection),
+                {"table": self.collection, "record_id": escaped, "owned_prefix": f"{escaped}:"},
+            )
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting document by ID '{id}': {str(e)}")
+            return False
 
     def delete_by_name(self, name: str) -> bool:
         """Delete documents by their name.
@@ -397,12 +590,16 @@ class SurrealDb(VectorDb):
             name: The name of the documents to delete.
 
         Returns:
-            True if documents were deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored.
 
         """
         log_debug(f"Deleting documents by name: {name}")
-        result = self.client.query(self.DELETE_BY_NAME_QUERY.format(collection=self.collection), {"name": name})
-        return bool(result)
+        try:
+            result = self.client.query(self.DELETE_BY_NAME_QUERY.format(collection=self.collection), {"name": name})
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting documents by name '{name}': {str(e)}")
+            return False
 
     def delete_by_metadata(self, metadata: Dict[str, Any]) -> bool:
         """Delete documents by their metadata.
@@ -411,35 +608,82 @@ class SurrealDb(VectorDb):
             metadata: The metadata to match for deletion.
 
         Returns:
-            True if documents were deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored.
 
         """
         log_debug(f"Deleting documents by metadata: {metadata}")
-        conditions = [f"meta_data.{key} = ${key}" for key in metadata.keys()]
-        conditions_str = " AND ".join(conditions)
-        query = self.DELETE_BY_METADATA_QUERY.format(collection=self.collection, conditions=conditions_str)
-        result = self.client.query(query, metadata)
-        return bool(result)
+        if not metadata:
+            log_warning("No metadata provided for deletion; refusing to match every row.")
+            return False
+        try:
+            # Bind both halves: an interpolated key carrying a '.' becomes NONE = NONE, which
+            # matches every row
+            conditions = [f"meta_data[$key_{i}] = $value_{i}" for i, _ in enumerate(metadata.items())]
+            params: Dict[str, Any] = {}
+            for i, (key, value) in enumerate(metadata.items()):
+                params[f"key_{i}"] = key
+                params[f"value_{i}"] = value
+            query = self.DELETE_BY_METADATA_QUERY.format(
+                collection=self.collection, conditions=" AND ".join(conditions)
+            )
+            result = self.client.query(query, params)
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting documents by metadata {metadata}: {str(e)}")
+            return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by their content ID.
 
         Args:
             content_id: The content ID of the documents to delete.
+            user_id: Delete only this owner's chunks. None (default) deletes across all owners.
 
         Returns:
-            True if documents were deleted, False otherwise.
+            True if rows were deleted, False if none matched or the query errored.
 
         """
         log_debug(f"Deleting documents by content ID: {content_id}")
+        try:
+            scope_condition = self._owner_scope_condition(user_id)
+            params: Dict[str, Any] = {"content_id": content_id}
+            if user_id is not None:
+                params["scope_user_id"] = user_id
+            result = self.client.query(
+                self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection, scope_condition=scope_condition),
+                params,
+            )
+            return bool(self._extract_result(result))
+        except Exception as e:
+            log_error(f"Error deleting documents by content ID '{content_id}': {str(e)}")
+            return False
+
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by their content hash, scoped to one owner.
+
+        Args:
+            content_hash: The content hash of the documents to delete.
+            user_id: The owner whose chunks to clear. None (default) clears the shared (NONE-owned)
+                chunks alone, so a shared re-upsert never wipes an owner's identical content.
+
+        Returns:
+            True if rows were deleted, False if none matched. Errors propagate instead of being
+            swallowed, so ``upsert`` never writes over chunks that were not cleared.
+
+        """
+        log_debug(f"Deleting documents by content hash: {content_hash}")
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
         result = self.client.query(
-            self.DELETE_BY_CONTENT_ID_QUERY.format(collection=self.collection), {"content_id": content_id}
+            self.DELETE_BY_CONTENT_HASH_QUERY.format(collection=self.collection),
+            params,
         )
-        return bool(result)
+        return bool(self._extract_result(result))
 
     @staticmethod
     def _extract_result(query_result: Any) -> Union[List[Any], Dict[str, Any]]:
         """Extract the actual result from SurrealDB query response.
+
+        surrealdb >= 1.0 hands back the rows themselves: a list for a SELECT, a dict for INFO FOR DB.
 
         Args:
             query_result: The query result from SurrealDB.
@@ -449,26 +693,13 @@ class SurrealDb(VectorDb):
 
         """
         log_debug(f"Query result: {query_result}")
-        if isinstance(query_result, dict):
+        if isinstance(query_result, (dict, list)):
             return query_result
-        if isinstance(query_result, list):
-            if len(query_result) > 0:
-                return query_result[0].get("result", {})
-            return []
         return []
 
     async def async_create(self) -> None:
         """Create the vector collection and index asynchronously."""
-        log_debug(f"Creating collection: {self.collection}")
-        await self.async_client.query(
-            self.CREATE_TABLE_QUERY.format(
-                collection=self.collection,
-                distance=self.distance,
-                dimensions=self.dimensions,
-                efc=self.efc,
-                m=self.m,
-            ),
-        )
+        await self._async_ensure_schema()
 
     async def async_name_exists(self, name: str) -> bool:
         """Check if a document exists by its name asynchronously.
@@ -483,8 +714,53 @@ class SurrealDb(VectorDb):
         )
         return bool(self._extract_result(response))
 
+    async def async_content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document exists by its content hash asynchronously.
+
+        Args:
+            content_hash: The content hash of the document to check.
+            user_id: The owner to check, so another owner's identical upload is not judged a
+                duplicate. None (default) checks the shared (NONE-owned) rows alone.
+
+        Returns:
+            True if the document exists, False otherwise.
+
+        """
+        log_debug(f"Checking if document exists by content hash: {content_hash}")
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
+        response = await self.async_client.query(
+            self.CONTENT_HASH_EXISTS_QUERY.format(collection=self.collection),
+            params,
+        )
+        return bool(self._extract_result(response))
+
+    async def _async_delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by their content hash asynchronously, scoped to one owner.
+
+        Args:
+            content_hash: The content hash of the documents to delete.
+            user_id: The owner whose chunks to clear. None (default) clears the shared (NONE-owned)
+                chunks alone, so a shared re-upsert never wipes an owner's identical content.
+
+        Returns:
+            True if rows were deleted, False if none matched. See ``_delete_by_content_hash``
+            for why errors propagate here.
+
+        """
+        log_debug(f"Deleting documents by content hash: {content_hash}")
+        params: Dict[str, Any] = {"content_hash": content_hash, "user_id": user_id}
+        result = await self.async_client.query(
+            self.DELETE_BY_CONTENT_HASH_QUERY.format(collection=self.collection),
+            params,
+        )
+        return bool(self._extract_result(result))
+
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Insert documents into the vector store asynchronously.
 
@@ -492,20 +768,36 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to insert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
+        # See ``insert``
+        await self._async_ensure_schema()
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            if doc.name is not None:
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
+                meta_data.setdefault("name", doc.name)
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
             log_debug(f"Inserting document asynchronously: {doc.name} ({doc.meta_data})")
             await self.async_client.create(self.collection, data)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the vector store asynchronously.
 
@@ -513,24 +805,46 @@ class SurrealDb(VectorDb):
             content_hash: The content hash for the documents.
             documents: A list of documents to upsert.
             filters: A dictionary of filters to apply to the query.
+            user_id: Owner of these chunks. None (default) writes shared chunks, visible to everyone.
 
         """
+        # See ``insert``
+        await self._async_ensure_schema()
+        # See ``upsert``; the guard and its delete run on the async client
+        if await self.async_content_hash_exists(content_hash, user_id=user_id):
+            await self._async_delete_by_content_hash(content_hash, user_id=user_id)
+
         for doc in documents:
             doc.embed(embedder=self.embedder)
             meta_data: Dict[str, Any] = doc.meta_data if isinstance(doc.meta_data, dict) else {}
             meta_data["content_hash"] = content_hash
-            data: Dict[str, Any] = {"content": doc.content, "embedding": doc.embedding, "meta_data": meta_data}
+            if doc.name is not None:
+                # name_exists and delete_by_name match meta_data.name, so the write has to put it there
+                meta_data.setdefault("name", doc.name)
+            data: Dict[str, Any] = {
+                "content": doc.content,
+                "embedding": doc.embedding,
+                "meta_data": meta_data,
+                "content_id": doc.content_id,
+                "user_id": user_id,
+            }
             if filters:
                 data["meta_data"].update(filters)
             log_debug(f"Upserting document asynchronously: {doc.name} ({doc.meta_data})")
-            thing = f"{self.collection}:{doc.id}" if doc.id else self.collection
-            await self.async_client.query(self.UPSERT_QUERY.format(thing=thing), data)  # type: ignore[arg-type]
+            if doc.id:
+                # ``type::record`` accepts a reader-assigned UUID; the fold keeps two owners' ids apart
+                data["table"] = self.collection
+                data["record_id"] = self._fold_record_id(doc.id, user_id)
+                await self.async_client.query(self.UPSERT_QUERY, data)  # type: ignore[arg-type]
+            else:
+                await self.async_client.create(self.collection, data)
 
     async def async_search(
         self,
         query: str,
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for similar documents asynchronously.
 
@@ -538,6 +852,8 @@ class SurrealDb(VectorDb):
             query: The query to search for.
             limit: The maximum number of documents to return.
             filters: A dictionary of filters to apply to the query.
+            user_id: Restrict results to this user's chunks plus the shared (NONE-owned) chunks.
+                None (default) applies no scope.
 
         Returns:
             A list of documents that are similar to the query.
@@ -557,12 +873,15 @@ class SurrealDb(VectorDb):
             collection=self.collection,
             limit=limit,
             search_ef=self.search_ef,
+            scope_condition=self._user_scope_condition(user_id),
             filter_condition=filter_condition,
             distance=self.distance,
         )
-        search_params: Any = (
-            {"query_embedding": query_embedding, **filters} if filters else {"query_embedding": query_embedding}
-        )
+        search_params: Dict[str, Any] = {"query_embedding": query_embedding}
+        if filters:
+            search_params.update(self._build_filter_params(filters))
+        if user_id is not None:
+            search_params["scope_user_id"] = user_id
         response: Any = await self.async_client.query(search_query, search_params)
         log_debug(f"Search response: {response}")
         documents = []
@@ -582,6 +901,8 @@ class SurrealDb(VectorDb):
         """Drop the vector collection asynchronously."""
         log_debug(f"Dropping collection: {self.collection}")
         await self.async_client.query(self.DROP_TABLE_QUERY.format(collection=self.collection))
+        # See ``drop``
+        self._schema_ensured = False
 
     async def async_exists(self) -> bool:
         """Check if the vector collection exists asynchronously.

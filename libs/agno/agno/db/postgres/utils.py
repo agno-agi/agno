@@ -9,7 +9,6 @@ from sqlalchemy import Engine
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
 from agno.db.postgres.schemas import get_table_schema_definition
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.utils.log import log_debug, log_error, log_warning
 
 try:
@@ -135,7 +134,10 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         schema (str): Database schema name
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -155,7 +157,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         return True
     except Exception as e:
         log_error(f"Error validating table schema for {db_schema}.{table_name}: {str(e)}")
-        return False
+        raise
 
 
 async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str, db_schema: str) -> bool:
@@ -167,7 +169,10 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         schema (str): Database schema name
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -189,7 +194,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         return False
     except Exception as e:
         log_error(f"Error validating table schema for {db_schema}.{table_name}: {str(e)}")
-        return False
+        raise
 
 
 def _get_table_columns(conn, table_name: str, db_schema: str) -> set[str]:
@@ -216,14 +221,16 @@ def bulk_upsert_metrics(session: Session, table: Table, metrics_records: list[di
     results = []
     stmt = postgresql.insert(table)
 
-    # Columns to update in case of conflict
+    # Columns to update in case of conflict. user_id is part of the conflict key, so never overwrite it.
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
     }
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
+    ).returning(  # type: ignore
         table
     )
     result = session.execute(stmt, metrics_records)
@@ -249,14 +256,16 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     results = []
     stmt = postgresql.insert(table)
 
-    # Columns to update in case of conflict
+    # Columns to update in case of conflict. user_id is part of the conflict key, so never overwrite it.
     update_columns = {
         col.name: stmt.excluded[col.name]
         for col in table.columns
-        if col.name not in ["id", "date", "created_at", "aggregation_period"]
+        if col.name not in ["id", "date", "created_at", "aggregation_period", "user_id"]
     }
 
-    stmt = stmt.on_conflict_do_update(index_elements=["date", "aggregation_period"], set_=update_columns).returning(  # type: ignore
+    stmt = stmt.on_conflict_do_update(
+        index_elements=["user_id", "date", "aggregation_period"], set_=update_columns
+    ).returning(  # type: ignore
         table
     )
     result = await session.execute(stmt, metrics_records)
@@ -266,85 +275,105 @@ async def abulk_upsert_metrics(session: AsyncSession, table: Table, metrics_reco
     return results  # type: ignore
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date.
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+    """Calculate metrics for the given single date, bucketed per user.
 
     Args:
         date_to_process (date): The date to calculate metrics for.
         sessions_data (dict): The sessions data to calculate metrics for.
 
     Returns:
-        dict: The calculated metrics.
+        List[dict]: The calculated metrics, one record per user. Sessions without a
+            ``user_id`` are bucketed under ``""``.
     """
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
+
             runs = session.get("runs", []) or []
-            metrics[runs_count_key] += len(runs)
-            if runs:
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
+
             session_data = session.get("session_data", {}) or {}
             session_metrics = session_data.get("session_metrics", {}) or {}
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-    metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
 
-    return {
-        "id": str(uuid4()),
-        "date": date_to_process,
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        # One distinct user per bucket, and none for the unowned one, so summed counts stay correct.
+        users_count = 0 if user_id == "" else 1
+
+        records.append(
+            {
+                "id": str(uuid4()),
+                "date": date_to_process,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
 
 
 def fetch_all_sessions_data(
@@ -398,60 +427,3 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
-
-
-# -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
-    """Serialize a CulturalKnowledge object for database storage.
-
-    Converts the model's separate content, categories, and notes fields
-    into a single JSON dict for the database content column.
-
-    Args:
-        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
-
-    Returns:
-        Dict[str, Any]: A dictionary with the content field as JSON containing content, categories, and notes.
-    """
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
-
-    return content_dict if content_dict else {}
-
-
-def deserialize_cultural_knowledge(db_row: Dict[str, Any]) -> CulturalKnowledge:
-    """Deserialize a database row to a CulturalKnowledge object.
-
-    The database stores content as a JSON dict containing content, categories, and notes.
-    This method extracts those fields and converts them back to the model format.
-
-    Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
-
-    Returns:
-        CulturalKnowledge: The cultural knowledge object.
-    """
-    # Extract content, categories, and notes from the JSON content field
-    content_json = db_row.get("content", {}) or {}
-
-    return CulturalKnowledge.from_dict(
-        {
-            "id": db_row.get("id"),
-            "name": db_row.get("name"),
-            "summary": db_row.get("summary"),
-            "content": content_json.get("content"),
-            "categories": content_json.get("categories"),
-            "notes": content_json.get("notes"),
-            "metadata": db_row.get("metadata"),
-            "input": db_row.get("input"),
-            "created_at": db_row.get("created_at"),
-            "updated_at": db_row.get("updated_at"),
-            "agent_id": db_row.get("agent_id"),
-            "team_id": db_row.get("team_id"),
-        }
-    )
