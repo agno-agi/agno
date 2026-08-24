@@ -335,3 +335,32 @@ class TestPinnedPreviewsAreGuardedToo:
         )
         assert out["ok"] is False
         assert out["error"]["code"] == "dispatch_refused"
+
+
+class TestSelfDispatchOnceOnThePinnedPath:
+    """The version-pinned branch dispatches directly, bypassing the runner's
+    run tools; the opt-in must behave identically there or version=N becomes
+    the door where "once" silently means "always" (or "never")."""
+
+    def test_a_pinned_self_preview_runs_once_then_refuses(self, studio, registry, db):
+        once_studio = StudioTools(registry=registry, db=db, self_dispatch="once")
+        caller = type("W", (), {"id": "pv-agent"})()
+
+        first = _payload(once_studio.run_agent("pv-agent", "hi", version=2, _agno_agent=caller))
+        assert first["content"] == "answer from v2"
+        metadata = _stored_metadata(db, first["session_id"], first["run_id"], "agent") or {}
+        assert metadata.get(DISPATCH_CHAIN_METADATA_KEY) == ["agent:pv-agent"]
+        assert metadata.get(DISPATCH_DEPTH_METADATA_KEY) == 1
+
+        nested = RunContext(run_id="nested-run", session_id="nested-sess", metadata=dict(metadata))
+        out = json.loads(
+            once_studio.run_agent("pv-agent", "hi again", version=2, _agno_run_context=nested, _agno_agent=caller)
+        )
+        assert out["ok"] is False
+        assert out["error"]["code"] == "dispatch_refused"
+
+    def test_the_default_still_refuses_the_first_pinned_self_preview(self, studio, db):
+        caller = type("W", (), {"id": "pv-agent"})()
+        out = json.loads(studio.run_agent("pv-agent", "hi", version=2, _agno_agent=caller))
+        assert out["ok"] is False
+        assert out["error"]["code"] == "dispatch_refused"
