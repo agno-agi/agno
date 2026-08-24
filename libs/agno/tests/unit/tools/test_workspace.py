@@ -13,13 +13,14 @@ ALL_METHODS = [
     "read_file",
     "list_files",
     "search_content",
+    "grep_content",
     "write_file",
     "edit_file",
     "move_file",
     "delete_file",
     "run_command",
 ]
-READ_METHODS = ["read_file", "list_files", "search_content"]
+READ_METHODS = ["read_file", "list_files", "search_content", "grep_content"]
 WRITE_METHODS = ["write_file", "edit_file", "move_file", "delete_file", "run_command"]
 
 
@@ -474,6 +475,134 @@ def test_search_content_empty_query():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         assert ws.search_content(query="").startswith("Error")
+
+
+# ------------------------------------------------------------------
+# grep_content (regex with line numbers)
+# ------------------------------------------------------------------
+
+
+def test_grep_content_basic():
+    """grep_content returns path:line:text format."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("def foo():\n    pass\n\ndef bar():\n    return 1")
+
+        result = ws.grep_content(pattern="def ")
+        assert "code.py:1:def foo():" in result
+        assert "code.py:4:def bar():" in result
+
+
+def test_grep_content_regex():
+    """grep_content supports regex patterns."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("async def run():\n    pass\ndef sync_run():\n    pass")
+
+        # Match only async def
+        result = ws.grep_content(pattern=r"async\s+def")
+        assert "code.py:1:async def run():" in result
+        assert "sync_run" not in result
+
+
+def test_grep_content_ignore_case():
+    """grep_content ignore_case flag works."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "doc.md").write_text("TODO: fix this\nTodo: later\ntodo: now")
+
+        result = ws.grep_content(pattern="TODO", ignore_case=True)
+        assert result.count("doc.md:") == 3
+
+        result = ws.grep_content(pattern="TODO", ignore_case=False)
+        assert result.count("doc.md:") == 1
+
+
+def test_grep_content_context_lines():
+    """grep_content context_lines shows surrounding lines."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("# header\ndef target():\n    pass\n# footer")
+
+        result = ws.grep_content(pattern="def target", context_lines=1)
+        assert "code.py:1:# header" in result
+        assert "code.py:2:def target():" in result
+        assert "code.py:3:    pass" in result
+
+
+def test_grep_content_files_only():
+    """grep_content files_only=True returns only file names."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "a.py").write_text("def foo(): pass")
+        (base / "b.py").write_text("def bar(): pass")
+        (base / "c.txt").write_text("nothing special here")
+
+        result = ws.grep_content(pattern="def ", files_only=True)
+        assert "a.py" in result
+        assert "b.py" in result
+        assert "c.txt" not in result
+        assert "(2 files)" in result
+
+
+def test_grep_content_respects_limit():
+    """grep_content respects the limit parameter."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("\n".join(f"line{i}" for i in range(100)))
+
+        result = ws.grep_content(pattern="line", limit=5)
+        assert "(showing 5 matches, limit=5)" in result
+
+
+def test_grep_content_invalid_regex():
+    """grep_content returns error for invalid regex."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        result = ws.grep_content(pattern="[invalid")
+        assert result.startswith("Error: invalid regex")
+
+
+def test_grep_content_no_matches():
+    """grep_content returns message when no matches."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "file.py").write_text("nothing here")
+
+        result = ws.grep_content(pattern="NOTFOUND")
+        assert "No matches for pattern" in result
+
+
+def test_grep_content_skips_excluded():
+    """grep_content skips excluded directories."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "real.py").write_text("def real(): pass")
+        (base / ".venv").mkdir()
+        (base / ".venv" / "hidden.py").write_text("def hidden(): pass")
+
+        result = ws.grep_content(pattern="def ")
+        assert "real.py" in result
+        assert ".venv" not in result
+
+
+def test_agrep_content_async():
+    """agrep_content async variant works."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("def foo(): pass")
+
+        result = asyncio.run(ws.agrep_content(pattern="def "))
+        assert "code.py:1:def foo():" in result
 
 
 # ------------------------------------------------------------------
