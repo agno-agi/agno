@@ -154,7 +154,7 @@ def _get_opening_prompt() -> str:
     )
 
 
-def _get_mode_instructions(team: "Team") -> str:
+def _get_mode_instructions(team: "Team", has_sub_team: bool = False) -> str:
     """Return the mode-specific <delegation> block."""
     from agno.team.mode import TeamMode
 
@@ -183,10 +183,10 @@ def _get_mode_instructions(team: "Team") -> str:
             "not state.\n"
             "- `mark_all_complete` ends the loop; the summary you pass it is bookkeeping, not the reply. "
             "Write the answer as your own message in the same turn — that message is what reaches the "
-            "user. A list whose tasks have all completed also ends the loop, but an empty one never "
-            "does, so a request that needed no tasks at all — a greeting, a question you can simply "
-            "answer — still has to call it. Call it too when the goal is out of reach: a partial "
-            "outcome stated plainly beats looping.\n"
+            "user. A list whose tasks have all completed also ends the loop. For a request that needs "
+            "no tasks at all — a greeting, a question you can simply answer — write the answer and call "
+            "`mark_all_complete` in the same turn: that finishes at once instead of after a reminder. "
+            "Call it too when the goal is out of reach: a partial outcome stated plainly beats looping.\n"
         )
     elif team.mode == TeamMode.route:
         content += (
@@ -255,7 +255,16 @@ def _get_mode_instructions(team: "Team") -> str:
 
     # Broadcast reaches every member with one call and takes no member id.
     if team.mode != TeamMode.broadcast:
-        content += "Member ids are the ids shown in the roster above, used exactly as written.\n"
+        if has_sub_team:
+            # A nested roster invites joined ids like "sub-team.member"; the lookup is exact,
+            # so every such call fails and costs a round trip before the leader recovers.
+            content += (
+                "Member ids are the ids shown in the roster above, used exactly as written — never joined "
+                "or prefixed. Delegate to a sub-team by the sub-team's own id; its leader hands work to "
+                "the members inside it.\n"
+            )
+        else:
+            content += "Member ids are the ids shown in the roster above, used exactly as written.\n"
 
     content += "</delegation>\n"
     return content
@@ -288,7 +297,10 @@ def _build_team_context(
         # Tasks mode takes the task-tool branch, which never attaches this one.
         if team.get_member_information_tool and team.mode != TeamMode.tasks:
             content += "Call `get_member_information` at any time to re-read this list.\n"
-        content += _get_mode_instructions(team)
+        from agno.team.team import Team
+
+        has_sub_team = any(isinstance(member, Team) for member in resolved_members)
+        content += _get_mode_instructions(team, has_sub_team=has_sub_team)
         content += "</team>\n\n"
     return content
 

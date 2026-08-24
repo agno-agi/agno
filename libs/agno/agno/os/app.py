@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Dict, Iterator, List, Literal, Optional, 
 from uuid import uuid4
 
 from fastapi import APIRouter, FastAPI, HTTPException
+from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.routing import APIRoute
@@ -1422,12 +1423,14 @@ class AgentOS:
         if not self._app_set:
 
             @fastapi_app.exception_handler(RequestValidationError)
-            async def validation_exception_handler(_: Request, exc: RequestValidationError) -> JSONResponse:
+            async def validation_exception_handler(request: Request, exc: RequestValidationError) -> JSONResponse:
                 log_error(f"Validation error (422): {exc.errors()}")
-                return JSONResponse(
-                    status_code=422,
-                    content={"detail": exc.errors()},
-                )
+                # Delegate the body to FastAPI's own handler: pydantic v2 puts the live
+                # exception object in ``ctx["error"]`` for any validator that raised
+                # ValueError, so the errors list must be run through ``jsonable_encoder``
+                # before it can be a JSON body. Building it here by hand is what made every
+                # custom validator answer 500 instead of 422.
+                return await request_validation_exception_handler(request, exc)
 
             @fastapi_app.exception_handler(HTTPException)
             async def http_exception_handler(_, exc: HTTPException) -> JSONResponse:

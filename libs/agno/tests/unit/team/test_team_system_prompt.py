@@ -216,3 +216,37 @@ def test_opening_makes_no_identity_claim(mode):
     assert opening.startswith("You have a team of specialists")
     for claim in ("You are", "You coordinate", "You act as"):
         assert claim not in opening
+
+
+def test_sub_team_roster_adds_the_id_join_rule():
+    """A nested roster invites joined ids like 'sub-team.member'; the closer forbids them.
+
+    The lookup is exact, so a joined id always fails and costs a round trip. A flat
+    roster keeps the shorter closer: the rule would name a sub-team that is not there.
+    """
+    sub = Team(
+        name="Research Team",
+        id="research-team",
+        model=OpenAIChat("gpt-4o"),
+        role="Handles all research",
+        members=[Agent(name="R", id="r", model=OpenAIChat("gpt-4o"))],
+    )
+    for mode in MODES:
+        nested = _team(members=[sub], mode=mode).get_system_message(session=_session()).content
+        flat = _team(mode=mode).get_system_message(session=_session()).content
+        if mode == TeamMode.broadcast.value:
+            # Broadcast takes no member id, so neither roster renders an ids closer.
+            assert "Member ids are the ids shown" not in nested
+            assert "never joined or prefixed" not in nested
+            continue
+        assert "never joined or prefixed" in nested, mode
+        assert "sub-team's own id" in nested, mode
+        assert "Member ids are the ids shown in the roster above, used exactly as written.\n" in flat, mode
+        assert "never joined or prefixed" not in flat, mode
+
+
+def test_tasks_block_matches_the_loop_it_runs():
+    """The loop now ends a no-task run after the reminder; the prompt may not claim otherwise."""
+    content = _team(mode=TeamMode.tasks.value).get_system_message(session=_session()).content
+    assert "an empty one never" not in content
+    assert "finishes at once instead of after a reminder" in content
