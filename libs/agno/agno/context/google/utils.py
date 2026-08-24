@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import TYPE_CHECKING
 
-from agno.context.provider import Status
+from agno.context.types import Status
 
 if TYPE_CHECKING:
     from agno.tools.google.auth import AuthConfig

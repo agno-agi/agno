@@ -36,9 +36,10 @@ import asyncio
 from typing import TYPE_CHECKING, Any, Literal
 
 from agno.agent import Agent
-from agno.context._utils import answer_from_run
+from agno.context._utils import answer_from_run, sanitize_id
 from agno.context.mode import ContextMode
-from agno.context.provider import Answer, ContextProvider, Status, _sanitize_id
+from agno.context.provider import ContextProvider
+from agno.context.types import Answer, Status
 from agno.run import RunContext
 from agno.tools.mcp import MCPTools
 from agno.utils.log import log_warning
@@ -71,7 +72,7 @@ class MCPContextProvider(ContextProvider):
         model: Model | None = None,
         stream_sub_agent_events: bool = True,
     ) -> None:
-        resolved_id = id or f"mcp_{_sanitize_id(server_name)}"
+        resolved_id = id or f"mcp_{sanitize_id(server_name)}"
         super().__init__(
             id=resolved_id,
             name=name or server_name,

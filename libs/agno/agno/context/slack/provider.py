@@ -30,7 +30,8 @@ from typing import TYPE_CHECKING
 from agno.agent import Agent
 from agno.context._utils import answer_from_run
 from agno.context.mode import ContextMode
-from agno.context.provider import Answer, ContextProvider, Status
+from agno.context.provider import ContextProvider
+from agno.context.types import Answer, Status
 from agno.run import RunContext
 from agno.tools.slack import SlackTools
 
