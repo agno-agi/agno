@@ -74,7 +74,7 @@ from __future__ import annotations
 
 import inspect
 import json
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Sequence, Set, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Union
 
 from agno.exceptions import SchemaMismatchError
 from agno.run import RunContext
@@ -228,6 +228,19 @@ class StudioTools(Toolkit):
             deliberately. denied_tools still wins over both.
         denied_tools: Names no caller may build with, whatever their source.
             A denied toolkit covers its member functions too.
+        max_dispatch_depth: How many runner-dispatch hops one request may
+            chain through the run tools (default 2). 1 means components this
+            toolkit runs may not dispatch further; 0 disables dispatch while
+            keeping discovery. Bounds depth, not fan-out. The cycle guard --
+            no component runs again while it is already running in the same
+            dispatch tree -- is always on regardless.
+        self_dispatch: "never" (default) refuses a component dispatching
+            itself outright. "once" allows a self-run one nested level deep
+            (a clean-context self-consult on its own derived session); the
+            nested run inherits its caller in the dispatch lineage, so it can
+            never re-enter, and indirect cycles stay refused in both modes.
+            Per dispatch call, not per conversation: a run that calls the
+            tool twice starts two such bounded self-runs.
     """
 
     def __init__(
@@ -248,6 +261,7 @@ class StudioTools(Toolkit):
         allowed_tools: Optional[List[str]] = None,
         denied_tools: Optional[List[str]] = None,
         max_dispatch_depth: int = 2,
+        self_dispatch: Literal["never", "once"] = "never",
         **kwargs: Any,
     ):
         self.registry = registry
@@ -312,6 +326,7 @@ class StudioTools(Toolkit):
             # That same reach is what makes an unbounded dispatch chain
             # reachable from one message, so the bound rides along with it.
             max_dispatch_depth=max_dispatch_depth,
+            self_dispatch=self_dispatch,
             list_limit=list_limit,
         )
 
