@@ -174,6 +174,30 @@ class DoclingReader(Reader):
             ContentType.VIDEO_MOV,
         ]
 
+    @classmethod
+    def get_read_time_requirements(cls) -> Dict[ContentType, List[str]]:
+        """The speech-recognition engine docling loads when it transcribes.
+
+        docling imports whisper inside its ASR pipeline, so DoclingReader imports cleanly
+        without it and every audio and video type would otherwise be advertised on an
+        install that cannot transcribe a single one of them.
+        """
+        transcription = ["whisper"]
+        return {
+            content_type: transcription
+            for content_type in (
+                ContentType.AUDIO_WAV,
+                ContentType.AUDIO_MP3,
+                ContentType.AUDIO_M4A,
+                ContentType.AUDIO_AAC,
+                ContentType.AUDIO_OGG,
+                ContentType.AUDIO_FLAC,
+                ContentType.VIDEO_MP4,
+                ContentType.VIDEO_AVI,
+                ContentType.VIDEO_MOV,
+            )
+        }
+
     def read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Reads document using Docling.
 

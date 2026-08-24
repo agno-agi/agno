@@ -66,8 +66,9 @@ def test_a_knowledge_base_without_a_contents_db_is_reported(caplog: pytest.LogCa
     with caplog.at_level("WARNING"):
         client = TestClient(AgentOS(agents=[agent], telemetry=False).get_app())
 
-    assert "No DB KB" in caplog.text
     assert "contents_db" in caplog.text
+    # get_app() runs discovery again, so the line is said once per knowledge object, not per pass.
+    assert caplog.text.count("No DB KB") == 1
     assert client.get("/knowledge/config").status_code == 503
 
 

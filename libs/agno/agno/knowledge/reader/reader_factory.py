@@ -2,7 +2,6 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
-from agno.knowledge.types import ContentType
 
 
 class ReaderFactory:
@@ -31,7 +30,7 @@ class ReaderFactory:
         },
         "docx": {
             "name": "DocxReader",
-            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+            "description": "Extracts text content from Microsoft Word documents (.docx format)",
         },
         "pptx": {
             "name": "PptxReader",
@@ -142,7 +141,7 @@ class ReaderFactory:
 
         config: Dict[str, Any] = {
             "name": "Docx Reader",
-            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+            "description": "Extracts text content from Microsoft Word documents (.docx format)",
         }
         config.update(kwargs)
         return DocxReader(**config)
@@ -378,18 +377,6 @@ class ReaderFactory:
         except Exception:
             return []
         return reader_class.get_missing_read_time_packages(content_type)  # type: ignore[attr-defined]
-
-    @classmethod
-    def get_available_content_types(cls, reader_key: str) -> List[ContentType]:
-        """Content types a reader supports and can actually read in this install.
-
-        An unknown reader key, or one whose class cannot be imported, returns [].
-        """
-        try:
-            reader_class = cls.get_reader_class(reader_key)
-            return reader_class.get_available_content_types()  # type: ignore[attr-defined]
-        except Exception:
-            return []
 
     @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:
