@@ -1,3 +1,4 @@
+import asyncio
 import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -485,3 +486,222 @@ async def test_alist_inbox_success(mock_client_class, tmp_path):
             }
         ],
     }
+
+
+# -- review-hardening regression tests -----------------------------------------------
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_register_inbox_does_not_overwrite_corrupt_credentials(mock_client_class, tmp_path):
+    """A present-but-unreadable credentials file must not be treated as "nothing
+    registered" and silently replaced by a fresh signup (which discards the live
+    api_key). It must surface an error and leave the file untouched."""
+    creds = tmp_path / "credentials.json"
+    creds.write_text('{"api_key": "live-key", "inbox": "agno-agent@atomi')  # truncated JSON
+    original = creds.read_text()
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = tools.register_inbox("new-agent")
+
+    assert "error" in result
+    assert "could not be read" in result["error"]
+    assert creds.read_text() == original  # left intact, not overwritten
+    mock_client_class.assert_not_called()  # no signup was attempted
+
+
+def test_solve_pow_is_bounded_by_pow_timeout():
+    """The nonce grind is driven by an unverified, server-set difficulty, so an
+    implausibly high value must hit the wall-clock bound instead of hanging forever."""
+    with pytest.raises(ValueError, match="did not converge"):
+        AtomicMailTools._solve_pow("challenge", difficulty=255, max_seconds=0.0)
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_register_inbox_pow_timeout_returns_error(mock_client_class, tmp_path):
+    """A too-hard proof-of-work challenge surfaces as a structured error, not a hang."""
+    hard_challenge = _fake_jwt({"jti": "challenge-hard", "difficulty": 255})
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.return_value = _response(headers={"Authorization": f"Bearer {hard_challenge}"})
+    tools = AtomicMailTools(credentials_dir=str(tmp_path), pow_timeout=0.0)
+
+    result = tools.register_inbox("agno-agent")
+
+    assert "error" in result
+    assert "proof-of-work" in result["error"]
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_register_inbox_errors_when_capability_lacks_inbox_id(mock_client_class, tmp_path):
+    """If the capability JWT carries no inboxId, registration must fail loudly rather
+    than persisting inbox=None, which wedges every later call behind a forced=True that
+    would then throw away the api_key of the inbox that was actually created."""
+    capability_without_inbox = _fake_jwt({"allowedFromDomain": "atomicmail.ai", "exp": 9999999999})
+    capability_response = _response(headers={"Authorization": f"Bearer {capability_without_inbox}"})
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [CHALLENGE_RESPONSE, SESSION_RESPONSE, capability_response]
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = tools.register_inbox("agno-agent")
+
+    assert result == {"error": "AtomicMail signup did not return an inbox address."}
+    assert not (tmp_path / "credentials.json").exists()
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_register_inbox_persists_inbox_even_if_account_lookup_fails(mock_client_class, tmp_path):
+    """The inbox exists the moment signup authenticates. If the follow-up JMAP session
+    lookup (only used to enrich account_id) fails, the api_key must still be saved and
+    registration must still succeed rather than stranding a taken-but-unsaved inbox."""
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [CHALLENGE_RESPONSE, SESSION_RESPONSE, CAPABILITY_RESPONSE]
+    client.get.side_effect = httpx.ConnectError("network down")
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = tools.register_inbox("agno-agent")
+
+    assert result == {"inbox": "agno-agent@atomicmail.ai", "account_id": None, "idempotent": False}
+    saved = json.loads((tmp_path / "credentials.json").read_text())
+    assert saved == {"api_key": "atomic-api-key", "inbox": "agno-agent@atomicmail.ai", "account_id": None}
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_register_inbox_non_jwt_bearer_returns_error(mock_client_class, tmp_path):
+    """A malformed (non-JWT) bearer token yields a structured error instead of an
+    IndexError escaping the tool — send_email/list_inbox already handled this class."""
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.return_value = _response(headers={"Authorization": "Bearer not-a-jwt"})
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = tools.register_inbox("agno-agent")
+
+    assert "error" in result
+    assert "registration failed" in result["error"].lower()
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_send_email_unexpected_jmap_body_returns_error(mock_client_class, tmp_path):
+    """A 200 whose body lacks `methodResponses` must return an error dict, not let a
+    KeyError escape from the result parser that ran outside the try."""
+    (tmp_path / "credentials.json").write_text(
+        json.dumps({"api_key": "atomic-api-key", "inbox": "agno-agent@atomicmail.ai", "account_id": "account-1"})
+    )
+    unexpected = _response(json_data={"unexpected": "shape"})
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        unexpected,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = tools.send_email(to="someone@example.com", subject="Hi", body="Hello there")
+
+    assert "error" in result
+    assert "AtomicMail request failed" in result["error"]
+
+
+def test_async_register_tool_schema_carries_param_descriptions(tmp_path):
+    """get_async_functions() prefers the async variant, so its docstring must keep the
+    Args block or async agents get description-less tool parameters."""
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+    fn = tools.get_async_functions()["register_inbox"]
+    fn.process_entrypoint()
+
+    username = fn.parameters["properties"]["username"]
+    assert username.get("description")
+    assert "5-21" in username["description"]
+
+
+@pytest.mark.asyncio
+@patch("agno.tools.atomic_mail.httpx.AsyncClient")
+async def test_aregister_inbox_offloads_pow_to_thread(mock_client_class, tmp_path):
+    """The async path must run the CPU-bound scrypt solve off the event loop."""
+    client = mock_client_class.return_value.__aenter__.return_value
+    client.post = AsyncMock(side_effect=[CHALLENGE_RESPONSE, SESSION_RESPONSE, CAPABILITY_RESPONSE])
+    client.get = AsyncMock(return_value=WELL_KNOWN_RESPONSE)
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    with patch("agno.tools.atomic_mail.asyncio.to_thread", wraps=asyncio.to_thread) as to_thread_spy:
+        result = await tools.aregister_inbox("agno-agent")
+
+    assert result["inbox"] == "agno-agent@atomicmail.ai"
+    assert to_thread_spy.called
+    assert to_thread_spy.call_args.args[0] == tools._solve_pow  # the solve was offloaded
+
+
+@pytest.mark.asyncio
+@patch("agno.tools.atomic_mail.httpx.AsyncClient")
+async def test_aregister_inbox_refuses_different_username_without_forced(mock_client_class, tmp_path):
+    (tmp_path / "credentials.json").write_text(
+        json.dumps({"api_key": "existing-key", "inbox": "old-agent@atomicmail.ai", "account_id": "account-1"})
+    )
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = await tools.aregister_inbox("new-agent")
+
+    assert "error" in result
+    assert "old-agent@atomicmail.ai" in result["error"]
+    mock_client_class.assert_not_called()
+
+
+@pytest.mark.asyncio
+@patch("agno.tools.atomic_mail.httpx.AsyncClient")
+async def test_aregister_inbox_http_error_returns_error_dict(mock_client_class, tmp_path):
+    request = httpx.Request("POST", "https://auth.atomicmail.ai/api/v1/challenge")
+    failing_response = MagicMock(spec=httpx.Response)
+    failing_response.status_code = 503
+    failing_response.text = "service unavailable"
+    failing_response.raise_for_status.side_effect = httpx.HTTPStatusError(
+        "service unavailable", request=request, response=failing_response
+    )
+    client = mock_client_class.return_value.__aenter__.return_value
+    client.post = AsyncMock(return_value=failing_response)
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = await tools.aregister_inbox("agno-agent")
+
+    assert result == {"error": "AtomicMail registration failed: 503 service unavailable"}
+
+
+@pytest.mark.asyncio
+@patch("agno.tools.atomic_mail.httpx.AsyncClient")
+async def test_asend_email_returns_error_on_malformed_jmap_session(mock_client_class, tmp_path):
+    """Async counterpart of the sync malformed-session guard: a 200 session missing
+    primaryAccounts must return a structured error, not an escaping KeyError."""
+    (tmp_path / "credentials.json").write_text(
+        json.dumps({"api_key": "atomic-api-key", "inbox": "agno-agent@atomicmail.ai", "account_id": "account-1"})
+    )
+    client = mock_client_class.return_value.__aenter__.return_value
+    client.post = AsyncMock(side_effect=[CHALLENGE_RESPONSE, SESSION_RESPONSE, CAPABILITY_RESPONSE])
+    client.get = AsyncMock(return_value=_response(json_data={"apiUrl": "https://api.atomicmail.ai/jmap"}))
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = await tools.asend_email(to="someone@example.com", subject="Hi", body="Hello there")
+
+    assert "error" in result
+    assert "AtomicMail request failed" in result["error"]
+
+
+@pytest.mark.asyncio
+@patch("agno.tools.atomic_mail.httpx.AsyncClient")
+async def test_alist_inbox_unexpected_jmap_body_returns_error(mock_client_class, tmp_path):
+    """Async list parser also runs inside the try now: an unexpected 200 body returns
+    an error dict rather than raising KeyError('methodResponses')."""
+    (tmp_path / "credentials.json").write_text(
+        json.dumps({"api_key": "atomic-api-key", "inbox": "agno-agent@atomicmail.ai", "account_id": "account-1"})
+    )
+    unexpected = _response(json_data={"unexpected": "shape"})
+    client = mock_client_class.return_value.__aenter__.return_value
+    client.post = AsyncMock(
+        side_effect=[CHALLENGE_RESPONSE, SESSION_RESPONSE, CAPABILITY_RESPONSE, MAILBOX_QUERY_RESPONSE, unexpected]
+    )
+    client.get = AsyncMock(return_value=WELL_KNOWN_RESPONSE)
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = await tools.alist_inbox(limit=5)
+
+    assert "error" in result
+    assert "AtomicMail request failed" in result["error"]

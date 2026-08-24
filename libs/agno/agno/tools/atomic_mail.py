@@ -1,6 +1,8 @@
+import asyncio
 import base64
 import hashlib
 import json
+import time
 from os import getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
@@ -45,6 +47,7 @@ class AtomicMailTools(Toolkit):
         enable_list_inbox: bool = True,
         all: bool = False,
         timeout: int = 30,
+        pow_timeout: Optional[float] = 300.0,
         **kwargs,
     ):
         """Initialize AtomicMail tools.
@@ -59,9 +62,14 @@ class AtomicMailTools(Toolkit):
             enable_list_inbox: Register the list_inbox tool (sync and async).
             all: Register all tools regardless of individual flags.
             timeout: Per-request timeout in seconds.
+            pow_timeout: Wall-clock cap (seconds) for the proof-of-work solve, which is
+                otherwise unbounded and driven by a server-set difficulty. A solve that
+                exceeds it fails with an `error` result instead of hanging. Set to `None`
+                to wait indefinitely.
         """
         self.auth_url = auth_url.rstrip("/")
         self.api_url = api_url.rstrip("/")
+        self.pow_timeout = pow_timeout
         self.credentials_path = self._resolve_credentials_path(credentials_dir)
 
         tools: List[Any] = []
@@ -86,13 +94,22 @@ class AtomicMailTools(Toolkit):
         return Path(directory).expanduser() / "credentials.json"
 
     def _load_credentials(self) -> Optional[Dict[str, Any]]:
+        """Return the stored credentials, or `None` if none have been written yet.
+
+        A present-but-unreadable file (truncated, non-JSON, permission error) raises
+        instead of returning `None`: treating corruption as "nothing registered" would
+        let `register_inbox` sail past its already-registered guard and overwrite a live
+        inbox's api_key with a freshly signed-up one.
+        """
         if not self.credentials_path.exists():
             return None
         try:
             return json.loads(self.credentials_path.read_text())
         except (OSError, ValueError) as e:
-            log_error(f"Failed to read AtomicMail credentials at {self.credentials_path}: {e}")
-            return None
+            raise ValueError(
+                f"AtomicMail credentials at {self.credentials_path} exist but could not be read ({e}). "
+                "Fix or remove the file; refusing to overwrite it with a new registration."
+            ) from e
 
     def _save_credentials(self, credentials: Dict[str, Any]) -> None:
         self.credentials_path.parent.mkdir(parents=True, exist_ok=True)
@@ -131,7 +148,14 @@ class AtomicMailTools(Toolkit):
         return True
 
     @classmethod
-    def _solve_pow(cls, challenge: str, difficulty: int) -> Dict[str, str]:
+    def _solve_pow(cls, challenge: str, difficulty: int, max_seconds: Optional[float] = None) -> Dict[str, str]:
+        """Grind nonces until the scrypt digest has `difficulty` leading zero bits.
+
+        `difficulty` comes from the (unverified) challenge JWT, so the loop is bounded
+        by `max_seconds` of wall-clock time to keep a misconfigured or implausibly high
+        difficulty from hanging the caller forever. `None` waits indefinitely.
+        """
+        deadline = None if max_seconds is None else time.monotonic() + max_seconds
         nonce = 0
         while True:
             digest = hashlib.scrypt(
@@ -145,6 +169,12 @@ class AtomicMailTools(Toolkit):
             if cls._has_leading_zero_bits(digest, difficulty):
                 return {"powHex": digest.hex(), "nonce": str(nonce)}
             nonce += 1
+            if deadline is not None and time.monotonic() > deadline:
+                raise ValueError(
+                    f"AtomicMail proof-of-work did not converge within {max_seconds:g}s "
+                    f"(difficulty={difficulty}, tried {nonce} nonces). The challenge may be "
+                    "misconfigured or its difficulty implausibly high."
+                )
 
     @staticmethod
     def _bearer_token(response: httpx.Response) -> str:
@@ -354,8 +384,7 @@ class AtomicMailTools(Toolkit):
                 }
         return None
 
-    def _finalize_registration(self, auth: Dict[str, Any], session: Dict[str, Any]) -> Dict[str, Any]:
-        account_id = self._extract_account_id(session)
+    def _finalize_registration(self, auth: Dict[str, Any], account_id: Optional[str]) -> Dict[str, Any]:
         self._save_credentials({"api_key": auth["api_key"], "inbox": auth["inbox"], "account_id": account_id})
         log_info(f"Registered AtomicMail inbox: {auth['inbox']}")
         return {"inbox": auth["inbox"], "account_id": account_id, "idempotent": False}
@@ -387,7 +416,7 @@ class AtomicMailTools(Toolkit):
         challenge_response.raise_for_status()
         challenge_jwt = self._bearer_token(challenge_response)
         challenge_claims = self._decode_jwt_payload(challenge_jwt)
-        solved = self._solve_pow(challenge_claims["jti"], int(challenge_claims["difficulty"]))
+        solved = self._solve_pow(challenge_claims["jti"], int(challenge_claims["difficulty"]), self.pow_timeout)
 
         session_response = client.post(
             f"{self.auth_url}/api/v1/session",
@@ -441,6 +470,20 @@ class AtomicMailTools(Toolkit):
         )
         return self._build_jmap_context(auth, session, account_id, mailbox_result, credentials)
 
+    def _resolve_account_id(self, client: httpx.Client, capability_jwt: str) -> Optional[str]:
+        """Best-effort JMAP account-id lookup for the registration result.
+
+        The inbox already exists once signup authenticates, so a failure resolving its
+        account id must not strand it: log and return `None` (it is re-derived on the
+        next send/list) rather than raising and discarding the just-created api_key.
+        """
+        try:
+            session = self._jmap_session(client, capability_jwt)
+            return self._extract_account_id(session)
+        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError, ValueError) as e:
+            log_error(f"AtomicMail inbox registered, but its account id could not be resolved yet: {e}")
+            return None
+
     # -- async HTTP calls ---------------------------------------------------------
 
     async def _aauthenticate(
@@ -451,7 +494,11 @@ class AtomicMailTools(Toolkit):
         challenge_response.raise_for_status()
         challenge_jwt = self._bearer_token(challenge_response)
         challenge_claims = self._decode_jwt_payload(challenge_jwt)
-        solved = self._solve_pow(challenge_claims["jti"], int(challenge_claims["difficulty"]))
+        # Offload the CPU-bound scrypt grind to a worker thread so a multi-second
+        # (server-difficulty-driven) solve does not block the event loop under agentos.
+        solved = await asyncio.to_thread(
+            self._solve_pow, challenge_claims["jti"], int(challenge_claims["difficulty"]), self.pow_timeout
+        )
 
         session_response = await client.post(
             f"{self.auth_url}/api/v1/session",
@@ -506,6 +553,15 @@ class AtomicMailTools(Toolkit):
         )
         return self._build_jmap_context(auth, session, account_id, mailbox_result, credentials)
 
+    async def _aresolve_account_id(self, client: httpx.AsyncClient, capability_jwt: str) -> Optional[str]:
+        """Async counterpart of `_resolve_account_id`."""
+        try:
+            session = await self._ajmap_session(client, capability_jwt)
+            return self._extract_account_id(session)
+        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError, ValueError) as e:
+            log_error(f"AtomicMail inbox registered, but its account id could not be resolved yet: {e}")
+            return None
+
     # -- tools ------------------------------------------------------------------
 
     def register_inbox(self, username: str, forced: bool = False) -> Dict[str, Any]:
@@ -524,41 +580,53 @@ class AtomicMailTools(Toolkit):
             Dict with `inbox`, `account_id`, and `idempotent` on success, or `error`.
         """
         normalized = username.strip().lower()
-        early_result = self._start_registration(self.credentials_path, self._load_credentials(), normalized, forced)
-        if early_result is not None:
-            return early_result
-
         try:
+            early_result = self._start_registration(self.credentials_path, self._load_credentials(), normalized, forced)
+            if early_result is not None:
+                return early_result
+
             with httpx.Client(timeout=self.timeout) as client:
                 auth = self._authenticate(client, username=normalized)
                 if not auth["api_key"]:
                     return {"error": "AtomicMail signup did not return an API key."}
-                session = self._jmap_session(client, auth["capability_jwt"])
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, ValueError) as e:
+                if not auth["inbox"]:
+                    return {"error": "AtomicMail signup did not return an inbox address."}
+                account_id = self._resolve_account_id(client, auth["capability_jwt"])
+                return self._finalize_registration(auth, account_id)
+        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, ValueError, IndexError) as e:
             return self._registration_error(e)
-
-        return self._finalize_registration(auth, session)
 
     async def aregister_inbox(self, username: str, forced: bool = False) -> Dict[str, Any]:
         """Asynchronously register a new AtomicMail inbox via autonomous proof-of-work signup.
 
-        See `register_inbox` for the full behavior description.
+        No domain setup or human verification is required. If an inbox is already
+        registered for this credentials directory, this call is idempotent for the
+        same username, and refuses to overwrite a different inbox unless `forced`.
+
+        Args:
+            username: Desired inbox local-part, 5-21 characters (e.g. "research-agent").
+            forced: If True, discard any different inbox already stored locally and
+                register a fresh one for `username`.
+
+        Returns:
+            Dict with `inbox`, `account_id`, and `idempotent` on success, or `error`.
         """
         normalized = username.strip().lower()
-        early_result = self._start_registration(self.credentials_path, self._load_credentials(), normalized, forced)
-        if early_result is not None:
-            return early_result
-
         try:
+            early_result = self._start_registration(self.credentials_path, self._load_credentials(), normalized, forced)
+            if early_result is not None:
+                return early_result
+
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 auth = await self._aauthenticate(client, username=normalized)
                 if not auth["api_key"]:
                     return {"error": "AtomicMail signup did not return an API key."}
-                session = await self._ajmap_session(client, auth["capability_jwt"])
-        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, ValueError) as e:
+                if not auth["inbox"]:
+                    return {"error": "AtomicMail signup did not return an inbox address."}
+                account_id = await self._aresolve_account_id(client, auth["capability_jwt"])
+                return self._finalize_registration(auth, account_id)
+        except (httpx.HTTPStatusError, httpx.RequestError, KeyError, ValueError, IndexError) as e:
             return self._registration_error(e)
-
-        return self._finalize_registration(auth, session)
 
     def send_email(self, to: str, subject: str, body: str) -> Dict[str, Any]:
         """Send a plain-text email from the registered AtomicMail inbox.
@@ -576,17 +644,22 @@ class AtomicMailTools(Toolkit):
                 context = self._prepare_jmap_context(client)
                 using, method_calls = self._send_email_call(context, to, subject, body)
                 result = self._jmap_call(client, context["capability_jwt"], context["api_url"], using, method_calls)
+                return self._parse_send_email_result(result, to, subject)
         except ValueError as e:
             return {"error": str(e)}
         except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)
 
-        return self._parse_send_email_result(result, to, subject)
-
     async def asend_email(self, to: str, subject: str, body: str) -> Dict[str, Any]:
         """Asynchronously send a plain-text email from the registered AtomicMail inbox.
 
-        See `send_email` for the full behavior description.
+        Args:
+            to: Recipient email address.
+            subject: Email subject line.
+            body: Plain-text email body.
+
+        Returns:
+            Dict with `email_id`, `submission_id`, `to`, and `subject` on success, or `error`.
         """
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -595,12 +668,11 @@ class AtomicMailTools(Toolkit):
                 result = await self._ajmap_call(
                     client, context["capability_jwt"], context["api_url"], using, method_calls
                 )
+                return self._parse_send_email_result(result, to, subject)
         except ValueError as e:
             return {"error": str(e)}
         except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)
-
-        return self._parse_send_email_result(result, to, subject)
 
     def list_inbox(self, limit: int = 20) -> Dict[str, Any]:
         """List the most recent emails in the registered AtomicMail inbox.
@@ -618,17 +690,21 @@ class AtomicMailTools(Toolkit):
                 context = self._prepare_jmap_context(client)
                 using, method_calls = self._list_inbox_call(context, capped_limit)
                 result = self._jmap_call(client, context["capability_jwt"], context["api_url"], using, method_calls)
+                return self._parse_list_inbox_result(result, context["inbox"])
         except ValueError as e:
             return {"error": str(e)}
         except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)
 
-        return self._parse_list_inbox_result(result, context["inbox"])
-
     async def alist_inbox(self, limit: int = 20) -> Dict[str, Any]:
         """Asynchronously list the most recent emails in the registered AtomicMail inbox.
 
-        See `list_inbox` for the full behavior description.
+        Args:
+            limit: Maximum number of emails to return (default 20, capped at 100).
+
+        Returns:
+            Dict with `inbox`, `count`, and an `emails` list (id, from, to, subject,
+            received_at, preview), or `error`.
         """
         capped_limit = max(1, min(limit, 100))
         try:
@@ -638,9 +714,8 @@ class AtomicMailTools(Toolkit):
                 result = await self._ajmap_call(
                     client, context["capability_jwt"], context["api_url"], using, method_calls
                 )
+                return self._parse_list_inbox_result(result, context["inbox"])
         except ValueError as e:
             return {"error": str(e)}
         except (httpx.HTTPStatusError, httpx.RequestError, KeyError, IndexError) as e:
             return self._request_error(e)
-
-        return self._parse_list_inbox_result(result, context["inbox"])
