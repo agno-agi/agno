@@ -5,11 +5,13 @@ import pytest
 
 from agno.learn.config import (
     EntityMemoryConfig,
+    FeedbackConfig,
     LearnedKnowledgeConfig,
     SessionContextConfig,
     UserMemoryConfig,
     UserProfileConfig,
 )
+from agno.learn.stores.feedback import FeedbackStore
 from agno.learn.stores.learned_knowledge import LearnedKnowledgeStore
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_memory import UserMemoryStore
@@ -169,12 +171,21 @@ def _build_learned_knowledge_store(model: Any, **config_kwargs: Any) -> tuple[An
     return store, {"user_id": "user-1"}
 
 
+def _build_feedback_store(model: Any, **config_kwargs: Any) -> tuple[Any, dict[str, str]]:
+    config_kwargs.setdefault("max_updates_per_run", DEFAULT_MAX_UPDATES)
+    store = FeedbackStore(
+        config=FeedbackConfig(db=_RecordingLearningDb(), model=model, **config_kwargs)  # type: ignore[arg-type]
+    )
+    return store, {"session_id": "session-1"}
+
+
 # Entity memory is AGENTIC-only (no extraction pass), so it does not appear here.
 STORE_BUILDERS = [
     pytest.param(_build_session_context_store, id="session_context"),
     pytest.param(_build_user_profile_store, id="user_profile"),
     pytest.param(_build_user_memory_store, id="user_memory"),
     pytest.param(_build_learned_knowledge_store, id="learned_knowledge"),
+    pytest.param(_build_feedback_store, id="feedback"),
 ]
 
 
@@ -196,6 +207,7 @@ def conversation_messages() -> list[Message]:
         pytest.param(SessionContextConfig, id="session_context"),
         pytest.param(LearnedKnowledgeConfig, id="learned_knowledge"),
         pytest.param(EntityMemoryConfig, id="entity_memory"),
+        pytest.param(FeedbackConfig, id="feedback"),
     ],
 )
 def test_config_default_max_updates_per_run(config_cls: type) -> None:
@@ -331,6 +343,7 @@ def test_learning_machine_propagates_global_limit_to_stores() -> None:
         user_memory=True,
         session_context=True,
         entity_memory=True,
+        feedback=True,
     )
 
     # Access stores to trigger initialization
@@ -338,12 +351,14 @@ def test_learning_machine_propagates_global_limit_to_stores() -> None:
     assert lm.user_memory_store is not None
     assert lm.session_context_store is not None
     assert lm.entity_memory_store is not None
+    assert lm.feedback_store is not None
 
     # Each store should have the global limit
     assert lm.user_profile_store.config.max_updates_per_run == 25
     assert lm.user_memory_store.config.max_updates_per_run == 25
     assert lm.session_context_store.config.max_updates_per_run == 25
     assert lm.entity_memory_store.config.max_updates_per_run == 25
+    assert lm.feedback_store.config.max_updates_per_run == 25
 
 
 def test_learning_machine_store_override_takes_precedence() -> None:

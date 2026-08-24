@@ -748,7 +748,7 @@ def _set_learning_machine(team: "Team") -> None:
             team.learning.knowledge = team.knowledge
         team._learning = team.learning
 
-        # PROPOSE/HITL modes need chat history for multi-turn confirmation
+        # PROPOSE/HITL and feedback modes need chat history
         if team._learning.requires_history and not team.add_history_to_context:
             team.add_history_to_context = True
 

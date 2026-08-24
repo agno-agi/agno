@@ -240,6 +240,9 @@ def _attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBas
             entity_id=body.entity_id,
             entity_type=body.entity_type,
             namespace=body.namespace,
+            # feedback keys on the run it reviews, which travels in the content. Without it
+            # the row takes a uuid the run feedback routes never look up.
+            run_id=body.content.get("run_id"),
         )
         if body.learning_type in IDENTITY_KEYED_LEARNING_TYPES and deterministic_id is None:
             if body.learning_type == "entity_memory" and body.namespace == "user":

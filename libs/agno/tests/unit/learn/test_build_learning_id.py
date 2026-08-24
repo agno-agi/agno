@@ -5,6 +5,7 @@ can compute the same deterministic id and records reconcile with what the agent 
 """
 
 from agno.learn.stores.entity_memory import EntityMemoryStore
+from agno.learn.stores.feedback import build_feedback_id
 from agno.learn.stores.session_context import SessionContextStore
 from agno.learn.stores.user_memory import UserMemoryStore
 from agno.learn.stores.user_profile import UserProfileStore
@@ -29,6 +30,11 @@ class TestBuildLearningId:
     def test_non_identity_types_return_none(self):
         assert build_learning_id("decision_log", user_id="u1") is None
         assert build_learning_id("something_custom", user_id="u1") is None
+
+    def test_feedback_is_keyed_by_run(self):
+        assert build_learning_id("feedback", run_id="run-1") == "feedback_run-1"
+        # Feedback with no run has no identity to derive from; the caller generates an id.
+        assert build_learning_id("feedback") is None
 
 
 class TestUserNamespaceEntityKey:
@@ -95,6 +101,11 @@ class TestUserNamespaceEntityKey:
         assert legacy_entity_learning_id("acme", "company", "user") == "entity_user_company_acme"
         assert legacy_entity_learning_id("acme", "company") == "entity_global_company_acme"
 
+    def test_feedback_is_not_identity_keyed(self):
+        # Half identity-keyed: a run review reconciles on feedback_<run_id>, but conversational
+        # feedback has no run, so the create endpoint must not 422 it like a keyless profile.
+        assert "feedback" not in IDENTITY_KEYED_LEARNING_TYPES
+
     def test_identity_keyed_set_matches_helper(self):
         # Every type in the set must be derivable when its fields are present, and the
         # decision_log (generated-id) type must not be in the set.
@@ -128,6 +139,9 @@ class TestStoresDelegateToHelper:
         assert store._build_entity_db_id("acme", "company", "global") == build_learning_id(
             "entity_memory", entity_id="acme", entity_type="company", namespace="global"
         )
+
+    def test_feedback_store(self):
+        assert build_feedback_id("run-1") == build_learning_id("feedback", run_id="run-1")
 
     def test_entity_memory_store_user_namespace(self):
         store = EntityMemoryStore.__new__(EntityMemoryStore)
