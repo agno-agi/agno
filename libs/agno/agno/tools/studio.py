@@ -244,10 +244,10 @@ class StudioTools(Toolkit):
         create_workflows: bool = True,
         versions: bool = True,
         schedules: bool = False,
-        max_dispatch_depth: int = 2,
         list_limit: int = 100,
         allowed_tools: Optional[List[str]] = None,
         denied_tools: Optional[List[str]] = None,
+        max_dispatch_depth: int = 2,
         **kwargs: Any,
     ):
         self.registry = registry
@@ -3500,8 +3500,8 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int],
         run_context: Optional[RunContext],
-        wielder_agent: Any = None,
-        wielder_team: Any = None,
+        caller_agent: Any = None,
+        caller_team: Any = None,
     ) -> str:
         runner_calls = {
             "agent": self._runner_tools.run_agent,
@@ -3517,8 +3517,8 @@ class StudioTools(Toolkit):
                     identifier,
                     message,
                     _agno_run_context=run_context,
-                    _agno_agent=wielder_agent,
-                    _agno_team=wielder_team,
+                    _agno_agent=caller_agent,
+                    _agno_team=caller_team,
                 )
             )
         # Preview: run an exact version, drafts included. Owner-gated like the
@@ -3535,7 +3535,7 @@ class StudioTools(Toolkit):
         # left open to unbounded self-dispatch.
         try:
             dispatch_metadata = self._runner_tools._dispatch_metadata(
-                run_context, component_type, resolved_id, wielder_agent=wielder_agent, wielder_team=wielder_team
+                run_context, component_type, resolved_id, caller_agent=caller_agent, caller_team=caller_team
             )
         except StudioRunnerError as e:
             return error_result("dispatch_refused", str(e))
@@ -3574,8 +3574,8 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int],
         run_context: Optional[RunContext],
-        wielder_agent: Any = None,
-        wielder_team: Any = None,
+        caller_agent: Any = None,
+        caller_team: Any = None,
     ) -> str:
         """Async mirror of _run_component: the target's arun actually runs on
         the event loop (async hooks and tools included) instead of the sync
@@ -3596,8 +3596,8 @@ class StudioTools(Toolkit):
                     identifier,
                     message,
                     _agno_run_context=run_context,
-                    _agno_agent=wielder_agent,
-                    _agno_team=wielder_team,
+                    _agno_agent=caller_agent,
+                    _agno_team=caller_team,
                 )
             )
         row, resolved_id, err = await asyncio.to_thread(self._component_row, identifier, _actor_id(run_context))
@@ -3612,7 +3612,7 @@ class StudioTools(Toolkit):
         # left open to unbounded self-dispatch. Pure in-memory work; no thread hop.
         try:
             dispatch_metadata = self._runner_tools._dispatch_metadata(
-                run_context, component_type, resolved_id, wielder_agent=wielder_agent, wielder_team=wielder_team
+                run_context, component_type, resolved_id, caller_agent=caller_agent, caller_team=caller_team
             )
         except StudioRunnerError as e:
             return error_result("dispatch_refused", str(e))
@@ -3669,7 +3669,7 @@ class StudioTools(Toolkit):
             and, when paused, the unresolved requirements to continue with.
         """
         return self._run_component(
-            "agent", agent_id, message, version, _agno_run_context, wielder_agent=_agno_agent, wielder_team=_agno_team
+            "agent", agent_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
     def run_team(
@@ -3694,7 +3694,7 @@ class StudioTools(Toolkit):
             and, when paused, the unresolved requirements.
         """
         return self._run_component(
-            "team", team_id, message, version, _agno_run_context, wielder_agent=_agno_agent, wielder_team=_agno_team
+            "team", team_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
     def run_workflow(
@@ -3724,8 +3724,8 @@ class StudioTools(Toolkit):
             message,
             version,
             _agno_run_context,
-            wielder_agent=_agno_agent,
-            wielder_team=_agno_team,
+            caller_agent=_agno_agent,
+            caller_team=_agno_team,
         )
 
     # ------------------------------------------------------------------
@@ -4101,7 +4101,7 @@ class StudioTools(Toolkit):
     ) -> str:
         """Async variant of run_agent."""
         return await self._arun_component(
-            "agent", agent_id, message, version, _agno_run_context, wielder_agent=_agno_agent, wielder_team=_agno_team
+            "agent", agent_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
     async def arun_team(
@@ -4115,7 +4115,7 @@ class StudioTools(Toolkit):
     ) -> str:
         """Async variant of run_team."""
         return await self._arun_component(
-            "team", team_id, message, version, _agno_run_context, wielder_agent=_agno_agent, wielder_team=_agno_team
+            "team", team_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
         )
 
     async def arun_workflow(
@@ -4134,8 +4134,8 @@ class StudioTools(Toolkit):
             message,
             version,
             _agno_run_context,
-            wielder_agent=_agno_agent,
-            wielder_team=_agno_team,
+            caller_agent=_agno_agent,
+            caller_team=_agno_team,
         )
 
     def create_schedule(

@@ -198,7 +198,7 @@ class DispatchCycleError(ComponentNotDispatchableError):
     """The dispatch target is already running in this dispatch lineage.
 
     Every dispatched run carries the components already running in its
-    dispatch tree in run metadata, and the wielding component joins that set
+    dispatch tree in run metadata, and the calling component joins that set
     at dispatch time. Re-entering one of them can only repeat work, and
     unchecked it is a self-sustaining loop: one message can keep a component
     re-dispatching itself indefinitely, outliving the HTTP caller and stopping
@@ -2396,8 +2396,8 @@ class StudioRunnerTools(Toolkit):
     # carries every component already running in this dispatch tree (the
     # lineage; membership is the cycle test) and the number of dispatches that
     # produced this run (the hop count; the depth test). They are two keys
-    # because the lineage records wielders as well as targets, so its length
-    # is not the hop count. The wielding component arrives through the
+    # because the lineage records callers as well as targets, so its length
+    # is not the hop count. The calling component arrives through the
     # framework's identity injection (_agno_agent/_agno_team) and joins the
     # lineage at dispatch time -- an inherited-only chain is empty at the top
     # level, which is exactly the reported repro (a team dispatching itself
@@ -2408,16 +2408,16 @@ class StudioRunnerTools(Toolkit):
         return list(dict.fromkeys(tokens))
 
     @staticmethod
-    def _wielder_tokens(wielder_agent: Any, wielder_team: Any) -> List[str]:
-        """Lineage tokens for the components wielding this toolkit.
+    def _caller_tokens(caller_agent: Any, caller_team: Any) -> List[str]:
+        """Lineage tokens for the components calling through this toolkit.
 
         A toolkit on a team leader contributes the team; a toolkit on a member
         agent contributes both its parent team and itself, outer frame first --
-        both are genuinely running and both are cycle targets. A wielder with
+        both are genuinely running and both are cycle targets. A caller with
         no usable id contributes nothing."""
         tokens: List[str] = []
-        for component_type, wielder in (("team", wielder_team), ("agent", wielder_agent)):
-            component_id = getattr(wielder, "id", None)
+        for component_type, caller in (("team", caller_team), ("agent", caller_agent)):
+            component_id = getattr(caller, "id", None)
             if isinstance(component_id, str) and component_id:
                 tokens.append(f"{component_type}:{component_id}")
         return tokens
@@ -2468,7 +2468,7 @@ class StudioRunnerTools(Toolkit):
         """The target's lineage token, after refusing re-entry.
 
         Tests the RESOLVED id, so a display name or slug alias cannot evade
-        the guard, against the running set (inherited lineage plus wielders):
+        the guard, against the running set (inherited lineage plus the calling components):
         a component may not be dispatched while it is already running in this
         tree, at any depth."""
         target = f"{component_type}:{component_id}"
@@ -2489,7 +2489,7 @@ class StudioRunnerTools(Toolkit):
     ) -> Dict[str, Any]:
         """The child run's metadata: the caller's metadata minus the keys the
         runtime owns, the lineage extended with the running set and the target
-        (so the wielder is recorded, not just the target -- an inherited-only
+        (so the caller is recorded, not just the target -- an inherited-only
         chain would allow A -> B -> A), and the hop count incremented by one.
 
         The version pin (``agno_component_version``) is deliberately not
@@ -2533,8 +2533,8 @@ class StudioRunnerTools(Toolkit):
         run_context: Optional[RunContext],
         component_type: str,
         component_id: str,
-        wielder_agent: Any = None,
-        wielder_team: Any = None,
+        caller_agent: Any = None,
+        caller_team: Any = None,
     ) -> Dict[str, Any]:
         """The whole guard in dispatch order: inherited state (fail-closed),
         depth budget, cycle test on the resolved id, outgoing metadata.
@@ -2545,7 +2545,7 @@ class StudioRunnerTools(Toolkit):
         that already hold the resolved id (StudioTools' version-pinned path)."""
         inherited, depth = self._inherited_dispatch_state(run_context)
         self._require_dispatch_budget(depth, component_type, component_id)
-        running = self._dedup([*inherited, *self._wielder_tokens(wielder_agent, wielder_team)])
+        running = self._dedup([*inherited, *self._caller_tokens(caller_agent, caller_team)])
         target = self._require_no_cycle(running, component_type, component_id)
         return self._outgoing_metadata(run_context, running, depth, target)
 
@@ -2630,7 +2630,7 @@ class StudioRunnerTools(Toolkit):
             return json.dumps({"error": self._not_found_message("agent", agent_id, actor=actor)})
         component_id = getattr(agent, "id", None) or agent_id
         try:
-            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
             target = self._require_no_cycle(running, "agent", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
@@ -2694,7 +2694,7 @@ class StudioRunnerTools(Toolkit):
             return json.dumps({"error": self._not_found_message("team", team_id, actor=actor)})
         component_id = getattr(team, "id", None) or team_id
         try:
-            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
             target = self._require_no_cycle(running, "team", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
@@ -2758,7 +2758,7 @@ class StudioRunnerTools(Toolkit):
             return json.dumps({"error": self._not_found_message("workflow", workflow_id, actor=actor)})
         component_id = getattr(wf, "id", None) or workflow_id
         try:
-            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
             target = self._require_no_cycle(running, "workflow", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
@@ -2814,7 +2814,7 @@ class StudioRunnerTools(Toolkit):
             )
         component_id = getattr(agent, "id", None) or agent_id
         try:
-            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
             target = self._require_no_cycle(running, "agent", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
@@ -2867,7 +2867,7 @@ class StudioRunnerTools(Toolkit):
             return json.dumps({"error": await asyncio.to_thread(self._not_found_message, "team", team_id, actor=actor)})
         component_id = getattr(team, "id", None) or team_id
         try:
-            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
             target = self._require_no_cycle(running, "team", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.
@@ -2922,7 +2922,7 @@ class StudioRunnerTools(Toolkit):
             )
         component_id = getattr(wf, "id", None) or workflow_id
         try:
-            running = self._dedup([*inherited, *self._wielder_tokens(_agno_agent, _agno_team)])
+            running = self._dedup([*inherited, *self._caller_tokens(_agno_agent, _agno_team)])
             target = self._require_no_cycle(running, "workflow", component_id)
         except StudioRunnerError as e:
             # Deliberate refusals with an actionable message; not failures to log.

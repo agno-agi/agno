@@ -4018,8 +4018,8 @@ class TestStudioToolsDispatchGuard:
         created = _loads(studio.create_agent(name="loop-preview", instructions="i", model_id="gpt-5.4", publish=True))
         assert created["data"]["id"] == "loop-preview"
 
-        wielder = type("W", (), {"id": "loop-preview"})()
-        out = _loads(studio.run_agent("loop-preview", "hi", version=1, _agno_agent=wielder))
+        caller = type("W", (), {"id": "loop-preview"})()
+        out = _loads(studio.run_agent("loop-preview", "hi", version=1, _agno_agent=caller))
         assert out["error"]["code"] == "dispatch_refused"
         assert "already running" in out["error"]["message"]
 
@@ -4028,8 +4028,8 @@ class TestStudioToolsDispatchGuard:
         studio = StudioTools(registry=registry, db=db)
         studio.create_agent(name="loop-preview", instructions="i", model_id="gpt-5.4", publish=True)
 
-        wielder = type("W", (), {"id": "loop-preview"})()
-        out = _loads(await studio.arun_agent("loop-preview", "hi", version=1, _agno_agent=wielder))
+        caller = type("W", (), {"id": "loop-preview"})()
+        out = _loads(await studio.arun_agent("loop-preview", "hi", version=1, _agno_agent=caller))
         assert out["error"]["code"] == "dispatch_refused"
 
     def test_studio_version_pinned_depth_is_guarded(self, registry, db):
@@ -4047,9 +4047,9 @@ class TestStudioToolsDispatchGuard:
         out = _loads(studio.run_agent("deep-preview", "hi", version=1, _agno_run_context=context))
         assert out["error"]["code"] == "dispatch_refused"
 
-    def test_studio_forwards_the_wielder_by_keyword(self, registry, db):
+    def test_studio_forwards_the_caller_by_keyword(self, registry, db):
         # The runner's injected parameters are keyword channels; a future
-        # positional call site would drop the wielder without an error.
+        # positional call site would drop the caller identity without an error.
         from unittest.mock import patch
 
         stub = _GuardStubTeam()

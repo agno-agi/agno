@@ -483,8 +483,8 @@ class TestInjectionGuard:
         assert stub.seen is not None
         assert stub.seen["user_id"] == "ash"
 
-    def test_a_model_supplied_wielder_is_discarded(self, db):
-        # The wielder identity drives the cycle guard, so a model that could
+    def test_a_model_supplied_caller_identity_is_discarded(self, db):
+        # The caller identity drives the cycle guard, so a model that could
         # null it out would talk its way past the refusal. The injected value
         # must win over anything in the tool-call arguments.
         stub = _StubTeam()
@@ -502,7 +502,7 @@ class TestInjectionGuard:
         assert "already running" in str(call.result)
         assert stub.seen is None
 
-    def test_the_wielder_params_stay_out_of_the_model_schema(self, db):
+    def test_the_caller_params_stay_out_of_the_model_schema(self, db):
         # The description assertion is the tripwire for the annotation hazard:
         # a forward-ref annotation on the injected params makes schema
         # generation fail silently, shipping the tool with empty parameters
@@ -1028,9 +1028,9 @@ _DISPATCH_TOOLS = [
     pytest.param("workflow", True, id="arun_workflow"),
 ]
 
-# The two component kinds that can WIELD a toolkit (workflows hold no tools),
-# for the top-level self-dispatch case where the wielder IS the target.
-_WIELDER_TOOLS = [
+# The two component kinds that can hold a toolkit (workflows hold no tools),
+# for the top-level self-dispatch case where the caller IS the target.
+_CALLER_TOOLS = [
     pytest.param("agent", False, id="run_agent"),
     pytest.param("team", False, id="run_team"),
     pytest.param("agent", True, id="arun_agent"),
@@ -1044,8 +1044,8 @@ def _guarded_stub(kind: str, db, **runner_kwargs):
     return stub, runner
 
 
-def _wielder_kwargs(kind: str, stub) -> Dict[str, Any]:
-    return {"wielder_agent": stub} if kind == "agent" else {"wielder_team": stub}
+def _caller_kwargs(kind: str, stub) -> Dict[str, Any]:
+    return {"caller_agent": stub} if kind == "agent" else {"caller_team": stub}
 
 
 async def _dispatch(
@@ -1054,12 +1054,12 @@ async def _dispatch(
     use_async: bool,
     identifier: Optional[str] = None,
     context=None,
-    wielder_agent=None,
-    wielder_team=None,
+    caller_agent=None,
+    caller_team=None,
 ):
     identifier = identifier if identifier is not None else _STUB_CLASSES[kind].id
     tool = getattr(runner, f"arun_{kind}" if use_async else f"run_{kind}")
-    result = tool(identifier, "go", _agno_run_context=context, _agno_agent=wielder_agent, _agno_team=wielder_team)
+    result = tool(identifier, "go", _agno_run_context=context, _agno_agent=caller_agent, _agno_team=caller_team)
     if use_async:
         result = await result
     return _loads(result)
@@ -1067,13 +1067,13 @@ async def _dispatch(
 
 class TestDispatchCycleGuard:
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("kind,use_async", _WIELDER_TOOLS)
+    @pytest.mark.parametrize("kind,use_async", _CALLER_TOOLS)
     async def test_top_level_self_dispatch_is_refused(self, db, kind, use_async):
-        # The reported repro: the wielding component dispatches ITSELF from a
+        # The reported repro: the calling component dispatches ITSELF from a
         # run a human started, where the inherited lineage is empty. Only the
-        # injected wielder identity can catch this.
+        # injected caller identity can catch this.
         stub, runner = _guarded_stub(kind, db)
-        out = await _dispatch(runner, kind, use_async, context=_context(), **_wielder_kwargs(kind, stub))
+        out = await _dispatch(runner, kind, use_async, context=_context(), **_caller_kwargs(kind, stub))
         assert stub.id in out["error"]
         assert "already running" in out["error"]
         assert stub.seen is None
@@ -1091,11 +1091,11 @@ class TestDispatchCycleGuard:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("use_async", [False, True], ids=["sync", "async"])
     async def test_a_member_agent_refuses_to_dispatch_its_parent_team(self, db, use_async):
-        # A toolkit on a member agent wields BOTH the member and its parent
+        # A toolkit on a member agent carries BOTH the member and its parent
         # team: the parent is genuinely running, so it is a cycle target.
         team, runner = _guarded_stub("team", db)
         agent = _StubAgent()
-        out = await _dispatch(runner, "team", use_async, context=_context(), wielder_agent=agent, wielder_team=team)
+        out = await _dispatch(runner, "team", use_async, context=_context(), caller_agent=agent, caller_team=team)
         assert "already running" in out["error"]
         assert team.seen is None
 
@@ -1113,13 +1113,13 @@ class TestDispatchCycleGuard:
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
-    async def test_the_wielder_is_written_into_the_outgoing_lineage(self, db, kind, use_async):
-        # The wielder is recorded, not just the target: an inherited-only
+    async def test_the_caller_is_written_into_the_outgoing_lineage(self, db, kind, use_async):
+        # The caller is recorded, not just the target: an inherited-only
         # outgoing chain never contains the caller, so A -> B -> A stays open.
         stub, runner = _guarded_stub(kind, db)
         outer = _StubTeam()
         outer.id = "outer"
-        out = await _dispatch(runner, kind, use_async, context=_context(), wielder_team=outer)
+        out = await _dispatch(runner, kind, use_async, context=_context(), caller_team=outer)
         assert "error" not in out
         assert stub.seen_metadata is not None
         assert stub.seen_metadata[_CHAIN_KEY] == ["team:outer", f"{kind}:{stub.id}"]
@@ -1139,13 +1139,13 @@ class TestDispatchCycleGuard:
         b.name = "B"
         runner = StudioRunnerTools(db=db, include_teams=[a, b], max_dispatch_depth=3)
 
-        out = await _dispatch(runner, "team", use_async, identifier="b", context=_context(), wielder_team=a)
+        out = await _dispatch(runner, "team", use_async, identifier="b", context=_context(), caller_team=a)
         assert "error" not in out
         assert b.seen_metadata == {_CHAIN_KEY: ["team:a", "team:b"], _DEPTH_KEY: 1}
 
         nested = _context()
         nested.metadata = dict(b.seen_metadata)
-        out = await _dispatch(runner, "team", use_async, identifier="a", context=nested, wielder_team=b)
+        out = await _dispatch(runner, "team", use_async, identifier="a", context=nested, caller_team=b)
         assert "already running" in out["error"]
         assert a.seen is None
 
@@ -1171,12 +1171,12 @@ class TestDispatchCycleGuard:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
     async def test_lineage_entries_are_deduped(self, db, kind, use_async):
-        # A wielder already in the inherited lineage appears once, and the hop
+        # A caller already in the inherited lineage appears once, and the hop
         # count still moves by exactly 1: it is its own key, not len(chain).
         stub, runner = _guarded_stub(kind, db, max_dispatch_depth=3)
         outer = _StubTeam()
         outer.id = "outer"
-        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(["team:outer"]), wielder_team=outer)
+        out = await _dispatch(runner, kind, use_async, context=_dispatched_context(["team:outer"]), caller_team=outer)
         assert "error" not in out
         assert stub.seen_metadata is not None
         assert stub.seen_metadata[_CHAIN_KEY] == ["team:outer", f"{kind}:{stub.id}"]
@@ -1196,13 +1196,13 @@ class TestDispatchCycleGuard:
         assert context.metadata == {"tenant": "acme"}
 
     @pytest.mark.asyncio
-    @pytest.mark.parametrize("kind,use_async", _WIELDER_TOOLS)
+    @pytest.mark.parametrize("kind,use_async", _CALLER_TOOLS)
     async def test_resolved_id_is_used_not_alias(self, db, kind, use_async):
-        # The lineage carries resolved ids; dispatching the wielder by display
+        # The lineage carries resolved ids; dispatching the caller by display
         # name must hit the same guard, or an alias walks straight around it.
         stub, runner = _guarded_stub(kind, db)
         out = await _dispatch(
-            runner, kind, use_async, identifier=stub.name, context=_context(), **_wielder_kwargs(kind, stub)
+            runner, kind, use_async, identifier=stub.name, context=_context(), **_caller_kwargs(kind, stub)
         )
         assert "error" in out
         assert stub.seen is None
@@ -1283,7 +1283,7 @@ class TestDispatchCycleGuard:
     async def test_a_different_component_is_unaffected(self, db, use_async):
         stub = _StubAgent()
         runner = StudioRunnerTools(db=db, include_agents=[stub])
-        out = await _dispatch(runner, "agent", use_async, context=_context(), wielder_team=_StubTeam())
+        out = await _dispatch(runner, "agent", use_async, context=_context(), caller_team=_StubTeam())
         assert out["status"] == "COMPLETED"
         assert stub.seen is not None
 
@@ -1379,7 +1379,7 @@ class TestDispatchDepthCap:
     @pytest.mark.asyncio
     @pytest.mark.parametrize("kind,use_async", _DISPATCH_TOOLS)
     async def test_depth_not_lineage_length_governs(self, db, kind, use_async):
-        # A member-agent first hop writes three wielder tokens plus the
+        # A member-agent first hop writes three caller tokens plus the
         # target; the cap must read the hop counter, not len(chain), or that
         # legitimate second hop is refused.
         stub, runner = _guarded_stub(kind, db)
@@ -4285,7 +4285,7 @@ class TestEndToEndSelfDispatch:
         # reach the team itself, driven by a model that re-dispatches whenever
         # it has no tool result yet. Unguarded, every nesting level starts
         # another; the recorder's ceiling fails the test loudly if that comes
-        # back. Guarded, the framework injects the wielding team into the tool
+        # back. Guarded, the framework injects the calling team into the tool
         # call, so the very FIRST self-dispatch is refused and no nested run
         # ever exists -- this is the reported top-level repro, end to end
         # through the real injection machinery.

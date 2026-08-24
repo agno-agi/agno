@@ -56,7 +56,7 @@ COMPONENT_VERSION_METADATA_KEY = "agno_component_version"
 # component already running in this dispatch tree, oldest first, each entry
 # "<type>:<id>" (membership is the cycle test), and the number of runner
 # dispatches that produced it (the depth test). Two keys, because the lineage
-# carries wielders as well as targets, so its length is NOT the hop count.
+# carries callers as well as targets, so its length is NOT the hop count.
 # Written by StudioRunnerTools/StudioTools on dispatch, read back by the nested
 # run's own runner tools. Runtime-owned: a caller or a stored config may never
 # supply either.
