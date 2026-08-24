@@ -1096,7 +1096,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
     caller_db = InMemoryDb()
     reasoning_db = InMemoryDb()
     summary_manager = SessionSummaryManager()
-    compression_manager = CompressionManager()
+    compaction_manager = CompressionManager()
     skills = Skills(loaders=[])
     save_path = tmp_path / "response.txt"
     caller = Agent(
@@ -1106,7 +1106,7 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         followup_model=followup_model,
         fallback_models=[fallback_model],
         session_summary_manager=summary_manager,
-        compression_manager=compression_manager,
+        compaction_manager=compaction_manager,
         skills=skills,
         reasoning_agent=Agent(model=sub_model, db=reasoning_db, telemetry=False),
         save_response_to_file=str(save_path),
@@ -1142,9 +1142,9 @@ async def test_hermetic_real_agent_full_override_set(tmp_path):
         # read flag unresolved -- exactly what a fresh production run would see.
         assert attempt_agent.add_memories_to_context is None
         assert attempt_agent.add_session_summary_to_context is True
-        assert attempt_agent.compression_manager is not compression_manager
-        assert attempt_agent.compression_manager.stats == {}
-        assert attempt_agent.compression_manager.stats is not compression_manager.stats
+        assert attempt_agent.compaction_manager is not compaction_manager
+        assert attempt_agent.compaction_manager.stats == {}
+        assert attempt_agent.compaction_manager.stats is not compaction_manager.stats
         assert attempt_agent.reasoning_agent is not caller.reasoning_agent
         assert isinstance(attempt_agent.reasoning_agent.db, InMemoryDb)
         assert attempt_agent.reasoning_agent.db is not reasoning_db
@@ -1741,7 +1741,7 @@ async def test_write_isolation_deep_freeze(tmp_path):
         fallback_models=[fallback_model],
         memory_manager=MemoryManager(),
         session_summary_manager=SessionSummaryManager(),
-        compression_manager=CompressionManager(),
+        compaction_manager=CompressionManager(),
         learning=LearningMachine(
             learned_knowledge=LearnedKnowledgeConfig(knowledge=learned_store, mode=LearningMode.ALWAYS)
         ),
