@@ -224,6 +224,8 @@ markdown = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown", "aiofiles"]
 pdf = ["pypdf", "rapidocr_onnxruntime"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
+# The website and llms_txt readers both import bs4 at module scope.
+website = ["beautifulsoup4"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
@@ -383,6 +385,7 @@ knowledge = [
   "agno[pdf]",
   "agno[pptx]",
   "agno[text]",
+  "agno[website]",
 ]
 
 # All embedders
