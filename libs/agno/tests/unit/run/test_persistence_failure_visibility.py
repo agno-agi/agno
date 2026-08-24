@@ -83,6 +83,21 @@ def test_completed_run_surfaces_run_persistence_failure(kind: str, tmp_path: Any
 
 
 @pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
+def test_failed_second_run_leaves_previous_durable_run_visible(kind: str, tmp_path: Any) -> None:
+    db = SqliteDb(db_file=str(tmp_path / f"{kind}-stale.db"))
+    component = _component(kind, db)
+
+    first = component.run("first", session_id="session", metadata={"amount": "12.34"})
+    before = [run.run_id for run in db.get_runs(session_id="session")]
+
+    with pytest.raises(StatementError, match="Decimal"):
+        component.run("second", session_id="session", metadata={"amount": Decimal("12.34")})
+
+    assert before == [first.run_id]
+    assert [run.run_id for run in db.get_runs(session_id="session")] == before
+
+
+@pytest.mark.parametrize("kind", ["agent", "team", "workflow"])
 async def test_async_completed_run_surfaces_run_persistence_failure(kind: str, tmp_path: Any) -> None:
     db = SqliteDb(db_file=str(tmp_path / f"{kind}-async.db"))
     component = _component(kind, db)
