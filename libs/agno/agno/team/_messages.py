@@ -110,8 +110,15 @@ def get_members_system_message_content(
     for member in resolved_members:
         member_id = get_member_id(member)
 
+        # Only a directly delegable member shows an id: an inner member's id is not a valid
+        # delegation target here, and a leader shown one joins it into ids like
+        # "sub-team.member" that always fail. The sub-team's own prompt still shows its
+        # members' ids, because there they are at the top level.
         if isinstance(member, Team):
-            content += f'{pad}<member id="{member_id}" name="{member.name}" type="team">\n'
+            if indent == 0:
+                content += f'{pad}<member id="{member_id}" name="{member.name}" type="team">\n'
+            else:
+                content += f'{pad}<member name="{member.name}" type="team">\n'
             if member.role is not None:
                 content += f"{pad}  Role: {member.role}\n"
             if member.description is not None:
@@ -122,7 +129,10 @@ def get_members_system_message_content(
                 )
             content += f"{pad}</member>\n"
         else:
-            content += f'{pad}<member id="{member_id}" name="{member.name}">\n'
+            if indent == 0:
+                content += f'{pad}<member id="{member_id}" name="{member.name}">\n'
+            else:
+                content += f'{pad}<member name="{member.name}">\n'
             if member.role is not None:
                 content += f"{pad}  Role: {member.role}\n"
             if member.description is not None:
@@ -139,8 +149,11 @@ def get_members_system_message_content(
 def _get_opening_prompt() -> str:
     """Capability statement for a leader that has members available.
 
-    States what the leader has, not who it is. An identity claim here would compete
-    with the description, role and instructions the user wrote.
+    States the leader's job and what it has, never who it is. A persona claim here would
+    compete with the description, role and instructions the user wrote — which render
+    before this block, so a statement of purpose does not stand ahead of them. The
+    coordinator sentence is load-bearing on small models: without it a leader consulting
+    a panel of similar members stops at the first one or two.
 
     The delegation rule is stated as need, never as a comparison with the leader's own
     ability. Asked whether a member fits a sub-task "better than yours", a small model
@@ -148,6 +161,7 @@ def _get_opening_prompt() -> str:
     named for it; asked whether the member is needed, it follows the request.
     """
     return (
+        "You coordinate this team to fulfill the user's request. "
         "You have a team of specialists, listed below. "
         "Delegate to members when their expertise or tools are needed; "
         "answer directly — including with your own tools — when they are not.\n"
