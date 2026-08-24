@@ -121,28 +121,37 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
 
 
 def _inject_user_id(fn: Callable) -> Callable:
-    """Inject the authenticated caller's user_id into a custom tool, hidden from clients.
+    """Inject the authenticated caller's user_id and hide framework params from MCP schema.
 
     If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
     resolved JWT subject at call time and drops it from the wrapper's signature -- so it
     does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
-    Tools that do not declare ``user_id`` are returned unchanged.
+
+    Also hides ``run_context`` from the schema: RunContext contains FilterExpr which
+    Pydantic cannot serialize, and it is framework-injected anyway.
     """
     try:
         sig = inspect.signature(fn)
     except (ValueError, TypeError):
         return fn
-    if "user_id" not in sig.parameters:
+
+    # Framework-injected params hidden from MCP schema
+    hidden_params = {"user_id", "run_context"}
+    has_hidden = any(p in sig.parameters for p in hidden_params)
+    if not has_hidden:
         return fn
 
-    visible_params = [p for name, p in sig.parameters.items() if name != "user_id"]
+    visible_params = [p for name, p in sig.parameters.items() if name not in hidden_params]
     new_sig = sig.replace(parameters=visible_params)
+
+    has_user_id = "user_id" in sig.parameters
 
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            kwargs["user_id"] = _resolve_user_id(None)
+            if has_user_id:
+                kwargs["user_id"] = _resolve_user_id(None)
             return await fn(*args, **kwargs)
 
         async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
@@ -150,7 +159,8 @@ def _inject_user_id(fn: Callable) -> Callable:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        kwargs["user_id"] = _resolve_user_id(None)
+        if has_user_id:
+            kwargs["user_id"] = _resolve_user_id(None)
         return fn(*args, **kwargs)
 
     wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
