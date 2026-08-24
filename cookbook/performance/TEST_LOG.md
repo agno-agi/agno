@@ -202,6 +202,58 @@ Reference table durable row and discussion updated in README.md.
 
 ---
 
+## 2026-08-24 (run_id re-test)
+
+`PerformanceResult` now requires `run_id` (eval runs are stored under a
+per-execution id). The three direct constructions in this suite were updated to
+pass `run_id=name`, so those three results are keyed by their metric name rather
+than a fresh UUID. This does not make the committed baselines deterministic:
+`save_result()` in `_bench.py` writes `asdict(result)`, so every entry produced
+by `run_benchmarks()` now carries a per-run UUID alongside the `measured_at`
+timestamp and the raw per-iteration samples, both of which already differ on
+each regeneration.
+
+### memory_footprint.py
+
+**Status:** PASS
+
+**Description:** Live run after `PerformanceResult(run_id=name, ...)` replaced the
+two-argument construction; 1000 agents per sample, 5 samples.
+
+**Result:** `memory_per_agent` median 3.66 KiB and `memory_per_agent_with_tools`
+median 3.67 KiB per live agent.
+
+---
+
+### import_time.py
+
+**Status:** PASS
+
+**Description:** Live run with the same constructor change; interpreter startup
+subtracted from each sample.
+
+**Result:** `import_agno` median 23.0 ms, `import_agno_agent` median 209.0 ms.
+
+---
+
+### comparison/import_time_comparison.py
+
+**Status:** PASS
+
+**Description:** The comparison targets need the competitor frameworks, which the dev
+venv does not carry, so this ran in a throwaway virtualenv holding agno 3.0.0a4 built
+from this worktree plus langgraph 1.2.11, pydantic-ai-slim 2.31.1 and crewai 1.6.1.
+10 samples per target, interpreter startup subtracted.
+
+**Result:** Interpreter startup median 15.2 ms. `import_compare_agno` median 516.5 ms
+(p95 532.2), `import_compare_langgraph` 1198.2 ms (p95 1257.6),
+`import_compare_pydantic_ai` 786.1 ms (p95 827.7), `import_compare_crewai` 1483.8 ms
+(p95 1557.0). These four are comparable to each other but not to the `import_time.py`
+medians above: different virtualenv, and each target imports its framework's agent
+construction path rather than the bare package.
+
+---
+
 ## Notes
 
 - 2026-08-21: First version of `_bench.py` stored the mock's requested tool name as

@@ -654,12 +654,12 @@ class TestGetEvalHistory:
 
         # Seed through the writer's own shape so this breaks if it changes again
         perf = PerformanceEval(func=lambda: None)
-        perf.result = PerformanceResult(run_times=[1.0, 3.0])
+        perf.result = PerformanceResult(run_id="eval-perf", run_times=[1.0, 3.0])
         db.create_eval_run(
             EvalRunRecord(
                 run_id="eval-perf",
                 eval_type=EvalType.PERFORMANCE,
-                eval_data=perf._parse_eval_run_data(),
+                eval_data=perf._parse_eval_run_data(perf.result),
                 agent_id="agent-1",
                 name="perf check",
             )

@@ -210,6 +210,8 @@ class AgentAsJudgeEval(BaseEval):
     # Render the transient progress spinner. Embedders that must not write to the
     # console (e.g. the suite runner) disable it.
     show_spinner: bool = True
+    # If set, results will be saved in the given file path
+    # Supports the {name} and {run_id} placeholders
     file_path_to_save_results: Optional[str] = None
     debug_mode: bool = getenv("AGNO_DEBUG", "false").lower() == "true"
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
@@ -552,7 +554,7 @@ class AgentAsJudgeEval(BaseEval):
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 result=result,
-                eval_id=run_id,
+                run_id=run_id,
                 name=self.name,
             )
 
@@ -652,7 +654,7 @@ class AgentAsJudgeEval(BaseEval):
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 result=result,
-                eval_id=run_id,
+                run_id=run_id,
                 name=self.name,
             )
 
@@ -721,7 +723,7 @@ class AgentAsJudgeEval(BaseEval):
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 result=result,
-                eval_id=run_id,
+                run_id=run_id,
                 name=self.name,
             )
 
@@ -790,7 +792,7 @@ class AgentAsJudgeEval(BaseEval):
             store_result_in_file(
                 file_path=self.file_path_to_save_results,
                 result=result,
-                eval_id=run_id,
+                run_id=run_id,
                 name=self.name,
             )
 
