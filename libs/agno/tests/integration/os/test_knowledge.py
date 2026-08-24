@@ -769,11 +769,17 @@ def test_upload_with_special_characters(test_app):
         assert "id" in data
 
 
-def _readers_without(reader_key):
-    """The real reader sweep minus one key, so a test can stage that key as unavailable."""
-    from agno.knowledge.utils import get_all_readers_info
+def _availability_staging(reader_key, unavailable_entries):
+    """The real reader sweep with one key moved from available to unavailable."""
+    from agno.knowledge.utils import get_readers_availability
 
-    return [info for info in get_all_readers_info() if info["id"] != reader_key]
+    available, _ = get_readers_availability()
+    kept = [info for info in available if info["id"] != reader_key]
+
+    def staged(knowledge_instance=None):
+        return kept, unavailable_entries
+
+    return staged
 
 
 def test_get_config_reports_unavailable_readers(test_app, mock_knowledge):
@@ -782,20 +788,18 @@ def test_get_config_reports_unavailable_readers(test_app, mock_knowledge):
     mock_knowledge.aget_valid_filters.return_value = []
     mock_knowledge.vector_db = None
 
-    with (
-        patch(
-            "agno.os.routers.knowledge.knowledge.get_unavailable_readers_info",
-            return_value=[
-                {
-                    "id": "pdf",
-                    "name": "PdfReader",
-                    "description": "Processes PDF documents",
-                    "missing_packages": ["pypdf"],
-                    "reason": "Reader 'pdf' has missing dependencies: `pypdf` not installed.",
-                }
-            ],
-        ),
-        patch("agno.os.routers.knowledge.knowledge.get_all_readers_info", return_value=_readers_without("pdf")),
+    unavailable = [
+        {
+            "id": "pdf",
+            "name": "PdfReader",
+            "description": "Processes PDF documents",
+            "missing_packages": ["pypdf"],
+            "reason": "Reader 'pdf' has missing dependencies: `pypdf` not installed.",
+        }
+    ]
+    with patch(
+        "agno.os.routers.knowledge.knowledge.get_readers_availability",
+        side_effect=_availability_staging("pdf", unavailable),
     ):
         response = test_app.get("/knowledge/config")
 
@@ -811,7 +815,9 @@ def test_get_config_omits_unavailable_readers_when_all_are_available(test_app, m
     mock_knowledge.vector_db = None
 
     with (
-        patch("agno.os.routers.knowledge.knowledge.get_unavailable_readers_info", return_value=[]),
+        patch(
+            "agno.os.routers.knowledge.knowledge.get_readers_availability", side_effect=_availability_staging(None, [])
+        ),
         patch("agno.os.routers.knowledge.knowledge.get_unavailable_chunkers_info", return_value=[]),
     ):
         response = test_app.get("/knowledge/config")
@@ -1036,8 +1042,9 @@ def test_get_config_warns_about_unavailable_readers_exactly_once(test_app, mock_
     knowledge_router._unavailable_warned = False
     try:
         with (
-            patch.object(knowledge_router, "get_unavailable_readers_info", return_value=unavailable),
-            patch.object(knowledge_router, "get_all_readers_info", return_value=_readers_without("pdf")),
+            patch.object(
+                knowledge_router, "get_readers_availability", side_effect=_availability_staging("pdf", unavailable)
+            ),
             caplog.at_level("WARNING"),
         ):
             test_app.get("/knowledge/config")
@@ -1046,3 +1053,26 @@ def test_get_config_warns_about_unavailable_readers_exactly_once(test_app, mock_
         knowledge_router._unavailable_warned = False
 
     assert caplog.text.count("reader(s) unavailable") == 1
+
+
+def test_get_config_sweeps_the_readers_once(test_app, mock_knowledge):
+    """The sweep imports 18 reader modules; the route must not pay for it three times."""
+    import agno.knowledge.utils as knowledge_utils
+    from agno.knowledge.reader.reader_factory import ReaderFactory
+
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    real_get_reader_info = knowledge_utils.get_reader_info
+    calls = []
+
+    def counting(key):
+        calls.append(key)
+        return real_get_reader_info(key)
+
+    with patch.object(knowledge_utils, "get_reader_info", side_effect=counting):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert len(calls) == len(ReaderFactory.get_all_reader_keys())
