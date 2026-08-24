@@ -225,13 +225,19 @@ text = ["aiofiles"]
 # The website and llms_txt readers both import bs4 at module scope.
 website = ["beautifulsoup4"]
 
-# Engines a reader loads only for the heavier path, kept out of the plain reader
-# extras above so that reading a file does not install a document-AI stack.
-# MarkdownChunking; MarkdownReader itself falls back to fixed-size chunking without it.
-# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
-# the venv lives inside the CWD, breaking the unstructured import chain.
+# The engines below are reached only on a reader's heavier path, so they live apart from
+# the reader extras above: installing a way to read a file should not install a
+# document-AI stack. agno[knowledge-full] pulls them all back in.
+
+# Gates MarkdownChunking, not MarkdownReader -- the reader imports none of these and falls
+# back to fixed-size chunking when they are absent. `markdown` is here because
+# unstructured.partition.md needs it, and nltk because unstructured loads it at runtime;
+# 3.10.1 is excluded because its inisec import hook falsely blocks site-packages imports
+# when the venv lives inside the CWD, which breaks that import chain.
 markdown-chunking = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown"]
-# OCR for scanned pages, used by PDFImageReader and by PDFReader(read_images=True).
+
+# OCR for scanned pages. PDFReader extracts a text layer with pypdf alone and only reaches
+# rapidocr when read_images=True, which PDFImageReader always sets.
 pdf-ocr = ["rapidocr_onnxruntime"]
 
 # Dependencies for AG-UI integration
