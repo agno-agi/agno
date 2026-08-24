@@ -33,6 +33,7 @@ from fastapi.testclient import TestClient
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.agent.agent import Agent
+from agno.db.schemas.scheduler import DISPATCH_CHAIN_METADATA_KEY, DISPATCH_DEPTH_METADATA_KEY
 from agno.db.sqlite import SqliteDb
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
@@ -197,6 +198,34 @@ class TestForgedStampStrippedAtRunStart:
         meta = start.json().get("metadata") or {}
         assert meta.get("trace") == "keep"
         assert COMPONENT_VERSION_METADATA_KEY not in meta
+
+    def test_a_forged_dispatch_chain_is_stripped_at_run_start(self, db, registry, model_v1, model_v2):
+        # Defence in depth: a caller forging the dispatch lineage can only
+        # shorten their own reach (the guard fails closed on garbage and a
+        # pre-seeded chain only restricts), but the runtime-owned keys still
+        # never enter through a caller-writable form field.
+        agent_id = _save_agent(db, model_v1, model_v2)
+        client = _client(AgentOS(db=db, registry=registry, telemetry=False).get_app(), _BOB)
+
+        start = client.post(
+            f"/agents/{agent_id}/runs",
+            data={
+                "message": "hi",
+                "stream": "false",
+                "metadata": '{"agno_dispatch_chain": ["team:x"], "agno_dispatch_depth": 0, "trace": "keep"}',
+            },
+        )
+        assert start.status_code == 200, start.text
+        body = start.json()
+        meta = body.get("metadata") or {}
+        assert meta.get("trace") == "keep"
+        assert DISPATCH_CHAIN_METADATA_KEY not in meta
+        assert DISPATCH_DEPTH_METADATA_KEY not in meta
+
+        stored = client.get(f"/agents/{agent_id}/runs/{body['run_id']}", params={"session_id": body["session_id"]})
+        stored_meta = stored.json().get("metadata") or {}
+        assert DISPATCH_CHAIN_METADATA_KEY not in stored_meta
+        assert DISPATCH_DEPTH_METADATA_KEY not in stored_meta
 
     def test_team_forged_metadata_stamp_does_not_survive(self, db, registry, model_v1, model_v2):
         team_id = _save_team(db, model_v1, model_v2)
@@ -495,7 +524,15 @@ class TestSchedulerExecutorScrubsStamp:
         executor = ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok")
         schedule = self._schedule(
             user_id="alice",
-            payload={"message": "hi", "metadata": {"agno_component_version": 2, "trace": "keep"}},
+            payload={
+                "message": "hi",
+                "metadata": {
+                    "agno_component_version": 2,
+                    "agno_dispatch_chain": ["team:x"],
+                    "agno_dispatch_depth": 0,
+                    "trace": "keep",
+                },
+            },
         )
         with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
             await executor._call_endpoint(schedule)
@@ -503,15 +540,87 @@ class TestSchedulerExecutorScrubsStamp:
         form_payload = bg.await_args.args[3]
         forwarded_metadata = json.loads(form_payload["metadata"])
         assert COMPONENT_VERSION_METADATA_KEY not in forwarded_metadata
+        assert DISPATCH_CHAIN_METADATA_KEY not in forwarded_metadata
+        assert DISPATCH_DEPTH_METADATA_KEY not in forwarded_metadata
         assert forwarded_metadata["trace"] == "keep"
 
     async def test_top_level_payload_stamp_is_not_forwarded(self):
         from agno.scheduler.executor import ScheduleExecutor
 
         executor = ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok")
-        schedule = self._schedule(user_id="alice", payload={"message": "hi", "agno_component_version": 2})
+        schedule = self._schedule(
+            user_id="alice",
+            payload={"message": "hi", "agno_component_version": 2, "agno_dispatch_chain": ["team:x"]},
+        )
         with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
             await executor._call_endpoint(schedule)
 
         form_payload = bg.await_args.args[3]
         assert COMPONENT_VERSION_METADATA_KEY not in form_payload
+        assert DISPATCH_CHAIN_METADATA_KEY not in form_payload
+
+
+# ---------------------------------------------------------------------------
+# Session metadata is a caller-writable channel that merges into every run of
+# the session and WINS conflicting keys, so the reserved keys are scrubbed at
+# the session routes exactly like the run-start routes and the executor.
+# ---------------------------------------------------------------------------
+
+
+class TestForgedSessionMetadataScrubbed:
+    def test_create_session_scrubs_reserved_keys(self, db, registry, model_v1, model_v2):
+        agent_id = _save_agent(db, model_v1, model_v2)
+        client = _client(AgentOS(db=db, registry=registry, telemetry=False).get_app(), _BOB)
+
+        created = client.post(
+            "/sessions",
+            params={"type": "agent"},
+            json={
+                "agent_id": agent_id,
+                "metadata": {
+                    "agno_component_version": 2,
+                    "agno_dispatch_chain": [],
+                    "agno_dispatch_depth": 0,
+                    "trace": "keep",
+                },
+            },
+        )
+        assert created.status_code == 201, created.text
+        meta = created.json().get("metadata") or {}
+        assert meta.get("trace") == "keep"
+        assert COMPONENT_VERSION_METADATA_KEY not in meta
+        assert DISPATCH_CHAIN_METADATA_KEY not in meta
+        assert DISPATCH_DEPTH_METADATA_KEY not in meta
+
+        session_id = created.json()["session_id"]
+        stored = client.get(f"/sessions/{session_id}", params={"type": "agent"})
+        stored_meta = stored.json().get("metadata") or {}
+        assert stored_meta.get("trace") == "keep"
+        assert DISPATCH_CHAIN_METADATA_KEY not in stored_meta
+
+    def test_update_session_scrubs_reserved_keys(self, db, registry, model_v1, model_v2):
+        agent_id = _save_agent(db, model_v1, model_v2)
+        client = _client(AgentOS(db=db, registry=registry, telemetry=False).get_app(), _BOB)
+
+        created = client.post("/sessions", params={"type": "agent"}, json={"agent_id": agent_id})
+        assert created.status_code == 201, created.text
+        session_id = created.json()["session_id"]
+
+        updated = client.patch(
+            f"/sessions/{session_id}",
+            params={"type": "agent"},
+            json={
+                "metadata": {
+                    "agno_component_version": 2,
+                    "agno_dispatch_chain": [],
+                    "agno_dispatch_depth": 0,
+                    "trace": "keep",
+                }
+            },
+        )
+        assert updated.status_code == 200, updated.text
+        meta = updated.json().get("metadata") or {}
+        assert meta.get("trace") == "keep"
+        assert COMPONENT_VERSION_METADATA_KEY not in meta
+        assert DISPATCH_CHAIN_METADATA_KEY not in meta
+        assert DISPATCH_DEPTH_METADATA_KEY not in meta
