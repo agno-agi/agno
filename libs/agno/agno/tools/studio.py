@@ -247,6 +247,7 @@ class StudioTools(Toolkit):
         list_limit: int = 100,
         allowed_tools: Optional[List[str]] = None,
         denied_tools: Optional[List[str]] = None,
+        max_dispatch_depth: int = 2,
         **kwargs: Any,
     ):
         self.registry = registry
@@ -308,6 +309,9 @@ class StudioTools(Toolkit):
             # components is the point rather than an accident. A standalone runner
             # mounted on a router gets the narrower default.
             include_all_components=True,
+            # That same reach is what makes an unbounded dispatch chain
+            # reachable from one message, so the bound rides along with it.
+            max_dispatch_depth=max_dispatch_depth,
             list_limit=list_limit,
         )
 
@@ -3469,7 +3473,7 @@ class StudioTools(Toolkit):
 
     @staticmethod
     def _version_stamp(version: Optional[int]) -> Dict[str, Any]:
-        """Run kwargs that record the pinned version on the run itself.
+        """Run-metadata entries that record the pinned version on the run itself.
 
         A preview of an exact version must stay pinned for the whole run: the
         continue/resume surfaces re-resolve the component from this stamp, and
@@ -3477,17 +3481,17 @@ class StudioTools(Toolkit):
         resumes on the published version. An unpinned run carries no stamp, so
         it keeps re-resolving the live version as before.
 
-        The dict is built here rather than merged into caller-supplied
-        metadata, so there is no inbound stamp to strip: the toolkit's own
-        pinned version is the only source. Only the key is imported, because
-        the writer that sanitizes caller metadata lives in the server package
-        and the toolkit must keep working without it installed.
+        Merged OVER the dispatch metadata, which has already stripped any
+        inbound stamp as a runtime-reserved key: the toolkit's own pinned
+        version is the only source. Only the key is imported, because the
+        writer that sanitizes caller metadata lives in the server package and
+        the toolkit must keep working without it installed.
         """
         from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY
 
         if version is None:
             return {}
-        return {"metadata": {COMPONENT_VERSION_METADATA_KEY: version}}
+        return {COMPONENT_VERSION_METADATA_KEY: version}
 
     def _run_component(
         self,
@@ -3496,6 +3500,8 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int],
         run_context: Optional[RunContext],
+        caller_agent: Any = None,
+        caller_team: Any = None,
     ) -> str:
         runner_calls = {
             "agent": self._runner_tools.run_agent,
@@ -3503,7 +3509,18 @@ class StudioTools(Toolkit):
             "workflow": self._runner_tools.run_workflow,
         }
         if version is None:
-            return self._alias_runner_result(runner_calls[component_type](identifier, message, run_context))
+            # By keyword: the runner's own injected parameters share these
+            # names, and a positional fourth argument would land in the wrong
+            # slot without an error the day either signature grows.
+            return self._alias_runner_result(
+                runner_calls[component_type](
+                    identifier,
+                    message,
+                    _agno_run_context=run_context,
+                    _agno_agent=caller_agent,
+                    _agno_team=caller_team,
+                )
+            )
         # Preview: run an exact version, drafts included. Owner-gated like the
         # REST preview: a scoped actor may only preview components it owns.
         row, resolved_id, err = self._component_row(identifier, _actor_id(run_context))
@@ -3512,6 +3529,16 @@ class StudioTools(Toolkit):
         actor = _actor_id(run_context)
         if not self._pin_allowed(resolved_id, version, row, actor):
             return error_result("component_not_found", f"Component not found: {identifier}")
+        # The preview dispatches the component directly rather than through the
+        # runner's run tools, so it carries the same dispatch lineage and
+        # refusals itself -- otherwise a pinned version would be the one door
+        # left open to unbounded self-dispatch.
+        try:
+            dispatch_metadata = self._runner_tools._dispatch_metadata(
+                run_context, component_type, resolved_id, caller_agent=caller_agent, caller_team=caller_team
+            )
+        except StudioRunnerError as e:
+            return error_result("dispatch_refused", str(e))
         loaders = {
             "agent": self._runner_tools._load_agent_from_db,
             "team": self._runner_tools._load_team_from_db,
@@ -3525,13 +3552,15 @@ class StudioTools(Toolkit):
             return self._error_from_exception(e, f"Failed to load {component_type} '{identifier}' v{version}")
         if component is None:
             return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+        sub_run_id = self._runner_tools._registered_sub_run_id(run_context)
         try:
             response = component.run(
                 message,
                 stream=False,
                 user_id=self._runner_tools._caller_user_id(run_context, component),
                 session_id=self._runner_tools._sub_session_id(run_context, component_type, resolved_id),
-                **self._version_stamp(version),
+                run_id=sub_run_id,
+                metadata={**dispatch_metadata, **self._version_stamp(version)},
             )
             payload = self._runner_tools._run_payload(f"{component_type}_id", resolved_id, response)
             return self._alias_runner_result(payload)
@@ -3545,6 +3574,8 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int],
         run_context: Optional[RunContext],
+        caller_agent: Any = None,
+        caller_team: Any = None,
     ) -> str:
         """Async mirror of _run_component: the target's arun actually runs on
         the event loop (async hooks and tools included) instead of the sync
@@ -3557,13 +3588,34 @@ class StudioTools(Toolkit):
             "workflow": self._runner_tools.arun_workflow,
         }
         if version is None:
-            return self._alias_runner_result(await runner_calls[component_type](identifier, message, run_context))
+            # By keyword: the runner's own injected parameters share these
+            # names, and a positional fourth argument would land in the wrong
+            # slot without an error the day either signature grows.
+            return self._alias_runner_result(
+                await runner_calls[component_type](
+                    identifier,
+                    message,
+                    _agno_run_context=run_context,
+                    _agno_agent=caller_agent,
+                    _agno_team=caller_team,
+                )
+            )
         row, resolved_id, err = await asyncio.to_thread(self._component_row, identifier, _actor_id(run_context))
         if err is not None:
             return err
         actor = _actor_id(run_context)
         if not await asyncio.to_thread(self._pin_allowed, resolved_id, version, row, actor):
             return error_result("component_not_found", f"Component not found: {identifier}")
+        # The preview dispatches the component directly rather than through the
+        # runner's run tools, so it carries the same dispatch lineage and
+        # refusals itself -- otherwise a pinned version would be the one door
+        # left open to unbounded self-dispatch. Pure in-memory work; no thread hop.
+        try:
+            dispatch_metadata = self._runner_tools._dispatch_metadata(
+                run_context, component_type, resolved_id, caller_agent=caller_agent, caller_team=caller_team
+            )
+        except StudioRunnerError as e:
+            return error_result("dispatch_refused", str(e))
         loaders = {
             "agent": self._runner_tools._load_agent_from_db,
             "team": self._runner_tools._load_team_from_db,
@@ -3579,13 +3631,15 @@ class StudioTools(Toolkit):
             return self._error_from_exception(e, f"Failed to load {component_type} '{identifier}' v{version}")
         if component is None:
             return error_result("version_not_found", f"Version not found: {resolved_id} v{version}")
+        sub_run_id = await self._runner_tools._aregistered_sub_run_id(run_context)
         try:
             response = await component.arun(
                 message,
                 stream=False,
                 user_id=self._runner_tools._caller_user_id(run_context, component),
                 session_id=self._runner_tools._sub_session_id(run_context, component_type, resolved_id),
-                **self._version_stamp(version),
+                run_id=sub_run_id,
+                metadata={**dispatch_metadata, **self._version_stamp(version)},
             )
             payload = self._runner_tools._run_payload(f"{component_type}_id", resolved_id, response)
             return self._alias_runner_result(payload)
@@ -3598,6 +3652,8 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int] = None,
         _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
     ) -> str:
         """Run an agent as the current user. Omit version to run the live
         published version; pass one to preview an exact version, drafts
@@ -3612,7 +3668,9 @@ class StudioTools(Toolkit):
             str: JSON with agent_id, id, run_id, session_id, status, content
             and, when paused, the unresolved requirements to continue with.
         """
-        return self._run_component("agent", agent_id, message, version, _agno_run_context)
+        return self._run_component(
+            "agent", agent_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
+        )
 
     def run_team(
         self,
@@ -3620,6 +3678,8 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int] = None,
         _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
     ) -> str:
         """Run a team as the current user. Omit version to run the live
         published version; pass one to preview an exact version.
@@ -3633,7 +3693,9 @@ class StudioTools(Toolkit):
             str: JSON with team_id, id, run_id, session_id, status, content
             and, when paused, the unresolved requirements.
         """
-        return self._run_component("team", team_id, message, version, _agno_run_context)
+        return self._run_component(
+            "team", team_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
+        )
 
     def run_workflow(
         self,
@@ -3641,6 +3703,8 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int] = None,
         _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
     ) -> str:
         """Run a workflow as the current user. Omit version to run the live
         published version; pass one to preview an exact version.
@@ -3654,7 +3718,15 @@ class StudioTools(Toolkit):
             str: JSON with workflow_id, id, run_id, session_id, status, content
             and, when paused, the unresolved requirements.
         """
-        return self._run_component("workflow", workflow_id, message, version, _agno_run_context)
+        return self._run_component(
+            "workflow",
+            workflow_id,
+            message,
+            version,
+            _agno_run_context,
+            caller_agent=_agno_agent,
+            caller_team=_agno_team,
+        )
 
     # ------------------------------------------------------------------
     # Async variants (same names on the model surface)
@@ -4024,9 +4096,13 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int] = None,
         _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
     ) -> str:
         """Async variant of run_agent."""
-        return await self._arun_component("agent", agent_id, message, version, _agno_run_context)
+        return await self._arun_component(
+            "agent", agent_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
+        )
 
     async def arun_team(
         self,
@@ -4034,9 +4110,13 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int] = None,
         _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
     ) -> str:
         """Async variant of run_team."""
-        return await self._arun_component("team", team_id, message, version, _agno_run_context)
+        return await self._arun_component(
+            "team", team_id, message, version, _agno_run_context, caller_agent=_agno_agent, caller_team=_agno_team
+        )
 
     async def arun_workflow(
         self,
@@ -4044,9 +4124,19 @@ class StudioTools(Toolkit):
         message: str,
         version: Optional[int] = None,
         _agno_run_context: Optional[RunContext] = None,
+        _agno_agent: Optional[Any] = None,
+        _agno_team: Optional[Any] = None,
     ) -> str:
         """Async variant of run_workflow."""
-        return await self._arun_component("workflow", workflow_id, message, version, _agno_run_context)
+        return await self._arun_component(
+            "workflow",
+            workflow_id,
+            message,
+            version,
+            _agno_run_context,
+            caller_agent=_agno_agent,
+            caller_team=_agno_team,
+        )
 
     def create_schedule(
         self,
