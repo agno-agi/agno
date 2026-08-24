@@ -971,6 +971,57 @@ def test_get_config_never_calls_the_same_reader_usable_and_missing(test_app, moc
     assert not (published & unavailable)
 
 
+def test_a_reader_the_sweep_cannot_introspect_is_published_once(test_app, mock_knowledge):
+    """The sweep cannot describe it, the route publishes it anyway, so it is listed once."""
+    from agno.knowledge.reader.base import Reader
+
+    class NoClassmethodsReader(Reader):
+        pass  # get_supported_* raise NotImplementedError on the base
+
+    mock_knowledge.get_readers.return_value = {"homegrown": NoClassmethodsReader(name="Homegrown")}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "homegrown" in (data["readers"] or {})
+    assert "homegrown" not in (data["unavailable_readers"] or {})
+
+
+def test_an_unusable_custom_reader_is_reported_over_http(test_app, mock_knowledge):
+    """It is gone from the palette, and the payload says what it needs."""
+    from typing import Dict, List
+
+    from agno.knowledge.reader.base import Reader
+    from agno.knowledge.types import ContentType
+
+    class NeedsAMissingPackage(Reader):
+        @classmethod
+        def get_supported_chunking_strategies(cls):
+            return []
+
+        @classmethod
+        def get_supported_content_types(cls):
+            return [ContentType.TXT]
+
+        @classmethod
+        def get_read_time_requirements(cls) -> Dict[ContentType, List[str]]:
+            return {ContentType.TXT: ["definitely_not_installed_xyz"]}
+
+    mock_knowledge.get_readers.return_value = {"needs_pkg": NeedsAMissingPackage()}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert "needs_pkg" not in (data["readers"] or {})
+    assert data["unavailable_readers"]["needs_pkg"]["missing_packages"] == ["definitely_not_installed_xyz"]
+
+
 def test_get_config_survives_a_reader_that_does_not_return_enums(test_app, mock_knowledge):
     """One non-conforming custom reader must not take the whole response down."""
     from agno.knowledge.reader.base import Reader

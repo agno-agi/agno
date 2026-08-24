@@ -459,9 +459,7 @@ async def assert_session_writable(
     # user_id is deliberately NOT passed: the probe must see the row regardless of owner.
     # deserialize=False keeps it a raw dict; runs_limit=1 bounds the run attach.
     if isinstance(db, AsyncBaseDb):
-        row = await db.get_session(
-            session_id=session_id, session_type=session_type, deserialize=False, runs_limit=1
-        )
+        row = await db.get_session(session_id=session_id, session_type=session_type, deserialize=False, runs_limit=1)
     else:
         row = db.get_session(session_id=session_id, session_type=session_type, deserialize=False, runs_limit=1)
     if not row:

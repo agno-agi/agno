@@ -1336,7 +1336,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             readers_dict: Dict[str, Reader] = {}
         else:
             readers_dict = readers_result
-        unusable_readers: Dict[str, UnavailableReaderSchema] = {}
         if readers_dict:
             for reader_id, reader in readers_dict.items():
                 # Check if this reader ID already exists in factory readers
@@ -1346,20 +1345,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 available_types, unavailable_types = get_read_time_availability(reader.__class__)
                 if unavailable_types and not available_types:
                     # Every format this reader handles needs a package that is not installed.
-                    # Reported rather than dropped: a reader that vanishes with no reason is
-                    # the defect this endpoint is being fixed for.
-                    missing = sorted({package for packages in unavailable_types.values() for package in packages})
-                    unusable_readers[reader_id] = UnavailableReaderSchema(
-                        id=reader_id,
-                        name=getattr(reader, "name", None) or reader.__class__.__name__,
-                        description=getattr(reader, "description", None),
-                        missing_packages=missing,
-                        reason=(
-                            f"Reader '{reader_id}' has missing dependencies: "
-                            f"{', '.join(f'`{package}`' for package in missing)} not installed. "
-                            f"Please install it via `pip install {' '.join(missing)}`."
-                        ),
-                    )
+                    # The sweep above already recorded it in unavailable_readers.
                     continue
 
                 # Get chunking strategies from the reader
@@ -1384,9 +1370,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         types_of_readers = get_content_types_to_readers_mapping(knowledge, readers_info=readers_info)
 
         unavailable_readers = {r["id"]: UnavailableReaderSchema(**r) for r in unavailable_readers_info}
-        unavailable_readers.update(unusable_readers)
-        # A reader this knowledge instance supplies under a factory id answers for that id, so
-        # the response never calls the same reader usable and missing at once.
+        # A reader the sweep could not introspect is still published by the loop above, so it
+        # is dropped from here: the response never calls the same reader usable and missing.
         for reader_id in reader_schemas:
             unavailable_readers.pop(reader_id, None)
         unavailable_chunkers = {c["id"]: UnavailableChunkerSchema(**c) for c in get_unavailable_chunkers_info()}

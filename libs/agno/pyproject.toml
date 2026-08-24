@@ -225,19 +225,13 @@ text = ["aiofiles"]
 # The website and llms_txt readers both import bs4 at module scope.
 website = ["beautifulsoup4"]
 
-# The engines below are reached only on a reader's heavier path, so they live apart from
-# the reader extras above: installing a way to read a file should not install a
-# document-AI stack. agno[knowledge-full] pulls them all back in.
+# Engines a reader reaches only on its heavier path; agno[knowledge-full] adds them all.
 
-# Gates MarkdownChunking, not MarkdownReader -- the reader imports none of these and falls
-# back to fixed-size chunking when they are absent. `markdown` is here because
-# unstructured.partition.md needs it, and nltk because unstructured loads it at runtime;
-# 3.10.1 is excluded because its inisec import hook falsely blocks site-packages imports
-# when the venv lives inside the CWD, which breaks that import chain.
+# Gates MarkdownChunking, not MarkdownReader, which falls back to fixed-size chunking.
+# nltk!=3.10.1: its inisec import hook blocks site-packages imports from a venv inside the CWD.
 markdown-chunking = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown"]
 
-# OCR for scanned pages. PDFReader extracts a text layer with pypdf alone and only reaches
-# rapidocr when read_images=True, which PDFImageReader always sets.
+# OCR for scanned pages; PDFReader reads a text layer with pypdf alone.
 pdf-ocr = ["rapidocr_onnxruntime"]
 
 # Dependencies for AG-UI integration
@@ -387,9 +381,7 @@ vectordbs = [
   "agno[weaviate]",
 ]
 
-# The document readers. Deliberately free of OCR, layout and deep-learning engines:
-# installing a way to read a .docx should not install torch. Everything left out is
-# in knowledge-full below.
+# The document readers, with no OCR, layout or deep-learning engines. See knowledge-full.
 knowledge = [
   "agno[chonkie]",
   "agno[csv]",
@@ -402,8 +394,7 @@ knowledge = [
   "agno[website]",
 ]
 
-# Every knowledge capability, including the heavy engines: docling's layout and
-# vision models, OCR for scanned PDFs, and unstructured's markdown partitioning.
+# Every knowledge capability, including docling, OCR and unstructured.
 knowledge-full = [
   "agno[knowledge]",
   "agno[docling]",  # also a tool; parses docs for knowledge
@@ -426,7 +417,7 @@ tests = [
     "agno[tools]",
     "agno[storage]",
     "agno[vectordbs]",
-    # The full set: CI must exercise docling, OCR and unstructured, not just the light readers.
+    # The full set: CI exercises docling, OCR and unstructured too.
     "agno[knowledge-full]",
     "agno[embedders]",
     "agno[performance]",
