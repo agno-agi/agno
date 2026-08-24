@@ -767,3 +767,140 @@ def test_upload_with_special_characters(test_app):
         assert response.status_code == 202
         data = response.json()
         assert "id" in data
+
+
+def test_get_config_reports_unavailable_readers(test_app, mock_knowledge):
+    """A reader this install cannot use is named in the payload, not dropped into DEBUG."""
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    with patch(
+        "agno.os.routers.knowledge.knowledge.get_unavailable_readers_info",
+        return_value=[
+            {
+                "id": "pdf",
+                "name": "PdfReader",
+                "description": "Processes PDF documents",
+                "missing_packages": ["pypdf"],
+                "reason": "Reader 'pdf' has missing dependencies: `pypdf` not installed.",
+            }
+        ],
+    ):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert response.json()["unavailable_readers"]["pdf"]["missing_packages"] == ["pypdf"]
+    assert "pypdf" in response.json()["unavailable_readers"]["pdf"]["reason"]
+
+
+def test_get_config_omits_unavailable_readers_when_all_are_available(test_app, mock_knowledge):
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    with (
+        patch("agno.os.routers.knowledge.knowledge.get_unavailable_readers_info", return_value=[]),
+        patch("agno.os.routers.knowledge.knowledge.get_unavailable_chunkers_info", return_value=[]),
+    ):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert response.json()["unavailable_readers"] in (None, {})
+
+
+def test_get_config_reports_unavailable_chunkers(test_app, mock_knowledge):
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    with patch(
+        "agno.os.routers.knowledge.knowledge.get_unavailable_chunkers_info",
+        return_value=[
+            {
+                "id": "SemanticChunker",
+                "name": "SemanticChunker",
+                "description": None,
+                "missing_packages": ["numpy"],
+                "reason": "Chunker 'SemanticChunker' has missing dependencies: `numpy` not installed.",
+            }
+        ],
+    ):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    assert response.json()["unavailable_chunkers"]["SemanticChunker"]["missing_packages"] == ["numpy"]
+
+
+def test_get_config_never_offers_a_reader_a_chunker_it_cannot_build(test_app, mock_knowledge):
+    """The same response cannot both drop a chunker and list it under a reader."""
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    available_chunkers = set(data["chunkers"] or {})
+    for reader in (data["readers"] or {}).values():
+        assert set(reader["chunkers"] or []) <= available_chunkers
+
+
+def test_get_config_publishes_partial_reader_availability(test_app, mock_knowledge):
+    """A reader that loses one content type says so over HTTP, rather than losing it quietly."""
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    import importlib.util
+
+    real_find_spec = importlib.util.find_spec
+
+    def fake_find_spec(name, package=None):
+        if name == "xlrd":
+            return None
+        if name == "openpyxl":
+            return object()
+        return real_find_spec(name, package)
+
+    with patch("agno.knowledge.reader.base.find_spec", side_effect=fake_find_spec):
+        response = test_app.get("/knowledge/config")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["readers"]["excel"]["content_types"] == [".xlsx"]
+    assert data["readers"]["excel"]["unavailable_content_types"] == {".xls": ["xlrd"]}
+    assert "excel" not in data["readersForType"].get(".xls", [])
+
+
+def test_get_config_warns_about_unavailable_readers_exactly_once(test_app, mock_knowledge, caplog):
+    """The sweep is expensive and the answer never changes, so the line is emitted once."""
+    import agno.os.routers.knowledge.knowledge as knowledge_router
+
+    mock_knowledge.get_readers.return_value = {}
+    mock_knowledge.aget_valid_filters.return_value = []
+    mock_knowledge.vector_db = None
+
+    unavailable = [
+        {
+            "id": "pdf",
+            "name": "PdfReader",
+            "description": "Processes PDF documents",
+            "missing_packages": ["pypdf"],
+            "reason": "Reader 'pdf' has missing dependencies: `pypdf` not installed.",
+        }
+    ]
+
+    knowledge_router._unavailable_warned = False
+    try:
+        with (
+            patch.object(knowledge_router, "get_unavailable_readers_info", return_value=unavailable),
+            caplog.at_level("WARNING"),
+        ):
+            test_app.get("/knowledge/config")
+            test_app.get("/knowledge/config")
+    finally:
+        knowledge_router._unavailable_warned = False
+
+    assert caplog.text.count("reader(s) unavailable") == 1

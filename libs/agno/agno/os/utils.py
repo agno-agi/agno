@@ -825,6 +825,19 @@ def get_knowledge_instance(
     Raises:
         HTTPException: If no matching instance is found or parameters are invalid
     """
+    # Answered before any identifier is considered: with nothing registered, no identifier can
+    # be right, and the branches below would blame the caller for not disambiguating an empty
+    # list. 503 is what the rest of AgentOS answers for a feature with no backing resource.
+    if not knowledge_instances:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No knowledge base is available on this AgentOS. A Knowledge is served over "
+                "/knowledge only once it has a contents_db: pass Knowledge(..., contents_db=<db>) "
+                "to AgentOS(knowledge=[...]), or to an agent or team."
+            ),
+        )
+
     # If only one instance and no specific identifier requested, return it (backwards compatible)
     if len(knowledge_instances) == 1 and not knowledge_id and not db_id:
         return next(iter(knowledge_instances))

@@ -12,7 +12,14 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.remote_content.s3 import S3Config
-from agno.knowledge.utils import get_all_chunkers_info, get_all_readers_info, get_content_types_to_readers_mapping
+from agno.knowledge.utils import (
+    get_all_chunkers_info,
+    get_all_readers_info,
+    get_content_types_to_readers_mapping,
+    get_read_time_availability,
+    get_unavailable_chunkers_info,
+    get_unavailable_readers_info,
+)
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.knowledge.schemas import (
@@ -27,6 +34,8 @@ from agno.os.routers.knowledge.schemas import (
     SourceFileSchema,
     SourceFilesResponseSchema,
     SourceFolderSchema,
+    UnavailableChunkerSchema,
+    UnavailableReaderSchema,
     VectorDbSchema,
     VectorSearchRequestSchema,
     VectorSearchResult,
@@ -44,10 +53,49 @@ from agno.os.schema import (
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import AgnoHTTPException, get_knowledge_instance
 from agno.remote.base import RemoteKnowledge
-from agno.utils.log import log_debug, log_error, log_info
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 logger = logging.getLogger(__name__)
+
+# Warned from the first /knowledge/config that finds anything unavailable, not from startup:
+# the sweep imports every reader module, which costs seconds on a knowledge-complete install,
+# and AgentOS builds its routers more than once per boot.
+_unavailable_warned = False
+
+
+def _warn_once_about_unavailable(
+    unavailable_readers: Dict[str, "UnavailableReaderSchema"],
+    unavailable_chunkers: Dict[str, "UnavailableChunkerSchema"],
+) -> None:
+    """Say once per process which readers and chunkers this install cannot use."""
+    global _unavailable_warned
+
+    if _unavailable_warned:
+        return
+    if not unavailable_readers and not unavailable_chunkers:
+        return
+    _unavailable_warned = True
+
+    def _describe(entries: Dict[str, Any]) -> str:
+        return ", ".join(
+            f"{entry.id} (needs {', '.join(entry.missing_packages)})"
+            if entry.missing_packages
+            else f"{entry.id} (see reason)"
+            for entry in entries.values()
+        )
+
+    parts = []
+    if unavailable_readers:
+        parts.append(f"{len(unavailable_readers)} reader(s) unavailable: {_describe(unavailable_readers)}")
+    if unavailable_chunkers:
+        parts.append(f"{len(unavailable_chunkers)} chunker(s) unavailable: {_describe(unavailable_chunkers)}")
+    log_warning(
+        "Knowledge: "
+        + "; ".join(parts)
+        + ". Content needing them will fail to process. "
+        + "See GET /knowledge/config -> unavailable_readers / unavailable_chunkers."
+    )
 
 
 def get_knowledge_router(
@@ -1127,7 +1175,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                 ".pptm": ["docling"],
                                 ".ppsm": ["docling"],
                                 ".potm": ["docling"],
-                                ".doc": ["docx"],
                                 ".json": ["json"],
                                 ".md": ["markdown", "docling"],
                                 ".pdf": ["pdf", "docling"],
@@ -1252,46 +1299,6 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_config(headers=headers)
 
-        # Get factory readers info (including custom readers from this knowledge instance)
-        readers_info = get_all_readers_info(knowledge)
-        reader_schemas = {}
-        # Add factory readers
-        for reader_info in readers_info:
-            reader_schemas[reader_info["id"]] = ReaderSchema(
-                id=reader_info["id"],
-                name=reader_info["name"],
-                description=reader_info.get("description"),
-                chunkers=reader_info.get("chunking_strategies", []),
-            )
-
-        # Add custom readers from knowledge.readers
-        readers_result: Any = knowledge.get_readers() or {}
-        # Ensure readers_dict is a dictionary (defensive check)
-        if not isinstance(readers_result, dict):
-            readers_dict: Dict[str, Reader] = {}
-        else:
-            readers_dict = readers_result
-        if readers_dict:
-            for reader_id, reader in readers_dict.items():
-                # Get chunking strategies from the reader
-                chunking_strategies = []
-                try:
-                    strategies = reader.get_supported_chunking_strategies()
-                    chunking_strategies = [strategy.value for strategy in strategies]
-                except Exception:
-                    chunking_strategies = []
-
-                # Check if this reader ID already exists in factory readers
-                if reader_id not in reader_schemas:
-                    reader_schemas[reader_id] = ReaderSchema(
-                        id=reader_id,
-                        name=getattr(reader, "name", reader.__class__.__name__),
-                        description=getattr(reader, "description", f"Custom {reader.__class__.__name__}"),
-                        chunkers=chunking_strategies,
-                    )
-
-        # Get content types to readers mapping (including custom readers from this knowledge instance)
-        types_of_readers = get_content_types_to_readers_mapping(knowledge)
         chunkers_list = get_all_chunkers_info()
 
         # Convert chunkers list to dictionary format expected by schema
@@ -1305,6 +1312,63 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                     description=chunker_info.get("description"),
                     metadata=chunker_info.get("metadata", {}),
                 )
+
+        # Get factory readers info (including custom readers from this knowledge instance)
+        readers_info = get_all_readers_info(knowledge)
+        reader_schemas = {}
+        # Add factory readers
+        for reader_info in readers_info:
+            reader_schemas[reader_info["id"]] = ReaderSchema(
+                id=reader_info["id"],
+                name=reader_info["name"],
+                description=reader_info.get("description"),
+                # A reader advertises only the chunkers this install can actually build.
+                chunkers=[c for c in reader_info.get("chunking_strategies", []) if c in chunkers_dict],
+                content_types=reader_info.get("content_types", []),
+                unavailable_content_types=reader_info.get("unavailable_content_types") or None,
+            )
+
+        # Add custom readers from knowledge.readers
+        readers_result: Any = knowledge.get_readers() or {}
+        # Ensure readers_dict is a dictionary (defensive check)
+        if not isinstance(readers_result, dict):
+            readers_dict: Dict[str, Reader] = {}
+        else:
+            readers_dict = readers_result
+        if readers_dict:
+            for reader_id, reader in readers_dict.items():
+                # Check if this reader ID already exists in factory readers
+                if reader_id in reader_schemas:
+                    continue
+
+                available_types, unavailable_types = get_read_time_availability(reader.__class__)
+                if unavailable_types and not available_types:
+                    # Every format this reader handles needs a package that is not installed.
+                    continue
+
+                # Get chunking strategies from the reader
+                chunking_strategies = []
+                try:
+                    strategies = reader.get_supported_chunking_strategies()
+                    chunking_strategies = [strategy.value for strategy in strategies]
+                except Exception:
+                    chunking_strategies = []
+
+                reader_schemas[reader_id] = ReaderSchema(
+                    id=reader_id,
+                    name=getattr(reader, "name", reader.__class__.__name__),
+                    description=getattr(reader, "description", f"Custom {reader.__class__.__name__}"),
+                    chunkers=[c for c in chunking_strategies if c in chunkers_dict],
+                    content_types=[content_type.value for content_type in available_types],
+                    unavailable_content_types=unavailable_types or None,
+                )
+
+        # Get content types to readers mapping (including custom readers from this knowledge instance)
+        types_of_readers = get_content_types_to_readers_mapping(knowledge)
+
+        unavailable_readers = {r["id"]: UnavailableReaderSchema(**r) for r in get_unavailable_readers_info()}
+        unavailable_chunkers = {c["id"]: UnavailableChunkerSchema(**c) for c in get_unavailable_chunkers_info()}
+        _warn_once_about_unavailable(unavailable_readers, unavailable_chunkers)
 
         vector_dbs = []
         if knowledge.vector_db:
@@ -1345,6 +1409,8 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             chunkers=chunkers_dict,
             filters=filters,
             remote_content_sources=remote_content_sources,
+            unavailable_readers=unavailable_readers or None,
+            unavailable_chunkers=unavailable_chunkers or None,
         )
 
     @router.get(
