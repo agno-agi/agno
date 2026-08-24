@@ -94,7 +94,7 @@ def main():
     for name, code in IMPORT_TARGETS.items():
         samples = measure(code, SAMPLES)
         adjusted = [max(0.0, s - baseline) for s in samples]
-        result = PerformanceResult(run_times=adjusted, memory_usages=[])
+        result = PerformanceResult(run_id=name, run_times=adjusted, memory_usages=[])
         print(
             name
             + ": median "

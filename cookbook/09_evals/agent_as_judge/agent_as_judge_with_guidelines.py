@@ -59,6 +59,6 @@ if __name__ == "__main__":
     eval_runs = db.get_eval_runs()
     print(f"Total evaluations stored: {len(eval_runs)}")
     if eval_runs:
-        latest = eval_runs[-1]
-        print(f"Eval ID: {latest.run_id}")
+        latest = eval_runs[0]
+        print(f"Run ID: {latest.run_id}")
         print(f"Additional guidelines used: {len(evaluation.additional_guidelines)}")

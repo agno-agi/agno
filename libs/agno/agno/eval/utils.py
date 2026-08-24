@@ -229,14 +229,19 @@ async def async_log_eval_telemetry(
 def store_result_in_file(
     file_path: str,
     result: Union["AccuracyResult", "AgentAsJudgeResult", "PerformanceResult", "ReliabilityResult"],
-    eval_id: Optional[str] = None,
+    run_id: Optional[str] = None,
     name: Optional[str] = None,
 ):
-    """Store the given result in the given file path"""
+    """Store the given result in the given file path.
+
+    ``file_path`` accepts the ``{name}`` and ``{run_id}`` placeholders, in the filename or
+    in a directory segment. An unknown placeholder raises and is logged below, so nothing
+    is written.
+    """
     try:
         import json
 
-        fn_path = Path(file_path.format(name=name, eval_id=eval_id))
+        fn_path = Path(file_path.format(name=name, run_id=run_id))
         if not fn_path.parent.exists():
             fn_path.parent.mkdir(parents=True, exist_ok=True)
         fn_path.write_text(json.dumps(asdict(result), indent=4))

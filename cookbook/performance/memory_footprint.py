@@ -64,7 +64,7 @@ def main():
         ("memory_per_agent_with_tools", tooled_agent),
     ]:
         usages = [per_agent_footprint(factory) for _ in range(SAMPLES)]
-        result = PerformanceResult(run_times=[], memory_usages=usages)
+        result = PerformanceResult(run_id=name, run_times=[], memory_usages=usages)
         print(
             name
             + ": median "
