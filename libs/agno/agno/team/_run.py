@@ -11,6 +11,8 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
+    Callable,
     Dict,
     Iterator,
     List,
@@ -393,7 +395,7 @@ def _run_tasks(
                 tool_call_limit=team.tool_call_limit,
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compaction_manager if team.compact_tools else None,
+                compaction_manager=team.compaction_manager if team.compact_tools else None,
                 **result_store_kwargs(team),
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
@@ -1249,7 +1251,21 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Get the model response for the team leader
+                # 6. Pre-loop compaction: compress history BEFORE first model call
+                if team.compaction_manager is not None and team.compaction_manager.compact_context:
+                    log_debug(f"[TEAM-RUN-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    compaction_result = team.compaction_manager.compact(
+                        run_messages.messages,
+                        run_response=run_response,
+                        run_metrics=run_response.metrics,
+                    )
+                    if compaction_result.summary:
+                        run_messages.compacted_messages = compaction_result.compacted_messages
+                        log_debug(
+                            f"[TEAM-RUN-SYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
+                        )
+
+                # 7. Get the model response for the team leader
                 team.model = cast(Model, team.model)
                 model_response: ModelResponse = call_model_with_fallback(
                     team.model,
@@ -1261,7 +1277,9 @@ def _run(
                     tool_call_limit=team.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compaction_manager if team.compact_tools else None,
+                    compaction_manager=team.compaction_manager if team.compact_tools else None,
+                    compacted_messages=run_messages.compacted_messages,
+                    compaction_callback=build_team_compaction_callback(team, run_messages, run_response),
                     **result_store_kwargs(team),
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
@@ -2284,7 +2302,7 @@ async def _arun_tasks(
                 tool_call_limit=team.tool_call_limit,
                 run_response=run_response,
                 send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compaction_manager if team.compact_tools else None,
+                compaction_manager=team.compaction_manager if team.compact_tools else None,
                 **result_store_kwargs(team),
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
@@ -3242,7 +3260,7 @@ async def _arun(
                     response_format=response_format,
                     send_media_to_model=team.send_media_to_model,
                     run_response=run_response,
-                    compression_manager=team.compaction_manager if team.compact_tools else None,
+                    compaction_manager=team.compaction_manager if team.compact_tools else None,
                     **result_store_kwargs(team),
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
@@ -5165,6 +5183,63 @@ async def acheckpoint_team_run(
     await _apersist_team_run_in_session(team, run_response, session, run_context)
 
 
+def build_team_compaction_callback(
+    team: "Team",
+    run_messages: "RunMessages",  # noqa: F821
+    run_response: TeamRunOutput,
+) -> Optional[Callable[[], Optional[List[Message]]]]:
+    """Build the sync mid-loop compaction callback for Team.
+
+    Returns ``None`` when context compaction is not enabled.
+    """
+    compaction_manager = team.compaction_manager
+    if compaction_manager is None:
+        return None
+
+    def _callback() -> Optional[List[Message]]:
+        messages_to_compact = (
+            run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+        )
+        result = compaction_manager.compact(
+            messages_to_compact,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if result.summary:
+            run_messages.compacted_messages = result.compacted_messages
+            return result.compacted_messages
+        return None
+
+    return _callback
+
+
+async def abuild_team_compaction_callback(
+    team: "Team",
+    run_messages: "RunMessages",  # noqa: F821
+    run_response: TeamRunOutput,
+) -> Optional[Callable[[], Awaitable[Optional[List[Message]]]]]:
+    """Async variant of :func:`build_team_compaction_callback`."""
+    compaction_manager = team.compaction_manager
+    if compaction_manager is None:
+        return None
+
+    async def _callback() -> Optional[List[Message]]:
+        messages_to_compact = (
+            run_messages.compacted_messages if run_messages.compacted_messages else run_messages.messages
+        )
+        result = await compaction_manager.acompact(
+            messages_to_compact,
+            run_response=run_response,
+            run_metrics=run_response.metrics,
+        )
+        if result.summary:
+            run_messages.compacted_messages = result.compacted_messages
+            return result.compacted_messages
+        return None
+
+    return _callback
+
+
 def build_team_after_tool_results_callback(
     team: "Team",
     run_response: TeamRunOutput,
@@ -7003,7 +7078,7 @@ async def _ahandle_model_response_for_continue(
         tool_call_limit=team.tool_call_limit,
         run_response=run_response,
         send_media_to_model=team.send_media_to_model,
-        compression_manager=team.compaction_manager if team.compact_tools else None,
+        compaction_manager=team.compaction_manager if team.compact_tools else None,
         **result_store_kwargs(team),
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
@@ -8363,7 +8438,7 @@ def _continue_run(
                     tool_call_limit=team.tool_call_limit,
                     run_response=run_response,
                     send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compaction_manager if team.compact_tools else None,
+                    compaction_manager=team.compaction_manager if team.compact_tools else None,
                     **result_store_kwargs(team),
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
