@@ -28,6 +28,19 @@ if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
 
 
+def _deserialize_history_run(run_dict: Dict[str, Any]) -> Optional[Any]:
+    """One stored run dict as a run object, mirroring AgentSession.from_dict's
+    per-run dispatch (a dict matching neither shape is skipped there too)."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+
+    if "agent_id" in run_dict:
+        return RunOutput.from_dict(run_dict)
+    if "team_id" in run_dict:
+        return TeamRunOutput.from_dict(run_dict)
+    return None
+
+
 class InMemoryDb(BaseDb):
     def __init__(self):
         """Interface for in-memory storage."""
@@ -36,6 +49,16 @@ class InMemoryDb(BaseDb):
         # Initialize in-memory storage. Sessions are keyed by session_id so
         # id lookups (get/upsert/delete) stay O(1) as the store grows.
         self._sessions: Dict[str, Dict[str, Any]] = {}
+        # Deserialized history-run objects, session_id -> run_id ->
+        # (stored run dict, run object). Rebuilding every historical run from
+        # its dict on every read made each turn's cost grow with session
+        # length. An entry is valid while the stored dict it was built from is
+        # still the one in the session's runs list -- upsert_run replaces the
+        # dict on every write, so dict identity is the invalidation token, and
+        # holding the dict itself means a recycled id can never alias a new
+        # dict. The cached objects are shared by every read and immutable by
+        # contract; the stored dicts remain the canonical state.
+        self._run_object_cache: Dict[str, Dict[str, Tuple[Dict[str, Any], Any]]] = {}
         self._memories: List[Dict[str, Any]] = []
         self._metrics: List[Dict[str, Any]] = []
         self._eval_runs: List[Dict[str, Any]] = []
@@ -76,6 +99,7 @@ class InMemoryDb(BaseDb):
             session = self._sessions.get(session_id)
             if session is not None and (user_id is None or session.get("user_id") == user_id):
                 del self._sessions[session_id]
+                self._run_object_cache.pop(session_id, None)
                 log_debug(f"Successfully deleted session with session_id: {session_id}")
                 return True
             else:
@@ -101,6 +125,7 @@ class InMemoryDb(BaseDb):
                 session = self._sessions.get(session_id)
                 if session is not None and (user_id is None or session.get("user_id") == user_id):
                     del self._sessions[session_id]
+                    self._run_object_cache.pop(session_id, None)
             log_debug(f"Successfully deleted sessions with ids: {session_ids}")
 
         except Exception as e:
@@ -146,6 +171,12 @@ class InMemoryDb(BaseDb):
                 runs_window = filter_context_runs(session_data.get("runs") or [])[-runs_limit:]
                 session_data_copy = deepcopy({**session_data, "runs": runs_window})
             else:
+                if deserialize and session_data.get("session_type") == SessionType.AGENT.value and (
+                    session_type is None or session_type == SessionType.AGENT
+                ):
+                    session_obj = self._agent_session_with_cached_runs(session_id, session_data)
+                    if session_obj is not None:
+                        return session_obj
                 session_data_copy = deepcopy(session_data)
 
             if not deserialize:
@@ -159,6 +190,49 @@ class InMemoryDb(BaseDb):
             traceback.print_exc()
             log_error(f"Exception reading session: {str(e)}")
             raise e
+
+    def _agent_session_with_cached_runs(self, session_id: str, session_data: Dict[str, Any]) -> Optional[AgentSession]:
+        """An AgentSession whose history runs come from the run-object cache.
+
+        The session row is deep-copied and rebuilt fresh per read, so row
+        state (session_data, metadata, summary) stays isolated exactly as
+        before. History run objects are built once per stored run dict and
+        SHARED by every read of the session; see the cache comment in
+        __init__ for the invalidation and immutability contract.
+        """
+        row_copy = deepcopy({**session_data, "runs": None})
+        session = AgentSession.from_dict(row_copy)
+        if session is None:
+            return None
+
+        cache = self._run_object_cache.setdefault(session_id, {})
+        runs: List[Any] = []
+        live_run_ids = set()
+        for run_dict in session_data.get("runs") or []:
+            if not isinstance(run_dict, dict):
+                continue
+            run_id = run_dict.get("run_id")
+            entry = cache.get(run_id) if run_id is not None else None
+            if entry is not None and entry[0] is run_dict:
+                run_obj = entry[1]
+            else:
+                # from_dict pops keys from its input, so it gets its own copy;
+                # the object then shares nothing with the stored dict.
+                run_obj = _deserialize_history_run(deepcopy(run_dict))
+                if run_id is not None:
+                    cache[run_id] = (run_dict, run_obj)
+            if run_id is not None:
+                live_run_ids.add(run_id)
+            if run_obj is not None:
+                runs.append(run_obj)
+
+        # Deleted runs leave stale entries behind; sweep them on read.
+        if len(cache) > len(live_run_ids):
+            for stale_id in [rid for rid in cache if rid not in live_run_ids]:
+                del cache[stale_id]
+
+        session.runs = runs
+        return session
 
     def get_sessions(
         self,
@@ -329,6 +403,9 @@ class InMemoryDb(BaseDb):
             else:
                 session_dict["created_at"] = session_dict.get("created_at", int(time.time()))
                 session_dict["updated_at"] = session_dict.get("created_at")
+                # A delete + re-insert under the same id must not serve the
+                # deleted session's cached run objects.
+                self._run_object_cache.pop(session_id, None)
                 # First insert: serialize whatever runs the incoming session
                 # carries, once (bulk import and restore callers never call
                 # upsert_run). to_dict output is freshly built, so it needs
@@ -494,7 +571,12 @@ class InMemoryDb(BaseDb):
     ) -> None:
         """Upsert a single run into the target session's inline runs list."""
         try:
-            run_dict = run if isinstance(run, dict) else run.to_dict()
+            # The store keeps its own copy: a dict held by the caller (or the
+            # nested structures a live run shares with its to_dict output)
+            # must not be able to rewrite stored state in place -- and the
+            # run-object cache relies on a stored dict never changing under
+            # its identity.
+            run_dict = deepcopy(run if isinstance(run, dict) else run.to_dict())
             run_id = run_dict.get("run_id")
             if run_id is None:
                 raise ValueError("Run must have a run_id")

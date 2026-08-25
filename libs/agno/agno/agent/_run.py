@@ -3520,6 +3520,13 @@ def continue_run_dispatch(
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
         if run_response.status == RunStatus.cancelled:
             raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+        # The continued run is mutated through the whole continue pipeline
+        # (message truncation, tool results, status). History run objects are
+        # shared between reads of the same session, so continue works on its
+        # own copy.
+        from copy import deepcopy as _deepcopy_run
+
+        run_response = _deepcopy_run(run_response)
 
         continue_index = _resolve_continue_from(
             run_response,
@@ -4818,6 +4825,13 @@ async def _acontinue_run(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    # The continued run is mutated through the whole continue
+                    # pipeline (message truncation, tool results, status).
+                    # History run objects are shared between reads of the same
+                    # session, so continue works on its own copy.
+                    from copy import deepcopy as _deepcopy_run
+
+                    run_response = _deepcopy_run(run_response)
 
                     continue_index = _resolve_continue_from(
                         run_response,
@@ -5318,6 +5332,13 @@ async def _acontinue_run_stream(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    # The continued run is mutated through the whole continue
+                    # pipeline (message truncation, tool results, status).
+                    # History run objects are shared between reads of the same
+                    # session, so continue works on its own copy.
+                    from copy import deepcopy as _deepcopy_run
+
+                    run_response = _deepcopy_run(run_response)
 
                     continue_index = _resolve_continue_from(
                         run_response,
@@ -6274,17 +6295,24 @@ def _mark_run_regenerated(
     explicit ``save_run`` here the DB row keeps its old (COMPLETED) status and
     history builders still surface the parent — producing duplicate content in
     conversation history after regenerate."""
+    from copy import copy as shallow_copy
+
     from agno.agent._session import save_run
 
-    for r in session.runs or []:
+    for i, r in enumerate(session.runs or []):
         if r.run_id == original_run_id:
-            r.status = RunStatus.regenerated
+            # Flip on a copy, never on the loaded run: history run objects are
+            # shared between reads of the same session, so an in-place write
+            # would surface mid-flight on another reader's session.
+            flipped = shallow_copy(r)
+            flipped.status = RunStatus.regenerated
+            session.runs[i] = flipped  # type: ignore[index]
             save_run(
                 agent,
-                run=cast(RunOutput, r),
+                run=cast(RunOutput, flipped),
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=resolve_run_index(session, flipped),
             )
             return
 
@@ -6295,17 +6323,24 @@ async def _amark_run_regenerated(
     original_run_id: str,
 ) -> None:
     """Async variant of :func:`_mark_run_regenerated`."""
+    from copy import copy as shallow_copy
+
     from agno.agent._session import asave_run
 
-    for r in session.runs or []:
+    for i, r in enumerate(session.runs or []):
         if r.run_id == original_run_id:
-            r.status = RunStatus.regenerated
+            # Flip on a copy, never on the loaded run: history run objects are
+            # shared between reads of the same session, so an in-place write
+            # would surface mid-flight on another reader's session.
+            flipped = shallow_copy(r)
+            flipped.status = RunStatus.regenerated
+            session.runs[i] = flipped  # type: ignore[index]
             await asave_run(
                 agent,
-                run=cast(RunOutput, r),
+                run=cast(RunOutput, flipped),
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=resolve_run_index(session, flipped),
             )
             return
 
