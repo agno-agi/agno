@@ -594,7 +594,11 @@ def _set_session_summary_manager(team: "Team") -> None:
 
 
 def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> None:
-    """Give ``member`` the store it runs with inside ``team``."""
+    """Give ``member`` the store it runs with inside ``team``.
+
+    CompressionManager leaves stored-result envelopes untouched, so a member
+    may inherit the team's store while also compressing ordinary tool results.
+    """
     from agno.offload.store import ResultStore
 
     inherited = member._inherited_result_store
@@ -611,16 +615,6 @@ def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> Non
     store: Optional[ResultStore] = None
     # An explicit False keeps the member out of the team's store.
     if team._result_store is not None and member.offload_tool_results is not False:
-        # A compressing member cannot take the team's store: compression
-        # rewrites the tool messages that hold stored-result envelopes. The
-        # member has to opt out of one of the two.
-        if getattr(member, "compress_tool_results", False):
-            member_name = member.name or member.id or "member"
-            raise ValueError(
-                f"Member '{member_name}' has compress_tool_results enabled and would inherit the "
-                "team's result store; the two cannot run together. Set offload_tool_results=False "
-                "on the member or disable its compression."
-            )
         if declares_own_store:
             from agno.offload.setup import build_result_store
 
@@ -655,14 +649,6 @@ def _set_result_store(team: "Team") -> None:
     """
     from agno.offload.setup import build_result_store
 
-    # Compression rewrites the tool messages that hold stored-result
-    # envelopes, so the two features refuse to run together.
-    if team.compress_tool_results and team.offload_tool_results:
-        raise ValueError(
-            "offload_tool_results and compress_tool_results cannot be enabled together: "
-            "compression rewrites the tool messages that hold stored-result envelopes. "
-            "Disable one of the two."
-        )
     team._result_store = build_result_store(
         setting=team.offload_tool_results, db=team.db, owner=team, owner_kind="team"
     )
@@ -867,17 +853,8 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
         _set_session_summary_manager(team)
     if team.compress_tool_results or team.compression_manager is not None:
         _set_compression_manager(team)
-    # Offloading and tool-result compression cannot run together: compression
-    # rewrites the tool messages that hold stored-result envelopes. Refuse the
-    # combination loudly instead of silently favouring one of them.
-    # Resolved when a setting is present or when a store exists.
+    # Resolve the store when a setting is present or when a store exists.
     if team.offload_tool_results or team._result_store is not None:
-        if team.compress_tool_results:
-            raise ValueError(
-                "offload_tool_results and compress_tool_results cannot be enabled together: "
-                "compression rewrites the tool messages that hold stored-result envelopes. "
-                "Disable one of the two."
-            )
         _ensure_result_store(team)
     if team.learning is not None and team.learning is not False:
         _set_learning_machine(team)

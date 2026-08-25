@@ -1,10 +1,8 @@
-"""Offloading and tool-result compression refuse to run together.
+"""Offloading and tool-result compression can be enabled together.
 
-Compression sends tool messages to a model and rewrites them, which would
-replace a stored-result envelope with text whose result id may be gone while
-the payload lives on unreferenced. The combination is refused at
-initialization, on the agent, on the team, and on a member that would inherit
-the team's store.
+CompressionManager treats ResultStore envelopes as opaque pointers, so
+ordinary tool results remain compressible without removing the read-back
+handle from an offloaded result.
 """
 
 import os
@@ -24,21 +22,21 @@ def db(tmp_path):
     return SqliteDb(db_file=os.path.join(tempfile.mkdtemp(dir=tmp_path), "offload-config.db"))
 
 
-def test_agent_refuses_offloading_with_compression(db):
+def test_agent_allows_offloading_with_compression(db):
     agent = Agent(db=db, compress_tool_results=True, offload_tool_results=True)
-    with pytest.raises(ValueError, match="cannot be enabled together"):
-        agent.initialize_agent()
+    agent.initialize_agent()
+    assert agent._result_store is not None
 
 
-def test_agent_refuses_offloading_with_a_compressing_manager(db):
+def test_agent_allows_offloading_with_a_compressing_manager(db):
     # The manager's own flag enables compression even when the agent's does not.
     agent = Agent(
         db=db,
         compression_manager=CompressionManager(compress_tool_results=True),
         offload_tool_results=ResultStore(threshold_chars=100),
     )
-    with pytest.raises(ValueError, match="cannot be enabled together"):
-        agent.initialize_agent()
+    agent.initialize_agent()
+    assert agent._result_store is not None
 
 
 def test_agent_allows_offloading_with_a_disabled_manager(db):
@@ -57,23 +55,23 @@ def test_agent_allows_compression_without_offloading(db):
     assert agent._result_store is None
 
 
-def test_result_store_property_refuses_the_combination(db):
+def test_result_store_property_allows_the_combination(db):
     agent = Agent(db=db, compress_tool_results=True, offload_tool_results=True)
-    with pytest.raises(ValueError, match="cannot be enabled together"):
-        agent.result_store
+    assert agent.result_store is not None
 
 
-def test_team_refuses_offloading_with_compression(db):
+def test_team_allows_offloading_with_compression(db):
     team = Team(members=[Agent(db=db)], db=db, compress_tool_results=True, offload_tool_results=True)
-    with pytest.raises(ValueError, match="cannot be enabled together"):
-        team.initialize_team()
+    team.initialize_team()
+    assert team._result_store is not None
 
 
-def test_compressing_member_cannot_inherit_the_team_store(db):
+def test_compressing_member_can_inherit_the_team_store(db):
     member = Agent(name="compressor", db=db, compress_tool_results=True)
     team = Team(members=[member], db=db, offload_tool_results=True)
-    with pytest.raises(ValueError, match="compressor"):
-        team.initialize_team()
+    team.initialize_team()
+    assert team._result_store is not None
+    assert member._result_store is team._result_store
 
 
 def test_compressing_member_that_opts_out_is_fine(db):
