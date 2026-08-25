@@ -8,6 +8,7 @@ on:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
       - "feat/v3.0"
+      - "perf/tool-schema-cache"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
