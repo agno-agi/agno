@@ -159,8 +159,10 @@ class InMemoryDb(BaseDb):
                 runs_window = filter_context_runs(session_data.get("runs") or [])[-runs_limit:]
                 session_data_copy = deepcopy({**session_data, "runs": runs_window})
             else:
-                if deserialize and session_data.get("session_type") == SessionType.AGENT.value and (
-                    session_type is None or session_type == SessionType.AGENT
+                if (
+                    deserialize
+                    and session_data.get("session_type") == SessionType.AGENT.value
+                    and (session_type is None or session_type == SessionType.AGENT)
                 ):
                     session_obj = self._agent_session_with_cached_runs(session_id, session_data)
                     if session_obj is not None:

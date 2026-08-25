@@ -718,10 +718,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         )
         result = await sess.execute(stmt)
         rows = result.fetchall()
-        return [
-            (run_id, run_data if isinstance(run_data, str) else json.dumps(run_data))
-            for run_id, run_data in rows
-        ]
+        return [(run_id, run_data if isinstance(run_data, str) else json.dumps(run_data)) for run_id, run_data in rows]
 
     async def _get_session_runs_data(
         self, sess, runs_table: Table, session_id: str, limit: Optional[int] = None
@@ -1347,9 +1344,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     # Fully-migrated agent session on the per-turn path: fetch
                     # the rows raw and serve run objects from the cache instead
                     # of rebuilding every run on every read.
-                    run_rows = await self._get_session_run_rows(
-                        sess=sess, runs_table=runs_table, session_id=session_id
-                    )
+                    run_rows = await self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
                     session["runs"] = None
                 elif runs_table is not None:
                     # Full load + merge. Also the un-migrated fallback: the legacy blob

@@ -1559,9 +1559,7 @@ class SqliteDb(BaseDb):
                         # Fully-migrated agent session on the per-turn path: fetch
                         # the rows raw and serve run objects from the cache instead
                         # of rebuilding every run on every read.
-                        run_rows = self._get_session_run_rows(
-                            sess=sess, runs_table=runs_table, session_id=session_id
-                        )
+                        run_rows = self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
                         session_raw["runs"] = None
                     elif runs_table is not None:
                         # Full load + merge. Also the un-migrated fallback: the legacy blob
