@@ -3484,13 +3484,10 @@ def continue_run_dispatch(
     if run_response is not None:
         if run_response.status == RunStatus.cancelled:
             raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
-        # The continue pipeline mutates this run in place (truncation, tool
-        # results, status). The caller's object may be a shared history run
-        # fetched from a session read, so continue works on its own copy.
-        from copy import deepcopy as _deepcopy_provided_run
-
-        run_response = _deepcopy_provided_run(run_response)
         # The run is continued from a provided run_response. This contains the updated tools.
+        # The pipeline completes this object in place: the caller owns it
+        # (the run getters hand out copies, and the team resume flow relies
+        # on its member run completing in place).
         continue_index: Optional[int] = _resolve_continue_from(
             run_response,
             continue_from=continue_from,
@@ -4799,13 +4796,10 @@ async def _acontinue_run(
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
-                    # The continue pipeline mutates this run in place (truncation, tool
-                    # results, status). The caller's object may be a shared history run
-                    # fetched from a session read, so continue works on its own copy.
-                    from copy import deepcopy as _deepcopy_provided_run
-
-                    run_response = _deepcopy_provided_run(run_response)
                     # The run is continued from a provided run_response. This contains the updated tools.
+                    # The pipeline completes this object in place: the caller owns it
+                    # (the run getters hand out copies, and the team resume flow relies
+                    # on its member run completing in place).
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
                         continue_from=continue_from,
@@ -5311,13 +5305,10 @@ async def _acontinue_run_stream(
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
-                    # The continue pipeline mutates this run in place (truncation, tool
-                    # results, status). The caller's object may be a shared history run
-                    # fetched from a session read, so continue works on its own copy.
-                    from copy import deepcopy as _deepcopy_provided_run
-
-                    run_response = _deepcopy_provided_run(run_response)
                     # The run is continued from a provided run_response. This contains the updated tools.
+                    # The pipeline completes this object in place: the caller owns it
+                    # (the run getters hand out copies, and the team resume flow relies
+                    # on its member run completing in place).
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
                         continue_from=continue_from,

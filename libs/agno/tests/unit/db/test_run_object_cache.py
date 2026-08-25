@@ -260,10 +260,11 @@ class TestSharedObjectBoundaries:
         later = db.get_session("s1", session_type=SessionType.AGENT)
         assert later.runs[-1].content != "vandalized"
 
-    def test_continue_run_with_provided_run_response_does_not_mutate_it(self):
-        """The documented poll-then-continue pattern: the object handed to
-        continue_run(run_response=...) may be a shared history run; the
-        pipeline works on a copy."""
+    def test_poll_then_continue_does_not_mutate_the_shared_history(self):
+        """The documented poll-then-continue pattern: the run fetched via
+        get_run_output is the caller's own copy, so continue_run(run_response=...)
+        -- which deliberately completes the passed object in place (the team
+        resume flow relies on that) -- never reaches the shared history."""
         db = InMemoryDb()
         agent = Agent(model=MockModel(), db=db, telemetry=False)
         agent.run("seed", session_id="s1", user_id="u1")
@@ -277,17 +278,21 @@ class TestSharedObjectBoundaries:
             },
             session_id="s1",
         )
-        shared = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
-        provided = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
-        status_before = provided.status
-        message_count = len(provided.messages or [])
+        shared = db.get_session("s1", session_type=SessionType.AGENT).runs[-1]
+        assert shared.run_id == "r-mid"
+        status_before = shared.status
+        message_count = len(shared.messages or [])
 
+        provided = agent.get_run_output("r-mid", session_id="s1")
         agent.continue_run(run_response=provided, session_id="s1", user_id="u1")
 
-        # Neither the caller's object nor the shared history moved.
-        assert provided.status == status_before
-        assert len(provided.messages or []) == message_count
+        # The passed copy completed; the shared history object never moved.
+        assert provided.status != status_before
         assert shared.status == status_before
+        assert len(shared.messages or []) == message_count
+        # And the store recorded the completion.
+        stored = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
+        assert stored.status != status_before
 
     def test_threaded_reads_with_run_churn_do_not_crash(self):
         """Concurrent threaded reads of one session while runs are written and
