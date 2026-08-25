@@ -57,8 +57,12 @@ def _streamable_http_connection(streamable_http_params: dict) -> Tuple[Any, floa
     if headers is not None or timeout is not None or sse_read_timeout is not None:
         httpx_timeout = None
         if timeout is not None or sse_read_timeout is not None:
-            # httpx2.Timeout(timeout, read=...): the first value covers connect/write/pool.
-            httpx_timeout = httpx2.Timeout(timeout if timeout is not None else 30.0, read=sse_read_timeout)
+            # Map the two v1 knobs onto one Timeout; the first value covers connect/write/pool.
+            # A knob left unset keeps the SDK default (30s ops / 300s stream read) rather than
+            # going unbounded -- httpx2.Timeout(read=None) means "no read limit" at all.
+            op_timeout = timeout if timeout is not None else 30.0
+            read_timeout = sse_read_timeout if sse_read_timeout is not None else 300.0
+            httpx_timeout = httpx2.Timeout(op_timeout, read=read_timeout)
         http_client = create_mcp_http_client(headers=headers, timeout=httpx_timeout)
 
     # The ClientSession read timeout mirrors the HTTP operation timeout so tool calls

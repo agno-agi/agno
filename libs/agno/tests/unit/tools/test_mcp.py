@@ -1610,3 +1610,124 @@ async def test_mcp_cached_hit_returns_tool_result(tmp_path):
     assert session.call_tool.await_count == 1
     assert isinstance(second.result, ToolResult)
     assert second.result.content == "payload"
+
+
+# ----------------------------- _streamable_http_connection -----------------------------
+
+
+def _run_streamable_http_connection(params):
+    """Call the helper with the SDK client factories stubbed; return the captured calls.
+
+    Returns (streamable_http_client_mock, create_client_mock, context, session_read_timeout).
+    """
+    from agno.tools.mcp.mcp import _streamable_http_connection
+
+    with (
+        patch("agno.tools.mcp.mcp.streamable_http_client", return_value="connection-context") as client_mock,
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value="http-client") as http_client_factory,
+    ):
+        context, session_read_timeout = _streamable_http_connection(dict(params))
+    return client_mock, http_client_factory, context, session_read_timeout
+
+
+def test_streamable_http_connection_maps_both_timeouts():
+    """Both knobs set: op timeout covers connect/write/pool, sse_read_timeout bounds reads."""
+    import httpx2
+
+    client_mock, factory, context, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "timeout": 10.0, "sse_read_timeout": 300.0}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert isinstance(timeout_arg, httpx2.Timeout)
+    assert timeout_arg.connect == 10.0
+    assert timeout_arg.read == 300.0
+    assert factory.call_args.kwargs["headers"] is None
+    assert client_mock.call_args.args == ("http://localhost:8080/mcp",)
+    assert client_mock.call_args.kwargs["http_client"] == "http-client"
+    assert client_mock.call_args.kwargs["terminate_on_close"] is True
+    assert context == "connection-context"
+    # The ClientSession read timeout mirrors the operation timeout.
+    assert session_read_timeout == 10.0
+
+
+def test_streamable_http_connection_defaults_missing_sse_read_timeout():
+    """Only `timeout` set: the stream read keeps the SDK's 300s default instead of
+    going unbounded -- httpx2.Timeout(read=None) means 'no read limit'."""
+
+    _, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "timeout": 10.0}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert timeout_arg.read == 300.0
+    assert session_read_timeout == 10.0
+
+
+def test_streamable_http_connection_defaults_missing_operation_timeout():
+    """Only `sse_read_timeout` set: operations keep the SDK's 30s default."""
+
+    _, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "sse_read_timeout": 120.0}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert timeout_arg.connect == 30.0
+    assert timeout_arg.read == 120.0
+    assert session_read_timeout == 30.0
+
+
+def test_streamable_http_connection_normalizes_timedelta_timeouts():
+    """Legacy configs may still carry timedelta values; they are converted to seconds."""
+    from datetime import timedelta
+
+    _, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "timeout": timedelta(seconds=15), "sse_read_timeout": timedelta(minutes=5)}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert timeout_arg.connect == 15.0
+    assert timeout_arg.read == 300.0
+    assert session_read_timeout == 15.0
+
+
+def test_streamable_http_connection_without_timeouts_builds_no_custom_client():
+    """No timeouts or headers configured: no http_client is built and the SDK default
+    timeout applies; the session read timeout falls back to 30 seconds."""
+    client_mock, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp"}
+    )
+
+    assert factory.call_args is None  # no custom client built at all
+    assert client_mock.call_args.kwargs["http_client"] is None
+    assert session_read_timeout == 30.0
+
+
+def test_streamable_http_connection_headers_only_build_client_without_timeout():
+    """Headers alone trigger a custom client, built without an explicit Timeout."""
+    _, factory, _, _ = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "headers": {"Authorization": "Bearer t"}}
+    )
+
+    assert factory.call_args.kwargs["headers"] == {"Authorization": "Bearer t"}
+    assert factory.call_args.kwargs["timeout"] is None
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_terminate_on_close_false_through():
+    """A caller-supplied terminate_on_close=False reaches streamable_http_client."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp", terminate_on_close=False),
+        transport="streamable-http",
+    )
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamable_http_client", return_value=_AsyncContextManager(("read", "write"))
+        ) as client_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert client_mock.call_args.kwargs["terminate_on_close"] is False
