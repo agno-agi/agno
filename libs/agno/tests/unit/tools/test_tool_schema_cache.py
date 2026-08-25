@@ -8,6 +8,7 @@ Functions between runs still change what the model sees.
 """
 
 import asyncio
+from functools import partial, wraps
 
 import pytest
 
@@ -450,3 +451,184 @@ def test_closure_tools_still_parse_and_run_without_the_cache():
     assert functions[0].name == "lookup"
     assert functions[0].entrypoint(query="q") == "q-one"
     assert functions[0]._run_context is context
+
+
+def test_wrapper_closing_over_state_is_not_cached_through_its_wrapped_base():
+    """A @wraps wrapper that captures per-run state must not be judged stable
+    through the closure-free function it forwards to.
+
+    functools.wraps sets __wrapped__, so a walk that only tests the object it
+    ends on reads such a wrapper as a plain module function and caches it,
+    pinning whatever the wrapper captured until eviction. The capture is on the
+    wrapper itself, which the walk passes through, so every link is tested."""
+    import gc
+    import weakref
+
+    from agno.tools.function import _cache_stable
+
+    def base(query: str) -> str:
+        """Look something up.
+
+        Args:
+            query: What to look for.
+        """
+        return "base"
+
+    class RunState:
+        pass
+
+    def make(state):
+        @wraps(base)
+        def per_run(*args, **kwargs):
+            return f"ran-{type(state).__name__}"
+
+        return per_run
+
+    state = RunState()
+    per_run = make(state)
+
+    # The base it forwards to is stable; the wrapper carrying state is not.
+    assert _cache_stable(base) is True
+    assert _cache_stable(per_run) is False
+
+    parsed = Function.from_callable(per_run, name="per_run")
+    assert "query" in parsed.parameters["properties"]
+    assert parsed.entrypoint is not None and parsed.entrypoint(query="q") == "ran-RunState"
+
+    finalizer = weakref.ref(state)
+    del state, per_run, parsed
+    gc.collect()
+    assert finalizer() is None
+
+
+def test_wrappers_over_one_base_keep_their_own_identities():
+    """Two per-run wrappers sharing a __wrapped__ base must each dispatch to
+    themselves; a cache keyed past the wrapper would serve one for the other."""
+
+    def base(query: str) -> str:
+        """Look something up.
+
+        Args:
+            query: What to look for.
+        """
+        return "base"
+
+    def make(tag: str):
+        @wraps(base)
+        def per_run(*args, **kwargs):
+            return f"ran-{tag}"
+
+        return per_run
+
+    first = Function.from_callable(make("one"), name="per_run")
+    second = Function.from_callable(make("two"), name="per_run")
+
+    assert first.entrypoint is not None and first.entrypoint(query="q") == "ran-one"
+    assert second.entrypoint is not None and second.entrypoint(query="q") == "ran-two"
+
+
+def test_partial_binding_run_state_is_not_cached():
+    """A partial is the other way a factory pins a run's objects. Bound
+    arguments are captured state even when the underlying function is a
+    closure-free module function."""
+    import gc
+    import weakref
+
+    from agno.tools.function import _cache_stable
+
+    class RunState:
+        pass
+
+    def lookup(query: str, state: object = None) -> str:
+        """Look something up.
+
+        Args:
+            query: What to look for.
+        """
+        return "ok"
+
+    state = RunState()
+    bound = partial(lookup, state=state)
+
+    assert _cache_stable(partial(lookup)) is True
+    assert _cache_stable(bound) is False
+
+    finalizer = weakref.ref(state)
+    del state, bound
+    gc.collect()
+    assert finalizer() is None
+
+
+def test_decorator_wrappers_over_long_lived_functions_still_cache():
+    """The gate must not reject ordinary decorators. @tool wraps the decorated
+    function in a wrapper that closes over it, and pydantic's validate_call
+    adds further callable-holding cells; those captures live as long as the
+    tool, so rejecting them would drop the framework's most common tool shape
+    out of the caches and undo the derivation saving for it."""
+    from agno.tools.function import _cache_stable
+
+    def plain(query: str) -> str:
+        """Look something up.
+
+        Args:
+            query: What to look for.
+        """
+        return "ok"
+
+    @tool
+    def decorated(query: str) -> str:
+        """Look something up.
+
+        Args:
+            query: What to look for.
+        """
+        return "ok"
+
+    assert _cache_stable(plain) is True
+    assert decorated.entrypoint is not None
+    assert _cache_stable(decorated.entrypoint) is True
+
+    class Kit(Toolkit):
+        def lookup(self, query: str) -> str:
+            """Look something up.
+
+            Args:
+                query: What to look for.
+            """
+            return "ok"
+
+    assert _cache_stable(Kit(name="kit").lookup) is True
+
+
+def test_cache_walk_depth_is_bounded_and_fails_closed():
+    """A wrapper chain longer than the walk cap is unresolved, so it must be
+    treated as unsafe rather than assumed closure-free past the cap."""
+    from agno.tools.function import _WRAPPED_WALK_CAP, _cache_stable
+
+    def base(query: str) -> str:
+        """Look something up.
+
+        Args:
+            query: What to look for.
+        """
+        return "ok"
+
+    def add_layer(inner):
+        # A cell holding a callable, so the layer itself stays "stable"; only
+        # the chain's depth decides the outcome here. (Nesting partials would
+        # not work: CPython flattens partial(partial(f)) into one object.)
+        @wraps(inner)
+        def layer(*args, **kwargs):
+            return inner(*args, **kwargs)
+
+        return layer
+
+    shallow = base
+    for _ in range(_WRAPPED_WALK_CAP - 2):
+        shallow = add_layer(shallow)
+    assert _cache_stable(shallow) is True
+
+    deep = base
+    for _ in range(_WRAPPED_WALK_CAP + 2):
+        deep = add_layer(deep)
+    assert _cache_stable(deep) is False

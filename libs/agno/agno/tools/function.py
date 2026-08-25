@@ -697,28 +697,70 @@ class _CallableIdentity:
 _WRAPPED_WALK_CAP = 10
 
 
+def _captures_state(c: Any) -> bool:
+    """Whether this single object closes over anything other than callables.
+
+    A decorator wrapper closes over the function it forwards to (and, through
+    pydantic's ``validate_call``, over further wrappers): those cells hold
+    callables that live as long as the tool itself, so an entry keyed on the
+    wrapper pins nothing the run owns. A per-run factory instead captures the
+    run's own objects -- output, session, agent, a bound value -- and those
+    are what must stay out of the caches.
+
+    Cells are read defensively: an empty cell (a recursive closure still being
+    built) raises on access and counts as captured state, since it cannot be
+    shown to be a plain callable.
+    """
+    for cell in getattr(getattr(c, "__func__", c), "__closure__", None) or ():
+        try:
+            contents = cell.cell_contents
+        except ValueError:
+            return True
+        if not callable(contents):
+            return True
+    return False
+
+
 def _cache_stable(c: Callable) -> bool:
     """Whether this callable is safe and useful to hold in the module caches.
 
-    A callable with captured state -- a closure cell anywhere under its
-    wrapper/partial chain -- is usually a per-run factory product: an
+    A callable capturing non-callable state -- a closure cell anywhere on
+    its wrapper/partial chain, or a bound partial argument -- is usually a
+    per-run factory product: an
     identity-keyed cache can never hit it (the object is new each run), and
     the entry would pin everything the closure captured (run output, session,
     agent) until eviction. Those skip the caches and are derived directly,
     exactly as before the caches existed. Module functions, bound methods,
     and decorator wrappers over them have no cells; they are the long-lived
-    tools the caches exist for."""
+    tools the caches exist for.
+
+    Every link is tested, not just the one the walk ends on. A wrapper that
+    closes over per-run state while forwarding ``__wrapped__`` to a
+    closure-free base (``@wraps`` over a module function) would otherwise be
+    read as stable through its base and pin whatever it captured; the walk
+    exists to see PAST wrappers, so it must judge each one it passes.
+    Cells holding callables do not count: that is how every decorator --
+    ``@tool`` included -- forwards to the function it wraps, and those
+    captures are as long-lived as the tool.
+    """
     for _ in range(_WRAPPED_WALK_CAP):
+        if _captures_state(c):
+            return False
         if isinstance(c, partial):
+            # Bound arguments are captured state as surely as a cell is, and a
+            # per-run partial is the usual way a factory pins a run's objects.
+            if c.args or c.keywords:
+                return False
             c = c.func
             continue
         wrapped = getattr(c, "__wrapped__", None)
         if wrapped is not None:
             c = wrapped
             continue
-        break
-    c = getattr(c, "__func__", c)
-    return getattr(c, "__closure__", None) is None
+        return True
+    # Chain deeper than the cap: unresolved, so treat it as unsafe to cache
+    # rather than assume the part never walked is closure-free.
+    return False
 
 
 @dataclass(frozen=True)
