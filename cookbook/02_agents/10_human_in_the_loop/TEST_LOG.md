@@ -76,3 +76,15 @@
 **Result:** Expected behavior for interactive file in non-interactive mode.
 
 ---
+
+### side_effect_tool_approval.py
+
+**Tested:** 2026-08-25
+**Environment:** Windows, `.venvs/demo/Scripts/python.exe`, Python 3.12
+**Status:** PASS
+**Tier:** untagged
+**Description:** Runs deterministic rejected and approved paths for a simulated side-effecting email tool without credentials or network access.
+**Result:** Rejected path completed with 0 outbox entries; approved path completed with 1 outbox entry. Targeted Ruff and Mypy checks passed.
+**Repository validation:** Full-library Ruff checks passed. Full-library Mypy reported pre-existing errors outside this cookbook folder. The cookbook-wide Mypy command exited before checking files because `00_quickstart` is not a valid Python package name.
+
+---
