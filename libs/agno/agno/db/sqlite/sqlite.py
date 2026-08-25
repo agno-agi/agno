@@ -1303,6 +1303,8 @@ class SqliteDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results([session_id])
+            # A deleted session's deserialized history must not stay resident.
+            self._run_object_cache.drop_session(session_id)
             return True
 
         except Exception as e:
@@ -1355,6 +1357,8 @@ class SqliteDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results(cascade_ids)
+            for deleted_id in cascade_ids:
+                self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")

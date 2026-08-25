@@ -239,7 +239,11 @@ class TestCrashRecovery:
         await worker.start()
         try:
             await wait_for_status(store, "r1", "failed")
-            assert run_row.status == RunStatus.error
+            # The sweeper stamps a copy and upserts it into the session (the
+            # loaded run object is shared with other readers, so it is never
+            # written through); the session's entry carries the flip.
+            assert session.runs[0].status == RunStatus.error
+            assert run_row.status == RunStatus.running
             assert saved, "run-row error must be persisted"
         finally:
             await worker.stop()
@@ -297,7 +301,7 @@ class TestCrashRecovery:
             db_down = False
             store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
-            assert run_row.status == RunStatus.error, "the retried persist must land before the terminal write"
+            assert session.runs[0].status == RunStatus.error, "the retried persist must land before the terminal write"
             assert "worker lost" in job["error"].lower()
         finally:
             await worker.stop()
@@ -339,14 +343,14 @@ class TestCrashRecovery:
             await asyncio.sleep(0.2)  # several sweep ticks
             job = await store.get_job("r1")
             assert job["status"] == "running", "component-missing must not terminalize the ticket"
-            assert run_row.status == RunStatus.running
+            assert session.runs[0].status == RunStatus.running
 
             components["agent-1"] = agent  # redeploy restores it
             # The sweeper holds a fresh lock from its failed attempt; the job
             # becomes re-sweepable once that lock goes stale (retry backoff)
             store._jobs["r1"]["locked_at"] -= 1000
             job = await wait_for_status(store, "r1", "failed")
-            assert run_row.status == RunStatus.error
+            assert session.runs[0].status == RunStatus.error
         finally:
             await worker.stop()
 

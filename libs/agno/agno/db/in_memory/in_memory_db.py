@@ -195,31 +195,27 @@ class InMemoryDb(BaseDb):
         if session is None:
             return None
 
-        cache = self._run_object_cache.setdefault(session_id, {})
+        # Build a fresh entry map and swap it in with one assignment: the map
+        # a previous read published is only ever read here, never written, so
+        # concurrent readers cannot trip over each other's inserts or sweeps,
+        # and entries for deleted runs simply fall out of the new map.
+        cache = self._run_object_cache.get(session_id) or {}
+        fresh_cache: Dict[str, Tuple[Dict[str, Any], Any]] = {}
         runs: List[Any] = []
-        live_run_ids = set()
         for run_dict in session_data.get("runs") or []:
             if not isinstance(run_dict, dict):
                 continue
             run_id = run_dict.get("run_id")
             entry = cache.get(run_id) if run_id is not None else None
-            if entry is not None and entry[0] is run_dict:
-                run_obj = entry[1]
-            else:
+            if entry is None or entry[0] is not run_dict:
                 # from_dict pops keys from its input, so it gets its own copy;
                 # the object then shares nothing with the stored dict.
-                run_obj = deserialize_history_run(deepcopy(run_dict))
-                if run_id is not None:
-                    cache[run_id] = (run_dict, run_obj)
+                entry = (run_dict, deserialize_history_run(deepcopy(run_dict)))
             if run_id is not None:
-                live_run_ids.add(run_id)
-            if run_obj is not None:
-                runs.append(run_obj)
-
-        # Deleted runs leave stale entries behind; sweep them on read.
-        if len(cache) > len(live_run_ids):
-            for stale_id in [rid for rid in cache if rid not in live_run_ids]:
-                del cache[stale_id]
+                fresh_cache[run_id] = entry
+            if entry[1] is not None:
+                runs.append(entry[1])
+        self._run_object_cache[session_id] = fresh_cache
 
         session.runs = runs
         return session

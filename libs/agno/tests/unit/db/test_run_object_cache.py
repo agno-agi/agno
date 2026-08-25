@@ -221,6 +221,128 @@ class TestHistoryEquality:
         assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
 
 
+class TestSharedObjectBoundaries:
+    """Every library surface that hands a run to a mutator copies at the
+    boundary, so the shared cached objects stay clean."""
+
+    def test_get_run_returns_a_copy(self):
+        """Background continue, HITL surfaces and the job-queue sweeper all
+        fetch via get_run and mutate before persisting; the shared object must
+        not carry those mutations."""
+        db = InMemoryDb()
+        _seed(db)
+        session = db.get_session("s1", session_type=SessionType.AGENT)
+        fetched = session.get_run("r1")
+        fetched.status = RunStatus.cancelled
+        fetched.content = "sweeper text"
+
+        later = db.get_session("s1", session_type=SessionType.AGENT)
+        assert later.runs[1].status != RunStatus.cancelled
+        assert later.runs[1].content == "content 1"
+
+    def test_get_run_output_returns_a_copy(self):
+        db = InMemoryDb()
+        agent = Agent(model=MockModel(), db=db, telemetry=False)
+        response = agent.run("one", session_id="s1", user_id="u1")
+
+        fetched = agent.get_run_output(response.run_id, session_id="s1")
+        fetched.status = RunStatus.cancelled
+        later = db.get_session("s1", session_type=SessionType.AGENT)
+        assert later.get_run(response.run_id).status != RunStatus.cancelled
+
+    def test_get_last_run_output_returns_a_copy(self):
+        db = InMemoryDb()
+        agent = Agent(model=MockModel(), db=db, telemetry=False)
+        agent.run("one", session_id="s1", user_id="u1")
+
+        fetched = agent.get_last_run_output(session_id="s1")
+        fetched.content = "vandalized"
+        later = db.get_session("s1", session_type=SessionType.AGENT)
+        assert later.runs[-1].content != "vandalized"
+
+    def test_continue_run_with_provided_run_response_does_not_mutate_it(self):
+        """The documented poll-then-continue pattern: the object handed to
+        continue_run(run_response=...) may be a shared history run; the
+        pipeline works on a copy."""
+        db = InMemoryDb()
+        agent = Agent(model=MockModel(), db=db, telemetry=False)
+        agent.run("seed", session_id="s1", user_id="u1")
+        db.upsert_run(
+            {
+                "run_id": "r-mid",
+                "agent_id": agent.id,
+                "user_id": "u1",
+                "status": "RUNNING",
+                "messages": [{"role": "user", "content": "resume me"}],
+            },
+            session_id="s1",
+        )
+        shared = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
+        provided = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
+        status_before = provided.status
+        message_count = len(provided.messages or [])
+
+        agent.continue_run(run_response=provided, session_id="s1", user_id="u1")
+
+        # Neither the caller's object nor the shared history moved.
+        assert provided.status == status_before
+        assert len(provided.messages or []) == message_count
+        assert shared.status == status_before
+
+    def test_threaded_reads_with_run_churn_do_not_crash(self):
+        """Concurrent threaded reads of one session while runs are written and
+        deleted: reads must never raise (the cache publishes a fresh entry map
+        per read instead of mutating a shared one)."""
+        import threading
+
+        db = InMemoryDb()
+        _seed(db, n_runs=10)
+        errors: list = []
+        stop = threading.Event()
+
+        def reader():
+            while not stop.is_set():
+                try:
+                    db.get_session("s1", session_type=SessionType.AGENT)
+                except Exception as exc:
+                    errors.append(exc)
+                    return
+
+        def writer():
+            for i in range(300):
+                db.upsert_run(
+                    {"run_id": f"rw{i % 7}", "agent_id": "a1", "content": f"v{i}", "status": "COMPLETED"},
+                    session_id="s1",
+                )
+                db.delete_run(f"rw{(i + 3) % 7}")
+            stop.set()
+
+        threads = [threading.Thread(target=reader) for _ in range(4)] + [threading.Thread(target=writer)]
+        import sys
+
+        old_interval = sys.getswitchinterval()
+        sys.setswitchinterval(1e-6)
+        try:
+            for t in threads:
+                t.start()
+            for t in threads:
+                t.join(timeout=30)
+        finally:
+            sys.setswitchinterval(old_interval)
+        assert errors == []
+
+    def test_sqlite_delete_session_drops_the_cache_entry(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "drop.db"))
+        db.upsert_session(AgentSession(session_id="s1", agent_id="a1", user_id="u1"))
+        db.upsert_run({"run_id": "r0", "agent_id": "a1", "content": "x", "status": "COMPLETED"}, "s1")
+        db.get_session("s1", session_type=SessionType.AGENT)
+        assert "s1" in db._run_object_cache._per_session
+        db.delete_session("s1")
+        assert "s1" not in db._run_object_cache._per_session
+
+
 class TestSqliteRunObjectCache:
     """The SQL-adapter cache keys on raw row text, so shared objects and
     cross-process visibility follow from the rows alone."""
@@ -249,9 +371,7 @@ class TestSqliteRunObjectCache:
     def test_updating_a_run_invalidates_only_that_run(self, sqlite_db):
         self._seed(sqlite_db)
         first = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
-        sqlite_db.upsert_run(
-            {"run_id": "r1", "agent_id": "a1", "content": "rewritten", "status": "COMPLETED"}, "s1"
-        )
+        sqlite_db.upsert_run({"run_id": "r1", "agent_id": "a1", "content": "rewritten", "status": "COMPLETED"}, "s1")
         second = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
         assert second.runs[1].content == "rewritten"
         assert first.runs[1].content == "content 1"
