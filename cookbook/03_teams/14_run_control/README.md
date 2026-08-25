@@ -1,6 +1,14 @@
-# run control
+# Run Control
 
-Examples for team workflows in run_control.
+Controlling a team run: cancelling one mid-flight, running one in the background
+and polling it, retrying transient errors, inheriting a model across members, and
+calling a team hosted on another AgentOS.
+
+Seven of these drive the team object in process; `remote_team.py` is the one that
+goes over HTTP. Pausing a team for a human decision lives in
+[`../20_human_in_the_loop/`](../20_human_in_the_loop/), and the same run control
+driven through AgentOS routes lives in
+[`cookbook/05_agent_os/04_run_lifecycle`](../../05_agent_os/04_run_lifecycle/).
 
 ## Prerequisites
 
@@ -8,84 +16,23 @@ Examples for team workflows in run_control.
 - Use .venvs/demo/bin/python to run cookbook examples.
 - Some examples require additional services (for example PostgreSQL, LanceDB, or Infinity server) as noted in file docstrings.
 
-## Files
+## Examples
 
-- cancel_run.py - Demonstrates cancel run.
-- cancel_run_persistence.py - Cancel a running team and verify partial content is persisted.
-- team_cancel_while_member_runs.py - Cancel a team run while a member agent is actively streaming.
-- background_execution.py - Demonstrates background execution and polling.
-- model_inheritance.py - Demonstrates model inheritance.
-- remote_team.py - Demonstrates remote team.
-- retries.py - Demonstrates retries.
-
-## AgentOS team run states
-
-AgentOS exposes the lifecycle of a team run through the `status` field on the
-run response and through team-specific stream events. Treat `run_id` and
-`session_id` as the identifiers for every follow-up request; a run can remain
-paused for an arbitrary amount of time while waiting for a human decision.
-
-| State | Meaning | Typical next action |
+| Example | What it shows | Needs |
 |---|---|---|
-| `PENDING` | A background run was accepted but has not started producing output. | Poll or subscribe to the run. |
-| `RUNNING` | The team is processing the request. | Consume the response or stream events. |
-| `PAUSED` | Human-in-the-loop requirements are unresolved; no pending tool call should be assumed to have completed. | Resolve the returned requirements, then call `/continue`. |
-| `COMPLETED` | The team produced a terminal response. | Store the response or start a new/follow-up run. |
-| `ERROR` | The run stopped because an error prevented completion. | Inspect the error and decide whether a new or continued run is appropriate. |
-| `CANCELLED` | Cancellation was requested and the run stopped; partial content may still be persisted. | Do not retry blindly; start a new run when the operation is safe to repeat. |
+| [`cancel_run.py`](./cancel_run.py) | Cancel an in-flight team run from a separate thread. | — |
+| [`cancel_run_persistence.py`](./cancel_run_persistence.py) | Cancel mid-stream and verify partial content and messages are preserved in the database. | PostgreSQL |
+| [`team_cancel_while_member_runs.py`](./team_cancel_while_member_runs.py) | Cancel a team run while a member agent is actively streaming; the cancellation propagates and both runs persist as cancelled. | PostgreSQL |
+| [`background_execution.py`](./background_execution.py) | Start a run that returns immediately as `PENDING`, then poll for completion or cancel it. | PostgreSQL |
+| [`background_execution_metrics.py`](./background_execution_metrics.py) | Metrics are tracked for team background runs and read back off the stored run. | PostgreSQL |
+| [`model_inheritance.py`](./model_inheritance.py) | Member models inherit from the parent team's model. | — |
+| [`remote_team.py`](./remote_team.py) | Call and stream a team hosted on a remote AgentOS instance. | AgentOS on `:7778` |
+| [`retries.py`](./retries.py) | Team retry configuration for transient run errors. | — |
 
-For a non-streaming request, the team route is:
+## Running
 
-```http
-POST /teams/{team_id}/runs
-Content-Type: application/x-www-form-urlencoded
-
-message=Summarize+the+latest+release&stream=false&session_id={session_id}
+```bash
+.venvs/demo/bin/python cookbook/03_teams/14_run_control/cancel_run.py
+.venvs/demo/bin/python cookbook/03_teams/14_run_control/model_inheritance.py
+.venvs/demo/bin/python cookbook/03_teams/14_run_control/retries.py
 ```
-
-A completed response has the same lifecycle identifiers and a terminal status:
-
-```json
-{
-  "run_id": "run-123",
-  "session_id": "session-456",
-  "status": "COMPLETED",
-  "content": "The release adds ..."
-}
-```
-
-With `stream=true`, the first and last lifecycle events are normally
-`TeamRunStarted` and `TeamRunCompleted`. A human-in-the-loop run can instead
-emit `TeamRunPaused` and return the unresolved `requirements` on the paused
-run output:
-
-```json
-{
-  "event": "TeamRunPaused",
-  "run_id": "run-123",
-  "session_id": "session-456",
-  "status": "PAUSED",
-  "requirements": [{"tool_name": "send_email", "requires_confirmation": true}]
-}
-```
-
-After the human decision is recorded, resume the same team run. Pass the
-resolved requirements back unchanged except for their resolution fields:
-
-```http
-POST /teams/{team_id}/runs/run-123/continue
-Content-Type: application/x-www-form-urlencoded
-
-session_id=session-456&stream=false&requirements=[...resolved requirements...]
-```
-
-Cancellation uses the same identifiers and is terminal for that run:
-
-```http
-POST /teams/{team_id}/runs/run-123/cancel
-```
-
-The stream may emit `TeamRunError` or `TeamRunCancelled`; the persisted run
-output and its `status` remain the source of truth for the final state. The
-existing examples in this directory show cancellation, background polling,
-retry configuration, and continued runs with real model-backed teams.
