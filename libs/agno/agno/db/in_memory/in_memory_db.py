@@ -15,6 +15,7 @@ from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
+    deserialize_history_run,
     deserialize_session,
     deserialize_sessions,
     drop_legacy_metrics,
@@ -26,19 +27,6 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.tracing.schemas import Span, Trace
-
-
-def _deserialize_history_run(run_dict: Dict[str, Any]) -> Optional[Any]:
-    """One stored run dict as a run object, mirroring AgentSession.from_dict's
-    per-run dispatch (a dict matching neither shape is skipped there too)."""
-    from agno.run.agent import RunOutput
-    from agno.run.team import TeamRunOutput
-
-    if "agent_id" in run_dict:
-        return RunOutput.from_dict(run_dict)
-    if "team_id" in run_dict:
-        return TeamRunOutput.from_dict(run_dict)
-    return None
 
 
 class InMemoryDb(BaseDb):
@@ -218,7 +206,7 @@ class InMemoryDb(BaseDb):
             else:
                 # from_dict pops keys from its input, so it gets its own copy;
                 # the object then shares nothing with the stored dict.
-                run_obj = _deserialize_history_run(deepcopy(run_dict))
+                run_obj = deserialize_history_run(deepcopy(run_dict))
                 if run_id is not None:
                     cache[run_id] = (run_dict, run_obj)
             if run_id is not None:

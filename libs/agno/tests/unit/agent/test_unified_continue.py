@@ -1481,7 +1481,8 @@ class TestRegenerateSugar:
 
     def test_replace_original_marks_old_run_regenerated(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
-        agent = _make_agent(monkeypatch, runs=[run])
+        runs_list = [run]
+        agent = _make_agent(monkeypatch, runs=runs_list)
 
         def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
             return run_response
@@ -1497,8 +1498,12 @@ class TestRegenerateSugar:
             stream=False,
         )
 
-        # Old run got status flipped (history-builders will skip it).
-        assert run.status == RunStatus.regenerated
+        # The session's entry got its status flipped (history-builders will
+        # skip it) -- on a copy: history run objects are shared between
+        # session reads, so the flip never writes through a held object.
+        assert runs_list[0].run_id == "run-A"
+        assert runs_list[0].status == RunStatus.regenerated
+        assert run.status == RunStatus.completed
 
     def test_replace_original_creates_fork_with_new_run_id(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
@@ -1531,7 +1536,8 @@ class TestRegenerateSugar:
         whether the source is hidden from history, not whether to fork.
         """
         run = self._build_run_with_assistant_tail()
-        agent = _make_agent(monkeypatch, runs=[run])
+        runs_list = [run]
+        agent = _make_agent(monkeypatch, runs=runs_list)
         captured: dict = {}
 
         def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
@@ -1554,9 +1560,10 @@ class TestRegenerateSugar:
         assert captured["forked_from"] == "run-A"
         # Source row is retained (original run_id) but, by default
         # (replace_original defaults to True), marked REGENERATED so the new
-        # run replaces it in history.
-        assert run.run_id == "run-A"
-        assert run.status == RunStatus.regenerated
+        # run replaces it in history. The flip lands on the session's entry,
+        # never through the held object (shared history runs are immutable).
+        assert runs_list[0].run_id == "run-A"
+        assert runs_list[0].status == RunStatus.regenerated
 
     def test_regenerate_replace_original_false_keeps_source_visible(self, monkeypatch: pytest.MonkeyPatch):
         """``replace_original=False`` leaves the source COMPLETED and visible so
@@ -1587,7 +1594,8 @@ class TestRegenerateSugar:
         earlier (default) regenerate already replaced — so it is only meaningful
         when the source is still COMPLETED."""
         run = self._build_run_with_assistant_tail()
-        agent = _make_agent(monkeypatch, runs=[run])
+        runs_list = [run]
+        agent = _make_agent(monkeypatch, runs=runs_list)
 
         def fake_continue_run(agent, run_response, run_messages, run_context, session, tools, **kw):
             return run_response
@@ -1596,7 +1604,7 @@ class TestRegenerateSugar:
 
         # First regenerate (default) hides the source.
         _run.continue_run_dispatch(agent=agent, run_id="run-A", session_id="s", regenerate=True, stream=False)
-        assert run.status == RunStatus.regenerated
+        assert runs_list[0].status == RunStatus.regenerated
 
         # Regenerating the SAME (now hidden) source with replace_original=False
         # does not bring it back to COMPLETED.
@@ -1608,7 +1616,7 @@ class TestRegenerateSugar:
             replace_original=False,
             stream=False,
         )
-        assert run.status == RunStatus.regenerated
+        assert runs_list[0].status == RunStatus.regenerated
 
     def test_regenerate_allows_default_end_boundary(self, monkeypatch: pytest.MonkeyPatch):
         run = self._build_run_with_assistant_tail()
