@@ -128,6 +128,11 @@ class SessionRunObjectCache:
     Sessions are pruned least-recently-read beyond ``max_sessions``, and a
     read replaces the session's entry map wholesale, so deleted runs do not
     linger.
+
+    The token must never be persisted or shared between processes: ``hash`` is
+    randomized per process, so the same text yields different tokens in
+    different processes (and after a restart). It is only meaningful within the
+    lifetime of one adapter instance, which is the only place it is used.
     """
 
     def __init__(self, max_sessions: int = 64):
