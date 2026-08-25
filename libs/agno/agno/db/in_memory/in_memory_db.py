@@ -341,16 +341,20 @@ class InMemoryDb(BaseDb):
             stored_session["runs"] = runs_for_store
             self._sessions[session_id] = stored_session
 
-            session_dict_copy = deepcopy(stored_session)
+            # Match the SQL adapters' return contract (see SqliteDb.upsert_session):
+            # a fresh copy of the session row with the caller's own runs attached
+            # by reference. The stored history is never copied or rebuilt on the
+            # write path -- doing so made every save cost grow with session
+            # length -- and the row copy keeps the returned session detached
+            # from both the store and the live session's nested dicts.
+            session_row = deepcopy(session_dict)
             if not deserialize:
-                return session_dict_copy
+                session_row["runs"] = [run if isinstance(run, dict) else run.to_dict() for run in session.runs or []]
+                return session_row
 
-            if session_dict_copy["session_type"] == SessionType.AGENT:
-                return AgentSession.from_dict(session_dict_copy)
-            elif session_dict_copy["session_type"] == SessionType.TEAM:
-                return TeamSession.from_dict(session_dict_copy)
-            else:
-                return WorkflowSession.from_dict(session_dict_copy)
+            upserted_session = deserialize_session(None, session_row)
+            upserted_session.runs = session.runs  # type: ignore[union-attr]
+            return upserted_session
 
         except Exception as e:
             log_error(f"Exception upserting session: {str(e)}")
