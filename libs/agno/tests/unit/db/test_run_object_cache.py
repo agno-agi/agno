@@ -221,6 +221,75 @@ class TestHistoryEquality:
         assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
 
 
+class TestSqliteRunObjectCache:
+    """The SQL-adapter cache keys on raw row text, so shared objects and
+    cross-process visibility follow from the rows alone."""
+
+    @pytest.fixture
+    def sqlite_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        return SqliteDb(db_file=str(tmp_path / "cache.db"))
+
+    def _seed(self, db, n_runs: int = 3) -> None:
+        db.upsert_session(AgentSession(session_id="s1", agent_id="a1", user_id="u1"))
+        for i in range(n_runs):
+            db.upsert_run(
+                {"run_id": f"r{i}", "agent_id": "a1", "content": f"content {i}", "status": "COMPLETED"},
+                session_id="s1",
+            )
+
+    def test_reads_share_history_run_objects(self, sqlite_db):
+        self._seed(sqlite_db)
+        first = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+        second = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+        assert first.runs is not second.runs
+        assert [id(r) for r in first.runs] == [id(r) for r in second.runs]
+
+    def test_updating_a_run_invalidates_only_that_run(self, sqlite_db):
+        self._seed(sqlite_db)
+        first = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+        sqlite_db.upsert_run(
+            {"run_id": "r1", "agent_id": "a1", "content": "rewritten", "status": "COMPLETED"}, "s1"
+        )
+        second = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+        assert second.runs[1].content == "rewritten"
+        assert first.runs[1].content == "content 1"
+        assert second.runs[0] is first.runs[0]
+        assert second.runs[2] is first.runs[2]
+
+    def test_another_writer_to_the_same_file_is_seen(self, sqlite_db, tmp_path):
+        """A second adapter instance (stand-in for another process) writes a
+        run; this instance's next read reflects it -- the text-keyed token
+        cannot serve state the rows no longer hold."""
+        from agno.db.sqlite import SqliteDb
+
+        self._seed(sqlite_db)
+        sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+
+        other = SqliteDb(db_file=str(tmp_path / "cache.db"))
+        other.upsert_run(
+            {"run_id": "r1", "agent_id": "a1", "content": "written elsewhere", "status": "COMPLETED"}, "s1"
+        )
+
+        again = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+        assert again.runs[1].content == "written elsewhere"
+
+    def test_content_matches_the_uncached_rebuild(self, sqlite_db):
+        self._seed(sqlite_db, n_runs=5)
+        cached = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+        raw = sqlite_db.get_session("s1", session_type=SessionType.AGENT, deserialize=False)
+        rebuilt = AgentSession.from_dict(raw)
+        assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
+
+    def test_mutating_a_returned_run_never_reaches_the_rows(self, sqlite_db):
+        self._seed(sqlite_db)
+        session = sqlite_db.get_session("s1", session_type=SessionType.AGENT)
+        session.runs[0].content = "caller vandalism"
+        raw = sqlite_db.get_session("s1", session_type=SessionType.AGENT, deserialize=False)
+        assert raw["runs"][0]["content"] == "content 0"
+
+
 class TestHardenedMutators:
     def test_regenerate_flips_status_on_a_copy(self):
         """_mark_run_regenerated must not write through a shared history
