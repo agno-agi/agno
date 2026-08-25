@@ -471,10 +471,8 @@ class BaseExternalAgent:
     @staticmethod
     def _find_run_in_session(session: AgentSession, run_id: str) -> Optional[RunOutput]:
         """Find a persisted run by id within the given session."""
-        for run in session.runs or []:
-            if isinstance(run, RunOutput) and run.run_id == run_id:
-                return run
-        return None
+        run = session.get_run(run_id)
+        return run if isinstance(run, RunOutput) else None
 
     def get_run_output(self, run_id: str, session_id: Optional[str] = None) -> Optional[RunOutput]:
         """Get a persisted RunOutput for this adapter."""
