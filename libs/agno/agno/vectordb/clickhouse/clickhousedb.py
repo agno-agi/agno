@@ -19,6 +19,9 @@ from agno.vectordb.base import VectorDb
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
+# Empty string marks a shared/unowned chunk in the user_id String column.
+SHARED_OWNER = ""
+
 
 class Clickhouse(VectorDb):
     def __init__(
@@ -65,6 +68,9 @@ class Clickhouse(VectorDb):
         self.client = client
         self.async_client = asyncclient
         self.table_name = table_name
+
+        # Whether the live table has the ``user_id`` column; resolved lazily and cached.
+        self._owner_column_exists: Optional[bool] = None
 
         # Embedder for embedding the document contents
         _embedder = embedder
@@ -170,11 +176,13 @@ class Clickhouse(VectorDb):
                     usage JSON,
                     created_at DateTime('UTC') DEFAULT now(),
                     content_hash String,
+                    user_id String DEFAULT '',
                     PRIMARY KEY (id),
                     {index}
                 ) ENGINE = ReplacingMergeTree ORDER BY id""",
                 parameters=parameters,
             )
+            self._owner_column_exists = True
 
     async def async_create(self) -> None:
         """Create database and table asynchronously."""
@@ -193,7 +201,7 @@ class Clickhouse(VectorDb):
 
             if isinstance(self.index, HNSW):
                 index = (
-                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.index.quantization}, "
+                    f"INDEX embedding_index embedding TYPE vector_similarity('hnsw', 'L2Distance', {self.embedder.dimensions}, {self.index.quantization}, "
                     f"{self.index.hnsw_max_connections_per_layer}, {self.index.hnsw_candidate_list_size_for_construction})"
                 )
                 await async_client.command("SET allow_experimental_vector_similarity_index = 1")
@@ -215,11 +223,13 @@ class Clickhouse(VectorDb):
                     usage JSON,
                     created_at DateTime('UTC') DEFAULT now(),
                     content_hash String,
+                    user_id String DEFAULT '',
                     PRIMARY KEY (id),
                     {index}
                 ) ENGINE = ReplacingMergeTree ORDER BY id""",
                 parameters=parameters,
             )
+            self._owner_column_exists = True
 
     def name_exists(self, name: str) -> bool:
         """
@@ -266,17 +276,79 @@ class Clickhouse(VectorDb):
         )
         return len(result.result_rows) > 0 if result.result_rows else False
 
+    def _user_id_column_exists(self) -> bool:
+        """Whether the live table has the ``user_id`` column. Tables created before the v2 -> v3
+        migration lack it, so the live schema is inspected. Cached after the first lookup."""
+        if self._owner_column_exists is None:
+            try:
+                if not self.table_exists():
+                    # No live table yet — it will be created with the column.
+                    self._owner_column_exists = True
+                else:
+                    parameters = self._get_base_parameters()
+                    result = self.client.query(
+                        "SELECT 1 FROM system.columns WHERE database = {database_name:String} "
+                        "AND table = {table_name:String} AND name = 'user_id'",
+                        parameters=parameters,
+                    )
+                    self._owner_column_exists = len(result.result_rows) > 0 if result.result_rows else False
+            except Exception:
+                # Assume migrated for this call only, uncached, so the next call re-inspects.
+                log_warning(
+                    f"Could not inspect table '{self.table_name}' for the user_id column; "
+                    "proceeding as migrated for this operation."
+                )
+                return True
+        return self._owner_column_exists
+
+    def _require_owner_column(self, user_id: Optional[str]) -> bool:
+        """Whether SQL may reference the ``user_id`` column. False when it is missing and the
+        operation is unscoped, so the caller falls back to pre-v3 SQL; a scoped operation raises."""
+        if self._user_id_column_exists():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate a migration run, so re-inspect once before refusing.
+        self._owner_column_exists = None
+        if self._user_id_column_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but table '{self.database_name}.{self.table_name}' predates per-user "
+            "isolation and has no 'user_id' column. Run the v2 -> v3 migration "
+            "(libs/agno/migrations/v2_to_v3/migrate_sql_vectordbs.py) or recreate the table."
+        )
+
+    def _validate_user_id(self, user_id: Optional[str]) -> None:
+        """Reject an empty user_id: "" is the reserved shared-owner sentinel; use None for shared."""
+        if user_id == "":
+            raise ValueError(
+                "user_id must not be an empty string - that value is reserved to mark content shared with every user"
+            )
+
+    def _scoped_record_id(self, cleaned_content: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic id so two users get distinct rows for the same
+        content; None keeps the plain digest. Content is digested first so the '_' boundary is fixed."""
+        _id = md5(cleaned_content.encode()).hexdigest()
+        if user_id is None:
+            return _id
+        return md5(f"{_id}_{user_id}".encode()).hexdigest()
+
     def insert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
+        self._validate_user_id(user_id)
+        # Unscoped inserts fall back to the pre-v3 column list; scoped ones raise.
+        include_owner = self._require_owner_column(user_id)
+        owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         for document in documents:
             document.embed(embedder=self.embedder)
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            _id = md5(cleaned_content.encode()).hexdigest()
+            _id = self._scoped_record_id(cleaned_content, user_id)
 
             row: List[Any] = [
                 _id,
@@ -289,29 +361,43 @@ class Clickhouse(VectorDb):
                 document.usage,
                 content_hash,
             ]
+            if include_owner:
+                row.append(owner)
             rows.append(row)
+
+        column_names = [
+            "id",
+            "name",
+            "meta_data",
+            "filters",
+            "content",
+            "content_id",
+            "embedding",
+            "usage",
+            "content_hash",
+        ]
+        if include_owner:
+            column_names.append("user_id")
 
         self.client.insert(
             f"{self.database_name}.{self.table_name}",
             rows,
-            column_names=[
-                "id",
-                "name",
-                "meta_data",
-                "filters",
-                "content",
-                "content_id",
-                "embedding",
-                "usage",
-                "content_hash",
-            ],
+            column_names=column_names,
         )
         log_debug(f"Inserted {len(documents)} documents")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Insert documents asynchronously."""
+        self._validate_user_id(user_id)
+        # Unscoped inserts fall back to the pre-v3 column list; scoped ones raise.
+        include_owner = self._require_owner_column(user_id)
+        owner = user_id if user_id is not None else SHARED_OWNER
         rows: List[List[Any]] = []
         async_client = await self._ensure_async_client()
 
@@ -356,7 +442,7 @@ class Clickhouse(VectorDb):
 
         for document in documents:
             cleaned_content = document.content.replace("\x00", "\ufffd")
-            _id = md5(cleaned_content.encode()).hexdigest()
+            _id = self._scoped_record_id(cleaned_content, user_id)
 
             row: List[Any] = [
                 _id,
@@ -369,22 +455,28 @@ class Clickhouse(VectorDb):
                 document.usage,
                 content_hash,
             ]
+            if include_owner:
+                row.append(owner)
             rows.append(row)
+
+        column_names = [
+            "id",
+            "name",
+            "meta_data",
+            "filters",
+            "content",
+            "content_id",
+            "embedding",
+            "usage",
+            "content_hash",
+        ]
+        if include_owner:
+            column_names.append("user_id")
 
         await async_client.insert(
             f"{self.database_name}.{self.table_name}",
             rows,
-            column_names=[
-                "id",
-                "name",
-                "meta_data",
-                "filters",
-                "content",
-                "content_id",
-                "embedding",
-                "usage",
-                "content_hash",
-            ],
+            column_names=column_names,
         )
         log_debug(f"Async inserted {len(documents)} documents")
 
@@ -396,19 +488,24 @@ class Clickhouse(VectorDb):
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents into the database.
         """
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        self._validate_user_id(user_id)
+        # Raise early on a scoped upsert against an unmigrated table.
+        self._require_owner_column(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def _upsert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents into the database.
@@ -416,11 +513,11 @@ class Clickhouse(VectorDb):
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting documents
-            batch_size (int): Batch size for upserting documents
+            user_id (Optional[str]): Explicit owner for per-user RAG isolation.
         """
         # We are using ReplacingMergeTree engine in our table, so we need to insert the documents,
         # then call SELECT with FINAL
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
         parameters = self._get_base_parameters()
         self.client.query(
@@ -429,20 +526,31 @@ class Clickhouse(VectorDb):
         )
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters)
+        self._validate_user_id(user_id)
+        # Raise early on a scoped upsert against an unmigrated table.
+        self._require_owner_column(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def _async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
         # We are using ReplacingMergeTree engine in our table, so we need to insert the documents,
         # then call SELECT with FINAL
-        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters)
+        await self.async_insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
         parameters = self._get_base_parameters()
         await self.async_client.query(  # type: ignore
@@ -450,9 +558,23 @@ class Clickhouse(VectorDb):
             parameters=parameters,
         )
 
+    def _user_scope_where_clause(self, parameters: Dict[str, Any], user_id: Optional[str]) -> str:
+        """WHERE fragment matching the owner's rows plus shared ('') rows; "" when user_id is None."""
+        if user_id is None:
+            return ""
+        parameters["user_id"] = user_id
+        return "WHERE (user_id = {user_id:String} OR user_id = '')"
+
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
+        self._validate_user_id(user_id)
+        # Ahead of the try below so a scoped search raises instead of returning [].
+        self._require_owner_column(user_id)
         if filters is not None:
             log_warning("Filters are not yet supported in Clickhouse. No filters will be applied.")
         query_embedding = self.embedder.get_embedding(query)
@@ -461,7 +583,7 @@ class Clickhouse(VectorDb):
             return []
 
         parameters = self._get_base_parameters()
-        where_query = ""
+        where_query = self._user_scope_where_clause(parameters, user_id)
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -508,9 +630,16 @@ class Clickhouse(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents asynchronously."""
+        self._validate_user_id(user_id)
+        # See ``search`` — raises here instead of being swallowed into [].
+        self._require_owner_column(user_id)
         async_client = await self._ensure_async_client()
 
         if filters is not None:
@@ -522,7 +651,7 @@ class Clickhouse(VectorDb):
             return []
 
         parameters = self._get_base_parameters()
-        where_query = ""
+        where_query = self._user_scope_where_clause(parameters, user_id)
 
         order_by_query = ""
         if self.distance == Distance.l2 or self.distance == Distance.max_inner_product:
@@ -576,6 +705,8 @@ class Clickhouse(VectorDb):
                 "DROP TABLE {database_name:Identifier}.{table_name:Identifier}",
                 parameters=parameters,
             )
+            # The next table under this name will have the owner column; re-resolve lazily.
+            self._owner_column_exists = None
 
     async def async_drop(self) -> None:
         """Drop the table asynchronously."""
@@ -724,23 +855,32 @@ class Clickhouse(VectorDb):
             log_info(f"Error deleting documents with metadata {metadata}: {e}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content ID.
 
         Args:
             content_id (str): The content ID to delete
+            user_id (Optional[str]): When set, scope the delete to this owner's rows.
 
         Returns:
             bool: True if documents were deleted, False otherwise
         """
+        self._validate_user_id(user_id)
+        # Outside the try so a scoped delete raises instead of returning False.
+        self._require_owner_column(user_id)
         try:
             log_debug(f"ClickHouse VectorDB : Deleting documents with content_id {content_id}")
             parameters = self._get_base_parameters()
             parameters["content_id"] = content_id
 
+            where_clause = "WHERE content_id = {content_id:String}"
+            if user_id is not None:
+                parameters["user_id"] = user_id
+                where_clause += " AND user_id = {user_id:String}"
+
             self.client.command(
-                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_id = {content_id:String}",
+                f"DELETE FROM {{database_name:Identifier}}.{{table_name:Identifier}} {where_clause}",
                 parameters=parameters,
             )
             return True
@@ -748,32 +888,55 @@ class Clickhouse(VectorDb):
             log_info(f"Error deleting documents with content_id {content_id}: {e}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Validate if a row with this content_hash exists or not
 
         Args:
             content_hash (str): Content hash to check
+            user_id (Optional[str]): Owner to scope the check to; None checks the shared ("")
+                bucket alone, matching what _delete_by_content_hash clears for None.
         """
+        self._validate_user_id(user_id)
+        # An unmigrated table has no owner column, so the whole table is the shared bucket.
+        scope_to_owner = self._require_owner_column(user_id)
         parameters = self._get_base_parameters()
         parameters["content_hash"] = content_hash
 
+        where_clause = "WHERE content_hash = {content_hash:String}"
+        if scope_to_owner:
+            parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
+            where_clause += " AND user_id = {user_id:String}"
+
         result = self.client.query(
-            "SELECT content_hash FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String}",
+            f"SELECT content_hash FROM {{database_name:Identifier}}.{{table_name:Identifier}} {where_clause}",
             parameters=parameters,
         )
         return len(result.result_rows) > 0 if result.result_rows else False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Delete documents by content hash.
+
+        Args:
+            content_hash (str): The content hash to delete
+            user_id (Optional[str]): Owner to scope the delete to; None scopes to the shared ("")
+                bucket so a shared re-upsert never wipes a scoped owner's identical-content row.
         """
+        self._validate_user_id(user_id)
+        # Outside the try so a scoped delete raises instead of returning False.
+        scope_to_owner = self._require_owner_column(user_id)
         try:
             parameters = self._get_base_parameters()
             parameters["content_hash"] = content_hash
 
+            where_clause = "WHERE content_hash = {content_hash:String}"
+            if scope_to_owner:
+                parameters["user_id"] = user_id if user_id is not None else SHARED_OWNER
+                where_clause += " AND user_id = {user_id:String}"
+
             self.client.command(
-                "DELETE FROM {database_name:Identifier}.{table_name:Identifier} WHERE content_hash = {content_hash:String}",
+                f"DELETE FROM {{database_name:Identifier}}.{{table_name:Identifier}} {where_clause}",
                 parameters=parameters,
             )
             return True
