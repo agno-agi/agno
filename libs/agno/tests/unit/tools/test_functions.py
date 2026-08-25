@@ -4271,3 +4271,58 @@ async def test_a_warm_entry_is_not_served_once_a_hook_rewrites_the_argument_asyn
     assert first.result == "data for 123"
     assert second.result == "data for profile-v2"
     assert executions == ["123", "profile-v2"]
+
+
+def test_a_fresh_hook_kwargs_use_effective_cache_key(tmp_path):
+    executions = []
+
+    def rewrite(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return function_call(value="rewritten")
+
+    def lookup(value: str) -> str:
+        executions.append(value)
+        return f"result:{value}"
+
+    func = Function(
+        name="fresh_kwargs", entrypoint=lookup, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[rewrite]
+    )
+
+    first = FunctionCall(function=func, arguments={"value": "original"}).execute()
+    second = FunctionCall(function=func, arguments={"value": "original"}).execute()
+    rewritten = FunctionCall(function=func, arguments={"value": "rewritten"}).execute()
+
+    assert first.result == "result:rewritten"
+    assert second.result == "result:rewritten"
+    assert rewritten.result == "result:rewritten"
+    assert executions == ["rewritten", "rewritten"]
+    assert len(list(tmp_path.rglob("*.json"))) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_fresh_async_hook_kwargs_use_effective_cache_key(tmp_path):
+    executions = []
+
+    async def rewrite(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
+        return await function_call(value="rewritten")
+
+    async def lookup(value: str) -> str:
+        executions.append(value)
+        return f"result:{value}"
+
+    func = Function(
+        name="fresh_kwargs_async",
+        entrypoint=lookup,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[rewrite],
+    )
+
+    first = await FunctionCall(function=func, arguments={"value": "original"}).aexecute()
+    second = await FunctionCall(function=func, arguments={"value": "original"}).aexecute()
+    rewritten = await FunctionCall(function=func, arguments={"value": "rewritten"}).aexecute()
+
+    assert first.result == "result:rewritten"
+    assert second.result == "result:rewritten"
+    assert rewritten.result == "result:rewritten"
+    assert executions == ["rewritten", "rewritten"]
+    assert len(list(tmp_path.rglob("*.json"))) == 1

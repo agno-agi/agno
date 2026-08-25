@@ -2056,7 +2056,7 @@ class FunctionCall(BaseModel):
             self._effective_entrypoint_cache_key = (
                 cache_key
                 if arguments == getattr(self, "_initial_effective_entrypoint_args", arguments)
-                else self.function._get_cache_key(arguments)
+                else self.function._get_cache_key(entrypoint_args, arguments)
             )
             if cached_result is not None and not self._moved_its_key(cache_key, arguments):
                 return _detached(cached_result)
@@ -2357,7 +2357,7 @@ class FunctionCall(BaseModel):
             self._effective_entrypoint_cache_key = (
                 cache_key
                 if arguments == getattr(self, "_initial_effective_entrypoint_args", arguments)
-                else self.function._get_cache_key(arguments)
+                else self.function._get_cache_key(entrypoint_args, arguments)
             )
             if cached_result is not None and not self._moved_its_key(cache_key, arguments):
                 return _detached(cached_result)
@@ -2377,7 +2377,7 @@ class FunctionCall(BaseModel):
             self._effective_entrypoint_cache_key = (
                 cache_key
                 if arguments == getattr(self, "_initial_effective_entrypoint_args", arguments)
-                else self.function._get_cache_key(arguments)
+                else self.function._get_cache_key(entrypoint_args, arguments)
             )
             if cached_result is not None and not self._moved_its_key(cache_key, arguments):
                 return _detached(cached_result)
