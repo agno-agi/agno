@@ -501,6 +501,79 @@ def test_wrapper_closing_over_state_is_not_cached_through_its_wrapped_base():
     assert finalizer() is None
 
 
+def test_wrapper_with_a_stateful_callable_cell_is_not_cached():
+    """A callable closure cell can hide another closure's run state even when
+    the outer wrapper does not publish a __wrapped__ link."""
+    import gc
+    import weakref
+
+    from agno.tools.function import _cache_stable
+
+    class RunState:
+        pass
+
+    def make(state):
+        def inner(query: str) -> str:
+            return f"{query}-{type(state).__name__}"
+
+        def outer(query: str) -> str:
+            return inner(query)
+
+        return outer
+
+    state = RunState()
+    dynamic = make(state)
+    assert _cache_stable(dynamic) is False
+
+    parsed = Function.from_callable(dynamic)
+    assert parsed.entrypoint is not None and parsed.entrypoint(query="q") == "q-RunState"
+
+    finalizer = weakref.ref(state)
+    del state, dynamic, parsed
+    gc.collect()
+    assert finalizer() is None
+
+
+def test_per_run_bound_methods_are_not_pinned_when_callable_caching_is_disabled():
+    """A callable-tools factory may return a fresh stateful handler method on
+    every run. The introspection caches must respect cache_callables=False and
+    not become a second, implicit owner of those handlers."""
+    import gc
+    import weakref
+
+    from agno.tools.function import _cache_stable, _clear_tool_introspection_caches
+    from agno.utils.callables import resolve_callable_tools
+
+    class Handler:
+        def lookup(self, query: str) -> str:
+            return query
+
+    handlers = []
+
+    def tools_factory():
+        handler = Handler()
+        handlers.append(weakref.ref(handler))
+        return [handler.lookup]
+
+    _clear_tool_introspection_caches()
+    agent = Agent(model=MockModel(), tools=tools_factory, cache_callables=False, telemetry=False)
+    try:
+        for index in range(3):
+            context = RunContext(run_id=f"r{index}", session_id=f"s{index}")
+            resolve_callable_tools(agent, context)
+            assert context.tools is not None
+            assert _cache_stable(context.tools[0]) is False
+            parsed = parse_tools(agent, context.tools, agent.model, context)
+            assert parsed[0].entrypoint is not None
+            assert parsed[0].entrypoint(query="q") == "q"
+
+        del context, parsed
+        gc.collect()
+        assert all(reference() is None for reference in handlers)
+    finally:
+        _clear_tool_introspection_caches()
+
+
 def test_wrappers_over_one_base_keep_their_own_identities():
     """Two per-run wrappers sharing a __wrapped__ base must each dispatch to
     themselves; a cache keyed past the wrapper would serve one for the other."""
@@ -597,7 +670,9 @@ def test_decorator_wrappers_over_long_lived_functions_still_cache():
             """
             return "ok"
 
-    assert _cache_stable(Kit(name="kit").lookup) is True
+    # An instance-bound method can also come from a per-run callable factory;
+    # without provenance proving otherwise, it must not enter a global cache.
+    assert _cache_stable(Kit(name="kit").lookup) is False
 
 
 def test_cache_walk_depth_is_bounded_and_fails_closed():
