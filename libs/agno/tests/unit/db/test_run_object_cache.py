@@ -315,19 +315,35 @@ class TestHardenedMutators:
 
     def test_continue_run_does_not_mutate_the_shared_history_object(self):
         """continue_run works on a copy of the stored run: the shared object
-        another reader holds must keep its message list."""
+        another reader holds must keep its status and message list. An
+        in-flight (RUNNING) run is the case that matters -- a completed run is
+        force-forked, and the fork path copies on its own."""
         db = InMemoryDb()
         agent = Agent(model=MockModel(), db=db, telemetry=False)
-        response = agent.run("one", session_id="s1", user_id="u1")
+        agent.run("seed", session_id="s1", user_id="u1")
+        db.upsert_run(
+            {
+                "run_id": "r-mid",
+                "agent_id": agent.id,
+                "user_id": "u1",
+                "status": "RUNNING",
+                "messages": [
+                    {"role": "user", "content": "resume me"},
+                ],
+            },
+            session_id="s1",
+        )
 
-        shared = db.get_session("s1", session_type=SessionType.AGENT).runs[0]
-        messages_before = list(shared.messages or [])
+        shared = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
+        assert shared is not None
+        status_before = shared.status
+        message_count_before = len(shared.messages or [])
 
-        try:
-            agent.continue_run(run_id=response.run_id, session_id="s1", user_id="u1")
-        except Exception:
-            # A completed run may refuse to continue; the mutation contract is
-            # what this test pins, not continuability.
-            pass
+        agent.continue_run(run_id="r-mid", session_id="s1", user_id="u1")
 
-        assert list(shared.messages or []) == messages_before
+        # The continue completed and persisted its own copy; the shared
+        # object another reader holds is untouched.
+        assert shared.status == status_before
+        assert len(shared.messages or []) == message_count_before
+        stored = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
+        assert stored.status != status_before
