@@ -138,12 +138,15 @@ class InMemoryDb(BaseDb):
             if user_id is not None and session_data.get("user_id") != user_id:
                 return None
 
-            session_data_copy = deepcopy(session_data)
-
             if runs_limit is not None:
                 # No query engine to push "last N" down: filter+slice in memory to
                 # match the SQL fast path (drop member/skip-status runs, then last N).
-                session_data_copy["runs"] = filter_context_runs(session_data_copy.get("runs") or [])[-runs_limit:]
+                # Slice BEFORE copying so a bounded read copies only the window,
+                # not the whole history; the filter only reads the stored dicts.
+                runs_window = filter_context_runs(session_data.get("runs") or [])[-runs_limit:]
+                session_data_copy = deepcopy({**session_data, "runs": runs_window})
+            else:
+                session_data_copy = deepcopy(session_data)
 
             if not deserialize:
                 return session_data_copy
