@@ -23,7 +23,7 @@ try:
     from mcp.client.stdio import get_default_environment, stdio_client
     from mcp.client.streamable_http import streamable_http_client
 except ModuleNotFoundError:
-    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.0.0,<3.0.0'`")
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
 def _streamable_http_connection(streamable_http_params: dict) -> Tuple[Any, float]:
