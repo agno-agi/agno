@@ -3216,7 +3216,7 @@ def test_a_hook_that_answers_without_the_entrypoint_is_not_cached(tmp_path):
     )
 
     assert FunctionCall(function=func, arguments={}).execute().result == "[error] upstream down"
-    assert len(list(tmp_path.rglob("*.json"))) == 2
+    assert list(tmp_path.rglob("*.json")) == []
 
     available["ok"] = True
     assert FunctionCall(function=func, arguments={}).execute().result == "[ok] fresh data"
