@@ -21,14 +21,13 @@ class PubmedTools(Toolkit):
     ):
         self.max_results: Optional[int] = max_results
         self.email: str = email
-        self.timeout: int = timeout
         self.results_expanded: bool = results_expanded
 
         tools: List[Any] = []
         if enable_search_pubmed or all:
             tools.append(self.search_pubmed)
 
-        super().__init__(name="pubmed", tools=tools, **kwargs)
+        super().__init__(name="pubmed", tools=tools, timeout=timeout, **kwargs)
 
     def fetch_pubmed_ids(self, query: str, max_results: int, email: str) -> List[str]:
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/esearch.fcgi"
@@ -40,6 +39,7 @@ class PubmedTools(Toolkit):
             "usehistory": "y",
         }
         response = httpx.get(url, params=params, timeout=self.timeout)  # type: ignore
+        response.raise_for_status()
         root = ElementTree.fromstring(response.content)
         return [id_elem.text for id_elem in root.findall(".//Id") if id_elem.text is not None]
 
@@ -47,6 +47,7 @@ class PubmedTools(Toolkit):
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
         params = {"db": "pubmed", "id": ",".join(pubmed_ids), "retmode": "xml"}
         response = httpx.get(url, params=params, timeout=self.timeout)
+        response.raise_for_status()
         return ElementTree.fromstring(response.content)
 
     def parse_details(self, xml_root: ElementTree.Element) -> List[Dict[str, Any]]:
