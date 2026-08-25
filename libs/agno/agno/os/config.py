@@ -153,23 +153,9 @@ class AuthorizationConfig(BaseModel):
     # (allow/deny) alongside the change trail, so you get an access audit, not just a
     # change audit. Pass the same sink you give ManagedRoleStore to unify both.
     audit: Optional[AuditSink] = None
-    # Optional ManagedUserStore — the credential-less user directory for the no-IdP
-    # case. When set, AgentOS denies a disabled user at the enforcement point
-    # (revocation that outlives a valid token) and can auto-provision a directory row
-    # from token claims. Identity is still asserted by the JWT; this never stores
-    # credentials.
-    user_store: Optional[Any] = None
-    # Just-in-time provisioning: when True, the first valid token from a subject not
-    # yet in the directory creates a row from the token claims below.
-    auto_provision_users: bool = False
-    user_email_claim: str = "email"
-    user_name_claim: str = "name"
-    # How to treat a user-directory read that errors (e.g. the directory DB is
-    # unreachable) while checking the disabled flag. Default False = fail OPEN (let
-    # the request through; availability over the kill-switch). Set True to fail CLOSED
-    # (reject with 503) so a directory outage can't silently re-enable every
-    # disabled/compromised account.
-    directory_error_fail_closed: bool = False
+    # NOTE: the credential-less user DIRECTORY (who the users are + the disabled
+    # kill-switch) is a peer concern, not authorization -- configure it via
+    # AgentOS(user_directory=UserDirectoryConfig(...)), see UserDirectoryConfig below.
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
@@ -189,6 +175,37 @@ class AuthorizationConfig(BaseModel):
                 "role_store is the shortcut that wires the store's provider for you."
             )
         return self
+
+
+class UserDirectoryConfig(BaseModel):
+    """The credential-less user directory — WHO the users are and whether they're active.
+
+    A PEER of authorization, not a part of it: it stores no policy, only a list of people
+    with a ``disabled`` kill-switch (a revocation that outlives a valid token) and optional
+    just-in-time provisioning from token claims. Identity is still asserted by the JWT; this
+    never stores credentials. Configure via ``AgentOS(user_directory=...)`` -- separate from
+    ``authorization_config`` because "who the users are" and "what they may do" are different
+    concerns and can be adopted independently.
+
+    Requires ``AgentOS(authorization=True)``: the disabled check is enforced in the auth
+    middleware, so without it the kill-switch would never run.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # A ManagedUserStore (typed Any to avoid importing the concrete store here). Needs a SQL
+    # database -- AgentOS adopts the OS db if the store was created without one.
+    store: Any
+    # Just-in-time provisioning: when True, the first valid token from a subject not yet in
+    # the directory creates a row from the token claims below.
+    auto_provision: bool = False
+    email_claim: str = "email"
+    name_claim: str = "name"
+    # How to treat a directory read that errors (e.g. the directory DB is unreachable) while
+    # checking the disabled flag. Default False = fail OPEN (let the request through;
+    # availability over the kill-switch). True = fail CLOSED (reject 503) so a directory
+    # outage cannot silently re-enable every disabled/compromised account.
+    fail_closed: bool = False
 
 
 class EvalsDomainConfig(BaseModel):

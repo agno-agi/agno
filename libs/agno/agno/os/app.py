@@ -43,6 +43,7 @@ from agno.os.config import (
     SessionDomainConfig,
     TracesConfig,
     TracesDomainConfig,
+    UserDirectoryConfig,
 )
 from agno.os.event_streams import BaseEventStream, set_event_stream
 from agno.os.interfaces.base import BaseInterface
@@ -261,6 +262,7 @@ class AgentOS:
         a2a_interface: bool = False,
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
+        user_directory: Optional[UserDirectoryConfig] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
@@ -449,6 +451,9 @@ class AgentOS:
         # RBAC
         self.authorization = authorization
         self.authorization_config = authorization_config
+        # The credential-less user directory is a PEER of authorization (who the users are +
+        # the disabled kill-switch), configured separately from authorization_config.
+        self.user_directory = user_directory
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -1251,10 +1256,14 @@ class AgentOS:
         # be set without authorization=True), so no extra flag gates this.
         authz_config = self.authorization_config
         role_store = getattr(authz_config, "role_store", None) if authz_config is not None else None
+        directory_store = self.user_directory.store if self.user_directory is not None else None
         if role_store is not None:
             from agno.os.authz.role_router import get_roles_router
 
-            routers.append(get_roles_router(role_store, user_store=getattr(authz_config, "user_store", None)))
+            # The /authz/users directory routes mount alongside the roles admin API (they
+            # share its admin gate). The directory itself is configured as a peer via
+            # AgentOS(user_directory=...); only its store is threaded here.
+            routers.append(get_roles_router(role_store, user_store=directory_store))
 
         for router in routers:
             self._add_router(fastapi_app, router)
@@ -1333,26 +1342,20 @@ class AgentOS:
         # author believes is governed by roles serves every route to anonymous callers.
         # Fail at construction rather than shipping a silently open instance.
         cfg = self.authorization_config
-        # Any AuthorizationConfig field that only takes effect through the auth middleware
-        # (seeded in _seed_authorization_provider, which runs only when the middleware is
-        # added) leaves a silently-open instance if authorization is off. user_store is one:
-        # its disabled-user kill switch is inert without the middleware, so a no-IdP
-        # directory deployment that forgets authorization=True serves every route to
-        # anonymous callers AND the revocation switch does nothing.
-        if (
-            cfg is not None
-            and not self.authorization
-            and (
-                getattr(cfg, "role_store", None) is not None
-                or getattr(cfg, "authorization_provider", None) is not None
-                or getattr(cfg, "user_store", None) is not None
-            )
-        ):
+        # Any plane that only takes effect through the auth middleware (seeded when the
+        # middleware is added) leaves a silently-open instance if authorization is off. The
+        # user directory is the same: its disabled-user kill switch is inert without the
+        # middleware, so a no-IdP directory deployment that forgets authorization=True serves
+        # every route to anonymous callers AND the revocation switch does nothing.
+        authz_plane_configured = cfg is not None and (
+            getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
+        )
+        if not self.authorization and (authz_plane_configured or self.user_directory is not None):
             raise ValueError(
-                "AuthorizationConfig(role_store=... / authorization_provider=... / user_store=...) "
-                "requires AgentOS(authorization=True). Without it the authorization plane is never "
-                "enforced (every route is served unauthenticated) and the user-directory kill switch "
-                "does nothing. Set authorization=True, or drop the config if you intended an open instance."
+                "AuthorizationConfig(role_store=.../authorization_provider=...) or AgentOS(user_directory=...) "
+                "requires AgentOS(authorization=True). Without it the authorization plane is never enforced "
+                "(every route is served unauthenticated) and the user-directory kill switch does nothing. "
+                "Set authorization=True, or drop the config if you intended an open instance."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -1562,6 +1565,9 @@ class AgentOS:
         # v2.7's scope RBAC. A role_store or a custom provider is enforced at the SAME
         # four points instead.
         self._seed_authorization_provider(fastapi_app)
+        # The user directory is a peer of the provider and seeded independently (it can be
+        # used with plain scope RBAC and no managed roles).
+        self._seed_user_directory(fastapi_app)
 
         # Only interfaces that verify the authenticity of their own inbound requests
         # (Slack HMAC, Telegram/WhatsApp webhook secrets -- see
@@ -1693,39 +1699,44 @@ class AgentOS:
         # runs after the mount, so this is where the first mirror happens.
         self._mirror_authz_state_to_mcp_app(fastapi_app)
 
-        # Optional user directory (no-IdP). When present, the middleware (and the
-        # WebSocket connect path) denies disabled users and — when auto-provision is
-        # on — creates a directory row from token claims. Seed the store and the
-        # claim/policy flags the middleware reads off app.state.
-        user_store = getattr(config, "user_store", None)
+    def _seed_user_directory(self, fastapi_app: FastAPI) -> None:
+        """Seed the credential-less user directory onto ``app.state`` from
+        ``AgentOS(user_directory=...)``.
+
+        A PEER of the authorization provider (who the users are + the disabled kill-switch,
+        not policy), so it is seeded independently of ``authorization_config`` -- a directory
+        can be adopted with plain scope RBAC and no managed roles. The middleware, the
+        WebSocket connect path and the MCP bridge all read these ``app.state`` fields to
+        deny disabled users and (when auto_provision is on) create a row from token claims.
+        """
+        directory = self.user_directory
+        user_store = directory.store if directory is not None else None
         if user_store is not None:
-            # Adopt the OS db, mirroring what we do for role_store, so a directory
-            # created without one persists instead of living in a process-local dict.
-            # That matters more here than convenience: the directory backs the
-            # disabled-user kill switch, and an in-memory one silently loses a
-            # revocation on restart and never reaches another replica at all.
+            # Adopt the OS db so a directory created without one persists instead of living
+            # in a process-local dict. That matters more than convenience here: the directory
+            # backs the disabled-user kill switch, and an in-memory one silently loses a
+            # revocation on restart and never reaches another replica.
             attach = getattr(user_store, "attach_db", None)
             if callable(attach):
                 attach(self.db)
             if getattr(user_store, "is_bound", True) is False:
-                # Same guard, and the same reasoning, as the role_store branch above: a
-                # store that cannot persist is not a working deployment mode. The
-                # directory backs the disabled-user kill switch, so an unpersisted one
-                # means a revocation is lost on restart and never reaches another
-                # replica -- the control silently does nothing. Fail at construction
-                # rather than serve an OS whose revocations do not work.
+                # A store that cannot persist is not a working deployment mode: the directory
+                # backs the disabled-user kill switch, so an unpersisted one means a revocation
+                # is lost on restart and never reaches another replica -- the control silently
+                # does nothing. Fail at construction rather than serve an OS whose revocations
+                # do not work.
                 raise ValueError(
-                    "AuthorizationConfig(user_store=...) needs a SQL database: the user directory "
+                    "AgentOS(user_directory=...) needs a SQL database: the user directory "
                     "backs the disabled-user kill switch, and an in-memory one cannot stay "
                     "consistent across replicas (a revocation would be lost on restart and never "
                     "seen by other workers). Give the store a db (ManagedUserStore(db_url=...) / "
                     "db=...) or pass a SQL-capable db to AgentOS(db=...) for it to adopt."
                 )
         fastapi_app.state.user_store = user_store
-        fastapi_app.state.user_auto_provision = getattr(config, "auto_provision_users", False)
-        fastapi_app.state.user_email_claim = getattr(config, "user_email_claim", "email")
-        fastapi_app.state.user_name_claim = getattr(config, "user_name_claim", "name")
-        fastapi_app.state.user_directory_fail_closed = getattr(config, "directory_error_fail_closed", False)
+        fastapi_app.state.user_auto_provision = directory.auto_provision if directory is not None else False
+        fastapi_app.state.user_email_claim = directory.email_claim if directory is not None else "email"
+        fastapi_app.state.user_name_claim = directory.name_claim if directory is not None else "name"
+        fastapi_app.state.user_directory_fail_closed = directory.fail_closed if directory is not None else False
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.

@@ -69,7 +69,7 @@ from agno.os.authz.role_router import get_roles_router
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.authz.user_store import ManagedUserStore
-from agno.os.config import AuthorizationConfig
+from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 from fastapi import HTTPException, Request
 
 # --- config: supports BOTH planes by default ---------------------------------
@@ -211,9 +211,10 @@ agent_os = AgentOS(
         # (Without the scope plane, a scope-bearing frontend token gets 403
         # because the store ignores token scopes.)
         authorization_provider=[ScopeAuthorizationProvider(), roles.provider],
-        user_store=users,
         audit=audit,  # record every access decision too
     ),
+    # The user directory is a peer of authorization (who the users are + the off-switch).
+    user_directory=UserDirectoryConfig(store=users),
 )
 app = agent_os.get_app()
 app.include_router(get_roles_router(roles, user_store=users))

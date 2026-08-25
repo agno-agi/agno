@@ -230,7 +230,7 @@ class ManagedUserStore:
         those live in the role store; remove them there if needed.
 
         NOTE: delete is NOT a revocation primitive. With JIT auto-provisioning on
-        (``AuthorizationConfig(auto_provision_users=True)``), the next valid token
+        (``UserDirectoryConfig(auto_provision=True)``), the next valid token
         from this subject re-creates the row as *active*, and any surviving role
         assignments come back with it. To revoke access, use :meth:`set_disabled`
         (a durable tombstone enforced at every request), not :meth:`remove`."""

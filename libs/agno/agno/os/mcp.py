@@ -1231,17 +1231,17 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
     admin_scope = getattr(config, "admin_scope", None) if config is not None else None
     user_isolation = bool(getattr(config, "user_isolation", False)) if config is not None else False
     # User directory: mcp_auth exempts /mcp from the parent AuthMiddleware, so the bridge
-    # must re-apply the disabled-user kill-switch itself. Thread the store + policy through.
+    # must re-apply the disabled-user kill-switch itself. The directory is a peer of authz
+    # (AgentOS(user_directory=...)), so read it from there, not authorization_config.
+    directory = getattr(os, "user_directory", None)
     return {
         "admin_scope": admin_scope or AgentOSScope.ADMIN.value,
         "user_isolation": user_isolation,
-        "user_store": getattr(config, "user_store", None) if config is not None else None,
-        "user_auto_provision": bool(getattr(config, "auto_provision_users", False)) if config is not None else False,
-        "user_email_claim": getattr(config, "user_email_claim", "email") if config is not None else "email",
-        "user_name_claim": getattr(config, "user_name_claim", "name") if config is not None else "name",
-        "user_directory_fail_closed": bool(getattr(config, "directory_error_fail_closed", False))
-        if config is not None
-        else False,
+        "user_store": directory.store if directory is not None else None,
+        "user_auto_provision": bool(directory.auto_provision) if directory is not None else False,
+        "user_email_claim": directory.email_claim if directory is not None else "email",
+        "user_name_claim": directory.name_claim if directory is not None else "name",
+        "user_directory_fail_closed": bool(directory.fail_closed) if directory is not None else False,
     }
 
 

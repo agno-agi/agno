@@ -118,7 +118,7 @@ from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
-from agno.os.config import AuthorizationConfig  # noqa: E402
+from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
 
 
 def _db_url() -> str:
@@ -132,7 +132,7 @@ def _db_url() -> str:
     return f"sqlite:///{path}"
 
 
-def _os(role_store, user_store, **cfg):
+def _os(role_store, user_store, *, auto_provision=False, **cfg):
     agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
     return AgentOS(
         id=OS_ID,
@@ -144,9 +144,9 @@ def _os(role_store, user_store, **cfg):
             verify_audience=True,
             audience=OS_ID,
             authorization_provider=role_store.provider,
-            user_store=user_store,
             **cfg,
         ),
+        user_directory=UserDirectoryConfig(store=user_store, auto_provision=auto_provision),
     )
 
 
@@ -279,7 +279,7 @@ def test_auto_provision_from_claims_at_the_gate():
     roles.assign("carol", "viewer")
     users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
-    client = TestClient(_os(roles, users, auto_provision_users=True).get_app())
+    client = TestClient(_os(roles, users, auto_provision=True).get_app())
 
     assert users.get("carol") is None
     # carol's first request provisions her from the token claims
@@ -362,9 +362,8 @@ def test_agentos_adopts_its_db_so_the_kill_switch_persists(tmp_path):
         agents=[Agent(id="a1", name="A", db=os_db)],
         db=os_db,
         authorization=True,
-        authorization_config=AuthorizationConfig(
-            verification_keys=["k" * 40], algorithm="HS256", role_store=roles, user_store=users
-        ),
+        authorization_config=AuthorizationConfig(verification_keys=["k" * 40], algorithm="HS256", role_store=roles),
+        user_directory=UserDirectoryConfig(store=users),
     ).get_app()
 
     # adopted, and the revocation made before adoption came across
@@ -398,7 +397,7 @@ def test_user_store_without_a_persistable_db_fails_fast():
     from agno.db.in_memory import InMemoryDb
     from agno.os import AgentOS
     from agno.os.authz.role_store import ManagedRoleStore
-    from agno.os.config import AuthorizationConfig
+    from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 
     non_sql_db = InMemoryDb()  # stands in for any db with no SQLAlchemy engine (e.g. Mongo)
     roles = ManagedRoleStore(db_url="sqlite:///:memory:")
@@ -414,8 +413,8 @@ def test_user_store_without_a_persistable_db_fails_fast():
                 verification_keys=["k" * 40],
                 algorithm="HS256",
                 role_store=roles,
-                user_store=ManagedUserStore(),  # bare: nothing to persist into
             ),
+            user_directory=UserDirectoryConfig(store=ManagedUserStore()),  # bare: nothing to persist into
         ).get_app()
 
 
@@ -467,8 +466,8 @@ def test_profile_upsert_does_not_clobber_the_disabled_flag():
     assert users.is_disabled("bob") is False
 
 
-def test_user_store_without_authorization_flag_is_refused():
-    """Config-guard regression (FGA-2). A user_store's kill switch is inert unless the
+def test_user_directory_without_authorization_flag_is_refused():
+    """Config-guard regression (FGA-2). A user directory's kill switch is inert unless the
     auth middleware runs (authorization=True). Configuring it without the flag must fail
     at construction, not ship a silently-open instance whose revocation does nothing."""
     import pytest
@@ -477,10 +476,8 @@ def test_user_store_without_authorization_flag_is_refused():
         id=OS_ID,
         agents=[Agent(id="research-agent", name="R", db=InMemoryDb())],
         # authorization=True intentionally omitted
-        authorization_config=AuthorizationConfig(
-            verification_keys=[SECRET],
-            user_store=ManagedUserStore(db_url=_db_url()),
-        ),
+        authorization_config=AuthorizationConfig(verification_keys=[SECRET]),
+        user_directory=UserDirectoryConfig(store=ManagedUserStore(db_url=_db_url())),
     )
     with pytest.raises(ValueError, match="authorization=True"):
         agent_os.get_app()
@@ -538,8 +535,8 @@ def test_workflow_continue_over_ws_enforces_the_approval_gate(monkeypatch):
             verify_audience=True,
             audience=OS_ID,
             authorization_provider=roles.provider,
-            user_store=users,
         ),
+        user_directory=UserDirectoryConfig(store=users),
     )
     app = agent_os.get_app()
 

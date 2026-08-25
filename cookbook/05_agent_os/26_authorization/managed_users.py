@@ -40,7 +40,7 @@ from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.user_store import ManagedUserStore
-from agno.os.config import AuthorizationConfig
+from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
 OS_ID = "managed-users-os"
@@ -67,7 +67,9 @@ research_agent = Agent(
     db=db,
 )
 
-# Wire BOTH stores into AgentOS. user_store= turns on the directory + off-switch.
+# Authorization (what users may do) and the user directory (who they are + the disabled
+# off-switch) are configured as PEERS: authorization_config for the former,
+# user_directory for the latter.
 agent_os = AgentOS(
     id=OS_ID,
     description="Managed-users AgentOS",
@@ -79,8 +81,10 @@ agent_os = AgentOS(
         verify_audience=True,
         audience=OS_ID,
         authorization_provider=roles.provider,
-        user_store=users,  # <- the directory + disabled kill-switch
     ),
+    user_directory=UserDirectoryConfig(
+        store=users
+    ),  # <- the directory + disabled kill-switch
 )
 app = agent_os.get_app()
 # The directory is managed through the store itself here (upsert / set_disabled), which
