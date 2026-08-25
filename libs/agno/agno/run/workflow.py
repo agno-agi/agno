@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, get_args
 
 from pydantic import BaseModel
 
@@ -100,17 +100,34 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     nested_depth: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        # Temporarily clear run_output before asdict() to avoid infinite recursion:
-        # WorkflowCompletedEvent.run_output -> WorkflowRunOutput.events -> WorkflowCompletedEvent.run_output -> ...
-        # asdict() recursively traverses all fields before we can filter, so we must clear it first.
-        saved_run_output = getattr(self, "run_output", None)
-        if saved_run_output is not None:
-            object.__setattr__(self, "run_output", None)
+        # Temporarily clear the DEEP fields before asdict(): it traverses
+        # every dataclass field BEFORE the post-hoc filter can drop a key,
+        # and these object graphs can reach back to this very event -
+        # run_output.events contains it, and
+        # step_requirements[].step_input.workflow_session.runs[].events
+        # contains it too (the WS HITL continue leg produces exactly that
+        # shape once the event lands on the live run). asdict() has no cycle
+        # detection, so traversal is fatal; each cleared field is
+        # re-serialized below through its own cycle-safe to_dict.
+        _deep_fields = (
+            "run_output",
+            "step_requirements",
+            "step_results",
+            "step_executor_runs",
+            "step_response",
+            "iteration_results",
+        )
+        _saved: Dict[str, Any] = {}
+        for _name in _deep_fields:
+            _value = getattr(self, _name, None)
+            if _value is not None:
+                _saved[_name] = _value
+                object.__setattr__(self, _name, None)
         try:
             _dict = {k: v for k, v in asdict(self).items() if v is not None and k not in ("run_output", "metrics")}
         finally:
-            if saved_run_output is not None:
-                object.__setattr__(self, "run_output", saved_run_output)
+            for _name, _value in _saved.items():
+                object.__setattr__(self, _name, _value)
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
@@ -644,6 +661,11 @@ WorkflowRunOutputEvent = Union[
     CustomEvent,
 ]
 
+# Cached union members for isinstance checks: rebuilding
+# tuple(get_args(WorkflowRunOutputEvent)) per streamed chunk is measurable on
+# the hot event-dispatch path.
+WORKFLOW_RUN_OUTPUT_EVENT_TYPES = get_args(WorkflowRunOutputEvent)
+
 # Map event string to dataclass for workflow events
 WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
@@ -740,6 +762,11 @@ class WorkflowRunOutput:
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
+    # Queue-attempt generation stamp: set by the queue worker when attempt N
+    # claims this run. Terminal writes carry their attempt and are fenced
+    # against a NEWER stored value, so a presumed-dead attempt's late write
+    # cannot clobber its successor. None outside durable-queue execution.
+    queue_attempt: Optional[int] = None
 
     # Unified HITL requirements to continue a paused workflow
     # Handles all HITL types: confirmation, user input, and route selection

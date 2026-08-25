@@ -39,7 +39,6 @@ class LanceDb(VectorDb):
         distance: The distance metric to use when searching for documents.
         nprobes: The number of probes to use when searching for documents.
         reranker: The reranker to use when reranking documents.
-        use_tantivy: Deprecated. LanceDB now uses native FTS. This parameter is ignored.
         on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """
@@ -61,7 +60,6 @@ class LanceDb(VectorDb):
         distance: Distance = Distance.cosine,
         nprobes: Optional[int] = None,
         reranker: Optional[Reranker] = None,
-        use_tantivy: bool = False,
         on_bad_vectors: Optional[str] = None,  # One of "error", "drop", "fill", "null".
         fill_value: Optional[float] = None,  # Only used if on_bad_vectors is "fill"
     ):
@@ -162,8 +160,8 @@ class LanceDb(VectorDb):
         self.fill_value: Optional[float] = fill_value
         self.fts_index_exists = False
 
-        if use_tantivy:
-            log_warning("use_tantivy is deprecated. LanceDB now uses native FTS. This parameter is ignored.")
+        # Whether the live table has the ``user_id`` column; pre-v3 tables lack it.
+        self._owner_column_exists: Optional[bool] = None
 
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
 
@@ -240,6 +238,7 @@ class LanceDb(VectorDb):
         """Create the table if it does not exist."""
         if not self.exists():
             self.table = self._init_table()
+            self._owner_column_exists = True
 
     async def async_create(self) -> None:
         """Create the table asynchronously if it does not exist."""
@@ -264,6 +263,10 @@ class LanceDb(VectorDb):
                     logger.exception("Sync table creation also failed")
                     raise
 
+    # Owner column for per-user isolation; ``NULL`` is shared content. A real column
+    # rather than a ``payload`` key so the scope predicate pushes into ``.where(...)``.
+    USER_ID_COL: str = "user_id"
+
     def _base_schema(self) -> pa.Schema:
         # Use fixed-size list for vector field as required by LanceDB
         if self.dimensions:
@@ -277,6 +280,7 @@ class LanceDb(VectorDb):
                 vector_field,
                 pa.field(self._id, pa.string()),
                 pa.field("payload", pa.string()),
+                pa.field(self.USER_ID_COL, pa.string(), nullable=True),
             ]
         )
 
@@ -291,17 +295,84 @@ class LanceDb(VectorDb):
             tbl = self.connection.create_table(name=self.table_name, schema=schema, mode="overwrite", exist_ok=True)  # type: ignore
         return tbl  # type: ignore
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def _scoped_doc_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic id so two users inserting the same
+        content get distinct ids. ``None`` keeps the stable base id.
+
+        ``base_id`` is collapsed with ``content_hash`` into a fixed-length digest before
+        the owner is folded in, otherwise ('doc_1', 'alice') and ('doc', '1_alice') collide.
+        """
+        doc_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return doc_id
+        return md5(f"{doc_id}_{user_id}".encode()).hexdigest()
+
+    def _user_id_column_exists(self) -> bool:
+        """Whether the live table has the ``user_id`` column. Pre-v3 tables lack it until migrated."""
+        if self._owner_column_exists is None:
+            try:
+                if self.table is None:
+                    # No table yet — it will be created with the column.
+                    return True
+                self._owner_column_exists = self.USER_ID_COL in self.table.schema.names
+            except Exception:
+                # Assume migrated for this call only; left uncached so the next call re-inspects.
+                log_warning(
+                    f"Could not inspect table '{self.table_name}' for the user_id column; "
+                    "proceeding as migrated for this operation."
+                )
+                return True
+        return self._owner_column_exists
+
+    def _require_owner_column(self, user_id: Optional[str]) -> bool:
+        """Gate every ``user_id``-column reference on the live schema.
+
+        Returns True when the column exists and False when it is missing on an unscoped
+        call, so the caller falls back to pre-v3 queries. A scoped call raises instead.
+        """
+        if self._user_id_column_exists():
+            return True
+        if user_id is None:
+            return False
+        # Re-inspect once before refusing: LanceTable pins its dataset version, so
+        # ``self.table.schema`` stays stale until the handle checks out the latest.
+        self._owner_column_exists = None
+        try:
+            if self.table is not None:
+                self.table.checkout_latest()
+        except Exception:
+            # Older clients / cloud handles may not support checkout.
+            pass
+        if self._user_id_column_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but table '{self.table_name}' predates per-user "
+            "isolation and has no 'user_id' column. Run the v2 -> v3 migration "
+            "(libs/agno/migrations/v2_to_v3/migrate_field_vectordbs.py) or recreate the table."
+        )
+
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Insert documents into the database.
 
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to add as metadata to documents
+            user_id (Optional[str]): Owner of these chunks, stored in the ``user_id``
+                column. ``None`` means shared.
         """
         if len(documents) <= 0:
             log_info("No documents to insert")
             return
+
+        # Pre-v3 tables reject rows carrying the column, so the row dicts below must omit it.
+        include_owner = self._require_owner_column(user_id)
 
         log_debug(f"Inserting {len(documents)} documents")
         data = []
@@ -321,7 +392,7 @@ class LanceDb(VectorDb):
             cleaned_content = document.content.replace("\x00", "\ufffd")
             # Include content_hash in ID to ensure uniqueness across different content hashes
             base_id = document.id or md5(cleaned_content.encode()).hexdigest()
-            doc_id = str(md5(f"{base_id}_{content_hash}".encode()).hexdigest())
+            doc_id = self._scoped_doc_id(base_id, content_hash, user_id)
             payload = {
                 "name": document.name,
                 "meta_data": document.meta_data,
@@ -330,13 +401,14 @@ class LanceDb(VectorDb):
                 "content_id": document.content_id,
                 "content_hash": content_hash,
             }
-            data.append(
-                {
-                    "id": doc_id,
-                    "vector": self._prepare_vector(document.embedding),
-                    "payload": json.dumps(payload),
-                }
-            )
+            row: Dict[str, Any] = {
+                "id": doc_id,
+                "vector": self._prepare_vector(document.embedding),
+                "payload": json.dumps(payload),
+            }
+            if include_owner:
+                row[self.USER_ID_COL] = user_id
+            data.append(row)
             log_debug(f"Parsed document: {document.name} ({document.meta_data})")
 
         if self.table is None:
@@ -355,7 +427,11 @@ class LanceDb(VectorDb):
         log_debug(f"Inserted {len(data)} documents")
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Asynchronously insert documents into the database.
@@ -366,10 +442,14 @@ class LanceDb(VectorDb):
         Args:
             documents (List[Document]): List of documents to insert
             filters (Optional[Dict[str, Any]]): Filters to apply while inserting documents
+            user_id (Optional[str]): See ``insert``.
         """
         if len(documents) <= 0:
             log_debug("No documents to insert")
             return
+
+        # Fail a scoped write on an unmigrated table before paying for embeddings.
+        self._require_owner_column(user_id)
 
         log_debug(f"Inserting {len(documents)} documents")
 
@@ -413,32 +493,47 @@ class LanceDb(VectorDb):
 
         # Use sync insert to avoid sync/async table synchronization issues
         # Sync insert will re-embed any documents that failed async embedding
-        self.insert(content_hash, documents, filters)
+        self.insert(content_hash, documents, filters, user_id=user_id)
 
     def upsert_available(self) -> bool:
         """Check if upsert is available in LanceDB."""
         return True
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """
         Upsert documents into the database.
 
         Args:
             documents (List[Document]): List of documents to upsert
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
+            user_id (Optional[str]): See ``insert``.
         """
-        if self.content_hash_exists(content_hash):
-            self._delete_by_content_hash(content_hash)
-        self.insert(content_hash=content_hash, documents=documents, filters=filters)
+        # Before the dedup guard so a scoped upsert raises instead of answering False.
+        self._require_owner_column(user_id)
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+        self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Asynchronously upsert documents into the database.
 
         Note: Uses async embedding for performance, then sync upsert for reliability.
         """
+        # See ``async_insert`` — fail before paying for embeddings.
+        self._require_owner_column(user_id)
         if len(documents) > 0:
             # Do async embedding for performance
             if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
@@ -478,10 +573,36 @@ class LanceDb(VectorDb):
 
         # Use sync upsert for reliability
         # Sync upsert (via insert) will re-embed any documents that failed async embedding
-        self.upsert(content_hash=content_hash, documents=documents, filters=filters)
+        self.upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
+
+    def _user_scope_where_clause(self, user_id: Optional[str]) -> Optional[str]:
+        """Build the read-scope ``WHERE`` clause.
+
+        ``None`` means no clause; otherwise the owner's rows plus shared (``NULL``) rows.
+        Internal quotes are doubled to escape the literal.
+        """
+        if user_id is None:
+            return None
+        escaped = user_id.replace("'", "''")
+        return f"({self.USER_ID_COL} = '{escaped}' OR {self.USER_ID_COL} IS NULL)"
+
+    def _owner_where_clause(self, user_id: Optional[str]) -> str:
+        """Build the exact-owner ``WHERE`` clause used by writes.
+
+        No OR-NULL arm: a scoped write never reaches the shared bucket, and ``None``
+        addresses the shared bucket alone.
+        """
+        if user_id is None:
+            return f"{self.USER_ID_COL} IS NULL"
+        escaped = user_id.replace("'", "''")
+        return f"{self.USER_ID_COL} = '{escaped}'"
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Search for documents matching the query.
@@ -490,6 +611,8 @@ class LanceDb(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            user_id (Optional[str]): Restrict results to this user's rows plus shared
+                (``user_id IS NULL``) rows. ``None`` applies no owner predicate.
 
         Returns:
             List[Document]: List of matching documents
@@ -498,6 +621,9 @@ class LanceDb(VectorDb):
             log_error("Table not initialized")
             return []
 
+        # Raise the migration error here rather than a raw DataFusion "no field named user_id".
+        self._require_owner_column(user_id)
+
         results = None
 
         if isinstance(filters, list):
@@ -505,11 +631,11 @@ class LanceDb(VectorDb):
             filters = None
 
         if self.search_type == SearchType.vector:
-            results = self.vector_search(query, limit)
+            results = self.vector_search(query, limit, user_id=user_id)
         elif self.search_type == SearchType.keyword:
-            results = self.keyword_search(query, limit)
+            results = self.keyword_search(query, limit, user_id=user_id)
         elif self.search_type == SearchType.hybrid:
-            results = self.hybrid_search(query, limit)
+            results = self.hybrid_search(query, limit, user_id=user_id)
         else:
             log_error(f"Invalid search type '{self.search_type}'.")
             return []
@@ -555,7 +681,11 @@ class LanceDb(VectorDb):
         return search_results
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Asynchronously search for documents matching the query.
@@ -567,15 +697,20 @@ class LanceDb(VectorDb):
             query (str): Query string to search for
             limit (int): Maximum number of results to return
             filters (Optional[Dict[str, Any]]): Filters to apply to the search
+            user_id (Optional[str]): See ``search``.
 
         Returns:
             List[Document]: List of matching documents
         """
         # Wrap sync search method to avoid sync/async table synchronization issues
-        return self.search(query=query, limit=limit, filters=filters)
+        return self.search(query=query, limit=limit, filters=filters, user_id=user_id)
 
     def vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> Optional[List[Dict[str, Any]]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -591,13 +726,23 @@ class LanceDb(VectorDb):
             vector_column_name=self._vector_col,
         ).limit(limit)
 
+        # ``prefilter=True`` runs the predicate before the ANN top-K; post-filtering
+        # would silently truncate results.
+        where_clause = self._user_scope_where_clause(user_id)
+        if where_clause is not None:
+            results = results.where(where_clause, prefilter=True)
+
         if self.nprobes:
             results.nprobes(self.nprobes)
 
         return results.to_list()
 
     def hybrid_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
@@ -622,13 +767,22 @@ class LanceDb(VectorDb):
             .limit(limit)
         )
 
+        # Same prefilter rationale as ``vector_search``.
+        where_clause = self._user_scope_where_clause(user_id)
+        if where_clause is not None:
+            results = results.where(where_clause, prefilter=True)
+
         if self.nprobes:
             results.nprobes(self.nprobes)
 
         return results.to_list()
 
     def keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Dict[str, Any]]:
         if self.table is None:
             log_error("Table not initialized. Please create the table first")
@@ -642,6 +796,11 @@ class LanceDb(VectorDb):
             query=query,
             query_type="fts",
         ).limit(limit)
+
+        # FTS has no top-K cliff, but prefiltering still avoids ranking unreadable rows.
+        where_clause = self._user_scope_where_clause(user_id)
+        if where_clause is not None:
+            results = results.where(where_clause, prefilter=True)
 
         return results.to_list()
 
@@ -673,6 +832,8 @@ class LanceDb(VectorDb):
             self.connection.drop_table(self.table_name)  # type: ignore
             # Clear the table reference after dropping
             self.table = None
+            # The next table under this name will carry the owner column.
+            self._owner_column_exists = None
 
     async def async_drop(self) -> None:
         """Drop the table asynchronously."""
@@ -856,15 +1017,25 @@ class LanceDb(VectorDb):
             logger.exception(f"Error deleting rows by metadata '{metadata}'")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete content by content ID."""
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete content by content ID, scoped to ``user_id`` when set.
+
+        ``None`` deletes across all owners, for unscoped/admin callers.
+        """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
+        # Outside the try so a scoped delete raises instead of returning False.
+        has_owner_column = self._require_owner_column(user_id)
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
+            # Server-side owner filter when scoped, so we don't scan every payload in Python.
+            select_cols = ["id", "payload"] + ([self.USER_ID_COL] if has_owner_column else [])
+            search = self.table.search().select(select_cols).limit(total_count)
+            if user_id is not None:
+                search = search.where(self._owner_where_clause(user_id))
+            result = search.to_list()
 
             ids_to_delete = []
             for row in result:
@@ -887,15 +1058,23 @@ class LanceDb(VectorDb):
             logger.exception(f"Error deleting rows by content_id '{content_id}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
-        """Delete content by content hash."""
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Delete content by content hash, scoped to ``user_id``.
+
+        ``None`` scopes to the shared (``NULL``) bucket, not to every owner.
+        """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
+        # Outside the try so a scoped delete raises instead of returning False.
+        scope_to_owner = self._require_owner_column(user_id)
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
+            search = self.table.search().select(["id", "payload"]).limit(total_count)
+            if scope_to_owner:
+                search = search.where(self._owner_where_clause(user_id))
+            result = search.to_list()
 
             ids_to_delete = []
             for row in result:
@@ -918,15 +1097,24 @@ class LanceDb(VectorDb):
             logger.exception(f"Error deleting rows by content_hash '{content_hash}'")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if documents with the given content hash exist."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if documents with the given content hash exist.
+
+        ``None`` scopes to the shared (``NULL``) bucket, matching
+        ``_delete_by_content_hash`` so the upsert dedup pair sees the same rows.
+        """
         if self.table is None:
             log_error("Table not initialized")
             return False
 
+        # Outside the try so a scoped check raises instead of returning False.
+        scope_to_owner = self._require_owner_column(user_id)
         try:
             total_count = self.table.count_rows()
-            result = self.table.search().select(["id", "payload"]).limit(total_count).to_list()
+            search = self.table.search().select(["id", "payload"]).limit(total_count)
+            if scope_to_owner:
+                search = search.where(self._owner_where_clause(user_id))
+            result = search.to_list()
 
             for row in result:
                 payload = json.loads(row["payload"])
@@ -955,7 +1143,10 @@ class LanceDb(VectorDb):
                 return
 
             total_count = self.table.count_rows()
-            results = self.table.search().select(["id", "payload", "vector"]).limit(total_count).to_list()
+            # Select the owner column too so the delete-and-reinsert below can preserve it.
+            has_owner_column = self._user_id_column_exists()
+            select_cols = ["id", "payload", "vector"] + ([self.USER_ID_COL] if has_owner_column else [])
+            results = self.table.search().select(select_cols).limit(total_count).to_list()
 
             if not results:
                 logger.debug("No documents found")
@@ -1004,6 +1195,9 @@ class LanceDb(VectorDb):
                     update_data["vector"] = vector_data
                 if text_data is not None:
                     update_data["text"] = text_data
+                # Omitting this would NULL out user_id and turn an owned chunk into a shared one.
+                if has_owner_column:
+                    update_data[self.USER_ID_COL] = row.get(self.USER_ID_COL)
 
                 # Delete old record and insert updated one
                 self.table.delete(f"id = '{row_id}'")
