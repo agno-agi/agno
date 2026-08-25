@@ -46,7 +46,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 from agno.exceptions import PathSecurityError
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error
 from agno.utils.path_safety import safe_join_filename
 
 try:
@@ -265,9 +265,6 @@ class GoogleDriveTools(GoogleToolkit):
         scopes: Optional[List[str]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
-        # Deprecated aliases (use credentials_path, oauth_port instead)
-        creds_path: Optional[str] = None,
-        auth_port: Optional[int] = None,
         # Service account auth — alternative to OAuth for server/bot deployments
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
@@ -292,20 +289,13 @@ class GoogleDriveTools(GoogleToolkit):
         supports_all_drives: bool = False,
         include_items_from_all_drives: bool = False,
         drive_id: Optional[str] = None,  # Required when corpora="drive"
+        # Pagination cap — limits results per API call to prevent context overflow
+        max_results: int = 20,
         # Injected into agent system prompt with Drive query syntax
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
     ):
-        # Handle deprecated aliases
-        if creds_path is not None:
-            log_warning("creds_path is deprecated, use credentials_path instead")
-            if credentials_path is None:
-                credentials_path = creds_path
-        if auth_port is not None:
-            log_warning("auth_port is deprecated, use oauth_port instead")
-            if oauth_port is None:
-                oauth_port = auth_port
         if oauth_port is None:
             oauth_port = 5050
 
@@ -316,6 +306,7 @@ class GoogleDriveTools(GoogleToolkit):
 
         self.include_trashed = include_trashed
         self.max_read_size = max_read_size
+        self.max_results = max_results
         self.download_dir = Path(download_dir).resolve()
         self.corpora = corpora
         self.supports_all_drives = supports_all_drives
@@ -469,6 +460,7 @@ class GoogleDriveTools(GoogleToolkit):
 
         try:
             service = cast(Resource, self.service)
+            effective_max = min(max_results, self.max_results)
             if self.include_trashed:
                 effective_query = query or ""
             elif query:
@@ -477,7 +469,7 @@ class GoogleDriveTools(GoogleToolkit):
                 effective_query = "trashed=false"
             list_kwargs: dict = {
                 "q": effective_query,
-                "pageSize": max_results,
+                "pageSize": effective_max,
                 "orderBy": "modifiedTime desc",
                 "fields": self.SEARCH_FIELDS,
                 "corpora": self.corpora,

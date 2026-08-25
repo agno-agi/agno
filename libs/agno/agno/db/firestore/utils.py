@@ -1,13 +1,12 @@
 """Utility functions for the Firestore database class."""
 
+import hashlib
 import json
 import time
 from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
-from uuid import uuid4
 
 from agno.db.firestore.schemas import get_collection_indexes
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.utils import get_sort_value
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
@@ -113,7 +112,14 @@ def apply_sorting(query, sort_by: Optional[str] = None, sort_order: Optional[str
 
 
 def apply_pagination(query, limit: Optional[int] = None, page: Optional[int] = None):
-    """Apply pagination to Firestore query."""
+    """Apply pagination to Firestore query.
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is not None:
         query = query.limit(limit)
         if page is not None and page > 1:
@@ -162,7 +168,14 @@ def apply_sorting_to_records(
 def apply_pagination_to_records(
     records: List[Dict[str, Any]], limit: Optional[int] = None, page: Optional[int] = None
 ) -> List[Dict[str, Any]]:
-    """Apply pagination to in-memory records (for cases where Firestore query pagination isn't possible)."""
+    """Apply pagination to in-memory records (for cases where Firestore query pagination isn't possible).
+
+    Raises ``ValueError`` when ``page`` is provided without ``limit`` — see
+    ``agno.db.utils.validate_pagination``.
+    """
+    from agno.db.utils import validate_pagination
+
+    validate_pagination(limit, page)
     if limit is None:
         return records
 
@@ -177,85 +190,111 @@ def apply_pagination_to_records(
 # -- Metrics util methods --
 
 
-def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> dict:
-    """Calculate metrics for the given single date."""
-    metrics = {
-        "users_count": 0,
-        "agent_sessions_count": 0,
-        "team_sessions_count": 0,
-        "workflow_sessions_count": 0,
-        "agent_runs_count": 0,
-        "team_runs_count": 0,
-        "workflow_runs_count": 0,
-    }
-    token_metrics = {
-        "input_tokens": 0,
-        "output_tokens": 0,
-        "total_tokens": 0,
-        "audio_total_tokens": 0,
-        "audio_input_tokens": 0,
-        "audio_output_tokens": 0,
-        "cache_read_tokens": 0,
-        "cache_write_tokens": 0,
-        "reasoning_tokens": 0,
-    }
-    model_counts: Dict[str, int] = {}
+def calculate_date_metrics(date_to_process: date, sessions_data: dict) -> List[dict]:
+    """Calculate metrics for the given single date, bucketed per ``user_id``.
+
+    Args:
+        date_to_process (date): The date to calculate metrics for.
+        sessions_data (dict): The sessions data to calculate metrics for.
+
+    Returns:
+        The list of per-user metrics records. Sessions without a ``user_id`` bucket under "".
+    """
+
+    def _empty_metric_record() -> Dict[str, Any]:
+        return {
+            "users_count": 0,
+            "agent_sessions_count": 0,
+            "team_sessions_count": 0,
+            "workflow_sessions_count": 0,
+            "agent_runs_count": 0,
+            "team_runs_count": 0,
+            "workflow_runs_count": 0,
+            "token_metrics": {
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "audio_total_tokens": 0,
+                "audio_input_tokens": 0,
+                "audio_output_tokens": 0,
+                "cache_read_tokens": 0,
+                "cache_write_tokens": 0,
+                "reasoning_tokens": 0,
+            },
+            "model_counts": {},
+        }
 
     session_types = [
         ("agent", "agent_sessions_count", "agent_runs_count"),
         ("team", "team_sessions_count", "team_runs_count"),
         ("workflow", "workflow_sessions_count", "workflow_runs_count"),
     ]
-    all_user_ids = set()
+
+    per_user: Dict[str, Dict[str, Any]] = {}
 
     for session_type, sessions_count_key, runs_count_key in session_types:
         sessions = sessions_data.get(session_type, []) or []
-        metrics[sessions_count_key] = len(sessions)
 
         for session in sessions:
-            if session.get("user_id"):
-                all_user_ids.add(session["user_id"])
+            bucket_key = session.get("user_id") or ""
+            bucket = per_user.setdefault(bucket_key, _empty_metric_record())
+            bucket[sessions_count_key] += 1
+
             runs = session.get("runs", []) or []
+            if isinstance(runs, str):
+                runs = json.loads(runs)
+            bucket[runs_count_key] += len(runs)
+            for run in runs:
+                if model_id := run.get("model"):
+                    model_provider = run.get("model_provider", "")
+                    key = f"{model_id}:{model_provider}"
+                    bucket["model_counts"][key] = bucket["model_counts"].get(key, 0) + 1
 
-            if runs:
-                if isinstance(runs, str):
-                    runs = json.loads(runs)
-
-                metrics[runs_count_key] += len(runs)
-
-                for run in runs:
-                    if model_id := run.get("model"):
-                        model_provider = run.get("model_provider", "")
-                        model_counts[f"{model_id}:{model_provider}"] = (
-                            model_counts.get(f"{model_id}:{model_provider}", 0) + 1
-                        )
-
-            session_data = session.get("session_data", {})
+            session_data = session.get("session_data", {}) or {}
             if isinstance(session_data, str):
                 session_data = json.loads(session_data)
-            session_metrics = session_data.get("session_metrics", {})
-            for field in token_metrics:
-                token_metrics[field] += session_metrics.get(field, 0)
+            session_metrics = session_data.get("session_metrics", {}) or {}
+            for field in bucket["token_metrics"]:
+                bucket["token_metrics"][field] += session_metrics.get(field, 0)
 
-    model_metrics = []
-    for model, count in model_counts.items():
-        model_id, model_provider = model.rsplit(":", 1)
-        model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
-
-    metrics["users_count"] = len(all_user_ids)
     current_time = int(time.time())
+    completed = date_to_process < datetime.now(timezone.utc).date()
 
-    return {
-        "id": str(uuid4()),
-        "date": date_to_process,
-        "completed": date_to_process < datetime.now(timezone.utc).date(),
-        "token_metrics": token_metrics,
-        "model_metrics": model_metrics,
-        "created_at": current_time,
-        "updated_at": current_time,
-        "aggregation_period": "daily",
-        **metrics,
-    }
+    records: List[dict] = []
+    for user_id, bucket in per_user.items():
+        model_metrics = []
+        for model, count in bucket["model_counts"].items():
+            model_id, model_provider = model.rsplit(":", 1)
+            model_metrics.append({"model_id": model_id, "model_provider": model_provider, "count": count})
+
+        users_count = 0 if user_id == "" else 1
+        # Firestore document ids reject ``/``, ``.``, ``..`` and ``__..__``, so hash the owner
+        # segment: an IdP subject like ``google-oauth2/abc`` fails the write, which the upsert swallows.
+        user_segment = "shared" if user_id == "" else hashlib.sha256(user_id.encode("utf-8")).hexdigest()
+        metric_id = f"{date_to_process.isoformat()}_{user_segment}_daily"
+
+        records.append(
+            {
+                "id": metric_id,
+                "date": date_to_process,
+                "completed": completed,
+                "token_metrics": bucket["token_metrics"],
+                "model_metrics": model_metrics,
+                "created_at": current_time,
+                "updated_at": current_time,
+                "aggregation_period": "daily",
+                "user_id": user_id,
+                "users_count": users_count,
+                "agent_sessions_count": bucket["agent_sessions_count"],
+                "team_sessions_count": bucket["team_sessions_count"],
+                "workflow_sessions_count": bucket["workflow_sessions_count"],
+                "agent_runs_count": bucket["agent_runs_count"],
+                "team_runs_count": bucket["team_runs_count"],
+                "workflow_runs_count": bucket["workflow_runs_count"],
+            }
+        )
+
+    return records
 
 
 def fetch_all_sessions_data(
@@ -304,88 +343,29 @@ def bulk_upsert_metrics(collection_ref, metrics_records: List[Dict[str, Any]]) -
     results = []
     batch = collection_ref._client.batch()
 
-    for i, record in enumerate(metrics_records):
+    batch_count = 0
+
+    for record in metrics_records:
         record["date"] = record["date"].isoformat() if isinstance(record["date"], date) else record["date"]
         try:
-            # Create a unique document ID based on date and aggregation period
-            doc_id = f"{record['date']}_{record['aggregation_period']}"
+            # ``record["id"]`` is deterministic per (date, user_id), so re-runs update the same doc.
+            doc_id = record["id"]
             doc_ref = collection_ref.document(doc_id)
             batch.set(doc_ref, record, merge=True)
             results.append(record)
-
-            # Firestore batch limit is 500 operations
-            if (i + 1) % 500 == 0:
-                batch.commit()
-                batch = collection_ref._client.batch()
+            batch_count += 1
 
         except Exception as e:
             log_error(f"Error preparing metrics record for batch: {str(e)}")
             continue
 
-    # Commit remaining operations
-    if len(metrics_records) % 500 != 0:
-        try:
+        # Firestore batch limit is 500 operations
+        if batch_count % 500 == 0:
             batch.commit()
-        except Exception as e:
-            log_error(f"Error committing metrics batch: {str(e)}")
+            batch = collection_ref._client.batch()
+
+    # Commit remaining operations
+    if batch_count % 500 != 0:
+        batch.commit()
 
     return results
-
-
-# -- Cultural Knowledge util methods --
-
-
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
-    """Serialize a CulturalKnowledge object for database storage.
-
-    Converts the model's separate content, categories, and notes fields
-    into a single dict for the database content field.
-
-    Args:
-        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
-
-    Returns:
-        Dict[str, Any]: A dictionary with content, categories, and notes.
-    """
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
-
-    return content_dict if content_dict else {}
-
-
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
-    """Deserialize a database row to a CulturalKnowledge object.
-
-    The database stores content as a dict containing content, categories, and notes.
-    This method extracts those fields and converts them back to the model format.
-
-    Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
-
-    Returns:
-        CulturalKnowledge: The cultural knowledge object.
-    """
-    # Extract content, categories, and notes from the content field
-    content_json = db_row.get("content", {}) or {}
-
-    return CulturalKnowledge.from_dict(
-        {
-            "id": db_row.get("id"),
-            "name": db_row.get("name"),
-            "summary": db_row.get("summary"),
-            "content": content_json.get("content"),
-            "categories": content_json.get("categories"),
-            "notes": content_json.get("notes"),
-            "metadata": db_row.get("metadata"),
-            "input": db_row.get("input"),
-            "created_at": db_row.get("created_at"),
-            "updated_at": db_row.get("updated_at"),
-            "agent_id": db_row.get("agent_id"),
-            "team_id": db_row.get("team_id"),
-        }
-    )

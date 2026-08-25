@@ -43,33 +43,36 @@ class WorkflowSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
         """Convert to dictionary for storage, serializing runs to dicts"""
 
-        runs_data: Optional[List[Dict[str, Any]]] = None
-        if self.runs:
-            runs_data = []
-            for run in self.runs:
-                try:
-                    if isinstance(run, dict):
-                        runs_data.append(run)  # type: ignore[arg-type]
-                    else:
-                        runs_data.append(run.to_dict())
-                except Exception as e:
-                    raise ValueError(f"Serialization failed: {str(e)}")
-
-        return {
+        session_dict: Dict[str, Any] = {
             "session_id": self.session_id,
             "user_id": self.user_id,
             "workflow_id": self.workflow_id,
             "workflow_name": self.workflow_name,
-            "runs": runs_data,
             "session_data": self.session_data,
             "workflow_data": self.workflow_data,
             "metadata": self.metadata,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
+
+        if include_runs:
+            runs_data: Optional[List[Dict[str, Any]]] = None
+            if self.runs:
+                runs_data = []
+                for run in self.runs:
+                    try:
+                        if isinstance(run, dict):
+                            runs_data.append(run)  # type: ignore[arg-type]
+                        else:
+                            runs_data.append(run.to_dict())
+                    except Exception as e:
+                        raise ValueError(f"Serialization failed: {str(e)}")
+            session_dict["runs"] = runs_data
+
+        return session_dict
 
     @classmethod
     def from_dict(cls, data: Mapping[str, Any]) -> Optional[WorkflowSession]:
@@ -89,6 +92,11 @@ class WorkflowSession:
                     # Already a WorkflowRunOutput object (from deserialize_session_json_fields)
                     runs.append(run_item)
                 elif isinstance(run_item, dict):
+                    # A step's agent/team run shares this session id; the workflow run carries it.
+                    from agno.db.utils import get_run_type  # circular at module level
+
+                    if get_run_type(run_item) != "workflow":
+                        continue
                     # Still a dictionary, needs to be converted
                     runs.append(WorkflowRunOutput.from_dict(run_item))
                 else:
@@ -140,6 +148,12 @@ class WorkflowSession:
         # Find existing run and update it, or append new one
         for i, existing_run in enumerate(self.runs):
             if existing_run.run_id == run.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run, "queue_attempt", None) is None:
+                    run.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run
                 break
         else:

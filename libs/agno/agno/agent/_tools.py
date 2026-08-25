@@ -2,25 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections import deque
 from typing import (
     TYPE_CHECKING,
+    Any,
     AsyncIterator,
     Callable,
     Dict,
     Iterator,
     List,
     Optional,
+    Set,
     Union,
     cast,
 )
 
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
+    from agno.offload.store import ResultStore
 
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run import RunContext
 from agno.run.agent import RunOutput, RunOutputEvent
@@ -28,6 +32,12 @@ from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.tools import Toolkit
 from agno.tools.function import Function
+from agno.tools.toolkit import (
+    ToolkitKey,
+    _emits_toolkit_instructions,
+    _group_source_toolkits,
+    _toolkit_key,
+)
 from agno.utils.agent import (
     collect_joint_audios,
     collect_joint_files,
@@ -41,6 +51,22 @@ from agno.utils.events import (
     handle_event,
 )
 from agno.utils.log import log_debug, log_warning
+
+
+def _active_result_store(owner: Any) -> Optional["ResultStore"]:
+    """The ResultStore of the Agent or Team this run belongs to, or None when offloading is off."""
+    return getattr(owner, "_result_store", None)
+
+
+def result_store_kwargs(owner: Any) -> Dict[str, Any]:
+    """The ``result_store=`` kwarg for a model call, or nothing at all.
+
+    With offloading off the kwarg is omitted entirely, so a Model subclass
+    that overrides ``response`` with an older parameter list keeps working
+    until its owner actually opts into offloading.
+    """
+    store = getattr(owner, "_result_store", None)
+    return {"result_store": store} if store is not None else {}
 
 
 def raise_if_async_tools(agent: Agent) -> None:
@@ -164,17 +190,22 @@ def get_tools(
     if agent.enable_agentic_memory:
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
 
+    # Read-back tools for offloaded results
+    if agent._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        agent_tools.append(get_read_result_function(agent, run_context=run_context, async_mode=False))
+        agent_tools.append(get_search_result_function(agent, run_context=run_context, async_mode=False))
+
     # Add learning machine tools
     if agent._learning is not None:
         learning_tools = agent._learning.get_tools(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            run_context=run_context,
         )
         agent_tools.extend(learning_tools)
-
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=False))
 
     if agent.enable_agentic_state:
         agent_tools.append(
@@ -200,7 +231,7 @@ def get_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -247,10 +278,8 @@ async def aget_tools(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            )
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            is_mcp_tool = hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
 
             if is_mcp_tool:
                 if tool.refresh_connection:  # type: ignore
@@ -296,17 +325,22 @@ async def aget_tools(
     if agent.enable_agentic_memory:
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
 
+    # Read-back tools for offloaded results
+    if agent._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        agent_tools.append(get_read_result_function(agent, run_context=run_context, async_mode=True))
+        agent_tools.append(get_search_result_function(agent, run_context=run_context, async_mode=True))
+
     # Add learning machine tools (async)
     if agent._learning is not None:
         learning_tools = await agent._learning.aget_tools(
             user_id=user_id,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
+            run_context=run_context,
         )
         agent_tools.extend(learning_tools)
-
-    if agent.enable_agentic_culture:
-        agent_tools.append(_default_tools.get_update_cultural_knowledge_function(agent, async_mode=True))
 
     if agent.enable_agentic_state:
         agent_tools.append(
@@ -332,7 +366,7 @@ async def aget_tools(
         )
 
     if resolved_knowledge is not None and agent.update_knowledge:
-        agent_tools.append(agent.add_to_knowledge)
+        agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
 
     # Add tools for accessing skills
     if agent.skills is not None:
@@ -350,7 +384,37 @@ def parse_tools(
 ) -> List[Union[Function, dict]]:
     _function_names: List[str] = []
     _functions: List[Union[Function, dict]] = []
+    _toolkit_instruction_keys: Set[ToolkitKey] = set()
+    _source_toolkit_last_index, _source_toolkit_members, _toolkit_keys = _group_source_toolkits(tools)
     agent._tool_instructions = []
+
+    def toolkit_key(toolkit: Toolkit) -> ToolkitKey:
+        # The key folds the toolkit's whole function surface; memoized so one
+        # collection pass computes it once per toolkit, not once per member.
+        key = _toolkit_keys.get(id(toolkit))
+        if key is None:
+            key = _toolkit_keys[id(toolkit)] = _toolkit_key(toolkit)
+        return key
+
+    def add_toolkit_instructions(toolkit: Toolkit) -> None:
+        key = toolkit_key(toolkit)
+        if key in _toolkit_instruction_keys:
+            return
+        if toolkit.add_instructions and toolkit.instructions is not None:
+            if agent._tool_instructions is None:
+                agent._tool_instructions = []
+            agent._tool_instructions.append(toolkit.instructions)
+            _toolkit_instruction_keys.add(key)
+
+    def emits_toolkit_instructions(source_toolkit: Toolkit, index: int) -> bool:
+        return _emits_toolkit_instructions(
+            source_toolkit,
+            index,
+            key=toolkit_key(source_toolkit),
+            last_index=_source_toolkit_last_index,
+            members=_source_toolkit_members,
+            async_mode=async_mode,
+        )
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -365,7 +429,7 @@ def parse_tools(
     ):
         strict = True
 
-    for tool in tools:
+    for tool_index, tool in enumerate(tools):
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent
@@ -402,12 +466,17 @@ def parse_tools(
                     agent._tool_instructions.append(_func.instructions)
 
             # Add instructions from the toolkit
-            if tool.add_instructions and tool.instructions is not None:
-                agent._tool_instructions.append(tool.instructions)
+            add_toolkit_instructions(tool)
 
         elif isinstance(tool, Function):
+            source_toolkit = tool.source_toolkit if isinstance(tool.source_toolkit, Toolkit) else None
+            emit_toolkit_instructions = source_toolkit is not None and emits_toolkit_instructions(
+                source_toolkit, tool_index
+            )
             if tool.name in _function_names:
                 log_warning(f"Duplicate tool name '{tool.name}' already registered on agent; skipping the duplicate.")
+                if emit_toolkit_instructions and source_toolkit is not None:
+                    add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
 
@@ -429,6 +498,13 @@ def parse_tools(
             # Add instructions from the Function
             if tool.add_instructions and tool.instructions is not None:
                 agent._tool_instructions.append(tool.instructions)
+
+            # DB-loaded toolkit members are bare Functions. Their live owning
+            # Toolkit is restored by Registry.rehydrate_function; add its
+            # guidance after all its member Functions, matching live Toolkit
+            # instruction order, and only once.
+            if emit_toolkit_instructions and source_toolkit is not None:
+                add_toolkit_instructions(source_toolkit)
 
         elif callable(tool):
             try:
@@ -525,7 +601,43 @@ def determine_tools_for_model(
 # ---------------------------------------------------------------------------
 
 
-def handle_external_execution_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
+def _offload_continue_result(agent: Any, run_response: Optional[RunOutput], tool: ToolExecution, content: str) -> str:
+    """The tool message content for a result produced on a continue-run path.
+
+    A result that arrives after a pause (external execution, user input, user
+    feedback) is a tool result like any other: an oversized one is stored and
+    the message holds the envelope. A result that ends the run stays inline,
+    since it is the answer the caller receives.
+    """
+    result_store = _active_result_store(agent)
+    if (
+        result_store is None
+        or run_response is None
+        or run_response.session_id is None
+        or run_response.run_id is None
+        or tool.tool_call_error
+        or tool.stop_after_tool_call
+        or not result_store.should_offload(tool.tool_name, content)
+    ):
+        return content
+    return result_store.offload_for_model(
+        session_id=run_response.session_id,
+        run_id=run_response.run_id,
+        tool_call_id=tool.tool_call_id or tool.tool_name or "continue",
+        tool_name=tool.tool_name or "continue",
+        tool_args=tool.tool_args,
+        output=content,
+        user_id=run_response.user_id,
+        shared=getattr(agent, "members", None) is not None,
+    )
+
+
+def handle_external_execution_update(
+    agent: Agent,
+    run_messages: RunMessages,
+    tool: ToolExecution,
+    run_response: Optional[RunOutput] = None,
+):
     agent.model = cast(Model, agent.model)
 
     if tool.result is not None:
@@ -534,6 +646,11 @@ def handle_external_execution_update(agent: Agent, run_messages: RunMessages, to
             if msg.tool_call_id == tool.tool_call_id:
                 break
         else:
+            # Only text is offloaded. A list result is structured content the
+            # model must receive as it is. The ToolExecution carries the
+            # envelope too, so the persisted session row stays small.
+            if isinstance(tool.result, str):
+                tool.result = _offload_continue_result(agent, run_response, tool, tool.result)
             run_messages.messages.append(
                 Message(
                     role=agent.model.tool_message_role,
@@ -557,7 +674,9 @@ def handle_user_input_update(agent: Agent, tool: ToolExecution):
         tool.tool_args[field.name] = field.value
 
 
-def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
+def handle_get_user_input_tool_update(
+    agent: Agent, run_messages: RunMessages, tool: ToolExecution, run_response: Optional[RunOutput] = None
+):
     import json
 
     agent.model = cast(Model, agent.model)
@@ -568,11 +687,12 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
         {"name": user_input_field.name, "value": user_input_field.value}
         for user_input_field in tool.user_input_schema or []
     ]
+    content = f"User inputs retrieved: {json.dumps(user_input_result, ensure_ascii=False)}"
     # Add the tool call result to the run_messages
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User inputs retrieved: {json.dumps(user_input_result, ensure_ascii=False)}",
+            content=_offload_continue_result(agent, run_response, tool, content),
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
@@ -581,7 +701,9 @@ def handle_get_user_input_tool_update(agent: Agent, run_messages: RunMessages, t
     )
 
 
-def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: ToolExecution):
+def handle_ask_user_tool_update(
+    agent: Agent, run_messages: RunMessages, tool: ToolExecution, run_response: Optional[RunOutput] = None
+):
     import json
 
     agent.model = cast(Model, agent.model)
@@ -590,10 +712,11 @@ def handle_ask_user_tool_update(agent: Agent, run_messages: RunMessages, tool: T
     feedback_result = [
         {"question": q.question, "selected": q.selected_options or []} for q in tool.user_feedback_schema
     ]
+    content = f"User feedback received: {json.dumps(feedback_result, ensure_ascii=False)}"
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=f"User feedback received: {json.dumps(feedback_result, ensure_ascii=False)}",
+            content=_offload_continue_result(agent, run_response, tool, content),
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
@@ -664,6 +787,7 @@ def run_tool(
     for call_result in agent.model.run_function_call(
         function_call=function_call,
         function_call_results=function_call_results,
+        result_store=_active_result_store(agent),
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
@@ -779,6 +903,7 @@ async def arun_tool(
         function_calls=[function_call],
         function_call_results=function_call_results,
         skip_pause_check=True,
+        result_store=_active_result_store(agent),
     ):
         if isinstance(call_result, ModelResponse):
             if call_result.event == ModelResponseEvent.tool_call_started.value:
@@ -874,18 +999,18 @@ def handle_tool_call_updates(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
+            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _t.requires_user_input = False
             _t.answered = True
 
@@ -927,18 +1052,18 @@ def handle_tool_call_updates_stream(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            handle_external_execution_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _maybe_create_audit_approval(agent, _t, run_response, "approved")
 
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _t.requires_user_input = False
             _t.answered = True
 
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
+            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t, run_response=run_response)
             _t.requires_user_input = False
             _t.answered = True
 
@@ -978,16 +1103,25 @@ async def ahandle_tool_call_updates(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_external_execution_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_get_user_input_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_ask_user_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 4: Handle user input required tools
@@ -1031,16 +1165,25 @@ async def ahandle_tool_call_updates_stream(
 
         # Case 2: Handle external execution required tools
         elif _t.external_execution_required is not None and _t.external_execution_required is True:
-            handle_external_execution_update(agent, run_messages=run_messages, tool=_t)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_external_execution_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             await _amaybe_create_audit_approval(agent, _t, run_response, "approved")
         # Case 3a: Agentic user input required
         elif _t.tool_name == "get_user_input" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_get_user_input_tool_update(agent, run_messages=run_messages, tool=_t)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_get_user_input_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 3b: User feedback (ask_user) required
         elif _t.tool_name == "ask_user" and _t.requires_user_input is not None and _t.requires_user_input is True:
-            handle_ask_user_tool_update(agent, run_messages=run_messages, tool=_t)
+            # The handler may offload an oversized result; the write must not run on the event loop.
+            await asyncio.to_thread(
+                handle_ask_user_tool_update, agent, run_messages=run_messages, tool=_t, run_response=run_response
+            )
             _t.requires_user_input = False
             _t.answered = True
         # Case 4: Handle user input required tools

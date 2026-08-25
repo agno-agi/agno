@@ -7,10 +7,18 @@ input. Use this when label quality matters more than throughput.
 
 ## Files
 
-- `basic.py` — labeler → reviewer → adjudicator applied to text
-  extraction (the `_03_text_extraction/basic.py` Contact schema). The same
-  pattern composes on top of any image / audio / document extraction
+- `basic.py` — labeler → reviewer → adjudicator expressed as an agno
+  Workflow: the two labelers run inside `Parallel(...)`, the reviewer
+  diffs their outputs field by field, and a `Condition` step runs the
+  adjudicator only when the reviewer flags disagreement. Applied to text
+  extraction (the `_03_text_extraction/basic.py` Contact schema); the
+  same shape composes on top of any image / audio / document extraction
   cookbook in this directory.
+
+The demo runs two inputs — a clean one where the labelers agree and the
+adjudication step is skipped, and one with deliberately conflicting
+details where the adjudicator resolves the disagreement — and prints the
+full step trail for both.
 
 ## When to use
 
@@ -24,10 +32,11 @@ see [`_17_llm_as_judge/`](../_17_llm_as_judge/).
 
 ## Composition
 
-`basic.py` is a flat imperative pipeline (three sequential agent calls).
-For production traceability and parallelism, wrap the same agents in
-`Workflow(Parallel(labeler_a, labeler_b), reviewer, Condition(adjudicator))` -
-see `cookbook/04_workflows/04_parallel_execution/parallel_with_condition.py`.
+The workflow is `Parallel(labeler_a, labeler_b)` → reviewer →
+`Condition(adjudicator)`, with every run persisted to SQLite
+(`tmp/labeling.db`) for traceability. Swap the labeler agents and the
+schema to apply the same quality gate to any other primitive in this
+directory.
 
 ## Run
 

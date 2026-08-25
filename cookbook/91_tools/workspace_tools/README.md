@@ -67,6 +67,27 @@ so the LLM tool spec is self-explanatory.
 - **`require_read_before_write=True`** (opt-in) blocks `write_file` / `edit_file` /
   `move_file` / `delete_file` on existing files until the agent has read them
   this session. Catches the "agent hallucinated the file's contents" bug.
+- **`exclude_patterns` is an access boundary, not just a listing filter.** A path
+  is excluded when any component of the path as written, or of the file it
+  resolves to, matches a pattern (`.env*`, `*.env`, `.git`, `.venv`,
+  `node_modules`, ...). Excluded paths are hidden from `list_files` /
+  `search_content` and refused by `read_file`, `write_file`, `edit_file`,
+  `move_file` (either end), and `delete_file` with
+  `Error: <argument> is excluded from this workspace: <path>`. On a
+  case-insensitive filesystem (macOS and Windows defaults) patterns match
+  case-insensitively, so `.ENV` is refused there. Each pattern matches one path
+  component; `dist/` raises `ValueError`, use `dist`. `run_command` is a process,
+  not a path, and is outside this boundary; gate it with `confirm`.
+- **`allow_paths=[...]`** names workspace-relative files or directories that stay
+  visible and reachable even when they match an exclude pattern. Entries are
+  literal paths. A directory entry covers the files beneath it, and exclude
+  patterns still apply beneath the entry: `allow_paths=["build"]` reaches
+  `build/index.html` but not `build/.env`.
+
+```python
+# Let the agent write the committed template while the real .env stays refused.
+tools = [Workspace(".", allow_paths=[".env.example"])]
+```
 
 ## Examples in this folder
 

@@ -273,6 +273,78 @@ class PathSecurityError(AgnoError):
         self.error_id = "path_security_error"
 
 
+class ComponentRehydrationError(AgnoError):
+    """Raised when a persisted component cannot be fully reconstructed.
+
+    A serialized agent, team or workflow references objects that live outside
+    its config (tools, schemas, knowledge, dbs, member components). When such
+    a reference cannot be resolved from the provided registry or database, the
+    component would silently run with less than what was saved - no tools,
+    missing members, no persistence. Deserialization raises this error instead,
+    when the caller asks for strict reconstruction with ``strict=True``.
+    """
+
+    def __init__(self, message: str):
+        super().__init__(message, status_code=422)
+        self.type = "component_rehydration_error"
+        self.error_id = "component_rehydration_error"
+
+
+class ComponentPinError(ComponentRehydrationError):
+    """Raised when an explicitly pinned component version cannot be satisfied.
+
+    A parent component's links pin a child at an exact stored version. When
+    that version is missing or fails to rebuild, the refusal names the pin and
+    the remedy (re-save the parent), which no broader guard can improve on.
+    """
+
+
+class SchemaMismatchError(AgnoError):
+    """Raised when an existing database table does not match the schema this version of Agno expects.
+
+    Base class for schema validation failures. ``MigrationRequiredError`` is raised for
+    table types that ``MigrationManager`` can migrate; this class is raised for the rest,
+    where the table was likely created or modified outside Agno and needs repair rather
+    than a migration. Build instances with ``agno.db.utils.table_schema_mismatch_error``
+    so the message names the right remedy.
+
+    Surfaces over HTTP as a 500 whose body carries ``error_id``, so clients can tell it
+    apart from other server errors without parsing the message.
+    """
+
+    def __init__(self, table_name: str, message: Optional[str] = None):
+        if message is None:
+            message = f"Table {table_name} has an invalid schema: it does not match what this version of Agno expects."
+        super().__init__(message, status_code=500)
+        self.table_name = table_name
+        self.type = "schema_mismatch_error"
+        self.error_id = "schema_mismatch_error"
+
+
+class MigrationRequiredError(SchemaMismatchError):
+    """Raised when a table's schema is stale and a pending Agno migration can fix it.
+
+    The usual cause is a database created by an older version of Agno whose migrations
+    have not been applied yet. Run them from code with
+    ``asyncio.run(MigrationManager(db).up())`` (``agno.db.migrations.manager``) or over
+    HTTP with ``POST /databases/all/migrate`` on AgentOS.
+
+    Carries ``error_id="migration_required_error"`` so a client can offer the migration.
+    """
+
+    def __init__(self, table_name: str, message: Optional[str] = None):
+        if message is None:
+            message = (
+                f"Table {table_name} has an invalid schema: it does not match what this version of Agno "
+                "expects. If this database was created by an older version of Agno, apply the pending "
+                "migrations with `asyncio.run(MigrationManager(db).up())` (import it from "
+                "`agno.db.migrations.manager`) or via the AgentOS endpoint `POST /databases/all/migrate`."
+            )
+        super().__init__(table_name, message)
+        self.type = "migration_required_error"
+        self.error_id = "migration_required_error"
+
+
 class RunNotFoundError(RuntimeError):
     """Raised when a run_id cannot be found in the session.
 

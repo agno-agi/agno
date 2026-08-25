@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 
@@ -28,7 +28,12 @@ if TYPE_CHECKING:
         VectorSearchResult,
     )
     from agno.os.routers.memory.schemas import OptimizeMemoriesResponse, UserMemorySchema, UserStatsSchema
-    from agno.os.routers.metrics.schemas import DayAggregatedMetrics, MetricsResponse
+    from agno.os.routers.metrics.schemas import (
+        DayAggregatedMetrics,
+        MetricsRefreshResponse,
+        MetricsRefreshStatusResponse,
+        MetricsResponse,
+    )
     from agno.os.routers.traces.schemas import TraceDetail, TraceNode, TraceSessionStats, TraceSummary
     from agno.os.schema import (
         AgentSessionDetailSchema,
@@ -55,7 +60,6 @@ class RemoteDb:
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
-    culture_table_name: Optional[str] = None
 
     @classmethod
     def from_config(
@@ -247,8 +251,11 @@ class RemoteDb:
     ) -> "MetricsResponse":
         return await self.client.get_metrics(starting_date=starting_date, ending_date=ending_date, **kwargs)
 
-    async def refresh_metrics(self, **kwargs: Any) -> List["DayAggregatedMetrics"]:
+    async def refresh_metrics(self, **kwargs: Any) -> Union[List["DayAggregatedMetrics"], "MetricsRefreshResponse"]:
         return await self.client.refresh_metrics(**kwargs)
+
+    async def get_metrics_refresh_status(self, **kwargs: Any) -> "MetricsRefreshStatusResponse":
+        return await self.client.get_metrics_refresh_status(**kwargs)
 
     # OTHER
     async def migrate_database(self, target_version: Optional[str] = None) -> None:
@@ -595,7 +602,7 @@ class BaseRemote:
         self,
         run_id: str,
         stream: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> Union[RunOutput, TeamRunOutput, WorkflowRunOutput]:

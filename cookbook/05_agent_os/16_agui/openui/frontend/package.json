@@ -1,0 +1,35 @@
+{
+  "name": "agno-openui-frontend",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "generate:prompt": "openui generate src/library.ts --out src/generated/system-prompt.txt",
+    "predev": "npm run generate:prompt",
+    "dev": "vite",
+    "typecheck": "tsc -b",
+    "test": "vitest run",
+    "prebuild": "npm run generate:prompt",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@openuidev/lang-core": "0.2.13",
+    "@openuidev/react-headless": "0.9.8",
+    "@openuidev/react-lang": "0.2.11",
+    "@openuidev/react-ui": "0.13.6",
+    "react": "19.2.4",
+    "react-dom": "19.2.4"
+  },
+  "devDependencies": {
+    "@openuidev/cli": "0.2.8",
+    "@tailwindcss/vite": "4.3.3",
+    "@types/react": "19.2.17",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "5.2.0",
+    "tailwindcss": "4.3.3",
+    "typescript": "5.9.3",
+    "vite": "7.3.6",
+    "vitest": "4.1.10"
+  }
+}
