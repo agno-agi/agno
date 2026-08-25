@@ -389,6 +389,7 @@ class Workspace(Toolkit):
         require_read_before_write: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
+        max_grep_matches: int = 500,
         exclude_patterns: Optional[List[str]] = None,
         allow_paths: Optional[List[str]] = None,
         **kwargs,
@@ -401,6 +402,7 @@ class Workspace(Toolkit):
 
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
+        self.max_grep_matches = max_grep_matches
         self.require_read_before_write = require_read_before_write
         self.exclude_patterns: List[str] = _validate_exclude_patterns(exclude_patterns)
         _resolve_allow_paths(self.root, allow_paths)
@@ -871,12 +873,15 @@ class Workspace(Toolkit):
         :param ignore_case: Case-insensitive matching (default False).
         :param context_lines: Lines of context before and after each match (default 0).
         :param files_only: Return only file paths, not matching lines (default False).
-        :param limit: Maximum number of matches to return (default 100).
+        :param limit: Maximum number of matches to return (default 100, capped by max_grep_matches).
         :return: Matching lines as ``path:line:text``, or file paths if ``files_only``.
         """
         try:
             if not pattern or not pattern.strip():
                 return "Error: pattern cannot be empty"
+
+            # Clamp limit to constructor-defined max
+            limit = min(limit, self.max_grep_matches)
 
             # 1. Compile regex
             flags = re.IGNORECASE if ignore_case else 0

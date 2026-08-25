@@ -561,6 +561,19 @@ def test_grep_content_respects_limit():
         assert "(showing 5 matches, limit=5)" in result
 
 
+def test_grep_content_max_grep_matches_clamps_limit():
+    """grep_content clamps limit to max_grep_matches from constructor."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Constructor sets max_grep_matches=10, LLM requests limit=50
+        ws = Workspace(tmp_dir, max_grep_matches=10)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("\n".join(f"match{i}" for i in range(100)))
+
+        # Even though limit=50 is requested, max_grep_matches=10 wins
+        result = ws.grep_content(pattern="match", limit=50)
+        assert "(showing 10 matches, limit=10)" in result
+
+
 def test_grep_content_invalid_regex():
     """grep_content returns error for invalid regex."""
     with tempfile.TemporaryDirectory() as tmp_dir:
