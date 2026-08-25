@@ -2350,17 +2350,21 @@ class Workflow:
     def _update_metadata(self, session: WorkflowSession):
         """Merge the workflow's metadata into the session's metadata.
 
-        Workflow values win on conflict, matching _resolve_run_params
-        (session < self). The workflow layer is deep-copied so the session record
-        never aliases the shared Workflow instance's nested dicts. Only the
-        session is updated; the shared Workflow instance is never mutated.
+        Workflow metadata provides defaults; the session's own stored values win
+        on conflict, matching _resolve_run_params (self < session), so a value
+        set on the session is not overwritten by a workflow default and persists
+        across runs. Only the session is updated; the shared Workflow instance
+        is never mutated.
         """
-        from copy import deepcopy
-
-        from agno.utils.merge_dict import merge_dictionaries
-
         if session.metadata is not None and self.metadata is not None:
-            merge_dictionaries(session.metadata, deepcopy(self.metadata))
+            from copy import deepcopy
+
+            from agno.utils.merge_dict import merge_dictionaries
+
+            merged = deepcopy(self.metadata)
+            merge_dictionaries(merged, session.metadata)
+            session.metadata.clear()
+            session.metadata.update(merged)
 
     def _load_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
         """Load and return the stored session_state from the database, optionally merging it with the given one"""
@@ -3807,7 +3811,7 @@ class Workflow:
         else:
             workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
         # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
-        # so the session layer keeps the session's own values (call-site < session < self).
+        # so the session layer keeps the session's own values (self < session < call-site).
         session_metadata = deepcopy(workflow_session.metadata)
         self._update_metadata(session=workflow_session)
 
@@ -10495,7 +10499,7 @@ class Workflow:
 
         workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
         # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
-        # so the session layer keeps the session's own values (call-site < session < self).
+        # so the session layer keeps the session's own values (self < session < call-site).
         session_metadata = deepcopy(workflow_session.metadata)
         self._update_metadata(session=workflow_session)
 
@@ -10793,7 +10797,7 @@ class Workflow:
 
             workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
             # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
-            # so the session layer keeps the session's own values (call-site < session < self).
+            # so the session layer keeps the session's own values (self < session < call-site).
             session_metadata = deepcopy(workflow_session.metadata)
             self._update_metadata(session=workflow_session)
 

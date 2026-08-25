@@ -946,3 +946,28 @@ class TestRunSessionMetadataPrecedence:
         await workflow.arun(input="hi", session_id="s1")
         assert captured["metadata"] == {"leak": "from_session", "env": "test"}
         assert workflow.metadata == {"env": "test"}
+
+    def test_session_metadata_persists_across_runs(self):
+        """Session metadata must persist across multiple runs.
+
+        Regression test: _update_metadata must preserve session values rather
+        than overwriting them with workflow defaults, otherwise session wins
+        only on the first run.
+        """
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"shared": "session_value", "session_only": "s"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured, metadata={"shared": "wf_value", "wf_only": "w"})
+
+        # Run 1: session wins
+        workflow.run(input="hi", session_id="s1")
+        assert captured["metadata"]["shared"] == "session_value"
+
+        # Run 2: session must STILL win (not overwritten by _update_metadata)
+        captured.clear()
+        workflow.run(input="hello again", session_id="s1")
+        assert captured["metadata"]["shared"] == "session_value", (
+            "session metadata was overwritten by _update_metadata; should persist"
+        )
+        assert captured["metadata"]["session_only"] == "s"
+        assert captured["metadata"]["wf_only"] == "w"
