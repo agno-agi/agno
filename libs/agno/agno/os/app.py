@@ -1260,10 +1260,17 @@ class AgentOS:
         if role_store is not None:
             from agno.os.authz.role_router import get_roles_router
 
-            # The /authz/users directory routes mount alongside the roles admin API (they
-            # share its admin gate). The directory itself is configured as a peer via
-            # AgentOS(user_directory=...); only its store is threaded here.
-            routers.append(get_roles_router(role_store, user_store=directory_store))
+            routers.append(get_roles_router(role_store))
+            if directory_store is not None:
+                from agno.os.authz.role_router import get_users_router
+
+                # The user DIRECTORY admin API (/users) is a peer of the /authz roles API,
+                # configured via AgentOS(user_directory=...). Auto-mounted here alongside
+                # the roles router ONLY in the role_store shortcut, mirroring it: with a
+                # composite/custom provider (or a directory on plain scope RBAC) the operator
+                # mounts both routers themselves (get_roles_router + get_users_router), so we
+                # do not auto-mount a second, role-store-less /users that would shadow theirs.
+                routers.append(get_users_router(directory_store, role_store=role_store))
 
         for router in routers:
             self._add_router(fastapi_app, router)

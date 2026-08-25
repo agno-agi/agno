@@ -1,7 +1,7 @@
 """The credential-less user directory (no-IdP tier).
 
 Covers the store itself (in-memory + SQLite), the admin HTTP surface
-(``/authz/users`` with roles merged in), and the enforcement value-add: a
+(``/users`` with roles merged in), and the enforcement value-add: a
 disabled user is denied at the gate even with a valid token, and just-in-time
 provisioning creates a directory row from token claims.
 """
@@ -116,7 +116,6 @@ pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the nativ
 from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
-from agno.os.authz.role_router import get_roles_router  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
 
@@ -143,7 +142,7 @@ def _os(role_store, user_store, *, auto_provision=False, **cfg):
             algorithm="HS256",
             verify_audience=True,
             audience=OS_ID,
-            authorization_provider=role_store.provider,
+            role_store=role_store,  # auto-mounts /authz (roles) and /users (directory)
             **cfg,
         ),
         user_directory=UserDirectoryConfig(store=user_store, auto_provision=auto_provision),
@@ -158,46 +157,45 @@ def test_users_api_crud_and_role_merge():
     users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
-    app.include_router(get_roles_router(roles, user_store=users))
     client = TestClient(app)
 
     # create a user
-    r = client.post("/authz/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
+    r = client.post("/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
     assert r.status_code == 200, r.text
     assert r.json()["id"] == "bob" and r.json()["role"] is None and r.json()["status"] == "active"
 
     # give bob a role; the user view merges it in (singular: one role per user)
     roles.assign("bob", "viewer")
-    got = client.get("/authz/users/bob", headers=_auth("alice")).json()
+    got = client.get("/users/bob", headers=_auth("alice")).json()
     assert got["email"] == "bob@co" and got["role"] == "viewer"
 
     # list is paginated ({data, meta}) and includes bob with his role
-    listed = client.get("/authz/users", headers=_auth("alice")).json()["data"]
+    listed = client.get("/users", headers=_auth("alice")).json()["data"]
     assert any(u["id"] == "bob" and u["role"] == "viewer" for u in listed)
 
     # fuzzy search filters by id/email/name, case-insensitive, before pagination
-    found = client.get("/authz/users?search=BOB", headers=_auth("alice")).json()
+    found = client.get("/users?search=BOB", headers=_auth("alice")).json()
     assert [u["id"] for u in found["data"]] == ["bob"] and found["meta"]["total_count"] == 1
-    assert [u["id"] for u in client.get("/authz/users?search=bob@co", headers=_auth("alice")).json()["data"]] == ["bob"]
-    nothing = client.get("/authz/users?search=zzz-no-match", headers=_auth("alice")).json()
+    assert [u["id"] for u in client.get("/users?search=bob@co", headers=_auth("alice")).json()["data"]] == ["bob"]
+    nothing = client.get("/users?search=zzz-no-match", headers=_auth("alice")).json()
     assert nothing["data"] == [] and nothing["meta"]["total_count"] == 0
 
     # sorting: any USER_SORT_FIELDS member, asc/desc; unknown field is a 422
-    client.post("/authz/users", headers=_auth("alice"), json={"id": "ann", "email": "ann@co"})
-    by_id = client.get("/authz/users?sort_by=id&sort_order=asc", headers=_auth("alice")).json()["data"]
+    client.post("/users", headers=_auth("alice"), json={"id": "ann", "email": "ann@co"})
+    by_id = client.get("/users?sort_by=id&sort_order=asc", headers=_auth("alice")).json()["data"]
     assert [u["id"] for u in by_id] == sorted(u["id"] for u in by_id)
-    assert client.get("/authz/users?sort_by=evil", headers=_auth("alice")).status_code == 422
+    assert client.get("/users?sort_by=evil", headers=_auth("alice")).status_code == 422
 
     # update + delete; PATCH {"disabled": ...} is the revocation kill-switch
-    client.patch("/authz/users/bob", headers=_auth("alice"), json={"name": "Bob"})
-    assert client.get("/authz/users/bob", headers=_auth("alice")).json()["name"] == "Bob"
-    disabled = client.patch("/authz/users/bob", headers=_auth("alice"), json={"disabled": True}).json()
+    client.patch("/users/bob", headers=_auth("alice"), json={"name": "Bob"})
+    assert client.get("/users/bob", headers=_auth("alice")).json()["name"] == "Bob"
+    disabled = client.patch("/users/bob", headers=_auth("alice"), json={"disabled": True}).json()
     assert disabled["status"] == "disabled" and disabled["disabled"] is True
     assert users.is_disabled("bob") is True
-    enabled = client.patch("/authz/users/bob", headers=_auth("alice"), json={"disabled": False}).json()
+    enabled = client.patch("/users/bob", headers=_auth("alice"), json={"disabled": False}).json()
     assert enabled["status"] == "active" and users.is_disabled("bob") is False
-    assert client.delete("/authz/users/bob", headers=_auth("alice")).json()["deleted"] is True
-    assert client.get("/authz/users/bob", headers=_auth("alice")).status_code == 404
+    assert client.delete("/users/bob", headers=_auth("alice")).json()["deleted"] is True
+    assert client.get("/users/bob", headers=_auth("alice")).status_code == 404
 
 
 def test_users_api_is_admin_only():
@@ -209,11 +207,10 @@ def test_users_api_is_admin_only():
     users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
-    app.include_router(get_roles_router(roles, user_store=users))
     client = TestClient(app)
 
-    assert client.get("/authz/users", headers=_auth("bob")).status_code == 403  # non-admin
-    assert client.get("/authz/users").status_code == 401  # anonymous
+    assert client.get("/users", headers=_auth("bob")).status_code == 403  # non-admin
+    assert client.get("/users").status_code == 401  # anonymous
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
@@ -430,18 +427,17 @@ def test_deleting_a_user_revokes_their_roles_no_access_reversal():
     users = ManagedUserStore(db_url=_db_url())
 
     app = _os(roles, users).get_app()
-    app.include_router(get_roles_router(roles, user_store=users))
     client = TestClient(app)
 
-    client.post("/authz/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
+    client.post("/users", headers=_auth("alice"), json={"id": "bob", "email": "bob@co"})
     roles.assign("bob", "viewer")
     # bob can read while enabled and assigned
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
     # revoke via disable
-    client.patch("/authz/users/bob", headers=_auth("alice"), json={"disabled": True})
+    client.patch("/users/bob", headers=_auth("alice"), json={"disabled": True})
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 403
     # delete the disabled user -> role revoked in the same op, tombstone gone
-    assert client.delete("/authz/users/bob", headers=_auth("alice")).status_code == 200
+    assert client.delete("/users/bob", headers=_auth("alice")).status_code == 200
     assert roles.roles_of("bob") == [], "delete must revoke the user's role assignments"
     # bob's still-valid token must NOT regain access (would be 200 before the fix)
     assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 403
@@ -493,7 +489,6 @@ def test_assign_unknown_role_is_rejected():
     users = ManagedUserStore(db_url=_db_url())
 
     app = _os(roles, users).get_app()
-    app.include_router(get_roles_router(roles, user_store=users))
     client = TestClient(app)
 
     # unknown role -> 404, nothing written

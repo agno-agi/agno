@@ -11,7 +11,7 @@
   cookbook server's CORS allows it. Everything it does is plain fetch() against
   the endpoints, so it doubles as living documentation of the API:
 
-    GET/POST/PATCH/DELETE /authz/users        directory (search, sort, paginate)
+    GET/POST/PATCH/DELETE /users        directory (search, sort, paginate)
     POST   /authz/users/{id}/roles            set THE role (one per user, replaces)
     GET    /authz/roles + /roles/{slug}/scopes role + permission management
     GET    /authz/scopes                       the permission catalog
@@ -319,8 +319,8 @@ async function loadHeist() { renderHeist(); }
 async function newHeist() {
   // Stage the world through the same API everyone else uses: a thief with no
   // role, and an "intern" role whose wildcard read carries an explicit vault DENY.
-  await api("POST", "/authz/users", { id: heist.who, name: "Arsène Lupin" }).catch(() => {});
-  await api("PATCH", `/authz/users/${heist.who}`, { disabled: false });
+  await api("POST", "/users", { id: heist.who, name: "Arsène Lupin" }).catch(() => {});
+  await api("PATCH", `/users/${heist.who}`, { disabled: false });
   await api("POST", "/authz/roles", { slug: "intern", name: "Intern" }).catch(() => {});
   await api("PUT", "/authz/roles/intern/scopes", { scopes: [
     "agents:*:read",
@@ -363,7 +363,7 @@ async function advance(label, denied, body) {
     hlog("🧱", "denied — and piling on <span class='mono'>allow</span> won't help. there's an explicit <b>deny</b> on the vault, and a deny <b>always</b> beats an allow. tear it off the <b class='mono'>intern</b> role.");
   } else if (p === "vault" && !denied && !heist.betrayed) {
     heist.betrayed = true;
-    await api("PATCH", `/authz/users/${heist.who}`, { disabled: true });
+    await api("PATCH", `/users/${heist.who}`, { disabled: true });
     heist.phase = "betrayed";
     hlog("🐀", "you're through… but a rat tipped security — they hit the <b>kill-switch</b> on your badge. your token is still perfectly valid, and perfectly useless. try the door.");
   } else if (p === "betrayed" && disabledHit) {
@@ -388,7 +388,7 @@ async function dropVaultDeny() {
   hlog("✂️", "the vault deny is gone. allow finally wins."); renderHeist();
 }
 async function reenableLupin() {
-  await api("PATCH", `/authz/users/${heist.who}`, { disabled: false });
+  await api("PATCH", `/users/${heist.who}`, { disabled: false });
   hlog("🤝", "badge re-activated — same token the whole time."); renderHeist();
 }
 
@@ -484,7 +484,7 @@ function confetti() {
 
 // ---- playground: act as an end user ---------------------------------------
 async function loadPlayground() {
-  const { data } = await api("GET", "/authz/users?limit=100");
+  const { data } = await api("GET", "/users?limit=100");
   $("p-personas").innerHTML = "<span class='dim'>become:</span>" + data.map((u) => `
     <button data-sub="${esc(u.id)}" ${state.persona?.id === u.id ? "class='primary'" : ""}>
       ${u.disabled ? "🚫" : "🧑"} ${esc(u.id)} <span class="dim">· ${esc(u.role ?? "no role")}</span>
@@ -543,7 +543,7 @@ async function loadUsers() {
   const st = state.users;
   const params = listParams(st, $("u-search").value.trim());
   params.set("include_disabled", $("u-disabled").checked);
-  const { data, meta } = await api("GET", "/authz/users?" + params);
+  const { data, meta } = await api("GET", "/users?" + params);
   const table = $("u-table");
   table.innerHTML = headerRow(
     [["id", "id"], ["email", "email"], ["name", "name"], [null, "role"],
@@ -566,10 +566,10 @@ async function loadUsers() {
       </td>`;
     row.querySelector("select").onchange = (e) => setRole(u, e.target);
     row.querySelector("[data-act=toggle]").onclick = () =>
-      api("PATCH", `/authz/users/${u.id}`, { disabled: !u.disabled }).then(loadUsers);
+      api("PATCH", `/users/${u.id}`, { disabled: !u.disabled }).then(loadUsers);
     row.querySelector("[data-act=delete]").onclick = () =>
       confirm(`really delete ${u.id}? (their role assignment stays in the store)`) &&
-      api("DELETE", `/authz/users/${u.id}`).then(loadUsers);
+      api("DELETE", `/users/${u.id}`).then(loadUsers);
   }
   bindSort(table, st, loadUsers);
   pager($("u-pager"), meta, st, loadUsers);
@@ -582,7 +582,7 @@ async function setRole(user, select) {
 async function createUser() {
   const id = $("u-new-id").value.trim();
   if (!id) return;
-  await api("POST", "/authz/users", { id, email: $("u-new-email").value.trim() || null });
+  await api("POST", "/users", { id, email: $("u-new-email").value.trim() || null });
   $("u-new-id").value = $("u-new-email").value = "";
   loadUsers();
 }

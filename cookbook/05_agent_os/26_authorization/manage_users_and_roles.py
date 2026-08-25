@@ -9,16 +9,17 @@ can create roles, add users, assign roles, and disable people - live. It works
 both with a control plane / login service (operators authorized by their token
 scopes) and on its own (end users managed in the OS-local store) - both at once.
 
-What it serves (all admin-only):
+What it serves (all admin-only). Authorization (/authz) and the user directory (/users)
+are peers -- get_roles_router and get_users_router:
     GET    /authz/roles                 list roles
     POST   /authz/roles                 create a role (PUT/PATCH .../{slug}/scopes for permissions)
     GET    /authz/scopes                the permission catalog (for a UI grid)
-    GET    /authz/users                 list users (one role each; search/sort/paginate)
-    POST   /authz/users                 add a user
-    POST   /authz/users/{id}/roles      set a user's role (replaces)
-    PATCH  /authz/users/{id}            update; {"disabled": true} revokes on next request
+    POST   /authz/users/{id}/roles      set a user's role (replaces)  -- role assignment is authz
     GET    /authz/audit                 the change trail (search/sort/paginate)
     GET    /authz/decisions             the access trail (search/sort/paginate)
+    GET    /users                       list users (one role each; search/sort/paginate)
+    POST   /users                       add a user
+    PATCH  /users/{id}                  update; {"disabled": true} revokes on next request
 
 It seeds a couple of roles and users so the frontend has something to show, and
 makes ONE bootstrap admin (so someone can call the admin API).
@@ -65,7 +66,7 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.authz.audit import DbAuditSink
-from agno.os.authz.role_router import get_roles_router
+from agno.os.authz.role_router import get_roles_router, get_users_router
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
 from agno.os.authz.user_store import ManagedUserStore
@@ -217,7 +218,10 @@ agent_os = AgentOS(
     user_directory=UserDirectoryConfig(store=users),
 )
 app = agent_os.get_app()
-app.include_router(get_roles_router(roles, user_store=users))
+app.include_router(get_roles_router(roles))
+app.include_router(
+    get_users_router(users, role_store=roles)
+)  # the /users directory, a peer
 
 # Dev-mode only: let the bundled console.html "become" an end user. An admin
 # trades their token for one minted as any subject (sub only — no scopes, so
@@ -277,7 +281,7 @@ if __name__ == "__main__":
             "\n  test client:  open console.html (this folder) in a browser and paste the token"
         )
         print(
-            "  or curl:      curl -H 'Authorization: Bearer <token>' http://localhost:7777/authz/users"
+            "  or curl:      curl -H 'Authorization: Bearer <token>' http://localhost:7777/users"
         )
     else:
         print(

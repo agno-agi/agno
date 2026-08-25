@@ -4,7 +4,9 @@ Admin-only REST API to create roles, set their permissions (in agno scope terms,
 with allow/deny), and grant or revoke them at runtime.
 
 With ``AuthorizationConfig(role_store=...)`` you do not mount this yourself: AgentOS
-registers it at ``/authz`` for you (add a ``user_store`` to also get ``/authz/users``).
+registers it at ``/authz`` for you. The credential-less user DIRECTORY (who the users are
++ the disabled kill-switch) is a PEER concern served by :func:`get_users_router` at
+``/users`` -- configured via ``AgentOS(user_directory=...)``, not this router.
 
     from agno.os.authz.role_store import ManagedRoleStore
 
@@ -22,7 +24,8 @@ of naming a store (``authorization_provider=[ScopeAuthorizationProvider(), roles
 and so has no ``role_store`` for AgentOS to find. Mount it yourself there -- and if you
 also run ``mcp_server=True``, mount it before the MCP app is added or it will 404:
 
-    app.include_router(get_roles_router(roles, user_store=users))
+    app.include_router(get_roles_router(roles))
+    app.include_router(get_users_router(users, role_store=roles))  # the /users directory
 
 Response shapes mirror the agno cloud RBAC API so a frontend can reuse its
 integration: roles are objects (slug/name/description/is_default/created_at/
@@ -37,7 +40,7 @@ weight anywhere else, so they are not trusted here either (see ``require_admin``
 Unauthenticated requests are rejected (401) by the JWT middleware before these
 handlers; a valid-but-non-admin caller gets 403.
 
-Endpoints (default prefix ``/authz``):
+Roles admin API -- get_roles_router (default prefix ``/authz``):
     GET    /authz/roles                          list roles (paginated)
     POST   /authz/roles                          create a role (metadata only)
     GET    /authz/roles/{slug}                   a role with its scopes
@@ -48,11 +51,18 @@ Endpoints (default prefix ``/authz``):
     GET    /authz/users/{subject}/roles          a subject's roles
     POST   /authz/users/{subject}/roles          assign a role        {"role": "..."}
     DELETE /authz/users/{subject}/roles/{role}   revoke a role
+
+User directory admin API -- get_users_router (default prefix ``/users``):
+    GET    /users                                list users (paginated, roles merged in)
+    POST   /users                                create a directory user
+    GET    /users/{user_id}                      a user
+    PATCH  /users/{user_id}                      update profile / disable (the kill-switch)
+    DELETE /users/{user_id}                      remove a user (cascades role revocation)
 """
 
 import time
 from enum import Enum
-from typing import TYPE_CHECKING, List, Optional, Union
+from typing import TYPE_CHECKING, Any, List, Optional, Union
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field
@@ -256,36 +266,24 @@ def _token_scopes_enforced(request: Request) -> bool:
     return token_scopes_are_authoritative(request)
 
 
-def get_roles_router(
-    store: "ManagedRoleStore",
-    prefix: str = "/authz",
-    tags: Optional[List[Union[str, Enum]]] = None,
-    user_store: "Optional[ManagedUserStore]" = None,
-) -> APIRouter:
-    """Build the admin-only roles-management router bound to ``store``.
+def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None) -> Any:
+    """Build the admin gate shared by the roles admin API and the user-directory API.
 
-    Pass ``user_store`` to also expose the credential-less user directory
-    (``/authz/users``) for the no-IdP case: list/create/update/remove users and
-    disable (revoke) them. User views merge in each user's roles from ``store``.
+    Admin can come from two planes (both run in parallel on one OS):
+      - the token's own scopes carrying the admin scope (the operator plane, e.g. an
+        agno-cloud-minted token for someone who administers this OS), OR
+      - when a role store is present, an admin role in it (``can_manage`` — the managed
+        plane). A directory running on plain scope RBAC has no role store, so admin is
+        the token scope alone.
+
+    The token-scope path is honoured ONLY when a scope plane actually enforces on this OS
+    (:func:`_token_scopes_enforced`). Under a role-store-only or ReBAC-only deployment the
+    enforcement plane ignores the token's scopes for every resource, so trusting
+    ``agent_os:admin`` here would let any validly-signed token carrying that scope
+    administer despite being denied every resource -- a privilege escalation.
     """
-    if tags is None:
-        tags = ["Authorization"]
 
     def require_admin(request: Request) -> str:
-        """Gate: caller must be authenticated and an admin.
-
-        Admin can come from two planes (so both run in parallel on one OS):
-          - the OS-local store (``store.can_manage`` — the end-user/managed plane), or
-          - the token's own scopes carrying the admin scope (the operator plane,
-            e.g. an agno-cloud-minted token for someone who administers this OS).
-
-        The token-scope path is honoured ONLY when a scope plane actually enforces on
-        this OS (:func:`_token_scopes_enforced`). Under a role-store-only or ReBAC-only
-        deployment the enforcement plane ignores the token's scopes for every resource,
-        so trusting ``agent_os:admin`` here would let any validly-signed token carrying
-        that scope administer roles despite being denied every resource — a privilege
-        escalation. The store path is always available for managed admins.
-        """
         if not getattr(request.state, "authenticated", False):
             raise HTTPException(status_code=401, detail="Not authenticated")
         principal_id = getattr(request.state, "user_id", None)
@@ -293,10 +291,30 @@ def get_roles_router(
         token_scopes = getattr(request.state, "scopes", []) or []
         admin_scope = getattr(request.state, "admin_scope", None) or AgentOSScope.ADMIN.value
         token_admin = admin_scope in token_scopes and _token_scopes_enforced(request)
-        if token_admin or store.can_manage(principal_id, claims):
+        managed_admin = role_store.can_manage(principal_id, claims) if role_store is not None else False
+        if token_admin or managed_admin:
             return principal_id or ""
-        raise HTTPException(status_code=403, detail="Admin privileges required to manage roles")
+        raise HTTPException(status_code=403, detail="Admin privileges required")
 
+    return require_admin
+
+
+def get_roles_router(
+    store: "ManagedRoleStore",
+    prefix: str = "/authz",
+    tags: Optional[List[Union[str, Enum]]] = None,
+) -> APIRouter:
+    """Build the admin-only roles-management router bound to ``store``.
+
+    Serves role definitions, the scope catalog, the audit trails, and role ASSIGNMENT
+    (which role a subject holds). The credential-less user DIRECTORY (who the users are +
+    the disabled kill-switch) is a peer concern served by :func:`get_users_router` at
+    ``/users`` -- AgentOS mounts it from ``AgentOS(user_directory=...)``.
+    """
+    if tags is None:
+        tags = ["Authorization"]
+
+    require_admin = _make_require_admin(store)
     router = APIRouter(prefix=prefix, tags=tags, dependencies=[Depends(require_admin)])
 
     def _role_or_404(slug: str) -> dict:
@@ -475,81 +493,102 @@ def get_roles_router(
         store.unassign(subject, role, actor=actor)
         return {"subject": subject, "role": _role_of(subject)}
 
-    # ---- user directory (no-IdP) ---------------------------------------
-    # Only mounted when a user_store is supplied. Identity is still asserted by
-    # the app's JWT; this is a directory + revocation switch, never credentials.
-    if user_store is not None:
+    return router
 
-        def _user(user: dict) -> AuthzUserSchema:
-            return AuthzUserSchema.from_user(user, _role_of(user["id"]))
 
-        @router.get("/users", response_model=PaginatedResponse[AuthzUserSchema])
-        def list_users(
-            include_disabled: bool = True,
-            limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
-            page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
-            search: Optional[str] = Query(
-                default=None, description="Filter by id/email/name (case-insensitive substring)"
-            ),
-            sort_by: str = Query(default=DEFAULT_USER_SORT_FIELD, description="Field to sort by"),
-            sort_order: SortOrder = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
-        ):
-            if sort_by not in USER_SORT_FIELDS:
-                raise HTTPException(status_code=422, detail=f"sort_by must be one of {list(USER_SORT_FIELDS)}")
-            # Paginate in the store (offset/limit + count) so we don't materialise
-            # the whole directory and resolve roles for every user on each call.
-            # `search` filters before pagination, so meta counts the matches.
-            start_ms = time.time() * 1000
-            rows = user_store.list(
-                limit=limit,
-                offset=(page - 1) * limit,
-                include_disabled=include_disabled,
-                search=search,
-                sort_by=sort_by,
-                order=sort_order.value,
-            )
-            total = user_store.count(include_disabled=include_disabled, search=search)
-            return _paginated(
-                [_user(u) for u in rows],
-                page,
-                limit,
-                total,
-                search_time_ms=round(time.time() * 1000 - start_ms, 2),
-            )
+def get_users_router(
+    user_store: "ManagedUserStore",
+    role_store: "Optional[ManagedRoleStore]" = None,
+    prefix: str = "/users",
+    tags: Optional[List[Union[str, Enum]]] = None,
+) -> APIRouter:
+    """Build the admin-only user-DIRECTORY router (who the users are + the disabled
+    kill-switch), a PEER of the roles admin API.
 
-        @router.post("/users", response_model=AuthzUserSchema)
-        def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
-            return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
+    AgentOS mounts this from ``AgentOS(user_directory=...)``. Identity is still asserted by
+    the app's JWT; this is a directory + revocation switch, never credentials. Pass
+    ``role_store`` to merge each user's role into the view and to cascade role revocation on
+    delete (omit it for a directory running on plain scope RBAC).
+    """
+    if tags is None:
+        tags = ["User directory"]
 
-        @router.get("/users/{user_id}", response_model=AuthzUserSchema)
-        def get_user(user_id: str):
-            user = user_store.get(user_id)
-            if user is None:
-                raise HTTPException(status_code=404, detail=f"User {user_id!r} not found")
-            return _user(user)
+    require_admin = _make_require_admin(role_store)
+    router = APIRouter(prefix=prefix, tags=tags, dependencies=[Depends(require_admin)])
 
-        @router.patch("/users/{user_id}", response_model=AuthzUserSchema)
-        def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
-            """Update a user. ``disabled`` is the revocation kill-switch: a disabled
-            user is denied at the enforcement point on their next request, even
-            with a still-valid token."""
-            user = user_store.upsert(user_id, email=body.email, name=body.name, actor=actor)
-            if body.disabled is not None and body.disabled != user["disabled"]:
-                user = user_store.set_disabled(user_id, body.disabled, actor=actor)
-            return _user(user)
+    def _role_of(subject: str) -> Optional[str]:
+        if role_store is None:
+            return None
+        roles = role_store.roles_of(subject)
+        return roles[0] if roles else None
 
-        @router.delete("/users/{user_id}")
-        def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
-            # Delete is a COMPLETE removal: revoke the user's role assignments in the same
-            # operation. Otherwise deleting a (disabled) user would REVERSE their
-            # revocation -- the directory row is the kill-switch tombstone (absence reads
-            # as "not disabled", by design, so auto-provision works), while their role
-            # assignment survives in the role store, so their still-valid token regains its
-            # old access. Revoking the roles first makes a deleted user access-less
-            # regardless of the tombstone.
-            for role in store.roles_of(user_id):
-                store.unassign(user_id, role, actor=actor)
-            deleted = user_store.remove(user_id, actor=actor)
-            return {"id": user_id, "deleted": deleted}
+    def _user(user: dict) -> AuthzUserSchema:
+        return AuthzUserSchema.from_user(user, _role_of(user["id"]))
+
+    @router.get("", response_model=PaginatedResponse[AuthzUserSchema])
+    def list_users(
+        include_disabled: bool = True,
+        limit: int = Query(default=20, ge=1, le=100, description="Items per page"),
+        page: int = Query(default=1, ge=1, description="Page number (1-indexed)"),
+        search: Optional[str] = Query(default=None, description="Filter by id/email/name (case-insensitive substring)"),
+        sort_by: str = Query(default=DEFAULT_USER_SORT_FIELD, description="Field to sort by"),
+        sort_order: SortOrder = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
+    ):
+        if sort_by not in USER_SORT_FIELDS:
+            raise HTTPException(status_code=422, detail=f"sort_by must be one of {list(USER_SORT_FIELDS)}")
+        # Paginate in the store (offset/limit + count) so we don't materialise the whole
+        # directory and resolve roles for every user on each call. `search` filters before
+        # pagination, so meta counts the matches.
+        start_ms = time.time() * 1000
+        rows = user_store.list(
+            limit=limit,
+            offset=(page - 1) * limit,
+            include_disabled=include_disabled,
+            search=search,
+            sort_by=sort_by,
+            order=sort_order.value,
+        )
+        total = user_store.count(include_disabled=include_disabled, search=search)
+        return _paginated(
+            [_user(u) for u in rows],
+            page,
+            limit,
+            total,
+            search_time_ms=round(time.time() * 1000 - start_ms, 2),
+        )
+
+    @router.post("", response_model=AuthzUserSchema)
+    def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
+        return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
+
+    @router.get("/{user_id}", response_model=AuthzUserSchema)
+    def get_user(user_id: str):
+        user = user_store.get(user_id)
+        if user is None:
+            raise HTTPException(status_code=404, detail=f"User {user_id!r} not found")
+        return _user(user)
+
+    @router.patch("/{user_id}", response_model=AuthzUserSchema)
+    def update_user(user_id: str, body: UpdateUserRequest, actor: str = Depends(require_admin)):
+        """Update a user. ``disabled`` is the revocation kill-switch: a disabled user is
+        denied at the enforcement point on their next request, even with a still-valid token."""
+        user = user_store.upsert(user_id, email=body.email, name=body.name, actor=actor)
+        if body.disabled is not None and body.disabled != user["disabled"]:
+            user = user_store.set_disabled(user_id, body.disabled, actor=actor)
+        return _user(user)
+
+    @router.delete("/{user_id}")
+    def delete_user(user_id: str, actor: str = Depends(require_admin)) -> dict:
+        # Delete is a COMPLETE removal: revoke the user's role assignments in the same
+        # operation. Otherwise deleting a (disabled) user would REVERSE their revocation --
+        # the directory row is the kill-switch tombstone (absence reads as "not disabled", by
+        # design, so auto-provision works), while their role assignment survives in the role
+        # store, so their still-valid token regains its old access. Revoking the roles first
+        # makes a deleted user access-less regardless of the tombstone.
+        if role_store is not None:
+            for role in role_store.roles_of(user_id):
+                role_store.unassign(user_id, role, actor=actor)
+        deleted = user_store.remove(user_id, actor=actor)
+        return {"id": user_id, "deleted": deleted}
 
     return router
