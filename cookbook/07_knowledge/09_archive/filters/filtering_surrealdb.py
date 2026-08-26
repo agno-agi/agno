@@ -95,7 +95,6 @@ knowledge.insert_many(
 agent = Agent(
     knowledge=knowledge,
     search_knowledge=True,
-    debug_mode=True,
 )
 
 agent.print_response(

@@ -1,6 +1,6 @@
 """
 1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno sqlalchemy aiosqlite` to install the dependencies
-2. Run: `python cookbook/db/async_sqlite/async_sqlite_for_team.py` to run the team
+2. Run: `python cookbook/06_storage/sqlite/async_sqlite/async_sqlite_for_team.py` to run the team
 """
 
 import asyncio

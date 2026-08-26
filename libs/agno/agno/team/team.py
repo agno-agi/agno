@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -28,15 +29,21 @@ from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
+
+if TYPE_CHECKING:
+    from agno.learn.machine import LearningMachine
+
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
-from agno.metrics import SessionMetrics
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics
 from agno.models.response import ModelResponse
+
+if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
@@ -49,7 +56,6 @@ from agno.session import SessionSummaryManager, TeamSession
 from agno.session.summary import SessionSummary
 from agno.skills import Skills
 from agno.team import (
-    _cli,
     _default_tools,
     _init,
     _managers,
@@ -66,6 +72,7 @@ from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.utils.log import (
     log_error,
+    log_warning,
 )
 
 
@@ -244,6 +251,8 @@ class Team:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set (and store_media is True), media is uploaded here and only references are stored
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output
@@ -293,18 +302,19 @@ class Team:
     output_model: Optional[Model] = None
     # Provide a prompt for the output model
     output_model_prompt: Optional[str] = None
-    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
+    # Instead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # If True, parse the response
     parse_response: bool = True
 
     # --- History ---
-    # Enable the agent to manage memories of the user
+    # Enable the agent to manage memories of the user.
+    # Do not combine with a LearningMachine that has a user_memory store: both
+    # register a tool named update_user_memory, tool parsing keeps the first
+    # name it sees, and the learning store's tool is dropped without a word.
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
-    # Soon to be deprecated. Use update_memory_on_run
-    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
     # If True, the agent creates/updates session summaries at the end of runs
@@ -329,6 +339,14 @@ class Team:
     # Compression manager for compressing tool call results
     compression_manager: Optional["CompressionManager"] = None
 
+    # --- Result Offloading ---
+    # Store tool results and member answers longer than a threshold as files
+    # and leave a short envelope with a result id in the message. True uses
+    # the defaults (16000 characters, one read_result page); a ResultStore
+    # sets the threshold, preview, lifetime and payload location. Unset, a
+    # sub-team inherits the parent's store; False keeps offloading off there too.
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
+
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
@@ -344,11 +362,9 @@ class Team:
     metadata: Optional[Dict[str, Any]] = None
 
     # --- Team Reasoning ---
-    reasoning: bool = False
+    # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
     reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
 
     # --- Team Followups ---
     # If True, generate followup prompts after the main response
@@ -411,6 +427,8 @@ class Team:
     videos: Optional[List[Video]] = None
     # Cached session
     _cached_session: Optional[TeamSession] = None
+    # The db the cached session was loaded from; the cache is only valid for that db
+    _cached_session_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
     # Tool instructions
     _tool_instructions: Optional[List[str]] = None
     # Member response model
@@ -423,6 +441,12 @@ class Team:
     _mcp_tools_initialized_on_run: Optional[List[Any]] = None
     # Connectable tools initialized on the last run
     _connectable_tools_initialized_on_run: Optional[List[Any]] = None
+    # Store for offloaded results, shared with the members
+    _result_store: Optional["ResultStore"] = None
+    # The store a parent team handed down, so a later team can replace or clear it
+    _inherited_result_store: Optional["ResultStore"] = None
+    # The setting the store was built from, so a changed setting rebuilds it
+    _result_store_setting: Union[bool, "ResultStore", None] = None
     # Internal resolved LearningMachine instance
     _learning: Optional[LearningMachine] = None
     # Whether learning init has been attempted (prevents repeated attempts when db is None)
@@ -437,6 +461,7 @@ class Team:
     def __init__(
         self,
         members: Union[List[Union[Agent, "Team"]], Callable[..., List]],
+        *,
         id: Optional[str] = None,
         model: Optional[Union[Model, str]] = None,
         fallback_config: Optional[FallbackConfig] = None,
@@ -461,9 +486,6 @@ class Team:
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
-        # Deprecated params — kept for backward compatibility
-        search_session_history: Optional[bool] = None,
-        num_history_sessions: Optional[int] = None,
         description: Optional[str] = None,
         instructions: Optional[Union[str, List[str], Callable]] = None,
         use_instruction_tags: bool = False,
@@ -495,6 +517,7 @@ class Team:
         add_search_knowledge_instructions: bool = True,
         read_chat_history: bool = False,
         store_media: bool = True,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         send_media_to_model: bool = True,
@@ -521,7 +544,6 @@ class Team:
         checkpoint: Optional[Literal["runs", "tool-batch", "tools"]] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
-        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         memory_manager: Optional[MemoryManager] = None,
         enable_session_summaries: bool = False,
@@ -531,12 +553,10 @@ class Team:
         add_learnings_to_context: bool = True,
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
+        offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         metadata: Optional[Dict[str, Any]] = None,
-        reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         followups: bool = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
@@ -585,8 +605,6 @@ class Team:
             search_past_sessions=search_past_sessions,
             num_past_sessions_to_search=num_past_sessions_to_search,
             num_past_session_runs_in_search=num_past_session_runs_in_search,
-            search_session_history=search_session_history,
-            num_history_sessions=num_history_sessions,
             description=description,
             instructions=instructions,
             use_instruction_tags=use_instruction_tags,
@@ -618,6 +636,7 @@ class Team:
             add_search_knowledge_instructions=add_search_knowledge_instructions,
             read_chat_history=read_chat_history,
             store_media=store_media,
+            media_storage=media_storage,
             store_tool_messages=store_tool_messages,
             store_history_messages=store_history_messages,
             send_media_to_model=send_media_to_model,
@@ -644,7 +663,6 @@ class Team:
             checkpoint=checkpoint,
             enable_agentic_memory=enable_agentic_memory,
             update_memory_on_run=update_memory_on_run,
-            enable_user_memories=enable_user_memories,
             add_memories_to_context=add_memories_to_context,
             memory_manager=memory_manager,
             enable_session_summaries=enable_session_summaries,
@@ -654,12 +672,10 @@ class Team:
             add_learnings_to_context=add_learnings_to_context,
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
+            offload_tool_results=offload_tool_results,
             metadata=metadata,
-            reasoning=reasoning,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,
-            reasoning_min_steps=reasoning_min_steps,
-            reasoning_max_steps=reasoning_max_steps,
             followups=followups,
             num_followups=num_followups,
             followup_model=followup_model,
@@ -694,6 +710,27 @@ class Team:
     def cached_session(self) -> Optional[TeamSession]:
         return _init.cached_session(self)
 
+    def _get_cached_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[TeamSession]:
+        """Return the cached session if it matches session_id/user_id and the current db."""
+        cached = getattr(self, "_cached_session", None)
+        if cached is None:
+            return None
+        if getattr(self, "_cached_session_db", None) is not self.db:
+            # The cached session was loaded from a previously assigned db; serving it
+            # would leak that db's runs into the current one, so drop it.
+            self._cached_session = None
+            self._cached_session_db = None
+            return None
+        if cached.session_id != session_id:
+            return None
+        if user_id is not None and cached.user_id != user_id:
+            return None
+        return cached
+
+    def _set_cached_session(self, session: TeamSession) -> None:
+        self._cached_session = session
+        self._cached_session_db = self.db
+
     def set_id(self) -> None:
         return _init.set_id(self)
 
@@ -711,6 +748,15 @@ class Team:
     def initialize_team(self, debug_mode: Optional[bool] = None) -> None:
         # Make sure for the team, we are using the team logger
         return _init.initialize_team(self, debug_mode=debug_mode)
+
+    @property
+    def result_store(self) -> Optional["ResultStore"]:
+        """The store offloaded tool results go to, or None when offloading is off."""
+        if self._result_store is None and self.offload_tool_results:
+            from agno.team import _init
+
+            _init._ensure_result_store(self)
+        return self._result_store
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
@@ -1231,6 +1277,8 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return _cli.team_print_response(
             self,
             input=input,
@@ -1289,6 +1337,8 @@ class Team:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return await _cli.team_aprint_response(
             self,
             input=input,
@@ -1319,6 +1369,8 @@ class Team:
         )
 
     def _get_member_name(self, entity_id: str) -> str:
+        from agno.team import _cli
+
         return _cli._get_member_name(self, entity_id=entity_id)
 
     def scrub_run_output_for_storage(self, run_response: TeamRunOutput) -> bool:
@@ -1337,6 +1389,8 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return _cli.cli_app(
             self, input=input, user=user, emoji=emoji, stream=stream, markdown=markdown, exit_on=exit_on, **kwargs
         )
@@ -1353,6 +1407,8 @@ class Team:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.team import _cli
+
         return await _cli.acli_app(
             self,
             input=input,
@@ -1442,6 +1498,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return _messages.get_system_message(
             self,
@@ -1453,6 +1510,7 @@ class Team:
             files=files,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     async def aget_system_message(
@@ -1465,6 +1523,7 @@ class Team:
         files: Optional[Sequence[File]] = None,
         tools: Optional[List[Union[Function, dict]]] = None,
         add_session_state_to_context: Optional[bool] = None,
+        input: Optional[Any] = None,
     ) -> Optional[Message]:
         return await _messages.aget_system_message(
             self,
@@ -1476,6 +1535,7 @@ class Team:
             files=files,
             tools=tools,
             add_session_state_to_context=add_session_state_to_context,
+            input=input,
         )
 
     ###########################################################################
@@ -1550,8 +1610,10 @@ class Team:
         data: Dict[str, Any],
         db: Optional["BaseDb"] = None,
         registry: Optional["Registry"] = None,
+        links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
     ) -> "Team":
-        return _storage.from_dict(cls, data=data, db=db, registry=registry)
+        return _storage.from_dict(cls, data=data, db=db, registry=registry, links=links, strict=strict)
 
     def save(
         self,
@@ -1572,16 +1634,28 @@ class Team:
         registry: Optional["Registry"] = None,
         label: Optional[str] = None,
         version: Optional[int] = None,
+        strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Team"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version)
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
 
     def delete(
         self,
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        return _storage.delete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
 
     # -*- Public convenience functions
     def get_run_output(
@@ -1665,11 +1739,11 @@ class Team:
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
-    def delete_session(self, session_id: str, user_id: Optional[str] = None):
-        return _session.delete_session(self, session_id=session_id, user_id=user_id)
+    def delete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        return _session.delete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
-    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
-        return await _session.adelete_session(self, session_id=session_id, user_id=user_id)
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        return await _session.adelete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
     def get_session_messages(
         self,
@@ -1742,7 +1816,7 @@ class Team:
     ###########################################################################
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     def get_relevant_docs_from_knowledge(
         self,
@@ -1782,6 +1856,9 @@ def get_team_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
+    strict: bool = False,
+    published_only: bool = True,
 ) -> Optional["Team"]:
     """
     Get a Team by id from the database.
@@ -1797,12 +1874,37 @@ def get_team_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the team when owned by this user, unowned (shared), or published.
+        strict: If True, unresolvable members and registry references
+            raise ComponentRehydrationError; None strictly means the team was not found.
 
     Returns:
         Team instance or None.
+
+    Raises:
+        ComponentRehydrationError: If strict and a member or registry reference cannot be resolved.
     """
+    from agno.exceptions import ComponentRehydrationError
+
     try:
-        row = db.get_config(component_id=id, version=version, label=label)
+        from agno.utils.component_scope import component_owner_scope
+
+        # Only resolve the team if owned by this user, unowned (shared), or published.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
+        if published_only and version is None and label is None:
+            # Dispatch surfaces resolve only a published version; a draft-only
+            # component is not runnable. Uses the
+            # component row rather than get_current_config so third-party
+            # adapters with only the old surface keep working.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            row = db.get_config(component_id=id, version=current_version)
+        else:
+            row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
 
@@ -1810,21 +1912,54 @@ def get_team_by_id(
         if cfg is None:
             raise ValueError(f"Invalid config found for team {id}")
 
-        team = Team.from_dict(cfg, db=db, registry=registry)
+        # Links for this config version carry the member versions pinned at
+        # save time, so members load at those versions like the graph loader.
+        # Adapters without link support load unpinned.
+        resolved_version = row.get("version")
+        try:
+            links = db.get_links(component_id=id, version=resolved_version) if resolved_version else []
+        except NotImplementedError:
+            links = []
+
+        # Resolve DB-backed members under the same owner scope as the team.
+        with component_owner_scope(user_id):
+            team = Team.from_dict(cfg, db=db, registry=registry, links=links, strict=strict)
         # Ensure team.id is set to the component_id
         team.id = id
+        # Only fall back to the caller-provided db if the config didn't
+        # reconstruct one, matching Team.load.
+        if team.db is None:
+            if strict:
+                from agno.utils.db_fallback import require_db_fallback_matches
+
+                require_db_fallback_matches(cfg, db, "team", id)
+            team.db = db
 
         return team
 
+    except ComponentRehydrationError:
+        # A rehydration failure is not "team not found"; propagate it.
+        raise
     except Exception as e:
         log_error(f"Error loading Team {id} from database: {str(e)}")
         return None
+
+
+# Rows fetched per list_components call while collecting the full catalog.
+_COMPONENT_LIST_PAGE = 100
+
+# Ceiling on rows collected per listing. Every listed row costs a get_config
+# read plus a full rehydration, and other users' published components share
+# the catalog, so an unbounded scan could turn one listing into thousands of
+# DB reads.
+_COMPONENT_LIST_CAP = 1000
 
 
 def get_teams(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List["Team"]:
     """
     Get all teams from the database.
@@ -1833,15 +1968,49 @@ def get_teams(
         db: Database to load teams from
         registry: Optional registry for rehydrating tools
         exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load teams owned by this user, unowned (shared), or published.
 
     Returns:
         List of Team instances loaded from the database
     """
     teams: List[Team] = []
     try:
-        components, _ = db.list_components(
-            component_type=ComponentType.TEAM, exclude_component_ids=exclude_component_ids
-        )
+        from agno.utils.component_scope import component_owner_scope
+
+        # The DB default page is one small page and the catalog can exceed it
+        # (other users' published components compete for the same slots), so
+        # page until the filtered total is exhausted or the cap is hit.
+        components: List[Dict[str, Any]] = []
+        seen_component_ids: Set[str] = set()
+        scanned = 0
+        while True:
+            page, total = db.list_components(
+                component_type=ComponentType.TEAM,
+                exclude_component_ids=exclude_component_ids,
+                user_id=user_id,
+                limit=_COMPONENT_LIST_PAGE,
+                offset=scanned,
+            )
+            scanned += len(page)
+            for row in page:
+                # Each page is its own read, so a row created between two of
+                # them shifts the window and hands back something an earlier
+                # page already carried.
+                row_id = row.get("component_id")
+                if row_id is None or row_id in seen_component_ids:
+                    continue
+                seen_component_ids.add(row_id)
+                components.append(row)
+            # A total that is not a count says nothing about what is left, so
+            # this page is all there is to read. BaseDb documents an int, but
+            # the baseline discarded the total entirely and an adapter that
+            # returns None was fine; comparing against it would raise here and
+            # the caller would get an empty listing instead of a short one.
+            if not page or not isinstance(total, int) or scanned >= total:
+                break
+            if scanned >= _COMPONENT_LIST_CAP:
+                log_warning(f"Team listing truncated by safety cap: returning {len(components)} of {total} components")
+                break
         for component in components:
             component_id = component["component_id"]
             try:
@@ -1851,7 +2020,13 @@ def get_teams(
                     if team_config is not None:
                         if "id" not in team_config:
                             team_config["id"] = component_id
-                        team = Team.from_dict(team_config, db=db, registry=registry)
+                        # Lenient on purpose: listings must show degraded
+                        # components so they stay visible and fixable. Listings
+                        # also show members at their current version; the
+                        # per-version pin links are a detail-read concern.
+                        # Resolve DB-backed members under the same owner scope as the team.
+                        with component_owner_scope(user_id):
+                            team = Team.from_dict(team_config, db=db, registry=registry, strict=False)
                         team.id = component_id
                         team._version = component.get("current_version")
                         team._stage = config.get("stage")

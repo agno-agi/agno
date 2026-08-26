@@ -229,6 +229,10 @@ class SessionContextStore(LearningStore):
             </session_context>\
         """)
 
+    def instructions(self) -> str:
+        """Session context is system-managed (ALWAYS-only, no tools): no guidance."""
+        return ""
+
     def get_tools(self, **kwargs) -> List[Callable]:
         """Session context has no agent tools (system-managed only)."""
         return []
@@ -560,6 +564,7 @@ class SessionContextStore(LearningStore):
         response = model_copy.response(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
         if run_metrics is not None and response.response_usage is not None:
@@ -629,6 +634,7 @@ class SessionContextStore(LearningStore):
         response = await model_copy.aresponse(
             messages=messages_for_model,
             tools=functions,
+            tool_call_limit=self.config.max_updates_per_run,
         )
 
         if run_metrics is not None and response.response_usage is not None:

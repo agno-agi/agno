@@ -58,7 +58,6 @@ if __name__ == "__main__":
         description="Automated article creation from research to writing",
         steps=[article_creation_sequence],
         db=SqliteDb(db_file="tmp/workflows.db"),
-        debug_mode=True,
     )
 
     article_workflow.print_response(

@@ -16,7 +16,7 @@ from agno.os.interfaces.slack.builders import (
     select_confirmation_row,
 )
 from agno.os.interfaces.slack.events import process_event
-from agno.os.interfaces.slack.helpers import open_chat_stream, slack_error_code
+from agno.os.interfaces.slack.helpers import open_chat_stream, resolve_session_id, slack_error_code
 from agno.os.interfaces.slack.ids import decode_admin_approval_button_value
 from agno.os.interfaces.slack.interactions import (
     apply_decisions,
@@ -138,14 +138,29 @@ class HITLHandler:
         ctx: SubmitContext,
         stream: Any,
         requirements: List[Any],
+        *,
+        session_id: str,
         user_id: Optional[str] = None,
     ) -> StreamState:
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
         try:
+            # Inline-door admission gate: Slack-driven runs are ticketless by
+            # construction today (the interface submits inline), but a durable
+            # ticket for this run_id - however it got here - owns the
+            # continuation; the existing except below turns the 409/503 into
+            # a logged non-execution, never a double-run.
+            from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
+
+            await araise_if_ticket_owns_continue(
+                get_active_queue_worker(),
+                ctx.run_id,
+                component_type=self.entity_type,
+                component_id=getattr(self.entity, "id", None),
+            )
             response_stream: Any = self.entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
                 run_id=ctx.run_id,
                 requirements=requirements,
-                session_id=ctx.session_id,
+                session_id=session_id,
                 user_id=user_id,
                 stream=True,
                 stream_events=True,
@@ -169,6 +184,20 @@ class HITLHandler:
             log_error(
                 f"[HITL] continuation append failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
             )
+        # Status-only stream sync (parity with the REST continue doors): a
+        # formerly-queued/streamed run's stream view must stop saying PAUSED
+        # once the continue settles - otherwise every later /resume replays
+        # the stale paused snapshot, and on Redis the pausing replica's TTL
+        # refresher keeps those keys alive indefinitely. only_if_tracked
+        # leaves never-streamed runs alone; a re-paused continue re-parks the
+        # stream as PAUSED. Best-effort: a stream-backend failure must not
+        # eat the Slack response.
+        try:
+            from agno.os.utils import acomplete_continue_stream
+
+            await acomplete_continue_stream(self.entity, ctx.run_id, session_id, only_if_tracked=True)
+        except Exception as exc:
+            log_error(f"[HITL] continue stream sync failed for run={ctx.run_id}: {exc}")
         return state
 
     async def complete_or_repause(
@@ -275,7 +304,7 @@ class HITLHandler:
         awaiting_ts: Optional[str],
     ) -> None:
         """Resume a paused run after admin approval."""
-        session_id = f"{self.entity_id}:{thread_ts}"
+        session_id = await resolve_session_id(self.entity, self.entity_id, channel, thread_ts)
 
         try:
             run_output = await self.entity.aget_run_output(run_id=run_id, session_id=session_id)  # type: ignore[union-attr]
@@ -296,7 +325,6 @@ class HITLHandler:
 
         ctx = SubmitContext(
             run_id=run_id,
-            session_id=session_id,
             channel=channel,
             thread_ts=thread_ts,
             msg_ts=msg_ts,
@@ -314,7 +342,7 @@ class HITLHandler:
             self.task_display_mode,
             self.buffer_size,
         )
-        state = await self.stream_resumed_run(ctx, stream, requirements, user_id=run_user_id)
+        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
         await self.complete_or_repause(ctx, stream, state)
 
     async def handle_check_status(self, payload: Dict[str, Any]) -> None:
@@ -421,15 +449,16 @@ class HITLHandler:
             )
 
     async def handle_submit(self, payload: Dict[str, Any]) -> None:
-        ctx = extract_submit_context(payload, self.entity_id)
+        ctx = extract_submit_context(payload)
         if ctx is None:
             return
+        session_id = await resolve_session_id(self.entity, self.entity_id, ctx.channel, ctx.thread_ts)
         log_info(f"[HITL] submit received: run_id={ctx.run_id} channel={ctx.channel}")
 
         await self.delete_awaiting_indicator(ctx.channel, ctx.awaiting_ts)
 
         try:
-            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=ctx.session_id)  # type: ignore[union-attr]
+            run_output = await self.entity.aget_run_output(run_id=ctx.run_id, session_id=session_id)  # type: ignore[union-attr]
         except Exception as exc:
             log_error(f"[HITL] aget_run_output failed for run={ctx.run_id}: {exc}")
             run_output = None
@@ -462,7 +491,7 @@ class HITLHandler:
         )
 
         await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)
-        state = await self.stream_resumed_run(ctx, stream, requirements, user_id=run_user_id)
+        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
         await self.complete_or_repause(ctx, stream, state)
 
     async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:

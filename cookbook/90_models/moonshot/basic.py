@@ -12,7 +12,7 @@ from agno.models.moonshot import MoonShot
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=MoonShot(id="kimi-k2-thinking"), markdown=True)
+agent = Agent(model=MoonShot(id="kimi-k3", reasoning_effort="low"), markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent

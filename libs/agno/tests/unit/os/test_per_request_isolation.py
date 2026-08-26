@@ -1459,24 +1459,6 @@ class TestToolsDeepCopyUnit:
         # MCP tool should be shared (same instance)
         assert copy.tools[0] is mcp
 
-    def test_multi_mcp_tools_class_detection(self):
-        """MultiMCPTools class should be detected and shared."""
-
-        class MultiMCPTools:
-            pass
-
-        class MyMultiMCP(MultiMCPTools):
-            def __init__(self):
-                self.servers = ["s1", "s2"]
-
-        multi = MyMultiMCP()
-        agent = Agent(name="test", id="test-id", tools=[multi])
-
-        copy = agent.deep_copy()
-
-        # MultiMCPTools should be shared
-        assert copy.tools[0] is multi
-
     def test_non_copyable_tool_shared(self):
         """Tool that can't be copied should be shared."""
 

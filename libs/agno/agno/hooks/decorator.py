@@ -87,7 +87,7 @@ def hook(*args, **kwargs) -> Union[F, Callable[[F], F]]:
             await send_async_notification(run_output.content)
 
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-5.5"),
             post_hooks=[my_hook, my_background_hook],
         )
     """

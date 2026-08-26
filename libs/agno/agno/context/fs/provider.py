@@ -36,8 +36,9 @@ class FilesystemContextProvider(ContextProvider):
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
         exclude_patterns: list[str] | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model)
+        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events)
         self.root = Path(root).expanduser().resolve()
         self.instructions_text = instructions if instructions is not None else DEFAULT_FS_INSTRUCTIONS
         self.exclude_patterns = exclude_patterns

@@ -148,7 +148,6 @@ def main() -> None:
     article_workflow = Workflow(
         description="Automated article creation from research to writing",
         steps=[research_step, writing_step],
-        debug_mode=True,
     )
 
     print("[START] Starting workflow run cancellation example...")

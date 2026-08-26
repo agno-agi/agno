@@ -1,9 +1,10 @@
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
 from agno.exceptions import RunCancelledException
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -16,9 +17,9 @@ from agno.run.workflow import (
     WorkflowRunOutputEvent,
 )
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_debug, log_error, logger
+from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_condition_evaluator, is_cel_expression
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import (
     ErrorRequirement,
     HumanReview,
@@ -110,47 +111,12 @@ class Condition:
     name: Optional[str] = None
     description: Optional[str] = None
 
-    # Human-in-the-loop (HITL) configuration
-    # If True, the condition will pause before execution and require user confirmation
-    # User confirms -> execute `steps` (if branch)
-    # User rejects -> behavior depends on on_reject setting
-    requires_confirmation: bool = False
-    # Message to display to the user when requesting confirmation
-    confirmation_message: Optional[str] = None
-    # What to do when condition is rejected:
-    # - "else" (default): Execute else_steps branch if provided, otherwise skip
-    # - "skip": Skip entire condition (both branches)
-    # - "cancel": Cancel the workflow
-    on_reject: Union[OnReject, str] = OnReject.else_branch
-    # What to do when a sub-step encounters an error:
-    # - "skip" (default): Log error, add to results, and break execution
-    # - "fail": Re-raise the exception, causing workflow to fail
-    # - "pause": Pause workflow and allow user to decide (retry or skip) via HITL
-    on_error: Union[OnError, str] = OnError.skip
-
-    # HumanReview config (alternative to flat params above)
-    human_review: Optional[HumanReview] = None
+    human_review: HumanReview = field(default_factory=lambda: HumanReview(on_reject=OnReject.else_branch))
 
     def __post_init__(self) -> None:
-        if self.human_review is not None:
-            pass  # Use the explicit config
-        else:
-            self.human_review = HumanReview(
-                requires_confirmation=self.requires_confirmation,
-                confirmation_message=self.confirmation_message,
-                on_reject=self.on_reject,
-                on_error=self.on_error,
-            )
-
         from agno.workflow.types import validate_human_review_for_condition
 
         validate_human_review_for_condition(self.human_review)
-
-        # Backward compat attributes
-        self.requires_confirmation = self.human_review.requires_confirmation
-        self.confirmation_message = self.human_review.confirmation_message
-        self.on_reject = self.human_review.on_reject
-        self.on_error = self.human_review.on_error
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -193,18 +159,14 @@ class Condition:
         Returns:
             StepRequirement configured for this condition's HITL needs.
         """
-        on_reject = self.human_review.on_reject if self.human_review else self.on_reject
+        on_reject = self.human_review.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=self.name or f"condition_{step_index + 1}",
             step_index=step_index,
             step_type="Condition",
-            requires_confirmation=self.human_review.requires_confirmation
-            if self.human_review
-            else self.requires_confirmation,
-            confirmation_message=(
-                self.human_review.confirmation_message if self.human_review else self.confirmation_message
-            )
+            requires_confirmation=self.human_review.requires_confirmation,
+            confirmation_message=self.human_review.confirmation_message
             or f"Execute condition '{self.name or 'condition'}'? (yes=if branch, no=else branch)",
             on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             requires_user_input=False,
@@ -241,26 +203,41 @@ class Condition:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Condition":
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
         from agno.workflow.steps import Steps
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return Loop.from_dict(step_data, registry=registry, db=db, links=links)
+                return Loop.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+                return Steps.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         evaluator_data = data.get("evaluator", True)
         evaluator_type = data.get("evaluator_type")
@@ -276,31 +253,36 @@ class Condition:
                 evaluator = evaluator_data
             else:
                 # Function name - look up in registry
-                if registry:
-                    func = registry.get_function(evaluator_data)
-                    if func is None:
-                        raise ValueError(f"Evaluator function '{evaluator_data}' not found in registry")
-                    evaluator = func
-                else:
-                    raise ValueError(f"Registry required to deserialize evaluator function '{evaluator_data}'")
+                func = registry.get_function(evaluator_data) if registry else None
+                if func is None:
+                    if registry:
+                        message = f"Evaluator function '{evaluator_data}' not found in registry"
+                    else:
+                        message = f"Registry required to deserialize evaluator function '{evaluator_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
+
+                        raise ComponentRehydrationError(message)
+                    from agno.workflow.step import _unresolvable_callable_placeholder
+
+                    log_warning(message)
+                    func = _unresolvable_callable_placeholder("Condition evaluator", evaluator_data)
+                evaluator = func
         else:
             raise ValueError(f"Invalid evaluator type in data: {type(evaluator_data).__name__}")
 
-        # Build HumanReview from serialized data
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            human_review = HumanReview(
-                requires_confirmation=data.get("requires_confirmation", False),
-                confirmation_message=data.get("confirmation_message"),
-                on_reject=data.get("on_reject", "else"),
-                on_error=data.get("on_error", "skip"),
-            )
+            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
+
+            drop_legacy_hitl_keys(data, StepType.CONDITION)
+            human_review = HumanReview(on_reject=OnReject.else_branch)
 
         return cls(
             evaluator=evaluator,
             steps=[deserialize_step(step) for step in data.get("steps", [])],
-            else_steps=[deserialize_step(step) for step in data.get("else_steps", [])],
+            else_steps=[deserialize_step(step, suffix=branch_suffix + "#else") for step in data.get("else_steps", [])],
             name=data.get("name"),
             description=data.get("description"),
             human_review=human_review,
@@ -381,7 +363,12 @@ class Condition:
             audio=current_audio + all_audio,
         )
 
-    def _evaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    def _evaluate_condition(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> bool:
         """Evaluate the condition and return boolean result.
 
         Supports:
@@ -404,10 +391,12 @@ class Condition:
                 return False
 
         if callable(self.evaluator):
-            if session_state is not None and self._evaluator_has_session_state_param():
-                result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-            else:
-                result = self.evaluator(step_input)
+            # Build kwargs based on what parameters the evaluator accepts
+            kwargs: Dict[str, Any] = {}
+            if run_context is not None and self._evaluator_has_run_context_param():
+                kwargs["run_context"] = run_context
+
+            result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
             if isinstance(result, bool):
                 return result
@@ -417,7 +406,12 @@ class Condition:
 
         return False
 
-    async def _aevaluate_condition(self, step_input: StepInput, session_state: Optional[Dict[str, Any]] = None) -> bool:
+    async def _aevaluate_condition(
+        self,
+        step_input: StepInput,
+        session_state: Optional[Dict[str, Any]] = None,
+        run_context: Optional[RunContext] = None,
+    ) -> bool:
         """Async version of condition evaluation.
 
         Supports:
@@ -440,18 +434,15 @@ class Condition:
                 return False
 
         if callable(self.evaluator):
-            has_session_state = session_state is not None and self._evaluator_has_session_state_param()
+            # Build kwargs based on what parameters the evaluator accepts
+            kwargs: Dict[str, Any] = {}
+            if run_context is not None and self._evaluator_has_run_context_param():
+                kwargs["run_context"] = run_context
 
             if inspect.iscoroutinefunction(self.evaluator):
-                if has_session_state:
-                    result = await self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-                else:
-                    result = await self.evaluator(step_input)
+                result = await self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
             else:
-                if has_session_state:
-                    result = self.evaluator(step_input, session_state=session_state)  # type: ignore[call-arg]
-                else:
-                    result = self.evaluator(step_input)
+                result = self.evaluator(step_input, **kwargs)  # type: ignore[call-arg]
 
             if isinstance(result, bool):
                 return result
@@ -461,14 +452,14 @@ class Condition:
 
         return False
 
-    def _evaluator_has_session_state_param(self) -> bool:
-        """Check if the evaluator function has a session_state parameter"""
+    def _evaluator_has_run_context_param(self) -> bool:
+        """Check if the evaluator function has a run_context parameter"""
         if not callable(self.evaluator):
             return False
 
         try:
             sig = inspect.signature(self.evaluator)
-            return "session_state" in sig.parameters
+            return "run_context" in sig.parameters
         except Exception:
             return False
 
@@ -483,6 +474,7 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -530,9 +522,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
 
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
@@ -568,6 +564,7 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -620,12 +617,16 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break
@@ -661,6 +662,7 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -733,9 +735,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = self._evaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = self._evaluate_condition(step_input, session_state=session_state)
+                condition_result = self._evaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             if stream_events and workflow_run_response:
@@ -808,6 +814,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
@@ -865,12 +872,16 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} streaming failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break
@@ -918,6 +929,7 @@ class Condition:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -965,9 +977,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             # Determine which steps to execute
@@ -1003,6 +1019,7 @@ class Condition:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -1053,12 +1070,16 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} async failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break
@@ -1094,6 +1115,7 @@ class Condition:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -1166,9 +1188,13 @@ class Condition:
         else:
             # Evaluate the condition
             if run_context is not None and run_context.session_state is not None:
-                condition_result = await self._aevaluate_condition(step_input, session_state=run_context.session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=run_context.session_state, run_context=run_context
+                )
             else:
-                condition_result = await self._aevaluate_condition(step_input, session_state=session_state)
+                condition_result = await self._aevaluate_condition(
+                    step_input, session_state=session_state, run_context=run_context
+                )
             log_debug(f"Condition {self.name} evaluated to: {condition_result}")
 
             if stream_events and workflow_run_response:
@@ -1242,6 +1268,7 @@ class Condition:
                     workflow_run_response=workflow_run_response,
                     step_index=child_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=conditional_step_id,
@@ -1299,12 +1326,16 @@ class Condition:
 
             except RunCancelledException:
                 raise
+            except UnresolvableCallableError:
+                # A placeholder for an unresolved reference can never succeed:
+                # converting it to a failed StepOutput would let the run complete.
+                raise
             except Exception as e:
                 step_name = getattr(step, "name", f"step_{i}")
                 logger.exception(f"Condition step {step_name} async streaming failed")
 
                 # Check the condition's on_error setting
-                if self.on_error == OnError.fail or self.on_error == OnError.pause:
+                if self.human_review.on_error == OnError.fail or self.human_review.on_error == OnError.pause:
                     raise
 
                 # OnError.skip: log error and break

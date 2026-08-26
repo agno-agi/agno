@@ -50,8 +50,17 @@ class DatabaseContextProvider(ContextProvider):
         model: Model | None = None,
         read: bool = True,
         write: bool = True,
+        stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, read=read, write=write)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            read=read,
+            write=write,
+            stream_sub_agent_events=stream_sub_agent_events,
+        )
         self.sql_engine = sql_engine
         self.readonly_engine = readonly_engine
         self.schema = schema

@@ -7,9 +7,9 @@ check the model's reasoning and is itself useful as training data for a
 reward model.
 """
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

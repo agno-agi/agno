@@ -290,6 +290,7 @@ class RemoteTeam(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -354,6 +355,7 @@ class RemoteTeam(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> Union[TeamRunOutput, AsyncIterator[TeamRunOutputEvent]]:
         """Execute via A2A protocol.
 
@@ -367,6 +369,7 @@ class RemoteTeam(BaseRemote):
             videos: Videos to include
             files: Files to include
             headers: HTTP headers to include in the request (optional)
+            metadata: Additional metadata to include in the message envelope (optional)
         Returns:
             TeamRunOutput for non-streaming, AsyncIterator[TeamRunOutputEvent] for streaming
         """
@@ -384,6 +387,7 @@ class RemoteTeam(BaseRemote):
                 images=list(images) if images else None,
                 videos=list(videos) if videos else None,
                 files=list(files) if files else None,
+                metadata=metadata,
                 headers=headers,
             )
             return map_stream_events_to_team_run_events(event_stream, team_id=self.team_id)
@@ -397,6 +401,7 @@ class RemoteTeam(BaseRemote):
                 images=images,
                 videos=videos,
                 files=files,
+                metadata=metadata,
                 headers=headers,
             )
 
@@ -410,6 +415,7 @@ class RemoteTeam(BaseRemote):
         videos: Optional[Sequence[Video]],
         files: Optional[Sequence[File]],
         headers: Optional[Dict[str, str]],
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> TeamRunOutput:
         """Send a non-streaming A2A message and convert response to TeamRunOutput."""
         if not self.a2a_client:
@@ -424,6 +430,7 @@ class RemoteTeam(BaseRemote):
             audio=list(audio) if audio else None,
             videos=list(videos) if videos else None,
             files=list(files) if files else None,
+            metadata=metadata,
             headers=headers,
         )
         return map_task_result_to_team_run_output(task_result, team_id=self.team_id, user_id=user_id)

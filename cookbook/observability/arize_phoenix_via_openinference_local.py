@@ -32,7 +32,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-5.2"),
     tools=[YFinanceTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
-    debug_mode=True,
 )
 
 

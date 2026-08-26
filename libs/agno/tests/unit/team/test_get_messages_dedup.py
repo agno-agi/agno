@@ -1,14 +1,12 @@
-"""Unit tests for TeamSession.get_messages() deduplication of member runs.
-
-Verifies fix for GitHub issue #7341: member runs stored both as standalone
-runs and inside member_responses should only appear once in get_messages output.
-"""
+"""Unit tests for TeamSession."""
 
 from agno.models.message import Message
-from agno.run.agent import RunOutput
+from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
+from agno.team._tools import _get_history_for_member_agent
+from agno.team.team import Team
 
 
 def _make_member_run(agent_id: str, run_id: str) -> RunOutput:
@@ -60,6 +58,50 @@ def _build_dual_storage_session(member_agent_id: str = "agent-001") -> TeamSessi
     session.runs = []
     session.upsert_run(member_run)
     session.upsert_run(team_run)
+    return session
+
+
+def _session_with_runs(n: int) -> TeamSession:
+    """Build a TeamSession with n completed team-leader runs (input/output pairs)."""
+    session = TeamSession(session_id="test-session")
+    session.runs = [
+        TeamRunOutput(
+            run_id=f"t{i}",
+            team_id="team-001",
+            status=RunStatus.completed,
+            input=RunInput(input_content=f"in{i}"),
+            content=f"out{i}",
+        )
+        for i in range(n)
+    ]
+    return session
+
+
+def _nested_team_history_session() -> TeamSession:
+    """Build a flat session containing parent and nested-team runs."""
+    session = TeamSession(session_id="nested-team-session", team_id="parent-team")
+    session.runs = [
+        TeamRunOutput(
+            run_id="parent-run",
+            team_id="parent-team",
+            parent_run_id=None,
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Parent request"),
+                Message(role="assistant", content="Parent response"),
+            ],
+        ),
+        TeamRunOutput(
+            run_id="nested-run",
+            team_id="nested-team",
+            parent_run_id="parent-run",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Nested request"),
+                Message(role="assistant", content="Nested response"),
+            ],
+        ),
+    ]
     return session
 
 
@@ -220,3 +262,50 @@ class TestGetMessagesMemberDedup:
 
         # Verify we got exactly one copy
         assert len(messages) == 4
+
+
+class TestNestedTeamHistory:
+    """Tests for retrieving history for nested Teams from a shared session."""
+
+    def test_team_id_filter_includes_nested_runs_by_default(self):
+        """An explicit team filter must include the selected nested team's runs."""
+        session = _nested_team_history_session()
+
+        messages = session.get_messages(team_id="nested-team")
+
+        assert [message.content for message in messages] == ["Nested request", "Nested response"]
+
+    def test_default_history_filter_still_returns_only_top_level_runs(self):
+        """Without an explicit team filter, member runs remain excluded."""
+        session = _nested_team_history_session()
+
+        messages = session.get_messages()
+
+        assert [message.content for message in messages] == ["Parent request", "Parent response"]
+
+    def test_nested_team_history_helper_returns_selected_team_history(self):
+        """The delegation history helper must pass nested-team history to the member."""
+        session = _nested_team_history_session()
+        parent_team = Team(id="parent-team", name="Parent Team", members=[])
+        nested_team = Team(
+            id="nested-team",
+            name="Nested Team",
+            members=[],
+            add_history_to_context=True,
+        )
+
+        history = _get_history_for_member_agent(parent_team, session, nested_team)
+
+        assert [message.content for message in history] == ["Nested request", "Nested response"]
+
+
+class TestGetTeamHistoryZeroCount:
+    """get_team_history() zero/negative num_runs must return empty, not the whole history."""
+
+    def test_get_team_history_zero_returns_empty(self):
+        """num_runs=0 returns no history rather than all runs."""
+        assert _session_with_runs(3).get_team_history(num_runs=0) == []
+
+    def test_get_team_history_positive_is_limited(self):
+        """A positive num_runs returns that many recent runs."""
+        assert len(_session_with_runs(3).get_team_history(num_runs=2)) == 2

@@ -6,10 +6,10 @@ Detect a single object in an image and return its bounding box. The model
 emits normalized coordinates so the result is resolution-independent.
 """
 
-from agno.agent import Agent, RunOutput  # noqa
+from agno.agent import Agent, RunOutput
 from agno.media import Image
 from pydantic import BaseModel, Field
-from rich.pretty import pprint  # noqa
+from rich.pretty import pprint
 
 
 # ---------------------------------------------------------------------------

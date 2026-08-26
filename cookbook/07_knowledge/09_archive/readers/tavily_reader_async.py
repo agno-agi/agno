@@ -67,7 +67,6 @@ async def main():
         model=OpenAIChat(id="gpt-5.2"),
         knowledge=knowledge,
         search_knowledge=True,  # Enable knowledge search
-        debug_mode=True,
     )
 
     print("\n" + "=" * 80)

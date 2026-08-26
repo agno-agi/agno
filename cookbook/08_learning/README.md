@@ -57,8 +57,8 @@ cookbook/08_learning/
 │   ├── 3a_session_context_summary.py
 │   ├── 3b_session_context_planning.py
 │   ├── 4_learned_knowledge.py
-│   ├── 5a_entity_memory_always.py
-│   └── 5b_entity_memory_agentic.py
+│   ├── 5_entity_memory.py
+│   └── 6_extraction_limits.py
 │
 ├── 02_user_profile/        # Deep dives into user profiles
 │   ├── 01_always_extraction.py
@@ -69,9 +69,9 @@ cookbook/08_learning/
 │   ├── 01_summary_mode.py
 │   └── 02_planning_mode.py
 │
-├── 04_entity_memory/       # Deep dives into entity memory
-│   ├── 01_facts_and_events.py
-│   └── 02_entity_relationships.py
+├── 04_entity_memory/       # Deep dives into entity memory (the four tools)
+│   ├── 01_the_four_tools.py
+│   └── 02_links_and_forget.py
 │
 ├── 05_learned_knowledge/   # Deep dives into learned knowledge
 │   ├── 01_agentic_mode.py
@@ -88,14 +88,20 @@ cookbook/08_learning/
 │   ├── 01_minimal_custom_store.py
 │   └── 02_custom_store_with_db.py
 │
-├── 09_decision_logs/       # Decision logging and auditing
+├── 09_decision_logs/       # Decision logging and auditing (AGENTIC-only)
 │   ├── 01_basic_decision_log.py
-│   └── 02_decision_log_always.py
+│   └── 02_record_outcomes.py
 │
-└── 10_demo/                # AgentOS demo: browse learnings in the UI
-    ├── agents.py
-    ├── seed.py
-    └── run.py
+├── 10_demo/                # AgentOS demo: browse learnings in the UI
+│   ├── agents.py
+│   ├── seed.py
+│   └── run.py
+│
+└── 11_composition/         # The manual door: place the surfaces yourself
+    ├── basic.py
+    ├── with_filesystem.py
+    ├── context_block.py
+    └── always_capture.py
 ```
 
 ## Running the Cookbooks
@@ -203,6 +209,34 @@ agent = Agent(
     ),
 )
 ```
+
+### Extraction Limits
+
+Each learning store has a `max_updates_per_run` setting (default: 10) that caps how many
+memory updates can happen per extraction. This prevents runaway loops when models keep
+requesting tool calls.
+
+```python
+from agno.learn import LearningMachine, EntityMemoryConfig
+
+# Option 1: Set a global limit for all stores
+learning = LearningMachine(
+    max_updates_per_run=25,  # Applied to all stores
+    user_profile=True,
+    user_memory=True,
+)
+
+# Option 2: Override per-store (takes precedence over global)
+learning = LearningMachine(
+    max_updates_per_run=15,  # Global default
+    entity_memory=EntityMemoryConfig(
+        max_updates_per_run=30,  # Entity memory needs more for dense info
+    ),
+)
+```
+
+When the limit is reached, the model receives an error message and stops updating.
+Debug logs show when updates are skipped: `Tool call limit (10) reached. Skipping: add_memory`.
 
 ### Learning Modes
 
@@ -360,7 +394,9 @@ agent = Agent(
 
 Captures knowledge about external entities: companies, projects, people, products, systems.
 
-**Supported modes:** ALWAYS, AGENTIC
+**Supported modes:** AGENTIC only. The agent records through four tools
+(`remember_about`, `link_entities`, `search_entities`, `forget`); there is no
+extraction pass, and any other mode raises.
 
 **Three types of entity data:**
 - **Facts** (semantic memory): Timeless truths - "Uses PostgreSQL"
@@ -392,7 +428,8 @@ agent.run("What database does Acme use?")
 
 Records decisions the agent makes, with reasoning and alternatives considered. Useful for auditing agent behavior and building feedback loops.
 
-**Supported modes:** ALWAYS, AGENTIC
+**Supported modes:** AGENTIC. The decision is the agent's to record, so it
+records it with `log_decision`.
 
 **Scope:** Per agent - stored and retrieved by `agent_id`.
 
@@ -457,7 +494,7 @@ Try it with the demo in this cookbook:
 .venvs/demo/bin/python cookbook/08_learning/10_demo/run.py
 ```
 
-See [10_demo](10_demo/) for the walkthrough, and [cookbook/05_agent_os/learnings](../05_agent_os/learnings/) for a client-side tour of the REST endpoints.
+See [10_demo](10_demo/) for the walkthrough, and [cookbook/05_agent_os/11_learnings](../05_agent_os/11_learnings/) for a client-side tour of the REST endpoints.
 
 ## Learn More
 

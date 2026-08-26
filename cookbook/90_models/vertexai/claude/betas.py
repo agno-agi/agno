@@ -17,7 +17,7 @@ model = Claude(id="claude-sonnet-4@20250514", betas=betas)
 
 # Note: you can see all beta features available in your Anthropic version like this:
 all_betas = anthropic.types.AnthropicBetaParam
-agent = Agent(model=model, debug_mode=True)
+agent = Agent(model=model)
 
 # ---------------------------------------------------------------------------
 # Run Agent
