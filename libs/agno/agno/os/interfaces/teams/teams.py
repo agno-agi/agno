@@ -63,9 +63,22 @@ class MicrosoftTeams(BaseInterface):
         self.app_password = app_password
         self.tenant_id = tenant_id
         self.request_timeout = request_timeout
+        # Built once and shared with the router: the cached bot access token
+        # lives on it, so a per-call config would re-authenticate every time.
+        self._config: Optional[TeamsConfig] = None
 
         if not (self.agent or self.team or self.workflow):
             raise ValueError("MicrosoftTeams requires an agent, team, or workflow")
+
+    def _get_config(self) -> TeamsConfig:
+        if self._config is None:
+            self._config = TeamsConfig.init(
+                app_id=self.app_id,
+                app_password=self.app_password,
+                tenant_id=self.tenant_id,
+                request_timeout=self.request_timeout,
+            )
+        return self._config
 
     def get_router(self) -> APIRouter:
         """Build and return the FastAPI router mounting the Teams endpoints.
@@ -82,10 +95,7 @@ class MicrosoftTeams(BaseInterface):
             workflow=self.workflow,
             show_reasoning=self.show_reasoning,
             send_user_id_to_context=self.send_user_id_to_context,
-            app_id=self.app_id,
-            app_password=self.app_password,
-            tenant_id=self.tenant_id,
-            request_timeout=self.request_timeout,
+            config=self._get_config(),
         )
 
         return self.router
@@ -143,12 +153,7 @@ class MicrosoftTeams(BaseInterface):
         if not ref:
             return False
 
-        config = TeamsConfig.init(
-            app_id=self.app_id,
-            app_password=self.app_password,
-            tenant_id=self.tenant_id,
-            request_timeout=self.request_timeout,
-        )
+        config = self._get_config()
 
         await send_teams_message_async(
             service_url=ref["service_url"],
