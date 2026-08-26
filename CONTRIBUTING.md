@@ -81,11 +81,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - The `VectorDb` interface is defined in `libs/agno/agno/vectordb/base.py`
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
-<<<<<<< HEAD
-4. Add a recipe for using your `VectorDb` under `cookbook/07_knowledge/05_integrations/vector_dbs/<your_db>`.
-=======
 4. Add a recipe for using your `VectorDb` under `cookbook/07_knowledge/09_archive/vector_dbs/<your_db>`.
->>>>>>> upstream/main
    - Checkout [`cookbook/07_knowledge/09_archive/vector_dbs/pgvector_db`](https://github.com/agno-agi/agno/blob/main/cookbook/07_knowledge/09_archive/vector_dbs/pgvector_db.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
@@ -138,11 +134,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - Checkout the [`agno/tools/youtube.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/youtube.py) file for an example.
    - If your tool requires an API key, checkout the [`agno/tools/serpapi.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/serpapi.py) as well.
 4. Add a recipe for using your Tool under `cookbook/91_tools/<your_tool>`.
-<<<<<<< HEAD
-   - Checkout [`agno/cookbook/91_tools/youtube_tools`](https://github.com/agno-agi/agno/blob/main/cookbook/91_tools/youtube_tools.py) for an example.
-=======
    - Checkout [`agno/cookbook/91_tools/youtube_tools.py`](https://github.com/agno-agi/agno/blob/main/cookbook/91_tools/youtube_tools.py) for an example.
->>>>>>> upstream/main
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 
