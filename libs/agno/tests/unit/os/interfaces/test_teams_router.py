@@ -6,10 +6,11 @@ Focus areas:
   - `_format_reasoning` filter
   - `_resolve_session_config` dispatch for agent/team/workflow
   - `/new` conversation reset command
+  - the post-run conversation-reference write
 
-These tests do NOT exercise the full inbound → arun → outbound flow (that
-is covered end-to-end by live testing). They pin the routing surface so
-future refactors can't silently change the contract.
+Most of these pin the routing surface only. The conversation-reference test
+does drive inbound → arun → the post-run write, with the outbound Bot
+Connector calls stubbed; real delivery is covered by live testing.
 """
 
 from types import SimpleNamespace
@@ -232,8 +233,75 @@ def test_webhook_rejects_malformed_json():
 
 
 # ---------------------------------------------------------------------------
-# Operation id + prefix suffix uses entity name
+# Post-run conversation-reference write
 # ---------------------------------------------------------------------------
+
+
+def test_conversation_ref_is_written_to_the_run_session_not_the_newest():
+    """The ref must land on the session the run used, not on whichever session is
+    newest when the run finishes. A second message from the same user runs as a
+    concurrent background task and can create or touch a newer session in
+    between, so the two are not the same row."""
+    run_session = SimpleNamespace(session_id="teams:agent-1:user-1:OLD", session_data={"existing": "kept"})
+    newer_session = SimpleNamespace(session_id="teams:agent-1:user-1:NEW", session_data={})
+    seen = {}
+
+    async def fake_arun(text, **kwargs):
+        return SimpleNamespace(
+            status="COMPLETED", content="ok", session_id="teams:agent-1:user-1:OLD", reasoning_content=None
+        )
+
+    async def fake_aget_session(session_id=None):
+        seen["requested"] = session_id
+        return run_session if session_id == run_session.session_id else newer_session
+
+    async def fake_asave_session(session):
+        seen["saved"] = session
+
+    fake_db = MagicMock(spec=BaseDb)
+    # 1st call: the pre-run lookup resolves the run onto OLD.
+    # 2nd call: whatever a latest-by-user re-read would have found -- NEW.
+    fake_db.get_sessions = MagicMock(side_effect=[[run_session], [newer_session]])
+    agent = SimpleNamespace(
+        id="agent-1",
+        name="Stub Agent",
+        db=fake_db,
+        arun=fake_arun,
+        aget_session=fake_aget_session,
+        asave_session=fake_asave_session,
+    )
+
+    client, env_patch = _build_test_client(agent=agent)
+    try:
+        with (
+            patch("agno.os.interfaces.teams.router.typing_indicator_async"),
+            patch("agno.os.interfaces.teams.router.send_teams_message_async"),
+        ):
+            resp = client.post(
+                "/messages",
+                json={
+                    "type": "message",
+                    "id": "act-1",
+                    "serviceUrl": "https://svc/",
+                    "from": {"id": "29:u", "aadObjectId": "user-1"},
+                    "conversation": {"id": "conv-1"},
+                    "recipient": {"id": "28:bot"},
+                    "text": "hello",
+                },
+            )
+        assert resp.status_code == 200
+    finally:
+        env_patch.stop()
+
+    # Outcome first: the ref belongs on the run's session and nowhere else.
+    # A latest-by-user re-read puts it on newer_session instead.
+    assert run_session.session_data["teams_conversation_ref"]["conversation_id"] == "conv-1"
+    assert newer_session.session_data == {}
+    # the merge must not drop keys that were already on the session
+    assert run_session.session_data["existing"] == "kept"
+    # and it got there by asking for that id, not by taking whatever was newest
+    assert seen["requested"] == "teams:agent-1:user-1:OLD"
+    assert seen["saved"].session_id == "teams:agent-1:user-1:OLD"
 
 
 def test_operation_ids_include_entity_name_suffix():
