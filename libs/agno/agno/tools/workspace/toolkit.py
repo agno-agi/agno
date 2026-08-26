@@ -42,6 +42,7 @@ from agno.utils.path_safety import safe_join_relative_path
 TEXT_EXTENSIONS = {
     # Markup and data
     ".md",
+    ".mdx",
     ".txt",
     ".csv",
     ".json",
