@@ -67,6 +67,31 @@ def test_config_init_missing_password_raises():
             TeamsConfig.init(app_id="app-id")
 
 
+def test_dev_bypass_requires_both_credentials_absent():
+    """Half-configured is a misconfiguration, not local development.
+
+    With a password set and the app id missing -- a typo, or one environment of a
+    multi-env deploy -- relaxing both checks would leave app_id="", which the
+    validator reads as "no credentials" and bypasses. The webhook is excluded
+    from AgentOS's auth layer, so nothing else would stop it.
+    """
+    with patch.dict(
+        "os.environ",
+        {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true", "MICROSOFT_APP_PASSWORD": "a-real-secret"},
+        clear=True,
+    ):
+        with pytest.raises(ValueError, match="MICROSOFT_APP_ID"):
+            TeamsConfig.init()
+
+
+def test_dev_bypass_allows_a_fully_credential_free_config():
+    """The genuine dev shape -- neither credential set -- still builds."""
+    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
+        cfg = TeamsConfig.init()
+    assert cfg.app_id == ""
+    assert cfg.app_password == ""
+
+
 def test_config_defaults_to_botframework_tenant():
     with patch.dict("os.environ", {"MICROSOFT_APP_ID": "a", "MICROSOFT_APP_PASSWORD": "b"}, clear=True):
         cfg = TeamsConfig.init()

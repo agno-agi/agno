@@ -8,15 +8,21 @@ from agno.os.interfaces.teams.security import validate_bot_framework_jwt
 APP_ID = "test-app-id"
 
 
+def _reset_jwks_state():
+    teams_security._jwks_cache["keys"] = None
+    teams_security._jwks_cache["fetched_at"] = 0.0
+    teams_security._jwks_cache["fetched_monotonic"] = 0.0
+    teams_security._jwks_cache["jwks_uri"] = None
+    # The async lock is bound to the loop that created it; a leaked one would
+    # be reused by the next test's loop.
+    teams_security._async_jwks_lock = None
+
+
 @pytest.fixture(autouse=True)
 def _clear_jwks_cache():
-    teams_security._jwks_cache["keys"] = None
-    teams_security._jwks_cache["fetched_at"] = 0.0
-    teams_security._jwks_cache["jwks_uri"] = None
+    _reset_jwks_state()
     yield
-    teams_security._jwks_cache["keys"] = None
-    teams_security._jwks_cache["fetched_at"] = 0.0
-    teams_security._jwks_cache["jwks_uri"] = None
+    _reset_jwks_state()
 
 
 # === Header shape rejection (fast-path, no JWKS fetch) ===
@@ -138,18 +144,24 @@ def test_repeated_unknown_kid_refetches_jwks_only_once():
     assert calls["keys"] == 1
 
 
-def test_validation_never_uses_a_blocking_http_client():
+def test_jwks_is_fetched_with_the_async_client_not_the_blocking_one():
     """The webhook handler is a coroutine; a synchronous httpx.Client inside it
-    stalls the whole event loop for the duration of the fetch."""
+    stalls the whole event loop for the duration of the fetch.
+
+    Both clients are patched: the sync one so the assertion can see it, the async
+    one so the test never leaves the machine. Patching only httpx.Client would
+    let the async path make a real request to Microsoft and still pass.
+    """
     client, env = _client_that_really_validates()
     try:
-        with patch("httpx.Client") as blocking_client:
+        with patch("httpx.AsyncClient") as async_client, patch("httpx.Client") as blocking_client:
             headers = {"Authorization": f"Bearer {_token_with_kid('made-up-kid')}"}
             client.post("/messages", json={"type": "message", "text": "x"}, headers=headers)
     finally:
         env.stop()
 
     blocking_client.assert_not_called()
+    assert async_client.called, "the JWKS fetch did not go through httpx.AsyncClient"
 
 
 @pytest.mark.asyncio
