@@ -57,7 +57,7 @@ async_agent = Agent(
 
 def print_latest_result(eval_runs):
     if eval_runs:
-        latest = eval_runs[-1]
+        latest = eval_runs[0]
         if latest.eval_data and "results" in latest.eval_data:
             result = latest.eval_data["results"][0]
             print(f"Score: {result.get('score', 'N/A')}/10")

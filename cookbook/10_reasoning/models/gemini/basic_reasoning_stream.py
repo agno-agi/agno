@@ -22,7 +22,6 @@ def run_example() -> None:
             thinking_budget=1024,  # Required to enable thinking mode
             include_thoughts=True,  # Include thought summaries in response
         ),
-        reasoning=True,
         instructions="Think step by step about the problem.",
     )
 
