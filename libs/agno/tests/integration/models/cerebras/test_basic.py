@@ -6,6 +6,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.cerebras import Cerebras
 
 
+def test_default_model_id():
+    assert Cerebras().id == "gpt-oss-120b"
+
+
 @pytest.fixture(scope="module")
 def cerebras_model():
     """Fixture that provides a Cerebras model and reuses it across all tests in the module."""

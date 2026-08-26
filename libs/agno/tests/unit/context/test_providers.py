@@ -130,6 +130,64 @@ def test_workspace_context_excludes_agent_scratch_and_plural_venvs(tmp_path: Pat
     assert result["files"][0]["file"] == "src/app.py"
 
 
+def test_workspace_context_refuses_excluded_paths_by_name(tmp_path: Path):
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-live-secret\n")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "app.py").write_text("# app")
+
+    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
+    workspace = p.get_tools()[0]
+    out = workspace.read_file(".env")
+    assert out == "Error: path is excluded from this workspace: .env"
+    assert "sk-live-secret" not in out
+    assert ".env" not in [e["path"] for e in json.loads(workspace.list_files())["files"]]
+    assert "# app" in workspace.read_file("src/app.py")
+
+
+def test_workspace_context_allow_paths_passes_through(tmp_path: Path):
+    (tmp_path / ".env").write_text("OPENAI_API_KEY=sk-live-secret\n")
+    (tmp_path / ".env.example").write_text("OPENAI_API_KEY=\n")
+
+    p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools, allow_paths=[".env.example"])
+    workspace = p.get_tools()[0]
+    assert "OPENAI_API_KEY=" in workspace.read_file(".env.example")
+    assert workspace.read_file(".env") == "Error: path is excluded from this workspace: .env"
+
+
+def test_workspace_context_instructions_describe_excludes_as_access_boundary(tmp_path: Path):
+    tools_mode = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
+    default_mode = WorkspaceContextProvider(root=tmp_path)
+    assert "cannot be read by name" in tools_mode.instructions()
+    assert "cannot be read by name" in default_mode.instructions()
+    assert "cannot be read by name" in default_mode._build_agent().instructions
+
+
+def test_workspace_context_instructions_follow_exclusion_config(tmp_path: Path):
+    none = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools, exclude_patterns=[])
+    assert "No paths are excluded." in none.instructions()
+    assert "cannot be read by name" not in none.instructions()
+    assert "No paths are excluded." in none._build_agent().instructions
+    assert "cannot be read by name" not in none._build_agent().instructions
+    custom = WorkspaceContextProvider(root=tmp_path, exclude_patterns=["secrets.*"])
+    assert "configured exclude patterns" in custom.instructions()
+    assert "cannot be read by name" in custom.instructions()
+    assert "configured exclude patterns" in custom._build_agent().instructions
+
+
+def test_workspace_context_rejects_exclude_pattern_with_separator(tmp_path: Path):
+    with pytest.raises(ValueError, match="path separator"):
+        WorkspaceContextProvider(root=tmp_path, exclude_patterns=["dist/"])
+
+
+def test_workspace_context_validates_allow_paths_at_construction(tmp_path: Path):
+    with pytest.raises(TypeError, match="allow_paths"):
+        WorkspaceContextProvider(root=tmp_path, allow_paths=".env.example")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="allow_paths"):
+        WorkspaceContextProvider(root=tmp_path, allow_paths=["../outside"])
+    with pytest.raises(ValueError, match="names the workspace root"):
+        WorkspaceContextProvider(root=tmp_path, allow_paths=["."])
+
+
 # ---------------------------------------------------------------------------
 # Web / ExaBackend
 # ---------------------------------------------------------------------------

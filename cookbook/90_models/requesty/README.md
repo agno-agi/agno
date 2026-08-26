@@ -25,16 +25,8 @@ uv pip install -U openai ddgs duckdb yfinance agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/requesty/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/requesty/basic.py
+python cookbook/90_models/requesty/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -42,11 +34,11 @@ python cookbook/92_models/requesty/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/requesty/tool_use.py
+python cookbook/90_models/requesty/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/requesty/structured_output.py
+python cookbook/90_models/requesty/structured_output.py
 ```
