@@ -1,6 +1,5 @@
 """Integration tests for the Metrics related methods of the PostgresDb class"""
 
-import time
 from datetime import date, datetime, timedelta, timezone
 from typing import List
 
@@ -31,10 +30,33 @@ def cleanup_metrics_and_sessions(postgres_db_real: PostgresDb):
             session.rollback()
 
 
+def _noon_utc(days_ago: int) -> int:
+    """Midday UTC, ``days_ago`` days back.
+
+    The suites below lay sessions an hour apart from this point and assert which
+    UTC day each one lands in. Counting back from the current clock keeps the
+    current time of day, so a run started late in the UTC day pushes the later
+    sessions past midnight into the next day and the per-day counts split.
+    """
+    day = datetime.now(timezone.utc).date() - timedelta(days=days_ago)
+    return int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
+
+
+def _persist(db: PostgresDb, session) -> None:
+    """Store a session the way v3 does: the row, then each run in the runs table.
+
+    ``upsert_session`` stopped writing the runs column when runs were normalised out, so a
+    metrics test that only called it would count no runs at all.
+    """
+    db.upsert_session(session)
+    for run_index, run in enumerate(session.runs or []):
+        db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
+
+
 @pytest.fixture
 def sample_agent_sessions_for_metrics() -> List[AgentSession]:
     """Fixture returning sample AgentSessions for metrics testing"""
-    base_time = int(time.time()) - 86400  # 1 day ago
+    base_time = _noon_utc(1)
     sessions = []
 
     for i in range(3):
@@ -64,7 +86,7 @@ def test_get_all_sessions_for_metrics_calculation(postgres_db_real: PostgresDb, 
     """Test the _get_all_sessions_for_metrics_calculation util method"""
     # Insert test sessions
     for session in sample_agent_sessions_for_metrics:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Test getting all sessions
     sessions = postgres_db_real._get_all_sessions_for_metrics_calculation()
@@ -83,7 +105,7 @@ def test_get_all_sessions_for_metrics_calculation_with_timestamp_filter(
     """Test the _get_all_sessions_for_metrics_calculation util method with timestamp filters"""
     # Insert test sessions
     for session in sample_agent_sessions_for_metrics:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Test with start timestamp filter
     start_time = sample_agent_sessions_for_metrics[1].created_at
@@ -113,7 +135,7 @@ def test_get_metrics_calculation_starting_date_no_metrics_with_sessions(
     """Test the _get_metrics_calculation_starting_date util method with no metrics but with sessions"""
     # Insert test sessions
     for session in sample_agent_sessions_for_metrics:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     metrics_table = postgres_db_real._get_table("metrics", create_table_if_not_found=True)
     result = postgres_db_real._get_metrics_calculation_starting_date(metrics_table)
@@ -135,7 +157,7 @@ def test_calculate_metrics_no_sessions(postgres_db_real: PostgresDb):
 def test_calculate_metrics(postgres_db_real: PostgresDb, sample_agent_sessions_for_metrics):
     """Ensure the calculate_metrics method returns a list of metrics when there are sessions"""
     for session in sample_agent_sessions_for_metrics:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Calculate metrics
     result = postgres_db_real.calculate_metrics()
@@ -147,7 +169,7 @@ def test_get_metrics_with_date_filter(postgres_db_real: PostgresDb, sample_agent
     """Test the get_metrics method with date filters"""
     # Insert test sessions and calculate metrics
     for session in sample_agent_sessions_for_metrics:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Calculate metrics to populate the metrics table
     postgres_db_real.calculate_metrics()
@@ -184,7 +206,7 @@ def test_calculate_metrics_idempotency(postgres_db_real: PostgresDb, sample_agen
     """Ensure the calculate_metrics method is idempotent"""
     # Insert test sessions
     for session in sample_agent_sessions_for_metrics:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Calculate metrics first time
     result1 = postgres_db_real.calculate_metrics()
@@ -211,7 +233,7 @@ def test_metrics_flow(postgres_db_real: PostgresDb, sample_agent_sessions_for_me
 
     # Step 1: Insert test sessions
     for session in sample_agent_sessions_for_metrics:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Step 2: Verify sessions were inserted
     all_sessions = postgres_db_real.get_sessions(session_type=SessionType.AGENT)
@@ -227,11 +249,14 @@ def test_metrics_flow(postgres_db_real: PostgresDb, sample_agent_sessions_for_me
     assert len(metrics) > 0
     assert latest_update is not None
 
-    # Step 5: Verify relevant metrics fields are there
-    assert metrics[0] is not None and len(metrics) == 1
+    # Step 5: Metrics are bucketed per user, so the 3 sessions give 3 rows for the day
+    assert len(metrics) == 3
+    assert {m["user_id"] for m in metrics} == {"test_user_0", "test_user_1", "test_user_2"}
+    assert sum(m["agent_runs_count"] for m in metrics) == 3
+
     metrics_obj = metrics[0]
     assert metrics_obj["completed"] is True
-    assert metrics_obj["agent_runs_count"] == 3
+    assert metrics_obj["agent_runs_count"] == 1
     assert metrics_obj["team_runs_count"] == 0
     assert metrics_obj["workflow_runs_count"] == 0
     assert metrics_obj["updated_at"] is not None
@@ -244,7 +269,7 @@ def test_metrics_flow(postgres_db_real: PostgresDb, sample_agent_sessions_for_me
 def sample_multi_day_sessions() -> List[AgentSession]:
     """Fixture returning sessions spread across multiple days"""
     sessions = []
-    base_time = int(time.time()) - (3 * 86400)  # 3 days ago
+    base_time = _noon_utc(3)
 
     # Day 1: 2 sessions
     for i in range(2):
@@ -317,47 +342,50 @@ def test_calculate_metrics_multiple_days(postgres_db_real: PostgresDb, sample_mu
     """Test that metrics calculation creates separate rows for different days"""
     # Insert sessions across multiple days
     for session in sample_multi_day_sessions:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Calculate metrics
     result = postgres_db_real.calculate_metrics()
     assert result is not None
     assert isinstance(result, list)
-    assert len(result) == 3  # Should have 3 metrics records for 3 different days
+    assert len(result) == 6  # One record per (user, day)
 
     # Retrieve all metrics
     metrics, latest_update = postgres_db_real.get_metrics()
-    assert len(metrics) == 3  # Should have 3 rows, one per day
+    assert len(metrics) == 6
     assert latest_update is not None
 
-    # Sort metrics by date for consistent checking
-    metrics_sorted = sorted(metrics, key=lambda x: x["date"])
+    # Fold the per-user rows back into per-day totals
+    by_date: dict = {}
+    for row in metrics:
+        day = by_date.setdefault(row["date"], {"agent_runs_count": 0, "team_runs_count": 0, "workflow_runs_count": 0})
+        for field in day:
+            day[field] += row[field]
+    metrics_sorted = [by_date[d] for d in sorted(by_date)]
+    assert all(row["completed"] is True for row in metrics)
 
     # Verify Day 1 metrics (2 sessions)
     day1_metrics = metrics_sorted[0]
     assert day1_metrics["agent_runs_count"] == 2
     assert day1_metrics["team_runs_count"] == 0
     assert day1_metrics["workflow_runs_count"] == 0
-    assert day1_metrics["completed"] is True
 
     # Verify Day 2 metrics (3 sessions)
     day2_metrics = metrics_sorted[1]
     assert day2_metrics["agent_runs_count"] == 3
     assert day2_metrics["team_runs_count"] == 0
     assert day2_metrics["workflow_runs_count"] == 0
-    assert day2_metrics["completed"] is True
 
     # Verify Day 3 metrics (1 session)
     day3_metrics = metrics_sorted[2]
     assert day3_metrics["agent_runs_count"] == 1
     assert day3_metrics["team_runs_count"] == 0
     assert day3_metrics["workflow_runs_count"] == 0
-    assert day3_metrics["completed"] is True
 
 
 def test_calculate_metrics_mixed_session_types_multiple_days(postgres_db_real: PostgresDb):
     """Test metrics calculation with different session types across multiple days"""
-    base_time = int(time.time()) - (2 * 86400)  # 2 days ago
+    base_time = _noon_utc(2)
     sessions = []
 
     # Day 1: Agent and Team sessions
@@ -427,7 +455,7 @@ def test_calculate_metrics_mixed_session_types_multiple_days(postgres_db_real: P
 
     # Insert all sessions
     for session in sessions:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Calculate metrics
     result = postgres_db_real.calculate_metrics()
@@ -458,7 +486,7 @@ def test_get_metrics_date_range_multiple_days(postgres_db_real: PostgresDb, samp
     """Test retrieving metrics with date range filters across multiple days"""
     # Insert sessions and calculate metrics
     for session in sample_multi_day_sessions:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     postgres_db_real.calculate_metrics()
 
@@ -466,24 +494,29 @@ def test_get_metrics_date_range_multiple_days(postgres_db_real: PostgresDb, samp
     first_session_date = datetime.fromtimestamp(sample_multi_day_sessions[0].created_at, tz=timezone.utc).date()
     last_session_date = datetime.fromtimestamp(sample_multi_day_sessions[-1].created_at, tz=timezone.utc).date()
 
-    # Test getting metrics for the full range
+    # Rows are per (user, day), so assert on distinct dates rather than row counts
     metrics_full, _ = postgres_db_real.get_metrics(starting_date=first_session_date, ending_date=last_session_date)
-    assert len(metrics_full) == 3  # All 3 days
+    assert {m["date"] for m in metrics_full} == {
+        first_session_date,
+        first_session_date + timedelta(days=1),
+        last_session_date,
+    }
 
     # Test getting metrics for partial range (first 2 days)
     second_day = first_session_date + timedelta(days=1)
     metrics_partial, _ = postgres_db_real.get_metrics(starting_date=first_session_date, ending_date=second_day)
-    assert len(metrics_partial) == 2  # First 2 days only
+    assert {m["date"] for m in metrics_partial} == {first_session_date, second_day}
 
     # Test getting metrics for single day
     metrics_single, _ = postgres_db_real.get_metrics(starting_date=first_session_date, ending_date=first_session_date)
-    assert len(metrics_single) == 1  # First day only
-    assert metrics_single[0]["agent_runs_count"] == 2  # Day 1 had 2 sessions
+    assert {m["date"] for m in metrics_single} == {first_session_date}
+    assert len(metrics_single) == 2  # Day 1 had 2 sessions, one per owner
+    assert sum(m["agent_runs_count"] for m in metrics_single) == 2
 
 
 def test_metrics_calculation_multiple_days(postgres_db_real: PostgresDb):
     """Ensure that metrics calculation can handle calculating metrics for multiple days at once"""
-    base_time = int(time.time()) - (2 * 86400)  # 2 days ago
+    base_time = _noon_utc(2)
 
     # Add sessions for Day 1
     day1_sessions = []
@@ -509,7 +542,7 @@ def test_metrics_calculation_multiple_days(postgres_db_real: PostgresDb):
 
     # Insert Day 1 sessions and calculate metrics
     for session in day1_sessions:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Calculate metircs for day 1
     result1 = postgres_db_real.calculate_metrics()
@@ -546,7 +579,7 @@ def test_metrics_calculation_multiple_days(postgres_db_real: PostgresDb):
 
     # Insert day 2 sessions and calculate metrics again
     for session in day2_sessions:
-        postgres_db_real.upsert_session(session)
+        _persist(postgres_db_real, session)
 
     # Calculate metrics for day 2
     result2 = postgres_db_real.calculate_metrics()

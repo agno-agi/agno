@@ -7,7 +7,7 @@ on:
     branches:
       - "*release*" # Run on release-* format
       - "release/*" # Run on release/1.2.3 branch format
-      - "feat/environments"
+      - "feat/v3.0"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:
@@ -496,7 +496,7 @@ jobs:
 
   # Run tests for Cerebras
   test-cerebras:
-    if: false
+    if: false # Disable cerebras tests until we get a production account
     runs-on: ubuntu-latest
     timeout-minutes: 20
     strategy:
@@ -681,7 +681,6 @@ jobs:
           ./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
           ./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
           ./libs/agno/tests/integration/agent/test_session.py \
-          ./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
           ./libs/agno/tests/integration/agent/test_introduction.py \
           ./libs/agno/tests/integration/agent/test_followups.py \
           ./libs/agno/tests/integration/agent/test_tool_hooks.py \
@@ -727,7 +726,6 @@ jobs:
           --ignore=./libs/agno/tests/integration/agent/test_disable_storing_tool_and_history_messages.py \
           --ignore=./libs/agno/tests/integration/agent/test_agent_convenience_functions.py \
           --ignore=./libs/agno/tests/integration/agent/test_session.py \
-          --ignore=./libs/agno/tests/integration/agent/test_reasoning_content_default_COT.py \
           --ignore=./libs/agno/tests/integration/agent/test_introduction.py
 
   test-teams-1:
@@ -808,13 +806,12 @@ jobs:
           ./libs/agno/tests/integration/teams/test_session_state.py \
           ./libs/agno/tests/integration/teams/test_storage_and_memory.py \
           ./libs/agno/tests/integration/teams/human_in_the_loop/test_team_tool_hitl.py \
-          ./libs/agno/tests/integration/teams/test_reasoning_content_default_COT.py \
           ./libs/agno/tests/integration/teams/test_filter_tool_calls.py \
           ./libs/agno/tests/integration/teams/test_multimodal.py
 
   test-teams-3:
     runs-on: ubuntu-latest
-    timeout-minutes: 30 # Green runs take 24-26 min; split the job to get under 20
+    timeout-minutes: 40 # Green runs take 24-26 min; one slow provider window pushed three runs past 30. Split the job to get under 20.
     strategy:
       matrix:
         python-version: ["3.12"]
@@ -1013,6 +1010,7 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
+          export SSL_CERT_FILE="$(python -m certifi)"
           python -m pytest ./libs/agno/tests/integration/knowledge/test_csv_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docling_knowledge.py \
           ./libs/agno/tests/integration/knowledge/test_docx_knowledge.py \
@@ -1081,8 +1079,11 @@ jobs:
         working-directory: .
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
-          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
-          # One resolve for both editables: the local agnoctl satisfies agno's floor
+          # requirements.txt is deliberately not installed here. It is a lockfile
+          # of published versions, and around a release it names an agnoctl that
+          # is not on PyPI yet, so the resolve fails before the editables below
+          # ever run. Those editables install agno's full dependency set anyway.
+          # One resolve for both: the local agnoctl satisfies agno's floor.
           VIRTUAL_ENV=.venv uv pip install -e ./libs/agnoctl -e ./libs/agno[dev,os,integration-tests,openai]
           # TODO: a2a-sdk v1.0+ has breaking changes, update agno for it
           VIRTUAL_ENV=.venv uv pip install "a2a-sdk>=0.3.0,<1.0"
@@ -1119,8 +1120,13 @@ jobs:
         working-directory: .
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
-          VIRTUAL_ENV=.venv uv pip install agno
-          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          # Install the branch, not PyPI: `uv pip install agno` resolved to the
+          # last published stable release, so this gate certified that release's
+          # clean install on every run and could never fail on branch changes.
+          # requirements.txt is not applied on top: it pins the published
+          # agnoctl, which around a release is older than the workspace build
+          # installed here, and layering it would downgrade that build.
+          VIRTUAL_ENV=.venv uv pip install ./libs/agnoctl ./libs/agno
           VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
         working-directory: .
@@ -1186,8 +1192,13 @@ jobs:
         working-directory: .
         run: |
           VIRTUAL_ENV=.venv uv venv --python 3.12
-          VIRTUAL_ENV=.venv uv pip install agno
-          VIRTUAL_ENV=.venv uv pip install -r ./libs/agno/requirements.txt
+          # Install the branch, not PyPI: `uv pip install agno` resolved to the
+          # last published stable release, so this gate certified that release's
+          # clean install on every run and could never fail on branch changes.
+          # requirements.txt is not applied on top: it pins the published
+          # agnoctl, which around a release is older than the workspace build
+          # installed here, and layering it would downgrade that build.
+          VIRTUAL_ENV=.venv uv pip install ./libs/agnoctl ./libs/agno
           VIRTUAL_ENV=.venv uv pip install openai chromadb sqlalchemy fastapi python-multipart pytest pytest-asyncio pytest-cov pytest-mock pytest-rerunfailures pytest-timeout
       - name: Run Basic Clean Test
         working-directory: .
@@ -1208,6 +1219,28 @@ jobs:
     env:
       OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
       ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+
+    # The offload and CodeMode-snapshot suites parametrize over sqlite and
+    # postgresql, and open the Postgres engine in a session fixture with no
+    # skip marker: without a server every postgresql case errors on connection
+    # refused instead of skipping, and the sqlite lane alone is not a gate on
+    # the adapter production runs. Same image, port and credentials the suites
+    # target (postgresql+psycopg://ai:ai@localhost:5532/ai).
+    services:
+      postgres:
+        image: agnohq/pgvector:18
+        env:
+          POSTGRES_DB: ai
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+        ports:
+          - "5532:5432"
+        options: >-
+          --health-cmd "pg_isready -U ai -d ai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
     steps:
       - uses: actions/checkout@v3
       - name: Set up Python ${{ matrix.python-version }}
@@ -1228,15 +1261,83 @@ jobs:
           AGNO_TELEMETRY: false
         run: |
           source .venv/bin/activate
-          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/workflows_2 --ignore=./libs/agno/tests/integration/fs --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os --ignore=./libs/agno/tests/integration/tools/test_seltz.py ./libs/agno/tests/integration
+          python -m pytest --ignore=./libs/agno/tests/integration/db --ignore=./libs/agno/tests/integration/models --ignore=./libs/agno/tests/integration/agent --ignore=./libs/agno/tests/integration/knowledge --ignore=./libs/agno/tests/integration/teams --ignore=./libs/agno/tests/integration/embedder --ignore=./libs/agno/tests/integration/workflows --ignore=./libs/agno/tests/integration/fs --ignore=./libs/agno/tests/integration/os/interfaces/test_a2a.py --ignore=./libs/agno/tests/integration/os --ignore=./libs/agno/tests/integration/tools/test_seltz.py ./libs/agno/tests/integration
+
+  # Run the database adapter suites that need no server beyond Postgres.
+  #
+  # test-remaining has excluded tests/integration/db since v2.0.0, and no other
+  # job picked it up, so the adapter layer had no integration gate at all. The
+  # sqlite lane needs nothing, and the postgres/async_postgres lanes target the
+  # same host, port and credentials as the pgvector service below
+  # (postgresql+psycopg://ai:ai@localhost:5532/ai).
+  #
+  # The four excluded directories need servers this workflow does not stand up.
+  # valkey is the one that cannot be left to its own guard: its conftest skips
+  # on ImportError alone, and agno[tests] pulls in valkey-glide-sync, so the
+  # import succeeds here and every test would fail on a refused connection
+  # instead of skipping. async_mysql and surrealdb open their engines in
+  # fixtures with no skip marker; async_mongo is worse, passing vacuously while
+  # each operation burns pymongo's 30s server-selection timeout.
+  #
+  # -rs prints the skip reasons: a suite that quietly stops running is the
+  # failure mode this job exists to prevent.
+  test-db:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    strategy:
+      matrix:
+        python-version: ["3.12"]
+      fail-fast: true # Stop all matrix jobs if one fails
+    services:
+      postgres:
+        image: agnohq/pgvector:18
+        env:
+          POSTGRES_DB: ai
+          POSTGRES_USER: ai
+          POSTGRES_PASSWORD: ai
+        ports:
+          - "5532:5432"
+        options: >-
+          --health-cmd "pg_isready -U ai -d ai"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    steps:
+      - uses: actions/checkout@v3
+      - name: Set up Python ${{ matrix.python-version }}
+        uses: actions/setup-python@v4
+        with:
+          python-version: ${{ matrix.python-version }}
+      - name: Install uv
+        run: |
+          curl -LsSf https://astral.sh/uv/install.sh | sh
+          echo "$HOME/.cargo/bin" >> $GITHUB_PATH
+      - name: Run dev setup
+        working-directory: .
+        run: |
+          ./scripts/test_setup.sh
+      - name: Run database integration tests
+        working-directory: .
+        env:
+          AGNO_TELEMETRY: false
+          # Unlocks the Postgres lane of the schedule lifecycle parity suite,
+          # which skips itself when this is unset even with a server present.
+          AGNO_TEST_POSTGRES_URL: postgresql+psycopg://ai:ai@localhost:5532/ai
+        run: |
+          source .venv/bin/activate
+          python -m pytest -rs \
+          --ignore=./libs/agno/tests/integration/db/async_mongo \
+          --ignore=./libs/agno/tests/integration/db/async_mysql \
+          --ignore=./libs/agno/tests/integration/db/surrealdb \
+          --ignore=./libs/agno/tests/integration/db/valkey \
+          ./libs/agno/tests/integration/db
 
   # Run the DbFileSystem suite against a real Postgres (both dialects).
   #
-  # This suite is ignored by test-remaining because its conftest eager-connects
-  # to Postgres with no skip marker; without a DB, every postgresql-parametrized
-  # case errors on connection-refused. Give it its own job with a pgvector
-  # service on localhost:5532 — the exact host/port/creds the conftest targets —
-  # so both the sqlite and postgresql lanes run in CI.
+  # test-remaining ignores this suite and runs it here instead, in parallel,
+  # so the largest Postgres-backed suite does not stretch that job's wall clock.
+  # The pgvector service is on localhost:5532 — the exact host/port/creds the
+  # conftest targets — so both the sqlite and postgresql lanes run in CI.
   test-fs:
     runs-on: ubuntu-latest
     timeout-minutes: 20

@@ -20,7 +20,6 @@ def run_example() -> None:
             id="o3-mini",
             reasoning_effort="low",
         ),
-        reasoning=True,
         instructions="Think step by step about the problem.",
     )
 
