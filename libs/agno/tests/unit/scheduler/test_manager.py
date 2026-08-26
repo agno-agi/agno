@@ -59,6 +59,13 @@ def mgr(mock_db):
     return ScheduleManager(mock_db)
 
 
+def test_close_handles_partially_constructed_manager():
+    manager = ScheduleManager.__new__(ScheduleManager)
+
+    manager.close()
+    manager.__del__()
+
+
 # =============================================================================
 # Sync API Tests
 # =============================================================================
