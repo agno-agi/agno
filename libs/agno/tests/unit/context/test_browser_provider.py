@@ -811,3 +811,198 @@ async def test_query_tool_skips_run_output():
     # Only the content event should be yielded, not RunOutput
     assert len(yielded_events) == 1
     assert isinstance(yielded_events[0], RunContentEvent)
+
+
+# ---------------------------------------------------------------------------
+# BrowserbaseBackend — write flag
+# ---------------------------------------------------------------------------
+
+
+def test_browserbase_backend_write_default_false():
+    backend = BrowserbaseBackend(api_key="test", project_id="test")
+    assert backend.write is False
+
+
+def test_browserbase_backend_write_true():
+    backend = BrowserbaseBackend(api_key="test", project_id="test", write=True)
+    assert backend.write is True
+
+
+def test_browserbase_backend_write_false():
+    backend = BrowserbaseBackend(api_key="test", project_id="test", write=False)
+    assert backend.write is False
+
+
+# ---------------------------------------------------------------------------
+# BrowserbaseTools — new tools and enable flags (mocked)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def mock_browserbase_sdk():
+    """Mock the browserbase SDK to avoid import errors."""
+    mock_browserbase = MagicMock()
+    mock_session = MagicMock()
+    mock_session.id = "test-session-id"
+    mock_session.connect_url = "wss://connect.browserbase.com?sessionId=test"
+    mock_browserbase.sessions.create.return_value = mock_session
+    mock_browserbase.sessions.debug.return_value = MagicMock(
+        debugger_fullscreen_url="https://debug.browserbase.com/fullscreen",
+        debugger_url="https://debug.browserbase.com",
+        ws_url="wss://debug.browserbase.com/ws",
+    )
+    return mock_browserbase
+
+
+def test_browserbase_tools_has_new_enable_flags():
+    """Check that BrowserbaseTools constructor accepts new enable flags."""
+    import inspect
+
+    # Import without actually loading browserbase
+    with patch.dict("sys.modules", {"browserbase": MagicMock()}):
+        # Re-import to get the patched version
+        import importlib
+
+        import agno.tools.browserbase
+
+        importlib.reload(agno.tools.browserbase)
+        from agno.tools.browserbase import BrowserbaseTools
+
+        sig = inspect.signature(BrowserbaseTools.__init__)
+        params = set(sig.parameters.keys())
+
+        # Check new enable flags exist
+        new_flags = {
+            "enable_go_back",
+            "enable_click",
+            "enable_type",
+            "enable_fill_form",
+            "enable_get_element_text",
+            "enable_wait_for",
+            "enable_evaluate_js",
+            "enable_save_pdf",
+            "enable_get_live_view_url",
+        }
+        assert new_flags.issubset(params), f"Missing flags: {new_flags - params}"
+
+
+def test_browserbase_tools_has_new_methods():
+    """Check that BrowserbaseTools has all new methods."""
+    with patch.dict("sys.modules", {"browserbase": MagicMock()}):
+        import importlib
+
+        import agno.tools.browserbase
+
+        importlib.reload(agno.tools.browserbase)
+        from agno.tools.browserbase import BrowserbaseTools
+
+        # Sync methods
+        sync_methods = [
+            "go_back",
+            "click",
+            "type_text",
+            "fill_form",
+            "get_element_text",
+            "wait_for",
+            "evaluate_js",
+            "save_pdf",
+            "get_live_view_url",
+        ]
+        for method in sync_methods:
+            assert hasattr(BrowserbaseTools, method), f"Missing sync method: {method}"
+
+        # Async methods
+        async_methods = [
+            "ago_back",
+            "aclick",
+            "atype_text",
+            "afill_form",
+            "aget_element_text",
+            "await_for",
+            "aevaluate_js",
+            "asave_pdf",
+            "aget_live_view_url",
+        ]
+        for method in async_methods:
+            assert hasattr(BrowserbaseTools, method), f"Missing async method: {method}"
+
+
+def test_browserbase_tools_read_tools_default_enabled():
+    """Read tools should be enabled by default."""
+    import inspect
+
+    with patch.dict("sys.modules", {"browserbase": MagicMock()}):
+        import importlib
+
+        import agno.tools.browserbase
+
+        importlib.reload(agno.tools.browserbase)
+        from agno.tools.browserbase import BrowserbaseTools
+
+        sig = inspect.signature(BrowserbaseTools.__init__)
+        defaults = {k: v.default for k, v in sig.parameters.items()}
+
+        # Read tools default to True
+        assert defaults.get("enable_navigate_to") is True
+        assert defaults.get("enable_go_back") is True
+        assert defaults.get("enable_screenshot") is True
+        assert defaults.get("enable_get_page_content") is True
+        assert defaults.get("enable_close_session") is True
+
+
+def test_browserbase_tools_write_tools_default_disabled():
+    """Write/interaction tools should be disabled by default."""
+    import inspect
+
+    with patch.dict("sys.modules", {"browserbase": MagicMock()}):
+        import importlib
+
+        import agno.tools.browserbase
+
+        importlib.reload(agno.tools.browserbase)
+        from agno.tools.browserbase import BrowserbaseTools
+
+        sig = inspect.signature(BrowserbaseTools.__init__)
+        defaults = {k: v.default for k, v in sig.parameters.items()}
+
+        # Write tools default to False
+        assert defaults.get("enable_click") is False
+        assert defaults.get("enable_type") is False
+        assert defaults.get("enable_fill_form") is False
+        assert defaults.get("enable_get_element_text") is False
+        assert defaults.get("enable_wait_for") is False
+        assert defaults.get("enable_evaluate_js") is False
+        assert defaults.get("enable_save_pdf") is False
+        assert defaults.get("enable_get_live_view_url") is False
+
+
+def test_browserbase_backend_build_tools_uses_write_flag():
+    """_build_tools should pass write flag to enable interaction tools."""
+    import inspect
+
+    source = inspect.getsource(BrowserbaseBackend._build_tools)
+
+    # Write-controlled flags should use self.write
+    write_flags = [
+        "enable_click=self.write",
+        "enable_type=self.write",
+        "enable_fill_form=self.write",
+        "enable_get_element_text=self.write",
+        "enable_wait_for=self.write",
+        "enable_evaluate_js=self.write",
+        "enable_save_pdf=self.write",
+        "enable_get_live_view_url=self.write",
+    ]
+    for flag in write_flags:
+        assert flag in source, f"Missing: {flag}"
+
+    # Read flags should always be True
+    read_flags = [
+        "enable_navigate_to=True",
+        "enable_go_back=True",
+        "enable_screenshot=True",
+        "enable_get_page_content=True",
+        "enable_close_session=True",
+    ]
+    for flag in read_flags:
+        assert flag in source, f"Missing: {flag}"
