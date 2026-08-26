@@ -12,7 +12,7 @@ from a script. This example serves the bot and schedules one alert after 30s:
   3. Wait for the scheduled alert to fire    → proactive message
 
 Prerequisites: ALERT_USER_ID (see README.md), plus the credentials basic.py needs
-Run: .venvs/demo/bin/python cookbook/05_agent_os/20_teams/proactive_alert.py
+Run: .venvs/demo/bin/python cookbook/05_agent_os/26_teams/proactive_alert.py
 """
 
 import asyncio

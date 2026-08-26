@@ -7,7 +7,7 @@ the inbound Bot Framework JWT, maps each Teams user to a persistent session,
 and posts the Agent's response back through the Bot Connector API.
 
 Prerequisites: OPENAI_API_KEY and the MICROSOFT_APP_* credentials in README.md
-Run: .venvs/demo/bin/python cookbook/05_agent_os/20_teams/basic.py
+Run: .venvs/demo/bin/python cookbook/05_agent_os/26_teams/basic.py
 Try: GET http://localhost:7777/msteams/status, then message the bot from Teams
 """
 
