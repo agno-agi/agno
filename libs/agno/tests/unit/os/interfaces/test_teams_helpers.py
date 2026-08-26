@@ -487,6 +487,60 @@ async def test_download_attachments_skips_missing_url():
     assert skipped == []
 
 
+@pytest.mark.asyncio
+async def test_download_attachments_unsupported_mime_passes_none():
+    """File validates mime against an allowlist; unsupported types must arrive as
+    mime_type=None rather than raising. Mirrors slack/helpers.py and agui/input.py,
+    which both pass None for exactly this reason."""
+    parsed = ActivityContent(
+        text="see attached",
+        image_attachments=[],
+        file_attachments=[
+            {"contentUrl": "https://ex/report", "name": "report.bin"},
+            {"contentUrl": "https://ex/archive", "name": "archive.zip"},
+        ],
+    )
+    cfg = _make_config()
+
+    async def fake_download(url, config, use_bot_token=True):
+        # no content-type header at all, then a type outside the allowlist
+        return (b"binbytes", None) if url.endswith("report") else (b"zipbytes", "application/zip")
+
+    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+        run_kwargs, skipped = await download_attachments_async(parsed, cfg)
+
+    assert skipped == []
+    files = run_kwargs["files"]
+    assert len(files) == 2
+    assert files[0].content == b"binbytes"
+    assert files[0].mime_type is None
+    assert files[0].filename == "report.bin"
+    assert files[1].content == b"zipbytes"
+    assert files[1].mime_type is None
+    assert files[1].filename == "archive.zip"
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_supported_mime_is_preserved():
+    """A type on the allowlist must survive unchanged — the guard must not blanket-None."""
+    parsed = ActivityContent(
+        text="hi",
+        image_attachments=[],
+        file_attachments=[{"contentUrl": "https://ex/f.pdf", "name": "f.pdf"}],
+    )
+    cfg = _make_config()
+
+    async def fake_download(url, config, use_bot_token=True):
+        return b"pdfbytes", "application/pdf"
+
+    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+        run_kwargs, skipped = await download_attachments_async(parsed, cfg)
+
+    assert skipped == []
+    assert run_kwargs["files"][0].mime_type == "application/pdf"
+    assert run_kwargs["files"][0].filename == "f.pdf"
+
+
 # === _clean_mention_text ===
 
 
