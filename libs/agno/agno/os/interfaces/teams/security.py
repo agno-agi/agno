@@ -21,7 +21,8 @@ _MISSING_CRYPTO_DETAIL = (
 
 _jwks_cache: Dict[str, Any] = {
     "keys": None,  # list[dict]
-    "fetched_at": 0.0,
+    "fetched_at": 0.0,  # wall clock, for the 24h TTL
+    "fetched_monotonic": 0.0,  # monotonic, for the forced-refresh floor
     "jwks_uri": None,
 }
 _jwks_lock = Lock()
@@ -30,8 +31,10 @@ _async_jwks_lock: Optional[asyncio.Lock] = None
 # An unknown kid means the keys may have rotated -- but the kid is read from an
 # unverified header, so any caller can invent one. Only force a refresh if the
 # cached keys are at least this old; a set fetched seconds ago cannot have
-# rotated. One timestamp, one comparison, as os/service_accounts.py throttles
-# its last-used writes.
+# rotated. Measured on the monotonic clock, as os/service_accounts.py throttles
+# its last-used writes: a backwards wall-clock step would otherwise suppress
+# every forced refresh until the clock caught up, and the TTL beside it reads
+# the same stamp, so rotation would go unnoticed for the duration.
 _MIN_FORCED_REFRESH_SECONDS = 60.0
 
 
@@ -97,6 +100,7 @@ async def _get_jwks() -> List[Dict[str, Any]]:
         keys = await _fetch_jwks(jwks_uri)
         _jwks_cache["keys"] = keys
         _jwks_cache["fetched_at"] = time.time()
+        _jwks_cache["fetched_monotonic"] = time.monotonic()
         _jwks_cache["jwks_uri"] = jwks_uri
         return keys
 
@@ -111,9 +115,10 @@ async def _find_key_for_kid(kid: str) -> Optional[Dict[str, Any]]:
 async def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
     """Verify a Bot Framework JWT from an inbound webhook `Authorization` header.
 
-    Returns True on success, False on any validation failure. The router converts
-    False to a 403 response. Raises HTTPException(500) only if `pyjwt[crypto]` is
-    not installed (a configuration error, not a validation failure).
+    Returns True on success, False on any validation failure; the router converts
+    False to a 403. Raises HTTPException(500) for the two configuration errors it
+    can detect -- no app id and no dev bypass, or `pyjwt[crypto]` missing --
+    neither of which is a statement about the token.
 
     `MICROSOFT_APP_SKIP_JWT_VALIDATION=true` bypasses the check for local
     development, and only when no app id is configured — a deployment with
@@ -163,10 +168,15 @@ async def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) ->
     try:
         jwk = await _find_key_for_kid(kid)
         if not jwk:
+            forced = False
             with _jwks_lock:
-                if time.time() - _jwks_cache["fetched_at"] > _MIN_FORCED_REFRESH_SECONDS:
+                if time.monotonic() - _jwks_cache["fetched_monotonic"] > _MIN_FORCED_REFRESH_SECONDS:
                     _jwks_cache["fetched_at"] = 0.0
-            jwk = await _find_key_for_kid(kid)
+                    forced = True
+            # Without a refresh the second lookup would re-scan the same cached
+            # list, so only repeat it when there is something new to find.
+            if forced:
+                jwk = await _find_key_for_kid(kid)
         if not jwk:
             log_warning(f"No matching JWK for kid={kid}")
             return False
