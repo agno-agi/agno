@@ -345,3 +345,39 @@ def test_retry_starts_with_a_fresh_record():
     assert out.status == RunStatus.completed
     assert out.verification.status == "verified"
     assert len(out.verification.attempts) == 1
+
+
+def test_stop_after_tool_call_still_verifies_and_reenters():
+    """A tool with stop_after_tool_call=True ends the turn with content the model never
+    authored; the gate still verifies that outcome and a failure re-calls the model."""
+    import json as _json
+
+    from agno.tools.decorator import tool
+
+    @tool(stop_after_tool_call=True)
+    def finish_now() -> str:
+        """End the turn immediately."""
+        return "tool says done"
+
+    tool_call = ModelResponse(
+        role="assistant",
+        tool_calls=[
+            {
+                "id": "call-stop",
+                "type": "function",
+                "function": {"name": "finish_now", "arguments": _json.dumps({})},
+            }
+        ],
+    )
+    model = ScriptedModel([tool_call, _text("model answer after the report")])
+    agent = Agent(
+        model=model,
+        tools=[finish_now],
+        verifiers=[fail_once()],
+        verification=VerificationConfig(max_attempts=2),
+    )
+    out = agent.run("go")
+    assert model.calls == 2
+    assert out.status == RunStatus.completed
+    assert out.verification.status == "verified"
+    assert len(out.verification.attempts) == 2

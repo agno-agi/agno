@@ -8,6 +8,7 @@ The verifier runs `pytest -q` in the scratch project after every attempt. Exit 0
 anything else sends the test output back to the model as evidence.
 """
 
+import sys
 import tempfile
 from pathlib import Path
 from textwrap import dedent
@@ -51,7 +52,11 @@ project = Path(tempfile.mkdtemp(prefix="tests_must_pass_"))
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.5"),
     tools=[FileTools(base_dir=project)],
-    verifiers=[ShellVerifier("python -m pytest -q", cwd=str(project), timeout_s=60.0)],
+    verifiers=[
+        ShellVerifier(
+            f"{sys.executable} -m pytest -q", cwd=str(project), timeout_s=60.0
+        )
+    ],
 )
 
 # ---------------------------------------------------------------------------
