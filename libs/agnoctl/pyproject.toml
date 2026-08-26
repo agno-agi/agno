@@ -1,6 +1,6 @@
 [project]
 name = "agnoctl"
-version = "0.1.3"
+version = "0.2.0"
 description = "The Agno CLI: connect and operate AgentOS from the terminal, built for humans and coding agents"
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -25,6 +25,7 @@ classifiers = [
 
 dependencies = [
   "httpx",
+  "questionary>=2.1.1,<3",
   "rich",
   "typer",
   "tomli; python_version < '3.11'",

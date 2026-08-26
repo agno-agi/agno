@@ -1,11 +1,24 @@
 import asyncio
 from dataclasses import dataclass, field
-from typing import Any, List, Optional
+from importlib.util import find_spec
+from typing import Any, Dict, List, Optional, Union
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyFactory, ChunkingStrategyType
 from agno.knowledge.document.base import Document
 from agno.knowledge.types import ContentType
+
+
+def package_is_importable(package: str) -> bool:
+    """Whether *package* can be located without importing it.
+
+    A probe that raises counts as missing: a package that cannot be probed cannot be relied
+    on to read a file either.
+    """
+    try:
+        return find_spec(package) is not None
+    except Exception:
+        return False
 
 
 @dataclass
@@ -78,6 +91,57 @@ class Reader:
     @classmethod
     def get_supported_content_types(cls) -> List[ContentType]:
         raise NotImplementedError
+
+    @classmethod
+    def get_read_time_requirements(cls) -> Dict[ContentType, List[str]]:
+        """Third-party packages this reader imports when it reads, not when it is imported.
+
+        Importing the reader class proves nothing about these, so they are declared here and
+        probed before the reader is advertised. Packages the reader imports at module scope
+        must not be listed: the module import already fails without them, and a second
+        declaration would drift from it.
+        """
+        return {}
+
+    @classmethod
+    def get_missing_read_time_packages(cls, content_type: Optional[Union[ContentType, str]] = None) -> List[str]:
+        """Declared read-time packages that are not importable.
+
+        With no *content_type*, returns the packages needed across every content type the
+        reader declares, in declaration order, first occurrence winning. Probes with
+        ``find_spec``, so nothing is imported and nothing enters ``sys.modules``.
+        """
+        requirements = cls.get_read_time_requirements()
+        if not requirements:
+            return []
+
+        if content_type is None:
+            packages = [package for declared in requirements.values() for package in declared]
+        else:
+            wanted = content_type.value if isinstance(content_type, ContentType) else content_type
+            packages = []
+            for declared_type, declared_packages in requirements.items():
+                declared = declared_type.value if isinstance(declared_type, ContentType) else declared_type
+                if declared == wanted:
+                    packages = list(declared_packages)
+                    break
+
+        missing: List[str] = []
+        for package in packages:
+            if package not in missing and not package_is_importable(package):
+                missing.append(package)
+        return missing
+
+    @classmethod
+    def get_available_content_types(cls) -> List[ContentType]:
+        """Supported content types whose declared read-time packages all resolve.
+
+        A reader that declares no read-time requirements returns its supported types unchanged.
+        """
+        supported = cls.get_supported_content_types()
+        # Asks get_missing_read_time_packages rather than reading the declaration directly: a
+        # reader whose requirement is not a package list overrides that method instead.
+        return [content_type for content_type in supported if not cls.get_missing_read_time_packages(content_type)]
 
     def chunk_document(self, document: Document) -> List[Document]:
         if self.chunking_strategy is None:

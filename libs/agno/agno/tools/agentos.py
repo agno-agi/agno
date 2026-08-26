@@ -31,15 +31,19 @@ Enable flags:
       backends) return a clear error payload at call time.
 
 Read-only:
-    * No tool mutates platform state. Schedule, approval and component management
-      are deliberately not exposed. The one write that does happen is the metrics
-      rollup refresh inside get_platform_metrics -- derived data, no user content.
+    * No tool mutates platform state, and no tool writes. Schedule, approval and
+      component management are deliberately not exposed. ``get_platform_metrics``
+      can still cause a metrics rollup write, but only because ``db.get_metrics()``
+      refreshes stale rollups for every caller -- the toolkit does not ask for it,
+      so it inherits whatever throttling the database applies.
     * Span attributes payloads, approval tool arguments and schedule run
       input/output are never returned -- they can hold full conversation content.
-    * Schedule run errors are redacted: an error that came with an HTTP status
-      code is reduced to ``HTTP <code>`` (upstream response bodies echo run
-      input back, e.g. via a 422), and framework-generated messages are capped
-      at their first line, 200 characters.
+    * Schedule run errors are redacted: an error carrying a non-2xx status code is
+      an upstream response body (which echoes run input back, e.g. via a 422) and
+      is reduced to ``HTTP <code>``. Messages the scheduler wrote itself -- a run
+      that ended in an error state, a timeout, a transport failure -- accompany a
+      2xx or no status code and are kept, capped at their first line, 200
+      characters.
     * The tools read the database directly, so AgentOS endpoint scopes do not
       apply to them: anyone who can talk to the agent sees platform-wide
       aggregates, and pending approvals include identifiers (user_id, tool_name,
@@ -53,8 +57,9 @@ import json
 from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union, cast
 
+from agno.db.utils import aggregate_metrics_by_date
 from agno.tools.toolkit import Toolkit
-from agno.utils.log import log_warning, logger
+from agno.utils.log import logger
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb
@@ -188,13 +193,8 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
+            days = _window_days(days)
             start_date, end_date = _metrics_window(days)
-            try:
-                self._sync_db().calculate_metrics()
-            except NotImplementedError:
-                pass
-            except Exception as e:
-                log_warning(f"Could not refresh metrics: {e}")
             rows, _ = self._sync_db().get_metrics(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
@@ -213,13 +213,8 @@ class AgentOSTools(Toolkit):
         if not self._db_is_async:
             return await _run_sync(self.get_platform_metrics, days)
         try:
+            days = _window_days(days)
             start_date, end_date = _metrics_window(days)
-            try:
-                await self._async_db().calculate_metrics()
-            except NotImplementedError:
-                pass
-            except Exception as e:
-                log_warning(f"Could not refresh metrics: {e}")
             rows, _ = await self._async_db().get_metrics(starting_date=start_date, ending_date=end_date)
             return _format_platform_metrics(rows, days, start_date, end_date)
         except Exception:
@@ -245,6 +240,7 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
+            days = _window_days(days)
             start_time = _window_start(days)
             groupings: Dict[str, Tuple[List[Dict[str, Any]], int]] = {}
             for group in ("agent", "team", "workflow", "endpoint"):
@@ -274,6 +270,7 @@ class AgentOSTools(Toolkit):
         if not self._db_is_async:
             return await _run_sync(self.get_run_activity, days)
         try:
+            days = _window_days(days)
             start_time = _window_start(days)
             groupings: Dict[str, Tuple[List[Dict[str, Any]], int]] = {}
             for group in ("agent", "team", "workflow", "endpoint"):
@@ -308,6 +305,7 @@ class AgentOSTools(Toolkit):
         if self._db_is_async:
             return _async_db_error()
         try:
+            days = _window_days(days)
             start_time = _window_start(days)
             tools_most_used, tools_total = self._sync_db().get_span_stats(
                 span_type="TOOL", start_time=start_time, sort_by="total_calls", limit=_SPAN_LIMIT
@@ -341,6 +339,7 @@ class AgentOSTools(Toolkit):
         if not self._db_is_async:
             return await _run_sync(self.get_tool_activity, days)
         try:
+            days = _window_days(days)
             start_time = _window_start(days)
             tools_most_used, tools_total = await self._async_db().get_span_stats(
                 span_type="TOOL", start_time=start_time, sort_by="total_calls", limit=_SPAN_LIMIT
@@ -673,13 +672,23 @@ def _clamp(value: int, low: int, high: int) -> int:
     return max(low, min(int(value), high))
 
 
+def _window_days(days: int) -> int:
+    """Normalize a caller-supplied window to a whole number of days in 1..365.
+
+    Callers are models, so 0, negatives and floats arrive routinely. Every tool
+    normalizes here and reports this value, so the window named in the payload is
+    always the window that was queried.
+    """
+    return _clamp(days, 1, 365)
+
+
 def _window_start(days: int) -> datetime:
-    return datetime.now(timezone.utc) - timedelta(days=_clamp(days, 1, 365))
+    return datetime.now(timezone.utc) - timedelta(days=days)
 
 
 def _metrics_window(days: int) -> tuple[date, date]:
     end_date = datetime.now(timezone.utc).date()
-    start_date = end_date - timedelta(days=_clamp(days, 1, 365) - 1)
+    start_date = end_date - timedelta(days=days - 1)
     return start_date, end_date
 
 
@@ -693,6 +702,9 @@ def _epoch_to_iso(value: Optional[int]) -> Optional[str]:
 
 
 def _format_platform_metrics(rows: List[Any], days: int, start_date: date, end_date: date) -> str:
+    # Stored metrics are one row per owner, and this reports a day: without collapsing them a
+    # day with three users arrives as three unlabelled entries carrying one user count each.
+    rows = aggregate_metrics_by_date(rows)
     daily = []
     totals = {
         "agent_runs": 0,
@@ -870,20 +882,34 @@ def _format_eval_history(rows: List[Any], total: int) -> str:
 def _summarize_run_error(run: Dict[str, Any]) -> Optional[str]:
     """Reduce a stored schedule run error to a safe, bounded summary.
 
-    Errors that came with an HTTP status code are raw upstream response bodies,
-    which can echo the run input back (e.g. a 422 validation error), so the
-    body is dropped and only ``HTTP <code>`` is returned. Errors without a
-    status code are framework-generated (timeouts, cancellations, transport
-    failures) and are kept, first line only, capped at 200 characters.
+    A non-2xx status code means the error is a raw upstream response body, which
+    can echo the run input back (e.g. a 422 validation error), so the body is
+    dropped and only ``HTTP <code>`` is returned.
+
+    A 2xx status code, or none at all, means the scheduler wrote the message
+    itself -- a run that finished in an error state, a timeout, a cancellation, a
+    transport failure. Those carry the diagnosis an operator actually needs, so
+    they are kept: first line only, capped at 200 characters.
+
+    The status code is a reliable signal because the executor only ever stores an
+    upstream body alongside a non-2xx response; its own messages accompany a
+    successful poll.
     """
     error = run.get("error")
     if error is None:
         return None
     status_code = run.get("status_code")
-    if status_code is not None:
+    if status_code is not None and not _is_success_status(status_code):
         return f"HTTP {status_code}"
     lines = str(error).strip().splitlines()
     return lines[0][:_ERROR_SUMMARY_LIMIT] if lines else None
+
+
+def _is_success_status(status_code: Any) -> bool:
+    try:
+        return 200 <= int(status_code) < 300
+    except (TypeError, ValueError):
+        return False
 
 
 def _format_schedule_run(run: Dict[str, Any]) -> Dict[str, Any]:

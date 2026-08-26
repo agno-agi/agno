@@ -5,6 +5,7 @@ from typing import List
 
 import pytest
 
+from agno.run import RunContext
 from agno.run.workflow import (
     StepCompletedEvent,
     StepStartedEvent,
@@ -387,11 +388,13 @@ def test_workflow_as_loop_step(shared_db):
 def test_workflow_as_parallel_step(shared_db):
     """Test using two workflows inside a Parallel step, verifying both execute."""
 
-    def set_key_a(step_input: StepInput, session_state: dict) -> StepOutput:
+    def set_key_a(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        session_state = run_context.session_state
         session_state["key_a"] = "value_a"
         return StepOutput(content="from_A")
 
-    def set_key_b(step_input: StepInput, session_state: dict) -> StepOutput:
+    def set_key_b(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        session_state = run_context.session_state
         session_state["key_b"] = "value_b"
         return StepOutput(content="from_B")
 
@@ -404,7 +407,8 @@ def test_workflow_as_parallel_step(shared_db):
         steps=[Step(name="b_step", executor=set_key_b)],
     )
 
-    def read_keys(step_input: StepInput, session_state: dict) -> StepOutput:
+    def read_keys(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        session_state = run_context.session_state
         a = session_state.get("key_a", "MISSING")
         b = session_state.get("key_b", "MISSING")
         return StepOutput(content=f"a={a}, b={b}")
@@ -1250,12 +1254,14 @@ async def test_async_nested_workflow_serialization(shared_db):
 async def test_async_nested_workflow_session_state(shared_db):
     """Test session state sharing in async nested workflow."""
 
-    async def async_set_state(step_input: StepInput, session_state: dict) -> StepOutput:
+    async def async_set_state(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        session_state = run_context.session_state
         await asyncio.sleep(0.001)
         session_state["async_key"] = "async_value"
         return StepOutput(content="state_set")
 
-    async def async_read_state(step_input: StepInput, session_state: dict) -> StepOutput:
+    async def async_read_state(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        session_state = run_context.session_state
         await asyncio.sleep(0.001)
         val = session_state.get("async_key", "NOT_FOUND")
         return StepOutput(content=f"state_read: {val}")
@@ -1525,16 +1531,17 @@ def test_workflow_passed_directly_as_step(shared_db):
 def test_nested_workflow_shared_session_state(shared_db):
     """Test that session state is shared between outer and nested workflow.
 
-    Function executors access session_state by declaring it as a parameter
-    in their function signature. The framework inspects the signature and
-    passes the dict automatically.
+    Function executors access session state by declaring run_context as a
+    parameter and reading run_context.session_state off it.
     """
 
-    def set_state(step_input: StepInput, session_state: dict) -> StepOutput:
+    def set_state(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        session_state = run_context.session_state
         session_state["inner_key"] = "inner_value"
         return StepOutput(content="state_set")
 
-    def read_state(step_input: StepInput, session_state: dict) -> StepOutput:
+    def read_state(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        session_state = run_context.session_state
         val = session_state.get("inner_key", "NOT_FOUND")
         return StepOutput(content=f"state_read: {val}")
 

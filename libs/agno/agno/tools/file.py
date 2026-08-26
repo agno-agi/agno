@@ -1,7 +1,7 @@
 import json
 import os
 from pathlib import Path
-from typing import Any, List, Optional, Tuple
+from typing import Any, List, Optional
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
@@ -61,6 +61,15 @@ def _extract_snippet(content: str, query: str, context_chars: int = 200) -> str:
 class FileTools(Toolkit):
     """Toolkit for read/write access to a local directory tree.
 
+    ``exclude_patterns`` here is a **listing filter, not an access boundary**: results
+    from ``list_files``, ``search_files`` and ``search_content`` skip matching paths,
+    but ``read_file``, ``read_file_chunk``, ``save_file``, ``replace_file_chunk`` and
+    ``delete_file`` do not consult it — an agent that names an excluded path directly
+    still reads or writes it. The shared default list includes credential files, so an
+    agent given ``FileTools`` over a directory holding secrets can still read them by
+    name. Use ``agno.tools.workspace.Workspace`` where exclusion has to be enforced:
+    there the same patterns refuse every path the agent names.
+
     By default, results from ``list_files``, ``search_files``, and ``search_content``
     skip common noise directories (``.venv``, ``.venvs``, ``.context``,
     ``.git``, ``__pycache__``, ``node_modules``, etc.). See
@@ -73,7 +82,11 @@ class FileTools(Toolkit):
     Each pattern is matched with ``fnmatch`` against *any path component* of the
     file's path relative to ``base_dir``. A file is excluded if any component
     matches any pattern, so ``.git`` will exclude both ``.git/`` at the root
-    and ``vendor/thing/.git/`` nested deep.
+    and ``vendor/thing/.git/`` nested deep. An entry prefixed with ``!`` is an
+    exemption: a component matching it is never excluded, whatever else it
+    matches. The defaults use this to keep committed env templates
+    (``.env.example`` and friends) listed while real env files stay out of
+    listings.
 
     Note: ``exclude_patterns`` does not parse ``.gitignore`` files — it only
     applies the literal patterns provided.
@@ -131,19 +144,6 @@ class FileTools(Toolkit):
         """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""
         return path_matches_exclude(path, self.base_dir, self.exclude_patterns)
 
-    def check_escape(self, relative_path: str) -> Tuple[bool, Path]:
-        """Check if the file path is within the base directory.
-
-        Alias for _check_path maintained for backward compatibility.
-
-        Args:
-            relative_path: The file name or relative path to check.
-
-        Returns:
-            Tuple of (is_safe, resolved_path). If not safe, returns base_dir as the path.
-        """
-        return self._check_path(relative_path, self.base_dir)
-
     def save_file(self, contents: str, file_name: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Saves the contents to a file called `file_name` and returns the file name if successful.
 
@@ -153,7 +153,7 @@ class FileTools(Toolkit):
         :return: The file name if successful, otherwise returns an error message.
         """
         try:
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to save file: {file_name}")
                 return "Error saving file"
@@ -181,7 +181,7 @@ class FileTools(Toolkit):
         """
         try:
             log_debug(f"Reading file: {file_name}")
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
@@ -204,11 +204,11 @@ class FileTools(Toolkit):
         :param chunk: String to be inserted instead of lines from start_line to end_line. Can have multiple lines.
         :param encoding: Encoding to use, default - utf-8
 
-        :return: file name if successfull, error message otherwise
+        :return: file name if successful, error message otherwise
         """
         try:
             log_debug(f"Patching file: {file_name}")
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
@@ -232,7 +232,7 @@ class FileTools(Toolkit):
         """
         try:
             log_debug(f"Reading file: {file_name}")
-            safe, file_path = self.check_escape(file_name)
+            safe, file_path = self._check_path(file_name, self.base_dir)
             if not (safe):
                 log_error(f"Attempted to read file: {file_name}")
                 return "Error reading file"
@@ -253,7 +253,7 @@ class FileTools(Toolkit):
 
         :return: Empty string, if operation succeeded, otherwise returns an error message
         """
-        safe, path = self.check_escape(file_name)
+        safe, path = self._check_path(file_name, self.base_dir)
         try:
             if safe:
                 if path.is_dir():
@@ -277,7 +277,7 @@ class FileTools(Toolkit):
         try:
             d = self.base_dir
             if directory:
-                safe, d = self.check_escape(directory)
+                safe, d = self._check_path(directory, self.base_dir)
                 if not safe:
                     return "{}"
             log_debug(f"Reading files in : {d}")
@@ -356,7 +356,7 @@ class FileTools(Toolkit):
 
             search_dir = self.base_dir
             if directory:
-                safe, search_dir = self.check_escape(directory)
+                safe, search_dir = self._check_path(directory, self.base_dir)
                 if not safe:
                     log_error(f"Attempted to search outside base directory: {directory}")
                     return "Error: Directory is outside the allowed base directory"
