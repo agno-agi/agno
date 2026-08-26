@@ -1,3 +1,4 @@
+import asyncio
 import os
 import time
 from threading import Lock
@@ -24,6 +25,14 @@ _jwks_cache: Dict[str, Any] = {
     "jwks_uri": None,
 }
 _jwks_lock = Lock()
+_async_jwks_lock: Optional[asyncio.Lock] = None
+
+# An unknown kid means the keys may have rotated -- but the kid is read from an
+# unverified header, so any caller can invent one. Only force a refresh if the
+# cached keys are at least this old; a set fetched seconds ago cannot have
+# rotated. One timestamp, one comparison, as os/service_accounts.py throttles
+# its last-used writes.
+_MIN_FORCED_REFRESH_SECONDS = 60.0
 
 
 def dev_bypass_enabled() -> bool:
@@ -35,46 +44,71 @@ def dev_bypass_enabled() -> bool:
     return os.getenv("MICROSOFT_APP_SKIP_JWT_VALIDATION", "").lower() == "true"
 
 
-def _fetch_openid_metadata() -> Dict[str, Any]:
-    with httpx.Client(timeout=10) as client:
-        resp = client.get(_OPENID_METADATA_URL)
+async def _fetch_openid_metadata() -> Dict[str, Any]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(_OPENID_METADATA_URL)
         resp.raise_for_status()
         return resp.json()
 
 
-def _fetch_jwks(jwks_uri: str) -> List[Dict[str, Any]]:
-    with httpx.Client(timeout=10) as client:
-        resp = client.get(jwks_uri)
+async def _fetch_jwks(jwks_uri: str) -> List[Dict[str, Any]]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(jwks_uri)
         resp.raise_for_status()
         return resp.json().get("keys", [])
 
 
-def _get_jwks() -> List[Dict[str, Any]]:
+def _cache_is_fresh(now: float) -> bool:
+    return bool(_jwks_cache["keys"]) and now - _jwks_cache["fetched_at"] < _JWKS_CACHE_TTL_SECONDS
+
+
+async def _get_jwks() -> List[Dict[str, Any]]:
+    """Return Microsoft's signing keys, fetching at most once per TTL.
+
+    Double-checked locking, as knowledge/loaders/github.py does for its token
+    exchange: the cache is read without the async lock first (safe -- no await,
+    so no coroutine can interleave), and on a miss the lock is held for the
+    whole fetch so concurrent callers collapse into one HTTP round trip rather
+    than each starting their own.
+    """
+    global _async_jwks_lock
+
     now = time.time()
+    # Fast path: lock-free cache read
+    if _cache_is_fresh(now):
+        return _jwks_cache["keys"]
+
+    # The async lock itself is created under the sync lock
     with _jwks_lock:
-        if _jwks_cache["keys"] and now - _jwks_cache["fetched_at"] < _JWKS_CACHE_TTL_SECONDS:
+        if _async_jwks_lock is None:
+            _async_jwks_lock = asyncio.Lock()
+    lock = _async_jwks_lock
+
+    async with lock:
+        # Slow path: re-check, then fetch and write under the lock
+        if _cache_is_fresh(time.time()):
             return _jwks_cache["keys"]
 
-        metadata = _fetch_openid_metadata()
+        metadata = await _fetch_openid_metadata()
         jwks_uri = metadata.get("jwks_uri")
         if not jwks_uri:
             raise RuntimeError("Bot Framework OpenID metadata missing 'jwks_uri'")
 
-        keys = _fetch_jwks(jwks_uri)
+        keys = await _fetch_jwks(jwks_uri)
         _jwks_cache["keys"] = keys
-        _jwks_cache["fetched_at"] = now
+        _jwks_cache["fetched_at"] = time.time()
         _jwks_cache["jwks_uri"] = jwks_uri
         return keys
 
 
-def _find_key_for_kid(kid: str) -> Optional[Dict[str, Any]]:
-    for key in _get_jwks():
+async def _find_key_for_kid(kid: str) -> Optional[Dict[str, Any]]:
+    for key in await _get_jwks():
         if key.get("kid") == kid:
             return key
     return None
 
 
-def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
+async def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
     """Verify a Bot Framework JWT from an inbound webhook `Authorization` header.
 
     Returns True on success, False on any validation failure. The router converts
@@ -95,10 +129,7 @@ def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
             return True
         raise HTTPException(
             status_code=500,
-            detail=(
-                "MICROSOFT_APP_ID is not set. Set MICROSOFT_APP_SKIP_JWT_VALIDATION=true "
-                "for local development."
-            ),
+            detail=("MICROSOFT_APP_ID is not set. Set MICROSOFT_APP_SKIP_JWT_VALIDATION=true for local development."),
         )
 
     if not auth_header or not auth_header.lower().startswith("bearer "):
@@ -130,11 +161,12 @@ def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
         return False
 
     try:
-        jwk = _find_key_for_kid(kid)
+        jwk = await _find_key_for_kid(kid)
         if not jwk:
             with _jwks_lock:
-                _jwks_cache["fetched_at"] = 0.0
-            jwk = _find_key_for_kid(kid)
+                if time.time() - _jwks_cache["fetched_at"] > _MIN_FORCED_REFRESH_SECONDS:
+                    _jwks_cache["fetched_at"] = 0.0
+            jwk = await _find_key_for_kid(kid)
         if not jwk:
             log_warning(f"No matching JWK for kid={kid}")
             return False

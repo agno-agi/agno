@@ -689,7 +689,8 @@ def test_config_init_uses_arg_tenant_over_env():
 # === _get_jwks cache TTL ===
 
 
-def test_get_jwks_caches_within_ttl():
+@pytest.mark.asyncio
+async def test_get_jwks_caches_within_ttl():
     """Second call inside TTL must not re-fetch OpenID metadata or JWKS."""
     from agno.os.interfaces.teams import security as teams_security
 
@@ -708,11 +709,15 @@ def test_get_jwks_caches_within_ttl():
         return [{"kty": "RSA", "kid": "k1"}]
 
     with (
-        patch("agno.os.interfaces.teams.security._fetch_openid_metadata", side_effect=fake_metadata),
-        patch("agno.os.interfaces.teams.security._fetch_jwks", side_effect=fake_jwks),
+        patch(
+            "agno.os.interfaces.teams.security._fetch_openid_metadata",
+            new_callable=AsyncMock,
+            side_effect=fake_metadata,
+        ),
+        patch("agno.os.interfaces.teams.security._fetch_jwks", new_callable=AsyncMock, side_effect=fake_jwks),
     ):
-        keys1 = teams_security._get_jwks()
-        keys2 = teams_security._get_jwks()
+        keys1 = await teams_security._get_jwks()
+        keys2 = await teams_security._get_jwks()
 
     assert keys1 == keys2
     assert metadata_calls["n"] == 1
@@ -723,21 +728,25 @@ def test_get_jwks_caches_within_ttl():
     teams_security._jwks_cache["fetched_at"] = 0.0
 
 
-def test_get_jwks_raises_when_metadata_missing_jwks_uri():
+@pytest.mark.asyncio
+async def test_get_jwks_raises_when_metadata_missing_jwks_uri():
     from agno.os.interfaces.teams import security as teams_security
 
     teams_security._jwks_cache["keys"] = None
     teams_security._jwks_cache["fetched_at"] = 0.0
 
-    with patch("agno.os.interfaces.teams.security._fetch_openid_metadata", return_value={"issuer": "x"}):
+    with patch(
+        "agno.os.interfaces.teams.security._fetch_openid_metadata", new_callable=AsyncMock, return_value={"issuer": "x"}
+    ):
         with pytest.raises(RuntimeError, match="jwks_uri"):
-            teams_security._get_jwks()
+            await teams_security._get_jwks()
 
     teams_security._jwks_cache["keys"] = None
     teams_security._jwks_cache["fetched_at"] = 0.0
 
 
-def test_get_jwks_refetches_after_ttl_expiry():
+@pytest.mark.asyncio
+async def test_get_jwks_refetches_after_ttl_expiry():
     """After TTL expiry, next call should hit metadata + JWKS endpoints again."""
     from agno.os.interfaces.teams import security as teams_security
 
@@ -748,14 +757,16 @@ def test_get_jwks_refetches_after_ttl_expiry():
     with (
         patch(
             "agno.os.interfaces.teams.security._fetch_openid_metadata",
+            new_callable=AsyncMock,
             return_value={"jwks_uri": "https://example/jwks", "issuer": "https://api.botframework.com"},
         ) as mock_meta,
         patch(
             "agno.os.interfaces.teams.security._fetch_jwks",
+            new_callable=AsyncMock,
             return_value=[{"kty": "RSA", "kid": "new"}],
         ) as mock_jwks,
     ):
-        keys = teams_security._get_jwks()
+        keys = await teams_security._get_jwks()
 
     assert keys[0]["kid"] == "new"
     mock_meta.assert_called_once()
