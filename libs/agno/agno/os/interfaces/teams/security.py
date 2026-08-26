@@ -28,22 +28,16 @@ _jwks_cache: Dict[str, Any] = {
 _jwks_lock = Lock()
 _async_jwks_lock: Optional[asyncio.Lock] = None
 
-# An unknown kid means the keys may have rotated -- but the kid is read from an
-# unverified header, so any caller can invent one. Only force a refresh if the
-# cached keys are at least this old; a set fetched seconds ago cannot have
-# rotated. Measured on the monotonic clock, as os/service_accounts.py throttles
-# its last-used writes: a backwards wall-clock step would otherwise suppress
-# every forced refresh until the clock caught up, and the TTL beside it reads
-# the same stamp, so rotation would go unnoticed for the duration.
+# The kid comes from an unverified header, so any caller can invent one and
+# force a refresh. Keys fetched seconds ago cannot have rotated, so refuse below
+# this age. Monotonic: a backwards wall-clock step would otherwise suppress
+# every refresh until the clock caught up.
 _MIN_FORCED_REFRESH_SECONDS = 60.0
 
 
 def dev_bypass_enabled() -> bool:
-    """True when the operator explicitly opted out of JWT validation for local dev.
-
-    Public within the package: TeamsConfig consults it too, because credentials
-    are optional in exactly this mode.
-    """
+    """Package-public: TeamsConfig consults it too, since credentials are
+    optional in exactly this mode."""
     return os.getenv("MICROSOFT_APP_SKIP_JWT_VALIDATION", "").lower() == "true"
 
 
@@ -66,13 +60,12 @@ def _cache_is_fresh(now: float) -> bool:
 
 
 async def _get_jwks() -> List[Dict[str, Any]]:
-    """Return Microsoft's signing keys, fetching at most once per TTL.
+    """Return Microsoft's signing keys, refetching once the TTL has passed or
+    the caller has cleared ``fetched_at``.
 
-    Double-checked locking, as knowledge/loaders/github.py does for its token
-    exchange: the cache is read without the async lock first (safe -- no await,
-    so no coroutine can interleave), and on a miss the lock is held for the
-    whole fetch so concurrent callers collapse into one HTTP round trip rather
-    than each starting their own.
+    Double-checked: the lock-free read is safe because no await sits between it
+    and the return, and holding the lock across the fetch collapses concurrent
+    callers into one round trip.
     """
     global _async_jwks_lock
 
@@ -81,7 +74,8 @@ async def _get_jwks() -> List[Dict[str, Any]]:
     if _cache_is_fresh(now):
         return _jwks_cache["keys"]
 
-    # The async lock itself is created under the sync lock
+    # A sync lock guards creating the async one: two coroutines racing here would
+    # otherwise each build a lock and neither would exclude the other.
     with _jwks_lock:
         if _async_jwks_lock is None:
             _async_jwks_lock = asyncio.Lock()
@@ -113,22 +107,17 @@ async def _find_key_for_kid(kid: str) -> Optional[Dict[str, Any]]:
 
 
 async def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
-    """Verify a Bot Framework JWT from an inbound webhook `Authorization` header.
+    """Verify a Bot Framework JWT from an inbound `Authorization` header.
 
-    Returns True on success, False on any validation failure; the router converts
-    False to a 403. Raises HTTPException(500) for the two configuration errors it
-    can detect -- no app id and no dev bypass, or `pyjwt[crypto]` missing --
-    neither of which is a statement about the token.
-
-    `MICROSOFT_APP_SKIP_JWT_VALIDATION=true` bypasses the check for local
-    development, and only when no app id is configured — a deployment with
-    credentials cannot be downgraded by an env var.
+    True on success, False on any validation failure, which the router turns
+    into a 403. Raises HTTPException(500) for the two configuration errors it can
+    tell apart from a bad token: no app id and no bypass, or a missing
+    `pyjwt[crypto]`.
     """
     if not app_id:
         # Explicit opt-out: operator must deliberately set this for local dev.
-        # Gated on the absence of credentials the way whatsapp/security.py gates
-        # on a missing WHATSAPP_APP_SECRET; with an app id there is a real
-        # audience to verify against, so the flag is ignored below.
+        # With an app id there is a real audience to verify against, so the flag
+        # is ignored below and a configured deployment cannot be downgraded.
         if dev_bypass_enabled():
             log_warning("MICROSOFT_APP_SKIP_JWT_VALIDATION=true — Bot Framework JWT check disabled")
             return True
@@ -147,10 +136,9 @@ async def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) ->
     except ImportError:
         raise HTTPException(status_code=500, detail=_MISSING_CRYPTO_DETAIL)
 
-    # pyjwt imports cleanly without cryptography -- it guards its own crypto
-    # imports -- and reports the gap only here. Left unchecked, RS256 fails deep
-    # inside and the broad handler below reports it as a bad token, sending the
-    # operator to debug their bot registration instead of their install.
+    # pyjwt imports cleanly without cryptography and reports the gap only here.
+    # Unchecked, RS256 fails deep inside and the handler below calls it a bad
+    # token, sending the operator to debug their registration instead.
     if not getattr(jwt.algorithms, "has_crypto", False):
         raise HTTPException(status_code=500, detail=_MISSING_CRYPTO_DETAIL)
 

@@ -20,14 +20,10 @@ from agno.workflow import RemoteWorkflow, Workflow
 class MicrosoftTeams(BaseInterface):
     """Microsoft Teams interface for agents, teams, and workflows.
 
-    Exposes two HTTP endpoints under ``prefix`` (default ``/msteams``):
-      - ``GET  /status``   — readiness probe
-      - ``POST /messages`` — Bot Framework webhook for inbound activities
-
-    Also provides ``send_alert(user_id, text)`` (and its async variant
-    ``asend_alert``) for pushing proactive messages to any user who has
-    previously chatted with the bot (their conversation reference is
-    stored in ``session.session_data`` after the first inbound message).
+    Serves ``GET /status`` and the Bot Framework webhook ``POST /messages``
+    under ``prefix``. ``send_alert`` / ``asend_alert`` push a message to a user
+    who has chatted with the bot before, using the conversation reference the
+    first inbound message stored on their session.
     """
 
     type = "teams"
@@ -81,11 +77,6 @@ class MicrosoftTeams(BaseInterface):
         return self._config
 
     def get_router(self) -> APIRouter:
-        """Build and return the FastAPI router mounting the Teams endpoints.
-
-        Called once by AgentOS during interface registration. The returned
-        router is later mounted at ``self.prefix``.
-        """
         self.router = APIRouter(prefix=self.prefix, tags=self.tags)  # type: ignore
 
         self.router = attach_routes(
@@ -100,26 +91,12 @@ class MicrosoftTeams(BaseInterface):
 
         return self.router
 
-    # ------------------------------------------------------------------
-    # Proactive alerts
-    # ------------------------------------------------------------------
-
     async def asend_alert(self, user_id: str, text: str) -> bool:
-        """Send a proactive message to a user who previously chatted with the bot.
+        """Push a message to a user without an inbound trigger.
 
-        Requires:
-          - The bound entity (agent/team/workflow) must have a `db` configured.
-          - The target `user_id` must have exchanged at least one message with
-            the bot (so a conversation reference exists in that user's latest
-            session).
-
-        Returns True on success, False when no conversation reference is found
-        (silent — callers can log or retry). Raises on transport errors after
-        the reference is found.
-
-        Safe to call from anywhere: scheduled jobs, background tasks, other
-        request handlers. The bot's HTTP server does NOT need to be serving
-        traffic — this only speaks to the Bot Connector API outbound.
+        Returns False, without raising, when the entity has no db or the user
+        has no stored conversation reference. Transport failures after the
+        reference is found do raise.
         """
         entity, entity_type = self._resolve_entity()
         db = getattr(entity, "db", None)
@@ -165,13 +142,8 @@ class MicrosoftTeams(BaseInterface):
         return True
 
     def send_alert(self, user_id: str, text: str) -> bool:
-        """Blocking variant of :meth:`asend_alert`. Prefer the async version
-        inside coroutines; this exists for scripts and simple schedulers."""
+        """Blocking twin of :meth:`asend_alert`, for scripts and schedulers."""
         return asyncio.run(self.asend_alert(user_id, text))
-
-    # ------------------------------------------------------------------
-    # Internals
-    # ------------------------------------------------------------------
 
     def _resolve_entity(self):
         if self.agent is not None:

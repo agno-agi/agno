@@ -112,10 +112,8 @@ def _token_with_kid(kid: str) -> str:
 
 
 def test_repeated_unknown_kid_refetches_jwks_only_once():
-    """An unknown kid means "keys may have rotated", so the cache is dropped and
-    refetched. get_unverified_header verifies nothing, so any unauthenticated
-    caller can trigger that with a made-up kid — and without a floor, every
-    request does it again."""
+    """get_unverified_header verifies nothing, so any caller can trigger the
+    rotation refetch with a made-up kid."""
     calls = {"meta": 0, "keys": 0}
 
     def fake_metadata():
@@ -145,13 +143,8 @@ def test_repeated_unknown_kid_refetches_jwks_only_once():
 
 
 def test_jwks_is_fetched_with_the_async_client_not_the_blocking_one():
-    """The webhook handler is a coroutine; a synchronous httpx.Client inside it
-    stalls the whole event loop for the duration of the fetch.
-
-    Both clients are patched: the sync one so the assertion can see it, the async
-    one so the test never leaves the machine. Patching only httpx.Client would
-    let the async path make a real request to Microsoft and still pass.
-    """
+    """Both clients are patched: the sync one so the assertion can see it, the
+    async one so the test never leaves the machine."""
     client, env = _client_that_really_validates()
     try:
         with patch("httpx.AsyncClient") as async_client, patch("httpx.Client") as blocking_client:
@@ -166,14 +159,8 @@ def test_jwks_is_fetched_with_the_async_client_not_the_blocking_one():
 
 @pytest.mark.asyncio
 async def test_missing_crypto_extra_raises_install_hint_not_a_rejection():
-    """pyjwt without the crypto extra is a configuration error, not a bad token.
-
-    `from jwt import PyJWKClient` succeeds without cryptography -- pyjwt guards
-    its own crypto imports -- so the existing ImportError guard never fires.
-    Verification then fails deep inside and the operator sees 403 "Invalid Bot
-    Framework token", sending them to debug their Azure registration instead of
-    their install.
-    """
+    """A configuration error, not a bad token: without this the operator sees a
+    403 and debugs their Azure registration instead of their install."""
     from fastapi import HTTPException
 
     with patch.dict("os.environ", {"MICROSOFT_APP_ID": APP_ID}, clear=True):
@@ -187,14 +174,7 @@ async def test_missing_crypto_extra_raises_install_hint_not_a_rejection():
 
 @pytest.mark.asyncio
 async def test_skip_flag_is_ignored_when_credentials_are_configured():
-    """A configured deployment must not be downgradable by an env var.
-
-    whatsapp/security.py consults its bypass only when WHATSAPP_APP_SECRET is
-    absent, and the framework decides enforcement the same way
-    (os/app.py: auth_configured = bool(... or jwt_env_configured or security_key)).
-    With an app id configured there is a real audience to verify against, so the
-    flag must not disable the check.
-    """
+    """A configured deployment must not be downgradable by an env var."""
     with patch.dict(
         "os.environ",
         {"MICROSOFT_APP_ID": APP_ID, "MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"},
@@ -206,8 +186,7 @@ async def test_skip_flag_is_ignored_when_credentials_are_configured():
 
 @pytest.mark.asyncio
 async def test_skip_flag_bypasses_only_without_credentials():
-    """The local-development path stays open: no credentials configured, flag set
-    explicitly, nothing to validate against."""
+    """The local-development path stays open."""
     with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
         assert await validate_bot_framework_jwt(None, "") is True
         assert await validate_bot_framework_jwt("Bearer garbage", "") is True
@@ -246,7 +225,8 @@ async def test_signature_verification_failure_returns_false():
 
 @pytest.mark.asyncio
 async def test_unknown_kid_forces_refresh_then_fails():
-    """When the kid isn't in cached JWKS, we refresh once. If still missing, reject."""
+    """With the cache old enough for the refresh floor, an unknown kid forces one
+    refetch and is then rejected."""
     call_count = {"n": 0}
 
     async def fake_get_jwks():

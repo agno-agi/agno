@@ -68,13 +68,8 @@ def test_config_init_missing_password_raises():
 
 
 def test_dev_bypass_requires_both_credentials_absent():
-    """Half-configured is a misconfiguration, not local development.
-
-    With a password set and the app id missing -- a typo, or one environment of a
-    multi-env deploy -- relaxing both checks would leave app_id="", which the
-    validator reads as "no credentials" and bypasses. The webhook is excluded
-    from AgentOS's auth layer, so nothing else would stop it.
-    """
+    """A password without an app id would leave app_id="", which the validator
+    reads as "no credentials" and bypasses."""
     with patch.dict(
         "os.environ",
         {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true", "MICROSOFT_APP_PASSWORD": "a-real-secret"},
@@ -319,12 +314,12 @@ async def test_send_message_coerces_pydantic_model():
     assert '"answer": "42"' in activity["text"]
 
 
-# === typing_indicator_async ===
+# === send_teams_message_async — bot identity ===
 
 
 @pytest.mark.asyncio
 async def test_send_message_includes_bot_identity():
-    """Bot Connector rejects outbound activities without `from`; verify we pass it through."""
+    """`from` is passed through when the caller supplies it."""
     cfg = _make_config()
     bot_id = {"id": "28:bot-guid", "name": "Agno Bot"}
     with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
@@ -375,7 +370,7 @@ async def test_typing_indicator_swallows_errors():
         await typing_indicator_async("svc", "conv-1", cfg)
 
 
-# === download_attachments_async ===
+# === conversation reference helpers ===
 
 
 def test_build_conversation_ref_shape():
@@ -400,7 +395,6 @@ def test_extract_conversation_ref_returns_none_when_missing():
 
 
 def test_extract_conversation_ref_rejects_incomplete_ref():
-
     bad = {"teams_conversation_ref": {"conversation_id": "conv-1"}}
     assert extract_conversation_ref(bad) is None
 
@@ -514,9 +508,8 @@ async def test_download_attachments_skips_missing_url():
 
 @pytest.mark.asyncio
 async def test_download_attachments_unsupported_mime_passes_none():
-    """File validates mime against an allowlist; unsupported types must arrive as
-    mime_type=None rather than raising. Mirrors slack/helpers.py and agui/input.py,
-    which both pass None for exactly this reason."""
+    """File validates mime against an allowlist; unsupported types must arrive
+    as mime_type=None rather than raising."""
     parsed = ActivityContent(
         text="see attached",
         image_attachments=[],
@@ -547,9 +540,7 @@ async def test_download_attachments_unsupported_mime_passes_none():
 
 @pytest.mark.asyncio
 async def test_download_attachments_prefers_content_download_url():
-    """Teams file attachments carry the pre-authorised link in content.downloadUrl;
-    contentUrl points at SharePoint. Slack reads url_private and Telegram resolves
-    get_file for the same reason — use the provider's designated download field."""
+    """The pre-authorised link is content.downloadUrl; contentUrl is SharePoint."""
     parsed = ActivityContent(
         text="see attached",
         image_attachments=[],
