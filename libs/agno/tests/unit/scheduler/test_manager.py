@@ -1,6 +1,10 @@
 """Tests for the ScheduleManager Pythonic API."""
 
+import concurrent.futures
+import gc
+import sys
 import time
+from copy import deepcopy
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -57,6 +61,81 @@ def mock_db():
 @pytest.fixture
 def mgr(mock_db):
     return ScheduleManager(mock_db)
+
+
+class TestManagerCleanup:
+    """`__del__` calls `close()`, so `close()` must hold up on an object whose
+    `__init__` never ran. A failed `deepcopy` of a manager leaves exactly that
+    behind: `__new__` allocates the object, the copy aborts before the instance
+    dict is filled, and the collector still calls `__del__` on the result."""
+
+    def test_close_on_manager_that_never_ran_init(self):
+        """A missing `_pool` means no pool was ever created, not an error."""
+        manager = ScheduleManager.__new__(ScheduleManager)
+
+        manager.close()
+
+        assert getattr(manager, "_pool", None) is None
+
+    def test_close_is_idempotent_on_partial_manager(self):
+        """`__del__` can follow an explicit `close()`, so the second call has
+        to stay quiet too."""
+        manager = ScheduleManager.__new__(ScheduleManager)
+
+        manager.close()
+        manager.close()
+
+        assert getattr(manager, "_pool", None) is None
+
+    def test_collecting_a_partial_manager_reports_nothing(self):
+        """The collector swallows whatever `__del__` raises and routes it to
+        `sys.unraisablehook`, so a raising `close()` never fails a test by
+        itself. Capture the hook to see the failure the issue reported."""
+        unraisable = []
+        original = sys.unraisablehook
+        sys.unraisablehook = unraisable.append
+        try:
+            ScheduleManager.__new__(ScheduleManager)
+            gc.collect()
+        finally:
+            sys.unraisablehook = original
+
+        assert unraisable == []
+
+    def test_failed_deepcopy_leaves_nothing_that_raises_on_collection(self):
+        """The reported trigger end to end: copying a manager whose db refuses
+        to be copied, then collecting the debris the failed copy left."""
+
+        class Uncopyable:
+            def __deepcopy__(self, memo):
+                raise TypeError("cannot copy this db handle")
+
+        manager = ScheduleManager(MagicMock())
+        manager.db = Uncopyable()
+
+        unraisable = []
+        original = sys.unraisablehook
+        sys.unraisablehook = unraisable.append
+        try:
+            with pytest.raises(TypeError, match="cannot copy"):
+                deepcopy(manager)
+            gc.collect()
+        finally:
+            sys.unraisablehook = original
+
+        assert unraisable == []
+
+    def test_close_still_shuts_down_a_real_pool(self):
+        """Tolerating a missing pool must not stop a fully built manager from
+        shutting its pool down and clearing the attribute."""
+        manager = ScheduleManager(MagicMock())
+        pool = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+        manager._pool = pool
+
+        manager.close()
+
+        assert manager._pool is None
+        assert pool._shutdown
 
 
 # =============================================================================
