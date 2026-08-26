@@ -13,6 +13,11 @@ _EXPECTED_ISSUER = "https://api.botframework.com"
 
 _JWKS_CACHE_TTL_SECONDS = 60 * 60 * 24  # 24h
 
+_MISSING_CRYPTO_DETAIL = (
+    "`pyjwt[crypto]` not installed. Please install using `pip install 'pyjwt[crypto]'`, "
+    "or set MICROSOFT_APP_SKIP_JWT_VALIDATION=true for local development."
+)
+
 _jwks_cache: Dict[str, Any] = {
     "keys": None,  # list[dict]
     "fetched_at": 0.0,
@@ -103,15 +108,15 @@ def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
 
     try:
         import jwt
-        from jwt import PyJWKClient  # noqa: F401  (imported to surface missing 'cryptography' extra early)
     except ImportError:
-        raise HTTPException(
-            status_code=500,
-            detail=(
-                "`pyjwt[crypto]` not installed. Install with `pip install 'pyjwt[crypto]'` "
-                "or set MICROSOFT_APP_SKIP_JWT_VALIDATION=true for local development."
-            ),
-        )
+        raise HTTPException(status_code=500, detail=_MISSING_CRYPTO_DETAIL)
+
+    # pyjwt imports cleanly without cryptography -- it guards its own crypto
+    # imports -- and reports the gap only here. Left unchecked, RS256 fails deep
+    # inside and the broad handler below reports it as a bad token, sending the
+    # operator to debug their bot registration instead of their install.
+    if not getattr(jwt.algorithms, "has_crypto", False):
+        raise HTTPException(status_code=500, detail=_MISSING_CRYPTO_DETAIL)
 
     try:
         unverified_header = jwt.get_unverified_header(token)

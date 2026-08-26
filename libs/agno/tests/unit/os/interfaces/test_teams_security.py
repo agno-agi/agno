@@ -65,6 +65,26 @@ def test_skip_flag_false_still_validates():
         assert validate_bot_framework_jwt(None, APP_ID) is False
 
 
+def test_missing_crypto_extra_raises_install_hint_not_a_rejection():
+    """pyjwt without the crypto extra is a configuration error, not a bad token.
+
+    `from jwt import PyJWKClient` succeeds without cryptography -- pyjwt guards
+    its own crypto imports -- so the existing ImportError guard never fires.
+    Verification then fails deep inside and the operator sees 403 "Invalid Bot
+    Framework token", sending them to debug their Azure registration instead of
+    their install.
+    """
+    from fastapi import HTTPException
+
+    with patch.dict("os.environ", {"MICROSOFT_APP_ID": APP_ID}, clear=True):
+        with patch("jwt.algorithms.has_crypto", False):
+            with pytest.raises(HTTPException) as exc:
+                validate_bot_framework_jwt("Bearer x.y.z", APP_ID)
+
+    assert exc.value.status_code == 500
+    assert "pyjwt[crypto]" in exc.value.detail
+
+
 def test_skip_flag_is_ignored_when_credentials_are_configured():
     """A configured deployment must not be downgradable by an env var.
 
