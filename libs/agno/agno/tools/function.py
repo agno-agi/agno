@@ -1432,9 +1432,19 @@ class Function(BaseModel):
         # Apply strict mode to the entire schema
         self.parameters = make_nested_strict(self.parameters)
 
+        # `parameters` can arrive straight from a tool provider rather than from
+        # `get_json_schema`: an MCP server advertises an argument-free tool as
+        # `{"type": "object"}`, with no `properties` key at all. Normalise it to the
+        # same empty map the no-parameter default uses, so strict mode emits a
+        # complete schema instead of raising on the rewrite below.
+        properties = self.parameters.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+            self.parameters["properties"] = properties
+
         self.parameters["required"] = [
             name
-            for name in self.parameters["properties"]
+            for name in properties
             if name not in ("return", "self")
             and name not in FRAMEWORK_INJECTED_PARAMS
             and name not in AGNO_INJECTED_PARAMS
