@@ -13,7 +13,7 @@ from agno.utils.log import log_debug
 
 @dataclass
 class CerebrasOpenAI(OpenAILike):
-    id: str = "llama-4-scout-17b-16e-instruct"
+    id: str = "gpt-oss-120b"
     name: str = "CerebrasOpenAI"
     provider: str = "CerebrasOpenAI"
 

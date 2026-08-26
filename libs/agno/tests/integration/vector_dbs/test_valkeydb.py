@@ -1,4 +1,4 @@
-"""Integration tests for the ValkeyDB vector database.
+"""Integration tests for the ValkeyDb vector database.
 
 Requires a running Valkey instance on localhost:6379 with the valkey-search module.
 Run with: pytest libs/agno/tests/integration/vector_dbs/test_valkeydb.py -v -s
@@ -16,7 +16,7 @@ from agno.vectordb.search import SearchType
 try:
     from glide_sync import GlideClient, GlideClientConfiguration, NodeAddress
 
-    from agno.vectordb.valkey.valkeydb import ValkeyDB
+    from agno.vectordb.valkey.valkeydb import ValkeyDb
 except ImportError:
     pytest.skip("valkey-glide-sync not installed", allow_module_level=True)
 
@@ -65,9 +65,9 @@ def embedder() -> MockEmbedder:
 
 
 @pytest.fixture()
-def valkey_db(embedder: MockEmbedder) -> ValkeyDB:
-    """Create a ValkeyDB instance and ensure a clean index."""
-    db = ValkeyDB(
+def valkey_db(embedder: MockEmbedder) -> ValkeyDb:
+    """Create a ValkeyDb instance and ensure a clean index."""
+    db = ValkeyDb(
         index_name="test_valkey_integ",
         host="localhost",
         port=6379,
@@ -83,7 +83,7 @@ def valkey_db(embedder: MockEmbedder) -> ValkeyDB:
 
 
 @pytest.fixture(autouse=True)
-def cleanup(valkey_db: ValkeyDB):
+def cleanup(valkey_db: ValkeyDb):
     """Drop the index after each test."""
     yield
     valkey_db.drop()
@@ -100,11 +100,11 @@ def _make_docs(count: int, prefix: str = "doc") -> List[Document]:
     ]
 
 
-def test_create_and_exists(valkey_db: ValkeyDB):
+def test_create_and_exists(valkey_db: ValkeyDb):
     assert valkey_db.exists() is True
 
 
-def test_insert_and_search(valkey_db: ValkeyDB):
+def test_insert_and_search(valkey_db: ValkeyDb):
     docs = _make_docs(5)
     valkey_db.insert("hash_1", docs)
 
@@ -113,7 +113,7 @@ def test_insert_and_search(valkey_db: ValkeyDB):
     assert all(isinstance(d, Document) for d in results)
 
 
-def test_non_finite_embedding_rejected(valkey_db: ValkeyDB):
+def test_non_finite_embedding_rejected(valkey_db: ValkeyDb):
     """A NaN vector is indexed but ranks out of every KNN result, so insert
     fails loudly instead of storing a silently invisible document."""
     doc = Document(name="nan_doc", content="Content with a broken embedding")
@@ -122,7 +122,7 @@ def test_non_finite_embedding_rejected(valkey_db: ValkeyDB):
         valkey_db.insert("nan_hash", [doc])
 
 
-def test_name_exists(valkey_db: ValkeyDB):
+def test_name_exists(valkey_db: ValkeyDb):
     docs = _make_docs(2)
     valkey_db.insert("hash_1", docs)
 
@@ -130,7 +130,7 @@ def test_name_exists(valkey_db: ValkeyDB):
     assert valkey_db.name_exists("nonexistent") is False
 
 
-def test_content_hash_exists(valkey_db: ValkeyDB):
+def test_content_hash_exists(valkey_db: ValkeyDb):
     docs = _make_docs(2)
     valkey_db.insert("unique_hash", docs)
 
@@ -138,7 +138,7 @@ def test_content_hash_exists(valkey_db: ValkeyDB):
     assert valkey_db.content_hash_exists("missing_hash") is False
 
 
-def test_upsert_replaces_documents(valkey_db: ValkeyDB):
+def test_upsert_replaces_documents(valkey_db: ValkeyDb):
     original = _make_docs(3, prefix="orig")
     valkey_db.insert("upsert_hash", original)
     assert valkey_db.content_hash_exists("upsert_hash") is True
@@ -153,7 +153,7 @@ def test_upsert_replaces_documents(valkey_db: ValkeyDB):
     assert valkey_db.name_exists("orig_0") is False
 
 
-def test_delete_by_name(valkey_db: ValkeyDB):
+def test_delete_by_name(valkey_db: ValkeyDb):
     docs = _make_docs(3)
     valkey_db.insert("hash_del", docs)
 
@@ -162,7 +162,7 @@ def test_delete_by_name(valkey_db: ValkeyDB):
     assert valkey_db.name_exists("doc_0") is True
 
 
-def test_delete_by_metadata(valkey_db: ValkeyDB):
+def test_delete_by_metadata(valkey_db: ValkeyDb):
     docs = _make_docs(6)
     valkey_db.insert("hash_meta", docs)
 
@@ -174,7 +174,7 @@ def test_delete_by_metadata(valkey_db: ValkeyDB):
     assert valkey_db.name_exists("doc_1") is True
 
 
-def test_keyword_search(valkey_db: ValkeyDB):
+def test_keyword_search(valkey_db: ValkeyDb):
     valkey_db.search_type = SearchType.keyword
     docs = _make_docs(5)
     valkey_db.insert("hash_kw", docs)
@@ -183,7 +183,7 @@ def test_keyword_search(valkey_db: ValkeyDB):
     assert len(results) > 0
 
 
-def test_drop_and_recreate(valkey_db: ValkeyDB):
+def test_drop_and_recreate(valkey_db: ValkeyDb):
     docs = _make_docs(2)
     valkey_db.insert("hash_drop", docs)
 
@@ -197,7 +197,7 @@ def test_drop_and_recreate(valkey_db: ValkeyDB):
 
 
 @pytest.mark.asyncio
-async def test_async_insert_and_search(valkey_db: ValkeyDB):
+async def test_async_insert_and_search(valkey_db: ValkeyDb):
     docs = _make_docs(3)
     await valkey_db.async_insert("hash_async", docs)
 
@@ -207,7 +207,7 @@ async def test_async_insert_and_search(valkey_db: ValkeyDB):
 
 
 @pytest.mark.asyncio
-async def test_async_drop_and_recreate(valkey_db: ValkeyDB):
+async def test_async_drop_and_recreate(valkey_db: ValkeyDb):
     assert await valkey_db.async_exists() is True
     await valkey_db.async_drop()
     assert await valkey_db.async_exists() is False

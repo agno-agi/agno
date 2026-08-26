@@ -1,12 +1,15 @@
 """Logic shared across different database implementations"""
 
 import json
-from datetime import date, datetime
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
+import time
+from datetime import date, datetime, timedelta, timezone
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import UUID
 
+from agno.exceptions import MigrationRequiredError, SchemaMismatchError
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
+from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
 from agno.utils.log import log_error, log_warning
 
 if TYPE_CHECKING:
@@ -20,7 +23,8 @@ if TYPE_CHECKING:
 DB_TABLE_NAME_KEYS: frozenset = frozenset(
     {
         "session_table",
-        "culture_table",
+        "job_table",
+        "runs_table",
         "memory_table",
         "metrics_table",
         "eval_table",
@@ -44,6 +48,32 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "mcp_oauth_keys_table",
     }
 )
+
+
+def is_unique_violation(exc: Exception) -> bool:
+    """Whether ``exc`` is a DB unique-constraint / duplicate-key violation.
+
+    Matched by exception TYPE (SQLAlchemy ``IntegrityError`` for pg/sqlite, pymongo
+    ``DuplicateKeyError`` for Mongo), never by message text — SQLAlchemy folds bound
+    parameters into ``str(exc)``, so a substring check could misfire on caller data.
+    Used by ``update_schedule`` to let a rename-onto-taken-name propagate (so the
+    router can map it to 409) while all other DB errors keep swallowing to None.
+    """
+    try:
+        from sqlalchemy.exc import IntegrityError
+
+        if isinstance(exc, IntegrityError):
+            return True
+    except ImportError:
+        pass
+    try:
+        from pymongo.errors import DuplicateKeyError
+
+        if isinstance(exc, DuplicateKeyError):
+            return True
+    except ImportError:
+        pass
+    return False
 
 
 def detect_session_type(record: Dict[str, Any]) -> str:
@@ -130,6 +160,280 @@ def deserialize_sessions(session_type: Optional["SessionType"], records: List[Di
     return [deserialize_session(session_type, record) for record in records]
 
 
+def get_run_type(run: Any) -> str:
+    """Return the run type ("agent", "team" or "workflow") for the given run object or dict."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+
+    if isinstance(run, RunOutput):
+        return "agent"
+    if isinstance(run, TeamRunOutput):
+        return "team"
+    if isinstance(run, WorkflowRunOutput):
+        return "workflow"
+    if isinstance(run, dict):
+        # A member run persisted without its id still identifies itself by name.
+        if run.get("agent_id") or run.get("agent_name"):
+            return "agent"
+        if run.get("team_id") or run.get("team_name"):
+            return "team"
+        return "workflow"
+    raise ValueError(f"Cannot determine run type for: {type(run)}")
+
+
+def deserialize_run(run_type: Optional[str], run_data: Dict[str, Any]) -> Any:
+    """Deserialize a run dict into the correct run output class based on its type."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+
+    # Some JSON columns (MySQL/SingleStore drivers, SQLite TEXT) hand back the
+    # payload as a str rather than a dict; normalize before dispatching.
+    if isinstance(run_data, str):
+        run_data = json.loads(run_data)
+
+    if run_type is None:
+        run_type = get_run_type(run_data)
+    if run_type == "agent":
+        return RunOutput.from_dict(run_data)
+    if run_type == "team":
+        return TeamRunOutput.from_dict(run_data)
+    if run_type == "workflow":
+        return WorkflowRunOutput.from_dict(run_data)
+    raise ValueError(f"Invalid run type: {run_type}")
+
+
+def build_run_rows_for_session(session: "Session") -> List[Dict[str, Any]]:
+    """Build runs-table rows for every run in the given session.
+
+    Args:
+        session: The session whose runs should be persisted.
+
+    Returns:
+        List of row dicts matching the runs table schema (run_data is the raw run dict).
+    """
+    current_time = int(time.time())
+    rows: List[Dict[str, Any]] = []
+    for run_index, run in enumerate(session.runs or []):
+        run_id = run.get("run_id") if isinstance(run, dict) else getattr(run, "run_id", None)
+        if run_id is None:
+            continue
+
+        run_data = run if isinstance(run, dict) else run.to_dict()
+        rows.append(
+            {
+                "run_id": run_id,
+                "session_id": session.session_id,
+                "run_type": get_run_type(run),
+                "agent_id": run_data.get("agent_id"),
+                "team_id": run_data.get("team_id"),
+                "workflow_id": run_data.get("workflow_id"),
+                "user_id": session.user_id,
+                "parent_run_id": run_data.get("parent_run_id"),
+                "status": run_data.get("status"),
+                "run_index": run_index,
+                "run_data": run_data,
+                "created_at": run_data.get("created_at") or current_time,
+                "updated_at": current_time,
+            }
+        )
+
+    return rows
+
+
+def run_index_lock_name(session_id: str) -> str:
+    """Per-session named-lock key serializing run_index backfills on engines
+    with connection-scoped user locks (MySQL GET_LOCK). Hashed because MySQL
+    caps lock names at 64 characters and session ids are caller-provided."""
+    import hashlib
+
+    return "agno_run_index_" + hashlib.md5(session_id.encode()).hexdigest()
+
+
+def canonical_run_status(value: Any) -> Any:
+    """Map a run status of any casing or enum form to the stored convention:
+    ``RunStatus.value`` (uppercase, e.g. ``"COMPLETED"``).
+
+    The indexed ``status`` column is filtered case-sensitively (``get_runs``
+    compares against ``RunStatus.value``), so a writer that stores
+    ``"completed"`` verbatim produces rows invisible to those readers.
+    Unknown values pass through unchanged.
+    """
+    from agno.run.base import RunStatus
+
+    if isinstance(value, RunStatus):
+        return value.value
+    try:
+        return RunStatus(str(value)).value
+    except ValueError:
+        pass
+    try:
+        return RunStatus[str(value).lower()].value
+    except KeyError:
+        return value
+
+
+def build_single_run_row(
+    run: Any,
+    session_id: str,
+    user_id: Optional[str] = None,
+    run_index: Optional[int] = None,
+) -> Dict[str, Any]:
+    """Build a single run-table row for the given run.
+
+    Used by ``upsert_run()`` for O(1) single-run persistence.
+
+    Args:
+        run: The run object (RunOutput, TeamRunOutput, WorkflowRunOutput) or dict.
+        session_id: The session ID this run belongs to.
+        user_id: Optional user ID to associate with the run.
+        run_index: Explicit index within the session. Callers **must** supply
+            this for INSERTS (any first-time save of a ``run_id``). For UPDATES
+            to an existing row it may be ``None``; every adapter's
+            ``on_conflict_do_update`` deliberately excludes ``run_index`` from
+            the update set to preserve ordering. Omitting ``run_index`` on an
+            INSERT silently writes NULL, which corrupts ``ORDER BY run_index``
+            reads.
+
+    Returns:
+        Row dict matching the runs table schema.
+    """
+    current_time = int(time.time())
+    run_id = run.get("run_id") if isinstance(run, dict) else getattr(run, "run_id", None)
+    if run_id is None:
+        raise ValueError("Run must have a run_id")
+
+    run_data = run if isinstance(run, dict) else run.to_dict()
+
+    # For run_index: use explicit param > run_data value > None
+    effective_run_index = run_index
+    if effective_run_index is None:
+        effective_run_index = run_data.get("run_index")
+
+    return {
+        "run_id": run_id,
+        "session_id": session_id,
+        "run_type": get_run_type(run),
+        "agent_id": run_data.get("agent_id"),
+        "team_id": run_data.get("team_id"),
+        "workflow_id": run_data.get("workflow_id"),
+        "user_id": user_id,
+        "parent_run_id": run_data.get("parent_run_id"),
+        "status": run_data.get("status"),
+        "run_index": effective_run_index,
+        "run_data": run_data,
+        "created_at": run_data.get("created_at") or current_time,
+        "updated_at": current_time,
+    }
+
+
+# Run statuses (as stored string values) excluded from context/history reads.
+# Derived from the single source of truth in ``agno.run.base`` so a DB-side
+# "most recent N runs" fetch returns the same runs the in-memory history builder
+# (``get_messages``) would — it filters these out *before* slicing the last N.
+HISTORY_SKIP_STATUSES: List[str] = [status.value for status in _RUN_HISTORY_SKIP_STATUSES]
+
+
+def filter_context_runs(runs: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Keep only top-level, context-relevant runs from a list of run dicts.
+
+    Drops member sub-runs (``parent_run_id`` set) and terminal-skip statuses,
+    mirroring the pre-slice filtering in ``get_messages``. Used on the
+    un-migrated / legacy-blob read path so slicing to "most recent N" yields the
+    same window as the fully-migrated (SQL-filtered) path.
+    """
+    kept: List[Dict[str, Any]] = []
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        if run.get("parent_run_id") is not None:
+            continue
+        if run.get("status") in HISTORY_SKIP_STATUSES:
+            continue
+        kept.append(run)
+    return kept
+
+
+def merge_runs_table_with_legacy_blob(
+    table_runs: List[Dict[str, Any]],
+    legacy_runs: Optional[List[Any]],
+) -> List[Dict[str, Any]]:
+    """Merge runs fetched from the runs table with the legacy ``runs`` JSON blob.
+
+    Used by adapter reads when a session may have its run history split across
+    the new ``agno_runs`` table and the legacy ``agno_sessions.runs`` column
+    (e.g. when the v3.0.0 migration has not yet been applied to that session).
+
+    Ordering guarantee: chronological insertion order is preserved. The legacy
+    blob is the historical order (v2.x wrote runs into that list in insertion
+    order), so we walk it first and substitute the table's version whenever a
+    run_id exists in both. Any runs that only exist in the table (writes made
+    after migration nulled the blob for this session) are appended after the
+    legacy-known runs, in the order the table returns them.
+
+    Conflict resolution: the runs table wins on run_id conflicts (it's the
+    source of truth for state changes like paused → completed).
+
+    Args:
+        table_runs: Rows fetched from the runs table (in insertion order —
+            adapters sort by ``run_index`` then ``created_at``).
+        legacy_runs: The raw value of the legacy ``runs`` column (may be a
+            list, a JSON-encoded string, or ``None``).
+
+    Returns:
+        Merged list of run dicts in chronological insertion order. Empty if
+        both inputs are empty.
+    """
+    if isinstance(legacy_runs, str):
+        try:
+            legacy_runs = json.loads(legacy_runs)
+        except (json.JSONDecodeError, TypeError):
+            log_warning("Could not parse legacy runs blob during merge; ignoring it")
+            legacy_runs = None
+
+    if not legacy_runs:
+        return list(table_runs)
+
+    # Index the table rows by run_id so we can substitute in O(1) while
+    # walking the legacy order.
+    table_by_id: Dict[Any, Dict[str, Any]] = {}
+    for run in table_runs:
+        if not isinstance(run, dict):
+            continue
+        rid = run.get("run_id")
+        if rid is not None:
+            table_by_id[rid] = run
+
+    legacy_ids: set = set()
+    merged: List[Dict[str, Any]] = []
+
+    # Phase 1: walk the legacy blob in its stored (insertion) order. For each
+    # id, prefer the table's copy when it exists so state changes since
+    # migration are visible; fall back to the legacy copy otherwise.
+    for legacy_run in legacy_runs:
+        if not isinstance(legacy_run, dict):
+            continue
+        rid = legacy_run.get("run_id")
+        if rid is None:
+            continue
+        legacy_ids.add(rid)
+        merged.append(table_by_id.get(rid, legacy_run))
+
+    # Phase 2: append any table-only runs (added after migration) in the order
+    # the table returned them — these are strictly newer than everything the
+    # blob knew about.
+    for table_run in table_runs:
+        if not isinstance(table_run, dict):
+            continue
+        rid = table_run.get("run_id")
+        if rid is None or rid in legacy_ids:
+            continue
+        merged.append(table_run)
+
+    return merged
+
+
 async def resolve_session_type(
     db: Union["BaseDb", "AsyncBaseDb"],
     session_id: str,
@@ -166,6 +470,305 @@ async def resolve_session_type(
     detected = detect_session_type(raw if isinstance(raw, dict) else {})
     resolved = SessionType(detected)
     return resolved, raw
+
+
+def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
+    """Validate a ``(limit, page)`` pair coming from a public read API.
+
+    ``page`` is meaningless without ``limit`` — every adapter's pagination
+    block is guarded by ``if limit is not None: if page is not None: ...``,
+    so a caller who passes ``page=5`` and forgets ``limit`` gets **all rows**
+    back instead of page 5 of some default size, silently. That's a bug
+    with real fallout (wrong data surfaced, excess memory/bandwidth); raise
+    at the boundary rather than paper over it.
+
+    Passing neither is fine (no pagination). Passing ``limit`` without
+    ``page`` is fine (first-N behavior). Passing ``page < 1`` is a caller
+    bug (pages are 1-indexed).
+    """
+    if page is not None and limit is None:
+        raise ValueError(
+            "`page` was provided without `limit`. Pass both to paginate, "
+            "or neither to fetch all rows. Silently returning everything on "
+            "a paginated call hides caller bugs and surfaces wrong data."
+        )
+    if page is not None and page < 1:
+        raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
+
+
+# Table types MigrationManager.up() knows how to migrate at all, across every
+# version it ships, not just the ones with a pending step in the current
+# release: a sessions table still at its 2.0 shape needs the 2.3/2.5 steps even
+# though 3.0 adds none. Must stay in sync with ``_table_type_to_attr`` in
+# agno/db/migrations/manager.py, which cannot be imported here: manager ->
+# db.base -> this module would be a cycle.
+MIGRATABLE_TABLE_TYPES = frozenset(
+    {
+        "memories",
+        "sessions",
+        "metrics",
+        "evals",
+        "knowledge",
+        "approvals",
+        "components",
+        "schedules",
+        "schedule_runs",
+        "learnings",
+    }
+)
+
+
+def table_schema_mismatch_error(table_ref: str, table_type: Optional[str] = None) -> SchemaMismatchError:
+    """Build the error raised when an existing table fails schema validation.
+
+    For table types MigrationManager can handle, the most common cause is an
+    upgrade across Agno versions whose migrations have not been applied yet
+    (e.g. v2.x data with a v3.x install), so the result is a
+    ``MigrationRequiredError`` whose message points the user at the migration
+    path instead of dead-ending. Other table types have no pending migrations,
+    so migration advice would send the user in a circle; they get a plain
+    ``SchemaMismatchError`` with repair guidance instead.
+    """
+    message = (
+        f"Table {table_ref} has an invalid schema: it does not match what this version of Agno "
+        "expects (see the warning or error logged above for details). "
+    )
+    if table_type is None or table_type in MIGRATABLE_TABLE_TYPES:
+        message += (
+            "If this database was created by an older version of Agno, apply the pending "
+            "migrations with `asyncio.run(MigrationManager(db).up())` (import it from "
+            "`agno.db.migrations.manager`; await the call directly in async code), or via the "
+            "AgentOS endpoint `POST /databases/all/migrate`."
+        )
+        return MigrationRequiredError(table_name=table_ref, message=message)
+    message += (
+        "No Agno migration covers this table, so it was likely created or modified outside "
+        "Agno. Compare it against the expected schema and repair it, or move Agno to a new "
+        "table name so the table is recreated."
+    )
+    return SchemaMismatchError(table_name=table_ref, message=message)
+
+
+def metric_record_day(record: Dict[str, Any]) -> Optional[date]:
+    """Read the day off a stored metric record, or ``None`` if it has no usable one.
+
+    Key-value backends store the date as an ISO string; an unparseable one is skipped
+    rather than raised, so one bad row cannot break every metrics read.
+    """
+    raw = record.get("date")
+    if isinstance(raw, datetime):
+        return raw.date()
+    if isinstance(raw, date):
+        return raw
+    try:
+        return datetime.fromisoformat(raw).date()  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        log_warning(f"Skipping metrics record {record.get('id')}: date {raw!r} is not a day")
+        return None
+
+
+def _metric_day(record: Dict[str, Any]) -> Optional[date]:
+    """The day a metric record covers, whatever shape the backend stored it in.
+
+    It arrives as a date, a datetime, an ISO string or an epoch second, and a record whose
+    date is none of those is skipped rather than raised on.
+    """
+    day = record.get("date")
+    if isinstance(day, datetime):
+        return day.date()
+    if isinstance(day, date):
+        return day
+    if isinstance(day, str):
+        try:
+            return datetime.fromisoformat(day).date()
+        except ValueError:
+            return None
+    # bool is an int, and a record holding True would otherwise read as 1 January 1970
+    if isinstance(day, (int, float)) and not isinstance(day, bool):
+        return datetime.fromtimestamp(day, tz=timezone.utc).date()
+    return None
+
+
+def metric_bucket_key(record: Dict[str, Any]) -> Optional[Tuple[str, str]]:
+    """The (day, period) a metric record belongs to, or ``None`` if its date is not a day.
+
+    A period-less record belongs in the daily bucket.
+    """
+    day = _metric_day(record)
+    if day is None:
+        return None
+    return (day.isoformat(), record.get("aggregation_period") or "daily")
+
+
+def metrics_starting_date_from_records(records: Sequence[Dict[str, Any]]) -> Optional[date]:
+    """The first day a metrics recalculation still has to rebuild, or ``None`` if there are no records.
+
+    A day holding a completed record was rebuilt after it ended, so an incomplete record
+    sharing that day belongs to an owner whose sessions have since gone: no recalculation
+    can rebuild it, and resuming there would restart at that day for good. Only the days
+    after the last completed one are still owing, and the earliest is where the work resumes.
+    The day never runs past today, whatever date a record carries.
+    """
+    latest_completed: Optional[date] = None
+    incomplete_dates: List[date] = []
+
+    for record in records:
+        day = _metric_day(record)
+        if day is None:
+            continue
+        if record.get("completed"):
+            if latest_completed is None or day > latest_completed:
+                latest_completed = day
+        else:
+            incomplete_dates.append(day)
+
+    still_incomplete = [day for day in incomplete_dates if latest_completed is None or day > latest_completed]
+    return metrics_starting_date_from_days(latest_completed, min(still_incomplete) if still_incomplete else None)
+
+
+def metrics_starting_date_from_days(
+    latest_completed: Optional[date], earliest_incomplete: Optional[date]
+) -> Optional[date]:
+    """The day a metrics recalculation resumes at, given the two days its backend queried for.
+
+    The rule: resume at the earliest incomplete day after the latest completed one, otherwise at
+    the day after that completed one, and nowhere at all (``None``) when neither day exists.
+    Backends holding every record in memory find the two days by scanning them; the rest ask their
+    own database, since a MAX and a MIN are what it is for. Only the decision is shared, so the day
+    after a completed one is not arrived at nine ways.
+
+    The day is capped at today: a record dated in the future puts the resume point past the last
+    day there is to rebuild, so the caller's list of days to process comes back empty and every
+    recalculation from then on does nothing at all.
+    """
+    if earliest_incomplete is not None:
+        resume_at = earliest_incomplete
+    elif latest_completed is not None:
+        resume_at = latest_completed + timedelta(days=1)
+    else:
+        return None
+    return min(resume_at, datetime.now(timezone.utc).date())
+
+
+def is_legacy_metric(record: Dict[str, Any]) -> bool:
+    """Whether a record predates per-user buckets, so it holds every user's traffic."""
+    # Such a record carries no owner at all, or the unowned sentinel it was stamped with, and
+    # it counted its users; a real unowned bucket has no owner to count and stays at zero
+    return "user_id" not in record or (not record["user_id"] and bool(record.get("users_count")))
+
+
+def drop_legacy_metrics(records: Sequence[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Drop the pre-user_id record for any bucket the per-user records already cover.
+
+    That record holds the whole day's traffic for every user, so summing it alongside the
+    per-user records counts the day twice. It only goes where per-user records for the same
+    bucket exist to replace it; on its own it is still the only record of that day.
+    """
+    per_user_buckets = set()
+    is_legacy = []
+    for record in records:
+        legacy = is_legacy_metric(record)
+        is_legacy.append(legacy)
+        if not legacy:
+            per_user_buckets.add(metric_bucket_key(record))
+
+    return [
+        record
+        for record, legacy in zip(records, is_legacy)
+        if not legacy or metric_bucket_key(record) not in per_user_buckets
+    ]
+
+
+_METRIC_COUNT_FIELDS = (
+    "agent_sessions_count",
+    "team_sessions_count",
+    "workflow_sessions_count",
+    "agent_runs_count",
+    "team_runs_count",
+    "workflow_runs_count",
+    "users_count",
+)
+
+
+def _merge_model_metrics(target: List[dict], extra: List[dict]) -> None:
+    """Merge extra model_metrics into target in place, summing counts per model."""
+    index: Dict[Any, dict] = {}
+    for m in [*target, *extra]:
+        key = (m.get("model_id"), m.get("model_provider"))
+        entry = index.get(key)
+        if entry is None:
+            index[key] = dict(m)
+        else:
+            entry["count"] = (entry.get("count") or 0) + (m.get("count") or 0)
+    target[:] = list(index.values())
+
+
+def _merge_timestamp(current: Any, candidate: Any, *, latest: bool) -> Any:
+    """Merge two timestamps into the later (or earlier) one, tolerating None."""
+    if candidate is None:
+        return current
+    if current is None:
+        return candidate
+    try:
+        if latest:
+            return candidate if candidate > current else current
+        return candidate if candidate < current else current
+    except TypeError:
+        # Adapters store epoch ints; a row carrying a datetime cannot be ordered against one.
+        return current
+
+
+def aggregate_metrics_by_date(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Collapse per-user metric rows into one aggregate row per date and period.
+
+    Every reader that reports a day rather than a user needs this: stored rows are one per
+    owner, so a day with three users arrives as three rows. The id is synthesised rather than
+    carried over, because stored per-user ids embed the owner on most key-value backends and
+    rows arrive in no particular order.
+    """
+    by_bucket: Dict[Any, dict] = {}
+    for row in drop_legacy_metrics(rows):
+        bucket = metric_bucket_key(row)
+        if bucket is None:
+            # The caller reports a day, so a record whose date is not one cannot be reported
+            # at all. Skip it rather than fail every other user's row.
+            log_warning(f"Skipping metrics record {row.get('id')}: date {row.get('date')!r} is not a day")
+            continue
+        day_key, period = bucket
+        agg = by_bucket.get(bucket)
+        if agg is None:
+            agg = {**row, "id": f"{day_key}_{period}"}
+            agg["token_metrics"] = dict(row.get("token_metrics") or {})
+            agg["model_metrics"] = [dict(m) for m in (row.get("model_metrics") or [])]
+            by_bucket[bucket] = agg
+            continue
+        for field in _METRIC_COUNT_FIELDS:
+            agg[field] = (agg.get(field) or 0) + (row.get(field) or 0)
+        for token, value in (row.get("token_metrics") or {}).items():
+            agg["token_metrics"][token] = (agg["token_metrics"].get(token) or 0) + (value or 0)
+        _merge_model_metrics(agg["model_metrics"], row.get("model_metrics") or [])
+        agg["created_at"] = _merge_timestamp(agg.get("created_at"), row.get("created_at"), latest=False)
+        agg["updated_at"] = _merge_timestamp(agg.get("updated_at"), row.get("updated_at"), latest=True)
+    return list(by_bucket.values())
+
+
+def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> List[Dict[str, Any]]:
+    """Give one owner's rows the same id on every backend.
+
+    Stored ids are the backend's own: a uuid on the SQL adapters, an owner-bearing string on
+    the key-value ones. Handing those out makes the field mean something different per
+    deployment, and on some backends puts the owner inside it. A row whose date is not a day
+    keeps the id it was stored with, there being no bucket to name it after.
+    """
+    identified: List[Dict[str, Any]] = []
+    for row in rows:
+        bucket = metric_bucket_key(row)
+        if bucket is None:
+            identified.append(dict(row))
+            continue
+        day_key, period = bucket
+        identified.append({**row, "id": f"{day_key}_{user_id}_{period}"})
+    return identified
 
 
 def get_sort_value(record: Dict[str, Any], sort_by: str) -> Any:
@@ -442,17 +1045,33 @@ def _clone_db_with_table_overrides(
     """
     overrides: Dict[str, Any] = {key: db_data[key] for key in DB_TABLE_NAME_KEYS if key in db_data}
 
+    def _accepted_by(cls: Any) -> Dict[str, Any]:
+        """Only pass table overrides the adapter's constructor accepts: not
+        every adapter supports every table (e.g. job_table is queue-capable
+        adapters only), and one unexpected kwarg would TypeError the clone
+        and silently drop ALL overrides via the fallback."""
+        import inspect as _inspect
+
+        try:
+            params = _inspect.signature(cls.__init__).parameters
+        except (TypeError, ValueError):
+            return overrides
+        if any(p.kind == _inspect.Parameter.VAR_KEYWORD for p in params.values()):
+            return overrides
+        return {k: v for k, v in overrides.items() if k in params}
+
     try:
         from agno.db.postgres import PostgresDb
 
         if isinstance(source_db, PostgresDb):
+            overrides_filtered = _accepted_by(PostgresDb)
             return PostgresDb(
                 db_url=source_db.db_url,
                 db_engine=source_db.db_engine,
                 db_schema=source_db.db_schema,
                 id=source_db.id,
                 create_schema=source_db.create_schema,
-                **overrides,
+                **overrides_filtered,
             )
     except Exception as e:
         log_error(f"Error cloning PostgresDb with table overrides: {str(e)}")
@@ -462,12 +1081,13 @@ def _clone_db_with_table_overrides(
         from agno.db.sqlite import SqliteDb
 
         if isinstance(source_db, SqliteDb):
+            overrides_filtered = _accepted_by(SqliteDb)
             return SqliteDb(
                 db_file=source_db.db_file,
                 db_url=source_db.db_url,
                 db_engine=source_db.db_engine,
                 id=source_db.id,
-                **overrides,
+                **overrides_filtered,
             )
     except Exception as e:
         log_error(f"Error cloning SqliteDb with table overrides: {str(e)}")

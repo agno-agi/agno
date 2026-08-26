@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "2.9.0"
+version = "3.0.0"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -24,7 +24,7 @@ classifiers = [
 ]
 
 dependencies = [
-  "agnoctl>=0.1.1",
+  "agnoctl>=0.2.0",
   "docstring-parser",
   # Prevent the request-smuggling CVE in h11 < 0.16
   "h11>=0.16.0",
@@ -63,6 +63,9 @@ dev = [
   "sqlalchemy",
   "aiosqlite",
   "greenlet",
+  # Driver for the Postgres adapter suites under tests/unit/db; without it
+  # they importorskip away and only the SQLite half of each guard is run.
+  "agno[postgres]",
   # First-party interfaces exercised by the unit suite
   "agno[slack]",
   "agno[agui]",
@@ -83,7 +86,10 @@ arize = ["arize-phoenix", "agno[opentelemetry]", "opentelemetry-exporter-otlp-pr
 langfuse = ["langfuse"]
 
 # Dependencies for Models
-anthropic = ["anthropic"]
+# >=0.77.0: the first release accepting output_config on the stable messages endpoint
+# as well as the beta one. Structured output rides inside it, and anthropic 1.0.0
+# dropped the output_format parameter that carried it before.
+anthropic = ["anthropic>=0.77.0"]
 aws-bedrock = ["boto3", "aioboto3"]
 azure = ["azure-ai-inference", "aiohttp"]
 cerebras = ["cerebras-cloud-sdk"]
@@ -95,9 +101,9 @@ infinity = ["infinity_client"]
 litellm = ["litellm<=1.82.6"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
-mistral = ["mistralai"]
+mistral = ["mistralai>=2.0.0"]
 ollama = ["ollama"]
-openai = ["openai"]
+openai = ["openai>=1.106.0"]  # >=1.106.0: callable api_key (sync+async token provider), openai/openai-python#2588
 portkey = ["portkey-ai"]
 
 # Dependencies for Token Counting
@@ -113,7 +119,18 @@ arxiv = ["arxiv"]
 brave = ["brave-search"]
 browserbase = ["browserbase", "playwright"]
 cartesia = ["cartesia"]
-confluence = ["atlassian-python-api"]
+# ipykernel 7.3 and jupyter_client 8.9 require Python >= 3.10; the markers keep
+# `pip install agno[code]` (and the tools/tests chains) resolvable on 3.9,
+# where importing agno.tools.code then raises its readable ImportError.
+code = [
+  "ipykernel>=7.3.0; python_version >= '3.10'",
+  "jupyter_client>=8.9.1; python_version >= '3.10'",
+  "dill>=0.4.1",
+]
+# Pinned below 5.0: that release split Confluence into Cloud and Server classes and left the
+# base ``Confluence`` with no space or page methods, so ConfluenceTools raises AttributeError.
+# Lift once the tools are ported to the split classes.
+confluence = ["atlassian-python-api<5"]
 crawl4ai = ["crawl4ai>=0.6.3"]
 daytona = ["daytona"]
 ddg = ["ddgs"]
@@ -123,6 +140,7 @@ elevenlabs = ["elevenlabs"]
 evm = ["web3"]
 exa = ["exa_py>=2.0.0"]
 fal = ["fal_client"]
+finance = ["yfinance"]  # default FinanceTools provider; financialdatasets.ai needs only httpx (core)
 firecrawl = ["firecrawl-py==3.4.0"]
 github = ["PyGithub"]
 gitlab = ["python-gitlab", "httpx"]
@@ -140,7 +158,7 @@ opencv = ["opencv-python"]
 oxylabs = ["oxylabs"]
 parallel = ["parallel-web>=1.0"]
 plivo = ["plivo"]
-psycopg = ["psycopg-binary", "psycopg"]
+psycopg = ["psycopg[binary]"]
 redmine = ["python-redmine"]
 redshift = ["redshift-connector"]
 reportlab = ["reportlab"]
@@ -168,8 +186,9 @@ async-postgres = ["asyncpg"]
 firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
-postgres = ["psycopg-binary"]
-redis = ["redis", "redisvl>=0.12.1"]
+postgres = ["sqlalchemy", "psycopg[binary]"]
+redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
+s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy"]
 sqlite = ["sqlalchemy", "aiosqlite"]
 valkey = ["valkey-glide-sync>=2.1.0"]
@@ -199,12 +218,21 @@ chonkie = [
 csv = ["aiofiles"]
 docx = ["python-docx"]
 excel = ["openpyxl", "xlrd"]
-# nltk!=3.10.1: its inisec import hook falsely blocks site-packages imports when
-# the venv lives inside the CWD, breaking the unstructured import chain.
-markdown = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown", "aiofiles"]
-pdf = ["pypdf", "rapidocr_onnxruntime"]
+markdown = ["aiofiles"]
+pdf = ["pypdf"]
 pptx = ["python-pptx"]
 text = ["aiofiles"]
+# The website and llms_txt readers both import bs4 at module scope.
+website = ["beautifulsoup4"]
+
+# Engines a reader reaches only on its heavier path; agno[knowledge-full] adds them all.
+
+# Gates MarkdownChunking, not MarkdownReader, which falls back to fixed-size chunking.
+# nltk!=3.10.1: its inisec import hook blocks site-packages imports from a venv inside the CWD.
+markdown-chunking = ["unstructured<0.18.31", "nltk!=3.10.1", "markdown"]
+
+# OCR for scanned pages; PDFReader reads a text layer with pypdf alone.
+pdf-ocr = ["rapidocr_onnxruntime"]
 
 # Dependencies for AG-UI integration
 agui = ["ag-ui-protocol>=0.1.15", "jsonpatch>=1.33"]
@@ -249,7 +277,7 @@ models = [
   # "agno[litellm]",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
   "agno[lmstudio]",
   "agno[meta]",
-  # "agno[mistral]",  # Temporarily disabled - mistralai quarantined on PyPI (May 12, 2026)
+  "agno[mistral]",
   "agno[ollama]",
   "agno[openai]",
   "agno[portkey]",
@@ -263,6 +291,7 @@ tools = [
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
   "agno[browserbase]",
   "agno[cartesia]",
+  "agno[code]",
   "agno[confluence]",
   # "agno[crawl4ai]",  # Excluded: depends on litellm, which was compromised on PyPI (March 24, 2026)
   "agno[daytona]",
@@ -273,6 +302,7 @@ tools = [
   "agno[evm]",
   "agno[exa]",
   "agno[fal]",
+  "agno[finance]",
   "agno[firecrawl]",
   "agno[github]",
   "agno[gitlab]",
@@ -319,10 +349,11 @@ storage = [
   "agno[async-mongo]",
   "agno[async-postgres]",
   "agno[firestore]",
-  "agno[gcs]",
+  "agno[gcs]",  # also used by GCS media storage (gcs serves both roles)
   "agno[mysql]",
   "agno[postgres]",
   "agno[redis]",  # also listed under vectordbs (redis serves both roles)
+  "agno[s3]",
   "agno[sql]",
   "agno[sqlite]",
   "agno[valkey]",  # also listed under vectordbs (valkey serves both roles)
@@ -350,17 +381,25 @@ vectordbs = [
   "agno[weaviate]",
 ]
 
-# All knowledge
+# The document readers, with no OCR, layout or deep-learning engines. See knowledge-full.
 knowledge = [
   "agno[chonkie]",
   "agno[csv]",
-  "agno[docling]",  # also a tool; parses docs for knowledge
   "agno[docx]",
   "agno[excel]",
   "agno[markdown]",
   "agno[pdf]",
   "agno[pptx]",
   "agno[text]",
+  "agno[website]",
+]
+
+# Every knowledge capability, including docling, OCR and unstructured.
+knowledge-full = [
+  "agno[knowledge]",
+  "agno[docling]",  # also a tool; parses docs for knowledge
+  "agno[markdown-chunking]",
+  "agno[pdf-ocr]",
 ]
 
 # All embedders
@@ -378,7 +417,8 @@ tests = [
     "agno[tools]",
     "agno[storage]",
     "agno[vectordbs]",
-    "agno[knowledge]",
+    # The full set: CI exercises docling, OCR and unstructured too.
+    "agno[knowledge-full]",
     "agno[embedders]",
     "agno[performance]",
     "agno[cookbooks]",
@@ -465,6 +505,9 @@ include = ["LICENSE"]
 log_cli = true
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+markers = [
+  "integration: tests that need live services (kernels, databases)",
+]
 
 [tool.ruff]
 line-length = 120
@@ -514,6 +557,7 @@ module = [
   "crawl4ai.*",
   "daytona.*",
   "daytona_api_client.*",
+  "dill.*",
   "superserve.*",
   "discord.*",
   "docker.*",
@@ -524,6 +568,8 @@ module = [
   "ddgs.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
+  "ipykernel.*",
+  "jupyter_client.*",
   "eth_account.*",
   "exa_py.*",
   "seltz.*",
@@ -587,6 +633,7 @@ module = [
   "psycopg.*",
   "pyarrow.*",
   "pycountry.*",
+  "pymilvus.*",
   "pymongo.*",
   "pypdf.*",
   "pytz.*",

@@ -1277,7 +1277,7 @@ class TestForkMetricsReset:
     parent's accumulated metrics or birthtime."""
 
     def test_fork_resets_metrics_to_fresh(self):
-        from agno.models.metrics import RunMetrics
+        from agno.metrics import RunMetrics
 
         parent_metrics = RunMetrics()
         parent_metrics.input_tokens = 100

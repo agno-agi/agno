@@ -749,13 +749,9 @@ class TestWorkflowRunE2EDependencies:
         finally:
             Agent.run = original_run  # type: ignore
 
-        # Agent1 sets its deps on the shared run_context
+        # Each step resolves onto its own copy of the run context, so Step 1's deps don't reach Step 2
         assert captured_per_step["Agent1"]["deps_after"] == {"agent1_key": "a1-val"}
-
-        # Agent2: run_context already has Agent1's deps (not None),
-        # so Agent2's deps are NOT applied — this is the shared RunContext behavior.
-        # Agent1's deps persist into Step 2.
-        assert captured_per_step["Agent2"]["deps_after"] == {"agent1_key": "a1-val"}
+        assert captured_per_step["Agent2"]["deps_after"] == {"agent2_key": "a2-val"}
 
     def test_add_dependencies_flag_propagated_e2e(self):
         """add_dependencies_to_context flag propagates from workflow to agent.run()."""
