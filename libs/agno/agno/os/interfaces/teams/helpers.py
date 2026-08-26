@@ -8,7 +8,6 @@ import httpx
 
 from agno.utils.log import log_error, log_info, log_warning
 
-_BOT_CONNECTOR_BASE = "https://api.botframework.com"
 _LOGIN_BASE = "https://login.microsoftonline.com"
 _BOT_SCOPE = "https://api.botframework.com/.default"
 
