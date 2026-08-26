@@ -47,7 +47,7 @@ AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Price Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[YFinanceTools()],
     instructions="You are a stock price agent. Answer questions in the style of a stock analyst.",
 )
