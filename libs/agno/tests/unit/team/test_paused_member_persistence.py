@@ -6058,3 +6058,42 @@ def test_a_routing_failure_restores_the_callers_team_level_requirements(tmp_path
 
     names = [r.tool_execution.tool_name for r in (run1.requirements or [])]
     assert names.count("publish") == 1, f"the caller's run object carries: {names}"
+
+
+def test_continue_does_not_mutate_the_shared_history_object(tmp_path):
+    """History run objects are shared between reads of one adapter (the
+    db-level run-object cache). The continue pipeline works on a copy of the
+    stored paused run, so a session view read before the continue keeps its
+    paused state and member responses, while the store advances."""
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "shared-history.db")
+    session_id = "s-shared-history"
+
+    db = SqliteDb(db_file=db_file)
+    team1 = _build_flat_team(db, resuming=False)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    # Another reader on the SAME adapter holds the shared paused run object.
+    session_view = db.get_session(session_id=session_id, session_type="team")
+    shared = next(r for r in session_view.runs if r.run_id == run1.run_id)
+    assert shared.status == RunStatus.paused
+    spared_member_ids = [m.run_id for m in shared.member_responses]
+    assert spared_member_ids, "the paused member run rides the stored team run"
+
+    team2 = _build_flat_team(db, resuming=True)
+    run2 = team2.continue_run(
+        run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(run1.requirements)
+    )
+    assert run2.status == RunStatus.completed
+    assert _EXECUTED == ["a@example.com"]
+
+    # The reader's shared object never moved...
+    assert shared.status == RunStatus.paused
+    assert [m.run_id for m in shared.member_responses] == spared_member_ids
+    assert all(getattr(m, "is_paused", False) for m in shared.member_responses)
+    # ...and a fresh read serves the completed run.
+    stored = next(
+        r for r in (db.get_session(session_id=session_id, session_type="team").runs or []) if r.run_id == run1.run_id
+    )
+    assert stored.status == RunStatus.completed

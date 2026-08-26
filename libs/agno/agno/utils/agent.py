@@ -627,10 +627,7 @@ def media_scrub_would_change(run_response: Union[RunOutput, TeamRunOutput]) -> b
     scrubbed on a previous save reports False at every level.
     """
     if run_response.input is not None and (
-        run_response.input.images
-        or run_response.input.videos
-        or run_response.input.audios
-        or run_response.input.files
+        run_response.input.images or run_response.input.videos or run_response.input.audios or run_response.input.files
     ):
         return True
     for message_list in (run_response.messages, run_response.additional_input, run_response.reasoning_messages):

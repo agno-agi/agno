@@ -19,7 +19,7 @@ from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.run.base import RunStatus
-from agno.session import AgentSession
+from agno.session import AgentSession, TeamSession, WorkflowSession
 
 
 class MockModel(Model):
@@ -472,3 +472,345 @@ class TestHardenedMutators:
         assert len(shared.messages or []) == message_count_before
         stored = db.get_session("s1", session_type=SessionType.AGENT).get_run("r-mid")
         assert stored.status != status_before
+
+
+# ---------------------------------------------------------------------------
+# Team sessions
+# ---------------------------------------------------------------------------
+
+
+def _member_response_dict(idx: int) -> dict:
+    """A member response carrying data every member storage flag can scrub.
+
+    Message and media ids are explicit: deserialization mints fresh ids for
+    entries without one, and the rebuild-equality tests compare two
+    independent deserializations."""
+    return {
+        "run_id": f"m{idx}",
+        "agent_id": "member-agent",
+        "content": f"member answer {idx}",
+        "status": "COMPLETED",
+        "images": [{"id": f"img-{idx}", "url": "http://x/out.png"}],
+        "messages": [
+            {"id": f"msg-{idx}-0", "role": "assistant", "tool_calls": [{"id": f"tc{idx}", "type": "function"}]},
+            {"id": f"msg-{idx}-1", "role": "tool", "tool_call_id": f"tc{idx}", "content": "tool result"},
+            {"id": f"msg-{idx}-2", "role": "assistant", "content": f"member answer {idx}"},
+            {"id": f"msg-{idx}-3", "role": "user", "content": "old turn", "from_history": True},
+        ],
+    }
+
+
+def _seed_team(db, session_id: str = "t1", n_runs: int = 3, with_member_data: bool = False) -> None:
+    db.upsert_session(TeamSession(session_id=session_id, team_id="tm1", user_id="u1"))
+    for i in range(n_runs):
+        run = {"run_id": f"r{i}", "team_id": "tm1", "content": f"content {i}", "status": "COMPLETED"}
+        if with_member_data:
+            run["member_responses"] = [_member_response_dict(i)]
+        db.upsert_run(run, session_id=session_id)
+
+
+class TestTeamRunObjectCache:
+    def test_reads_share_history_run_objects(self):
+        db = InMemoryDb()
+        _seed_team(db)
+        first = db.get_session("t1", session_type=SessionType.TEAM)
+        second = db.get_session("t1", session_type=SessionType.TEAM)
+        assert first is not second
+        assert first.runs is not second.runs
+        assert [id(r) for r in first.runs] == [id(r) for r in second.runs]
+
+    def test_content_matches_the_uncached_rebuild(self):
+        """Team runs with member responses and a member agent run at the top
+        level come back byte-for-byte what a fresh rebuild yields."""
+        db = InMemoryDb()
+        _seed_team(db, with_member_data=True)
+        db.upsert_run(
+            {"run_id": "ma1", "agent_id": "member-agent", "content": "standalone", "status": "COMPLETED"},
+            session_id="t1",
+        )
+        cached = db.get_session("t1", session_type=SessionType.TEAM)
+        raw = db.get_session("t1", session_type=SessionType.TEAM, deserialize=False)
+        rebuilt = TeamSession.from_dict(raw)
+        assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
+
+    def test_updating_a_run_invalidates_only_that_run(self):
+        db = InMemoryDb()
+        _seed_team(db)
+        first = db.get_session("t1", session_type=SessionType.TEAM)
+        db.upsert_run({"run_id": "r1", "team_id": "tm1", "content": "rewritten", "status": "COMPLETED"}, "t1")
+        second = db.get_session("t1", session_type=SessionType.TEAM)
+        assert second.runs[1].content == "rewritten"
+        assert first.runs[1].content == "content 1"
+        assert second.runs[0] is first.runs[0]
+        assert second.runs[2] is first.runs[2]
+
+    def test_mutating_a_returned_run_never_reaches_the_stored_dicts(self):
+        db = InMemoryDb()
+        _seed_team(db, with_member_data=True)
+        session = db.get_session("t1", session_type=SessionType.TEAM)
+        session.runs[0].content = "caller vandalism"
+        session.runs[0].member_responses[0].content = "member vandalism"
+        raw = db.get_session("t1", session_type=SessionType.TEAM, deserialize=False)
+        assert raw["runs"][0]["content"] == "content 0"
+        assert raw["runs"][0]["member_responses"][0]["content"] == "member answer 0"
+
+    def test_get_run_returns_a_copy(self):
+        """The team background continue, HITL surfaces and the job-queue
+        sweeper fetch via get_run and mutate before persisting; the shared
+        object must not carry those mutations."""
+        db = InMemoryDb()
+        _seed_team(db)
+        session = db.get_session("t1", session_type=SessionType.TEAM)
+        fetched = session.get_run("r1")
+        fetched.status = RunStatus.cancelled
+        fetched.content = "sweeper text"
+
+        later = db.get_session("t1", session_type=SessionType.TEAM)
+        assert later.runs[1].status != RunStatus.cancelled
+        assert later.runs[1].content == "content 1"
+
+
+class TestTeamSaveScrubIsolation:
+    """save_session/save_run with store_member_responses=True scrub member
+    responses per member storage flags on a storage view, never on the loaded
+    (shared) run objects."""
+
+    def _team(self, db):
+        from agno.team import Team
+
+        member = Agent(
+            name="member",
+            id="member-agent",
+            store_media=False,
+            store_tool_messages=False,
+            store_history_messages=False,
+        )
+        return Team(id="tm1", members=[member], db=db, store_member_responses=True, telemetry=False)
+
+    def test_save_session_scrubs_the_store_not_the_shared_runs(self):
+        db = InMemoryDb()
+        # Stored runs carry member data the member's current flags would
+        # scrub (written before the flags were turned off).
+        _seed_team(db, with_member_data=True)
+        team = self._team(db)
+
+        session = db.get_session("t1", session_type=SessionType.TEAM)
+        shared_member = session.runs[0].member_responses[0]
+        # Deleting the row first routes this save through the one path where
+        # upsert_session serializes the session's own runs (a v3 update
+        # carries the stored list forward instead), so the storage view is
+        # observable in the store.
+        db.delete_session("t1")
+        team.save_session(session=session)
+
+        # The shared run objects keep their member data...
+        assert any(m.role == "tool" for m in shared_member.messages or [])
+        assert any(m.from_history for m in shared_member.messages or [])
+        assert shared_member.images
+        # ...while the store holds the scrubbed view.
+        raw = db.get_session("t1", session_type=SessionType.TEAM, deserialize=False)
+        stored_member = raw["runs"][0]["member_responses"][0]
+        assert all(m.get("role") != "tool" for m in stored_member.get("messages") or [])
+        assert all(not m.get("from_history") for m in stored_member.get("messages") or [])
+        assert not stored_member.get("images")
+
+    def test_save_run_scrubs_the_store_not_the_shared_run(self):
+        from agno.team._session import save_run
+
+        db = InMemoryDb()
+        _seed_team(db, with_member_data=True)
+        team = self._team(db)
+
+        session = db.get_session("t1", session_type=SessionType.TEAM)
+        shared_run = session.runs[1]
+        save_run(team, run=shared_run, session_id="t1", user_id="u1")
+
+        assert any(m.role == "tool" for m in shared_run.member_responses[0].messages or [])
+        raw = db.get_session("t1", session_type=SessionType.TEAM, deserialize=False)
+        stored_member = raw["runs"][1]["member_responses"][0]
+        assert all(m.get("role") != "tool" for m in stored_member.get("messages") or [])
+
+    def test_already_scrubbed_history_is_reused_not_copied(self):
+        """A save of already-scrubbed history detects nothing to remove and
+        reuses the loaded run objects for the storage view."""
+        from agno.team._session import _scrub_member_responses_storage_view, save_run
+
+        db = InMemoryDb()
+        _seed_team(db, with_member_data=True)
+        team = self._team(db)
+        session = db.get_session("t1", session_type=SessionType.TEAM)
+        for i, run in enumerate(session.runs):
+            save_run(team, run=run, session_id="t1", user_id="u1", run_index=i)
+
+        reloaded = db.get_session("t1", session_type=SessionType.TEAM)
+        for run in reloaded.runs:
+            assert _scrub_member_responses_storage_view(team, run) is run
+
+
+class TestSqliteTeamRunObjectCache:
+    @pytest.fixture
+    def sqlite_db(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        return SqliteDb(db_file=str(tmp_path / "team-cache.db"))
+
+    def test_reads_share_history_run_objects(self, sqlite_db):
+        _seed_team(sqlite_db)
+        first = sqlite_db.get_session("t1", session_type=SessionType.TEAM)
+        second = sqlite_db.get_session("t1", session_type=SessionType.TEAM)
+        assert first.runs is not second.runs
+        assert [id(r) for r in first.runs] == [id(r) for r in second.runs]
+
+    def test_updating_a_run_invalidates_only_that_run(self, sqlite_db):
+        _seed_team(sqlite_db)
+        first = sqlite_db.get_session("t1", session_type=SessionType.TEAM)
+        sqlite_db.upsert_run({"run_id": "r1", "team_id": "tm1", "content": "rewritten", "status": "COMPLETED"}, "t1")
+        second = sqlite_db.get_session("t1", session_type=SessionType.TEAM)
+        assert second.runs[1].content == "rewritten"
+        assert first.runs[1].content == "content 1"
+        assert second.runs[0] is first.runs[0]
+        assert second.runs[2] is first.runs[2]
+
+    def test_another_writer_to_the_same_file_is_seen(self, sqlite_db, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        _seed_team(sqlite_db)
+        sqlite_db.get_session("t1", session_type=SessionType.TEAM)
+
+        other = SqliteDb(db_file=str(tmp_path / "team-cache.db"))
+        other.upsert_run(
+            {"run_id": "r1", "team_id": "tm1", "content": "written elsewhere", "status": "COMPLETED"}, "t1"
+        )
+
+        again = sqlite_db.get_session("t1", session_type=SessionType.TEAM)
+        assert again.runs[1].content == "written elsewhere"
+
+    def test_content_matches_the_uncached_rebuild(self, sqlite_db):
+        _seed_team(sqlite_db, with_member_data=True)
+        cached = sqlite_db.get_session("t1", session_type=SessionType.TEAM)
+        raw = sqlite_db.get_session("t1", session_type=SessionType.TEAM, deserialize=False)
+        rebuilt = TeamSession.from_dict(raw)
+        assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
+
+
+class TestTeamHardenedMutators:
+    def test_team_regenerate_flips_status_on_a_copy(self):
+        from unittest.mock import MagicMock
+
+        from agno.team._run import _mark_team_run_regenerated
+
+        db = InMemoryDb()
+        _seed_team(db)
+        team = MagicMock()
+        team.db = db
+        team.parent_team_id = None
+        team.workflow_id = None
+        team.store_member_responses = True
+
+        before = db.get_session("t1", session_type=SessionType.TEAM)
+        target_run = before.runs[0]
+        session_view = db.get_session("t1", session_type=SessionType.TEAM)
+
+        _mark_team_run_regenerated(team, session_view, target_run.run_id)
+
+        # The other reader's object is untouched; the store has the flip.
+        assert target_run.status != RunStatus.regenerated
+        after = db.get_session("t1", session_type=SessionType.TEAM)
+        assert after.runs[0].status == RunStatus.regenerated
+        # The mutated session view sees its own flip.
+        assert session_view.runs[0].status == RunStatus.regenerated
+
+
+# ---------------------------------------------------------------------------
+# Workflow sessions
+# ---------------------------------------------------------------------------
+
+
+def _seed_workflow(db, session_id: str = "w1", n_runs: int = 3) -> None:
+    db.upsert_session(WorkflowSession(session_id=session_id, workflow_id="wf1", user_id="u1"))
+    for i in range(n_runs):
+        db.upsert_run(
+            {"run_id": f"wr{i}", "workflow_id": "wf1", "content": f"content {i}", "status": "COMPLETED"},
+            session_id=session_id,
+        )
+        # A step's agent run shares the workflow's session id; the session's
+        # own runs list must not surface it.
+        db.upsert_run(
+            {
+                "run_id": f"sr{i}",
+                "agent_id": "step-agent",
+                "content": f"step {i}",
+                "status": "COMPLETED",
+                "parent_run_id": f"wr{i}",
+            },
+            session_id=session_id,
+        )
+
+
+class TestWorkflowRunObjectCache:
+    def test_reads_share_history_run_objects(self):
+        db = InMemoryDb()
+        _seed_workflow(db)
+        first = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        second = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        assert first is not second
+        assert [id(r) for r in first.runs] == [id(r) for r in second.runs]
+
+    def test_step_runs_are_filtered_like_the_uncached_rebuild(self):
+        db = InMemoryDb()
+        _seed_workflow(db)
+        cached = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        raw = db.get_session("w1", session_type=SessionType.WORKFLOW, deserialize=False)
+        rebuilt = WorkflowSession.from_dict(raw)
+        assert [r.run_id for r in cached.runs] == ["wr0", "wr1", "wr2"]
+        assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
+
+    def test_mutating_a_returned_run_never_reaches_the_stored_dicts(self):
+        db = InMemoryDb()
+        _seed_workflow(db)
+        session = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        session.runs[0].content = "caller vandalism"
+        raw = db.get_session("w1", session_type=SessionType.WORKFLOW, deserialize=False)
+        stored = {r["run_id"]: r for r in raw["runs"]}
+        assert stored["wr0"]["content"] == "content 0"
+
+    def test_get_run_returns_a_copy(self):
+        """The workflow continue pipeline and the queue worker fetch via
+        get_run and mutate before persisting; the shared object must not
+        carry those mutations."""
+        db = InMemoryDb()
+        _seed_workflow(db)
+        session = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        fetched = session.get_run("wr1")
+        fetched.status = RunStatus.cancelled
+        fetched.content = "sweeper text"
+
+        later = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        assert later.get_run("wr1").status != RunStatus.cancelled
+
+    def test_sqlite_reads_share_and_invalidate_per_run(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "wf-cache.db"))
+        _seed_workflow(db)
+        first = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        second = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        assert [id(r) for r in first.runs] == [id(r) for r in second.runs]
+
+        db.upsert_run({"run_id": "wr1", "workflow_id": "wf1", "content": "rewritten", "status": "COMPLETED"}, "w1")
+        third = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        assert [r.run_id for r in third.runs] == ["wr0", "wr1", "wr2"]
+        assert third.runs[1].content == "rewritten"
+        assert first.runs[1].content == "content 1"
+        assert third.runs[0] is first.runs[0]
+        assert third.runs[2] is first.runs[2]
+
+    def test_sqlite_content_matches_the_uncached_rebuild(self, tmp_path):
+        from agno.db.sqlite import SqliteDb
+
+        db = SqliteDb(db_file=str(tmp_path / "wf-rebuild.db"))
+        _seed_workflow(db)
+        cached = db.get_session("w1", session_type=SessionType.WORKFLOW)
+        raw = db.get_session("w1", session_type=SessionType.WORKFLOW, deserialize=False)
+        rebuilt = WorkflowSession.from_dict(raw)
+        assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
