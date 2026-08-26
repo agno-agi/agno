@@ -37,10 +37,10 @@ from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
-from agno.tools.function import (
+from agno.utils.schema import (
     AGNO_INJECTED_PARAMS,
     FRAMEWORK_INJECTED_PARAMS,
-    _is_schema_excluded,
+    is_schema_excluded,
 )
 
 if TYPE_CHECKING:
@@ -164,7 +164,7 @@ def _inject_user_id(fn: Callable) -> Callable:
         for param_name, hint in list(type_hints.items()):
             if param_name == "return":
                 continue
-            if _is_schema_excluded(hint):
+            if is_schema_excluded(hint):
                 excluded_params.append(param_name)
     except Exception:
         pass
