@@ -1835,3 +1835,89 @@ def test_empty_deny_list_with_only_exemptions_excludes_nothing():
         _write(base, ".env", "SECRET=1\n")
         ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
         assert "SECRET=1" in ws.read_file(".env")
+
+
+# ---------------------------------------------------------------------------
+# get_outline tests
+# ---------------------------------------------------------------------------
+
+
+def test_get_outline_returns_class_and_function_definitions():
+    """get_outline extracts classes and functions with line numbers."""
+    code = '''\
+class Foo:
+    """A foo class."""
+    def bar(self, x, y):
+        pass
+
+    async def baz(self):
+        pass
+
+def standalone(a, b, c):
+    pass
+'''
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, "example.py", code)
+        ws = Workspace(tmp_dir)
+        result = ws.get_outline("example.py")
+
+        assert "class Foo" in result
+        assert "line 1" in result or "line 2" in result
+        assert "def bar(x, y)" in result
+        assert "async def baz()" in result
+        assert "def standalone(a, b, c)" in result
+        assert "# Outline of example.py" in result
+
+
+def test_get_outline_only_supports_python_files():
+    """get_outline returns error for non-Python files."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, "readme.md", "# Hello")
+        ws = Workspace(tmp_dir)
+        result = ws.get_outline("readme.md")
+        assert "Error" in result
+        assert "only supports Python" in result
+
+
+def test_get_outline_handles_syntax_errors():
+    """get_outline returns error for invalid Python syntax."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, "broken.py", "def foo(:\n    pass")
+        ws = Workspace(tmp_dir)
+        result = ws.get_outline("broken.py")
+        assert "Error" in result
+        assert "syntax error" in result
+
+
+def test_get_outline_respects_exclude_patterns():
+    """get_outline refuses excluded paths."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        git_dir = base / ".git"
+        git_dir.mkdir()
+        _write(git_dir, "config.py", "class Config: pass")
+        ws = Workspace(tmp_dir)
+        result = ws.get_outline(".git/config.py")
+        assert "Error" in result
+        assert "excluded" in result
+
+
+def test_get_outline_shows_docstring_preview():
+    """get_outline includes first line of class docstrings."""
+    code = '''\
+class Agent:
+    """The main agent class for running AI tasks."""
+    def run(self):
+        pass
+'''
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        base = Path(tmp_dir).resolve()
+        _write(base, "agent.py", code)
+        ws = Workspace(tmp_dir)
+        result = ws.get_outline("agent.py")
+
+        assert "class Agent" in result
+        assert "main agent class" in result
