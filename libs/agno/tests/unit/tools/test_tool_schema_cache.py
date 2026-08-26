@@ -432,7 +432,7 @@ def test_transient_introspection_failure_heals_on_the_next_run():
         del globals()["DefinedLater"]
 
 
-def test_closure_tools_still_parse_and_run_without_the_cache():
+def test_closure_tools_still_parse_and_run_with_lifetime_cache():
     def make(suffix: str):
         def lookup(query: str) -> str:
             """Look something up.
@@ -499,6 +499,165 @@ def test_wrapper_closing_over_state_is_not_cached_through_its_wrapped_base():
     del state, per_run, parsed
     gc.collect()
     assert finalizer() is None
+
+
+def test_wrapper_with_a_stateful_callable_cell_is_not_cached():
+    """A callable closure cell can hide another closure's run state even when
+    the outer wrapper does not publish a __wrapped__ link."""
+    import gc
+    import weakref
+
+    from agno.tools.function import _cache_stable
+
+    class RunState:
+        pass
+
+    def make(state):
+        def inner(query: str) -> str:
+            return f"{query}-{type(state).__name__}"
+
+        def outer(query: str) -> str:
+            return inner(query)
+
+        return outer
+
+    state = RunState()
+    dynamic = make(state)
+    assert _cache_stable(dynamic) is False
+
+    parsed = Function.from_callable(dynamic)
+    assert parsed.entrypoint is not None and parsed.entrypoint(query="q") == "q-RunState"
+
+    finalizer = weakref.ref(state)
+    del state, dynamic, parsed
+    gc.collect()
+    assert finalizer() is None
+
+
+def test_toolkit_bound_methods_reuse_lifetime_scoped_introspection(monkeypatch):
+    """Toolkit methods are the common tool shape and must keep the cache win.
+
+    Their cache belongs to the toolkit rather than the module: repeated runs
+    reuse schema derivation and the validation wrapper, while dropping the
+    toolkit can still drop the whole cache.
+    """
+    import copy
+
+    import agno.tools.function as function_module
+    from agno.tools.calculator import CalculatorTools
+
+    derivations = 0
+    derive_entrypoint_schema = function_module._derive_entrypoint_schema
+
+    def counted_derivation(*args, **kwargs):
+        nonlocal derivations
+        derivations += 1
+        return derive_entrypoint_schema(*args, **kwargs)
+
+    monkeypatch.setattr(function_module, "_derive_entrypoint_schema", counted_derivation)
+
+    kit = CalculatorTools()
+    agent = Agent(model=MockModel(), tools=[kit], telemetry=False)
+    first = parse_tools(agent, agent.tools, agent.model)
+    second = parse_tools(agent, agent.tools, agent.model)
+
+    assert derivations == len(kit.functions)
+    assert all(left.entrypoint is right.entrypoint for left, right in zip(first, second))
+
+    # Copying a toolkit must not copy a validation wrapper still bound to the
+    # original owner. The copied toolkit builds and then reuses its own cache.
+    copied_kit = copy.deepcopy(kit)
+    copied_agent = Agent(model=MockModel(), tools=[copied_kit], telemetry=False)
+    copied_first = parse_tools(copied_agent, copied_agent.tools, copied_agent.model)
+    copied_second = parse_tools(copied_agent, copied_agent.tools, copied_agent.model)
+    assert derivations == len(kit.functions) + len(copied_kit.functions)
+    assert all(left.entrypoint is right.entrypoint for left, right in zip(copied_first, copied_second))
+    assert all(left.entrypoint is not right.entrypoint for left, right in zip(first, copied_first))
+
+
+def test_per_run_bound_methods_are_not_pinned_when_callable_caching_is_disabled():
+    """A callable-tools factory may return a fresh stateful handler method on
+    every run. The introspection caches must respect cache_callables=False and
+    not become a second, implicit owner of those handlers."""
+    import gc
+    import weakref
+
+    from agno.tools.function import _cache_stable, _clear_tool_introspection_caches
+    from agno.utils.callables import resolve_callable_tools
+
+    class Handler:
+        def lookup(self, query: str) -> str:
+            return query
+
+    handlers = []
+
+    def tools_factory():
+        handler = Handler()
+        handlers.append(weakref.ref(handler))
+        return [handler.lookup]
+
+    _clear_tool_introspection_caches()
+    agent = Agent(model=MockModel(), tools=tools_factory, cache_callables=False, telemetry=False)
+    try:
+        for index in range(3):
+            context = RunContext(run_id=f"r{index}", session_id=f"s{index}")
+            resolve_callable_tools(agent, context)
+            assert context.tools is not None
+            assert _cache_stable(context.tools[0]) is False
+            parsed = parse_tools(agent, context.tools, agent.model, context)
+            assert parsed[0].entrypoint is not None
+            assert parsed[0].entrypoint(query="q") == "q"
+
+        del context, parsed
+        gc.collect()
+        assert all(reference() is None for reference in handlers)
+    finally:
+        _clear_tool_introspection_caches()
+
+
+def test_long_lived_owner_evicts_dynamic_bound_method_caches():
+    """A persistent owner may bind a fresh closure on every run. Its method
+    cache must stay bounded and release state from evicted functions."""
+    import gc
+    import types
+    import weakref
+
+    from agno.tools.function import _LIFETIME_CACHE_ATTRIBUTE, _LIFETIME_OWNER_CACHE_SIZE
+
+    class Owner:
+        pass
+
+    class RunState:
+        def __init__(self, index: int):
+            self.index = index
+
+    def bind(owner, state):
+        def lookup(self, query: str) -> str:
+            return f"{query}-{state.index}"
+
+        return types.MethodType(lookup, owner)
+
+    owner = Owner()
+    references = []
+    overflow = 3
+    for index in range(_LIFETIME_OWNER_CACHE_SIZE + overflow):
+        state = RunState(index)
+        bound = bind(owner, state)
+        references.append(weakref.ref(state))
+        parsed = Function.from_callable(bound)
+        assert parsed.entrypoint is not None and parsed.entrypoint(query="q") == f"q-{index}"
+
+    del state, bound, parsed
+    gc.collect()
+
+    store = getattr(owner, _LIFETIME_CACHE_ATTRIBUTE)
+    assert len(store.entries) == _LIFETIME_OWNER_CACHE_SIZE
+    assert all(reference() is None for reference in references[:overflow])
+    assert all(reference() is not None for reference in references[overflow:])
+
+    del owner, store
+    gc.collect()
+    assert all(reference() is None for reference in references)
 
 
 def test_wrappers_over_one_base_keep_their_own_identities():
@@ -597,7 +756,10 @@ def test_decorator_wrappers_over_long_lived_functions_still_cache():
             """
             return "ok"
 
-    assert _cache_stable(Kit(name="kit").lookup) is True
+    # An instance-bound method can also come from a per-run callable factory;
+    # without provenance proving otherwise, it must not enter the global
+    # cache. It still gets the owner-lifetime cache exercised above.
+    assert _cache_stable(Kit(name="kit").lookup) is False
 
 
 def test_cache_walk_depth_is_bounded_and_fails_closed():

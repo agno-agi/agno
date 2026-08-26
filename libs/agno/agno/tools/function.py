@@ -1,7 +1,10 @@
 import types
+import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache, partial, wraps
 from importlib.metadata import version
+from threading import RLock
 from typing import (
     Any,
     Callable,
@@ -697,8 +700,8 @@ class _CallableIdentity:
 _WRAPPED_WALK_CAP = 10
 
 
-def _captures_state(c: Any) -> bool:
-    """Whether this single object closes over anything other than callables.
+def _captures_state(c: Any, seen: List[Any], depth: int) -> bool:
+    """Whether this single object closes over state that is unsafe to cache.
 
     A decorator wrapper closes over the function it forwards to (and, through
     pydantic's ``validate_call``, over further wrappers): those cells hold
@@ -707,10 +710,19 @@ def _captures_state(c: Any) -> bool:
     run's own objects -- output, session, agent, a bound value -- and those
     are what must stay out of the caches.
 
+    Callable cells are not automatically safe: a wrapper can close over an
+    inner callable that itself captures a run's objects without publishing a
+    ``__wrapped__`` link. Walk those cells recursively. Pydantic's known
+    validation wrapper is the exception: its callable cell is an internal
+    ``ValidateCallWrapper`` bound method, while ``__wrapped__`` is the actual
+    tool whose lifetime we need to classify.
+
     Cells are read defensively: an empty cell (a recursive closure still being
     built) raises on access and counts as captured state, since it cannot be
     shown to be a plain callable.
     """
+    wrapped = getattr(c, "__wrapped__", None)
+    validation_wrapper = getattr(c, "_wrapped_for_validation", False)
     for cell in getattr(getattr(c, "__func__", c), "__closure__", None) or ():
         try:
             contents = cell.cell_contents
@@ -718,49 +730,68 @@ def _captures_state(c: Any) -> bool:
             return True
         if not callable(contents):
             return True
+        cell_owner = getattr(contents, "__self__", None)
+        is_pydantic_validator = validation_wrapper and getattr(cell_owner, "function", None) is wrapped
+        if not is_pydantic_validator and not _cache_stable(contents, seen=seen, depth=depth + 1):
+            return True
     return False
 
 
-def _cache_stable(c: Callable) -> bool:
+def _cache_stable(c: Callable, seen: Optional[List[Any]] = None, depth: int = 0) -> bool:
     """Whether this callable is safe and useful to hold in the module caches.
 
     A callable capturing non-callable state -- a closure cell anywhere on
     its wrapper/partial chain, or a bound partial argument -- is usually a
-    per-run factory product: an
-    identity-keyed cache can never hit it (the object is new each run), and
-    the entry would pin everything the closure captured (run output, session,
-    agent) until eviction. Those skip the caches and are derived directly,
-    exactly as before the caches existed. Module functions, bound methods,
-    and decorator wrappers over them have no cells; they are the long-lived
-    tools the caches exist for.
+    per-run factory product. A module-owned identity cache would pin everything
+    the closure captured (run output, session, agent) until eviction, so these
+    use a cache attached to their own lifetime when possible. Module functions
+    and decorator wrappers over them use the larger module cache. Bound methods
+    are not provably long-lived: a callable factory can create an instance or
+    class per run and return its method, so their cache belongs to the owner
+    rather than retaining it from this module.
 
     Every link is tested, not just the one the walk ends on. A wrapper that
     closes over per-run state while forwarding ``__wrapped__`` to a
     closure-free base (``@wraps`` over a module function) would otherwise be
     read as stable through its base and pin whatever it captured; the walk
     exists to see PAST wrappers, so it must judge each one it passes.
-    Cells holding callables do not count: that is how every decorator --
-    ``@tool`` included -- forwards to the function it wraps, and those
-    captures are as long-lived as the tool.
+    Cells holding callables are followed recursively. That preserves ordinary
+    decorators while rejecting an unlabelled wrapper whose inner callable is
+    itself a state-capturing closure.
     """
-    for _ in range(_WRAPPED_WALK_CAP):
-        if _captures_state(c):
-            return False
-        if isinstance(c, partial):
-            # Bound arguments are captured state as surely as a cell is, and a
-            # per-run partial is the usual way a factory pins a run's objects.
-            if c.args or c.keywords:
-                return False
-            c = c.func
-            continue
-        wrapped = getattr(c, "__wrapped__", None)
-        if wrapped is not None:
-            c = wrapped
-            continue
+    if depth >= _WRAPPED_WALK_CAP:
+        return False
+
+    seen = [] if seen is None else seen
+    if any(c is item for item in seen):
+        # A cycle made entirely of callables adds no new state to inspect.
         return True
-    # Chain deeper than the cap: unresolved, so treat it as unsafe to cache
-    # rather than assume the part never walked is closure-free.
-    return False
+    seen.append(c)
+
+    if isinstance(c, partial):
+        # Bound arguments are captured state as surely as a cell is, and a
+        # per-run partial is the usual way a factory pins a run's objects.
+        if c.args or c.keywords:
+            return False
+        return _cache_stable(c.func, seen=seen, depth=depth + 1)
+
+    owner = getattr(c, "__self__", None)
+    if owner is not None and not isinstance(owner, types.ModuleType):
+        return False
+
+    function = getattr(c, "__func__", c)
+    if not isinstance(function, (types.FunctionType, types.BuiltinFunctionType)):
+        # Arbitrary callable instances can carry state in attributes that no
+        # closure walk can see.
+        return False
+
+    if _captures_state(c, seen=seen, depth=depth):
+        return False
+
+    wrapped = getattr(c, "__wrapped__", None)
+    if wrapped is not None:
+        return _cache_stable(wrapped, seen=seen, depth=depth + 1)
+    return True
 
 
 @dataclass(frozen=True)
@@ -953,6 +984,13 @@ def _derive_entrypoint_schema(
 # long-lived tools. Entries only hold stable callables (see _cache_stable),
 # whose object graphs are alive in the registering agent anyway.
 _INTROSPECTION_CACHE_SIZE = 4096
+_LIFETIME_INTROSPECTION_CACHE_SIZE = 32
+# Larger than the broadest built-in Toolkit surface, but finite when one
+# persistent owner dynamically binds a new closure function on every run.
+_LIFETIME_OWNER_CACHE_SIZE = 64
+_LIFETIME_CACHE_ATTRIBUTE = "_agno_tool_introspection_caches"
+_lifetime_cache_lock = RLock()
+_lifetime_caches: "weakref.WeakSet[_CallableLifetimeCache]" = weakref.WeakSet()
 
 
 class _DerivationFailed(Exception):
@@ -964,6 +1002,138 @@ class _DerivationFailed(Exception):
 
     def __init__(self, payload: Any):
         self.payload = payload
+
+
+class _CallableLifetimeCache:
+    """Introspection cached no longer than the callable that owns it.
+
+    Some useful, long-lived tools are not safe to put in the module caches:
+    toolkit methods are bound to an instance, while closures and partials can
+    own per-run state. Attaching this cache to the callable (or, for a bound
+    method, its owner) gives those tools repeated-run hits without making this
+    module a second owner. The resulting owner -> cache -> callable cycle is
+    collectable when the owner is.
+    """
+
+    def __init__(self, entrypoint: Callable):
+        @lru_cache(maxsize=_LIFETIME_INTROSPECTION_CACHE_SIZE)
+        def entrypoint_schema(
+            strict: bool,
+            requires_user_input: bool,
+            user_input_fields: Optional[Tuple[str, ...]],
+        ) -> _EntrypointSchema:
+            record = _derive_entrypoint_schema(entrypoint, strict, requires_user_input, user_input_fields)
+            if record.error is not None:
+                raise _DerivationFailed(record)
+            return record
+
+        @lru_cache(maxsize=1)
+        def wrapped_entrypoint() -> Callable:
+            return Function._wrap_callable_uncached(entrypoint)
+
+        @lru_cache(maxsize=1)
+        def framework_params() -> frozenset:
+            params, failed = _compute_framework_params(entrypoint)
+            if failed:
+                raise _DerivationFailed(params)
+            return frozenset(params)
+
+        @lru_cache(maxsize=_LIFETIME_INTROSPECTION_CACHE_SIZE)
+        def from_callable_template(cls: type, name: Optional[str], strict: bool) -> "Function":
+            template, error = cls._build_from_callable(entrypoint, name=name, strict=strict)  # type: ignore[attr-defined]
+            if error is not None:
+                raise _DerivationFailed(template)
+            return template
+
+        @lru_cache(maxsize=1)
+        def entrypoint_accepts_media() -> bool:
+            from inspect import signature
+
+            parameters = signature(entrypoint).parameters
+            return any(name in parameters for name in MEDIA_INJECTED_PARAMS)
+
+        self.entrypoint_schema = entrypoint_schema
+        self.wrapped_entrypoint = wrapped_entrypoint
+        self.framework_params = framework_params
+        self.from_callable_template = from_callable_template
+        self.entrypoint_accepts_media = entrypoint_accepts_media
+
+    def clear(self) -> None:
+        self.entrypoint_schema.cache_clear()
+        self.wrapped_entrypoint.cache_clear()
+        self.framework_params.cache_clear()
+        self.from_callable_template.cache_clear()
+        self.entrypoint_accepts_media.cache_clear()
+
+
+class _CallableLifetimeCacheStore:
+    """Bounded caches for methods that share one bound owner, keyed by function."""
+
+    def __init__(self, owner: Any):
+        self.owner_id = id(owner)
+        self.entries: OrderedDict[Any, _CallableLifetimeCache] = OrderedDict()
+
+    def __copy__(self) -> "_CallableLifetimeCacheStore":
+        # A copied callable/Toolkit gets an empty store on first use. Reusing
+        # this store would keep wrappers bound to the original owner.
+        return type(self)(None)
+
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "_CallableLifetimeCacheStore":
+        return type(self)(None)
+
+    def __reduce__(self) -> Tuple[Any, tuple]:
+        # Introspection caches are process-local optimization state and their
+        # lru_cache closures are intentionally not serialized.
+        return (type(self), (None,))
+
+
+def _get_lifetime_cache(entrypoint: Callable) -> Optional[_CallableLifetimeCache]:
+    """Return a cache whose ownership follows ``entrypoint``'s lifetime.
+
+    Accessing ``toolkit.method`` creates a fresh bound-method object each time,
+    so method caches live on the toolkit and are keyed by ``__func__``. Other
+    callables own their cache directly. Objects that disallow private
+    attributes simply keep the original uncached behavior.
+    """
+    owner = getattr(entrypoint, "__self__", None)
+    function = getattr(entrypoint, "__func__", None)
+    if owner is not None and function is not None and not isinstance(owner, types.ModuleType):
+        target = owner
+        cache_key = function
+    else:
+        target = entrypoint
+        cache_key = None
+
+    with _lifetime_cache_lock:
+        try:
+            namespace = vars(target)
+            store = namespace.get(_LIFETIME_CACHE_ATTRIBUTE)
+        except (TypeError, AttributeError):
+            store = getattr(target, _LIFETIME_CACHE_ATTRIBUTE, None)
+
+        if store is None or (isinstance(store, _CallableLifetimeCacheStore) and store.owner_id != id(target)):
+            # functools.wraps copies a function's __dict__, and deepcopy copies
+            # a Toolkit's. Never let that copied attribute share the original
+            # owner's cache.
+            store = _CallableLifetimeCacheStore(target)
+            try:
+                setattr(target, _LIFETIME_CACHE_ATTRIBUTE, store)
+            except Exception:
+                return None
+        elif not isinstance(store, _CallableLifetimeCacheStore):
+            # Do not overwrite an application attribute, however unlikely the
+            # private-name collision is.
+            return None
+
+        try:
+            cache = store.entries.pop(cache_key)
+        except KeyError:
+            cache = _CallableLifetimeCache(entrypoint)
+            _lifetime_caches.add(cache)
+        store.entries[cache_key] = cache
+        if len(store.entries) > _LIFETIME_OWNER_CACHE_SIZE:
+            store.entries.popitem(last=False)
+        return cache
 
 
 @lru_cache(maxsize=_INTROSPECTION_CACHE_SIZE)
@@ -1019,12 +1189,18 @@ def _clear_tool_introspection_caches() -> None:
     _cached_framework_params.cache_clear()
     _cached_from_callable_template.cache_clear()
     _cached_entrypoint_accepts_media.cache_clear()
+    with _lifetime_cache_lock:
+        for cache in list(_lifetime_caches):
+            cache.clear()
 
 
 def entrypoint_accepts_media(entrypoint: Callable) -> bool:
     """Whether the entrypoint declares a reserved media parameter
     (images/videos/audios/files), so the run's media must be collected for it."""
     if not _cache_stable(entrypoint):
+        cache = _get_lifetime_cache(entrypoint)
+        if cache is not None:
+            return cache.entrypoint_accepts_media()
         from inspect import signature
 
         parameters = signature(entrypoint).parameters
@@ -1458,13 +1634,20 @@ class Function(BaseModel):
         The derivation is cached per (class, callable identity, name, strict);
         every call returns an isolated copy of the cached template, so callers
         can mutate the result freely and nothing a run writes into one copy
-        can reach another run's. A callable carrying captured state skips the
-        cache (see _cache_stable) and is built directly, as before; so does a
-        callable whose introspection failed, since the failure may be
-        transient and must replay on the next call.
+        can reach another run's. A callable carrying captured state uses a
+        cache tied to its own lifetime instead of the module cache (see
+        _cache_stable); a callable whose introspection failed replays the
+        failure on the next call because it may be transient.
         """
         if not _cache_stable(c):
-            return cls._build_from_callable(c, name=name, strict=strict)[0]
+            cache = _get_lifetime_cache(c)
+            if cache is None:
+                return cls._build_from_callable(c, name=name, strict=strict)[0]
+            try:
+                template = cache.from_callable_template(cls, name, strict)
+            except _DerivationFailed as failed:
+                return failed.payload
+            return template._per_run_copy()
         try:
             template = _cached_from_callable_template(cls, _CallableIdentity(c), name, strict)
         except _DerivationFailed as failed:
@@ -1610,7 +1793,13 @@ class Function(BaseModel):
         if self.entrypoint is None:
             return set()
         if not _cache_stable(self.entrypoint):
-            return _compute_framework_params(self.entrypoint)[0]
+            cache = _get_lifetime_cache(self.entrypoint)
+            if cache is None:
+                return _compute_framework_params(self.entrypoint)[0]
+            try:
+                return set(cache.framework_params())
+            except _DerivationFailed as failed:
+                return failed.payload
         try:
             return set(_cached_framework_params(_CallableIdentity(self.entrypoint)))
         except _DerivationFailed as failed:
@@ -1643,15 +1832,23 @@ class Function(BaseModel):
         # requires_user_input, user_input_fields) and applied to this
         # Function; only the pieces that depend on this instance's own state
         # (a user-authored schema, the description, fresh UserInputFields)
-        # are (re)built here. Entrypoints carrying captured state skip the
-        # cache (see _cache_stable) and are derived directly.
+        # are (re)built here. Entrypoints carrying captured state use a cache
+        # attached to their own lifetime instead of the module cache (see
+        # _cache_stable).
         derive_key = (
             strict,
             bool(self.requires_user_input),
             tuple(self.user_input_fields) if self.user_input_fields else None,
         )
         if not _cache_stable(self.entrypoint):
-            derived = _derive_entrypoint_schema(self.entrypoint, *derive_key)
+            cache = _get_lifetime_cache(self.entrypoint)
+            if cache is None:
+                derived = _derive_entrypoint_schema(self.entrypoint, *derive_key)
+            else:
+                try:
+                    derived = cache.entrypoint_schema(*derive_key)
+                except _DerivationFailed as failed:
+                    derived = failed.payload
         else:
             try:
                 derived = _cached_entrypoint_schema(_CallableIdentity(self.entrypoint), *derive_key)
@@ -1712,11 +1909,14 @@ class Function(BaseModel):
 
         One wrapper per callable object: building one runs pydantic schema
         generation, and the wrapper holds no per-call state, so every run
-        shares it. Callables carrying captured state skip the cache (see
-        _cache_stable) and are wrapped directly, as before.
+        shares it. Callables carrying captured state use a cache attached to
+        their own lifetime instead of the module cache (see _cache_stable).
         """
         if not _cache_stable(func):
-            return Function._wrap_callable_uncached(func)
+            cache = _get_lifetime_cache(func)
+            if cache is None:
+                return Function._wrap_callable_uncached(func)
+            return cache.wrapped_entrypoint()
         return _cached_wrapped_entrypoint(_CallableIdentity(func))
 
     @staticmethod
