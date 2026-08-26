@@ -10,26 +10,17 @@ if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
 
-def _anthropic_fallback(reasoning_model: Model) -> bool:
-    """Config-based check, used only when the models.retrieve lookup fails: thinking is set."""
+def _thinking_configured(reasoning_model: Model) -> bool:
+    """Whether the caller explicitly enabled thinking on this model."""
     return hasattr(reasoning_model, "thinking") and reasoning_model.thinking is not None
 
 
-def is_anthropic_reasoning_model(reasoning_model: Model) -> bool:
-    """Check if the model is an Anthropic Claude model with thinking support.
+def _api_thinking_supported(reasoning_model: Model) -> Optional[bool]:
+    """Whether the Anthropic API reports thinking support for this model.
 
-    Uses the Anthropic API (models.retrieve -> capabilities.thinking.supported) to detect thinking
-    support, and falls back to checking whether the thinking parameter is set only if the API call
-    fails.
+    Returns None when the capability cannot be determined (API failure, or an older SDK/response
+    that omits the field), so callers can fall back to the configured value.
     """
-    if reasoning_model.__class__.__name__ != "Claude":
-        return False
-
-    # Only the Anthropic-hosted Claude (not VertexAI/Bedrock) exposes this capability endpoint.
-    is_anthropic_provider = hasattr(reasoning_model, "provider") and reasoning_model.provider == "Anthropic"
-    if not is_anthropic_provider:
-        return False
-
     try:
         client = reasoning_model.get_client()  # type: ignore[attr-defined]
         model_info = client.models.retrieve(reasoning_model.id)
@@ -49,8 +40,31 @@ def is_anthropic_reasoning_model(reasoning_model: Model) -> bool:
                     return bool(supported)
     except Exception as e:
         log_warning(f"Could not determine Anthropic thinking capability via API, falling back to config: {str(e)}")
+    return None
 
-    return _anthropic_fallback(reasoning_model)
+
+def is_anthropic_reasoning_model(reasoning_model: Model) -> bool:
+    """Check if the model is an Anthropic Claude model with thinking support.
+
+    Thinking must be explicitly enabled on the model: the reasoning agent runs the model as
+    configured and never turns thinking on by itself, so a model without it would stream back an
+    empty thinking block. The Anthropic API (models.retrieve -> capabilities.thinking.supported)
+    is then used to rule out models that cannot think despite being configured for it; when that
+    lookup is unavailable the configured value stands on its own.
+    """
+    if reasoning_model.__class__.__name__ != "Claude":
+        return False
+
+    # Only the Anthropic-hosted Claude (not VertexAI/Bedrock) exposes this capability endpoint.
+    is_anthropic_provider = hasattr(reasoning_model, "provider") and reasoning_model.provider == "Anthropic"
+    if not is_anthropic_provider:
+        return False
+
+    if not _thinking_configured(reasoning_model):
+        return False
+
+    supported = _api_thinking_supported(reasoning_model)
+    return True if supported is None else supported
 
 
 def get_anthropic_reasoning(

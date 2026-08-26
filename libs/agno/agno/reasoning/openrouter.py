@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from os import getenv
 from typing import Dict, List
 
 import httpx
@@ -35,7 +36,7 @@ def _fetch_openrouter_models(reasoning_model: Model) -> Dict[str, List[str]]:
     base_url = getattr(reasoning_model, "base_url", None) or "https://openrouter.ai/api/v1"
     catalog: Dict[str, List[str]] = {}
     try:
-        api_key = getattr(reasoning_model, "api_key", None)
+        api_key = getattr(reasoning_model, "api_key", None) or getenv("OPENROUTER_API_KEY")
         headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
         response = httpx.get(f"{base_url.rstrip('/')}/models", headers=headers, timeout=10.0)
         response.raise_for_status()
