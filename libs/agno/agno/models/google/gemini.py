@@ -981,8 +981,13 @@ class Gemini(Model):
         if message.images is not None:
             for image in message.images:
                 if image.content is not None and isinstance(image.content, GeminiFile):
-                    if image.content.uri and image.content.mime_type:
-                        add_media_part(Part.from_uri(file_uri=image.content.uri, mime_type=image.content.mime_type))
+                    if image.content.uri and image.content.mime_type:  # type: ignore[attr-defined]
+                        add_media_part(
+                            Part.from_uri(
+                                file_uri=image.content.uri,  # type: ignore[attr-defined]
+                                mime_type=image.content.mime_type,  # type: ignore[attr-defined]
+                            )
+                        )
                 else:
                     image_content = format_image_for_message(image)
                     if image_content:
