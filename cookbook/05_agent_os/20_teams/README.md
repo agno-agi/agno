@@ -105,10 +105,15 @@ await teams.asend_alert(user_id="29:1abc...", text="Analysis complete.")
 teams.send_alert(user_id="29:1abc...", text="Analysis complete.")
 ```
 
-Both return `True` on delivery and `False` if that user has never chatted
-with the bot (no reference to send to). Safe to call from scheduled jobs,
-background tasks, or other request handlers. See `proactive_alert.py` for
-a working example.
+Delivery uses the newest session that carries a reference, which is not always
+the newest session — `/new` starts one without a reference until the user's next
+message, and alerts keep working across that gap.
+
+Both return `True` on delivery and `False` when the entity has no database, when
+the session lookup fails, or when none of that user's recent sessions carries a
+reference (typically because they have never chatted with the bot). Safe to call
+from scheduled jobs, background tasks, or other request handlers. See
+`proactive_alert.py` for a working example.
 
 ### Finding a Recipient's `user_id`
 
