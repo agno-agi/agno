@@ -417,7 +417,13 @@ class EventsBuffer:
             # Terminal runs, plus paused runs: a pause can wait on an approval
             # forever, and a reclaimed paused entry is rebuilt by add_event
             # when the run is eventually continued.
-            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
+            if metadata["status"] in [
+                RunStatus.completed,
+                RunStatus.error,
+                RunStatus.cancelled,
+                RunStatus.paused,
+                RunStatus.unverified,
+            ]:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)

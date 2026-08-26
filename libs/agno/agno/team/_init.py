@@ -9,6 +9,8 @@ if TYPE_CHECKING:
     from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
     from agno.team.team import Team
+    from agno.verifiers.base import Verifier
+    from agno.verifiers.types import VerificationConfig
 
 from os import getenv
 from typing import (
@@ -136,6 +138,8 @@ def __init__(
     tool_hooks: Optional[List[Callable]] = None,
     pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+    verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None,
+    verification: Optional["VerificationConfig"] = None,
     input_schema: Optional[Type[BaseModel]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     parser_model: Optional[Union[Model, str]] = None,
@@ -310,6 +314,17 @@ def __init__(
     # Initialize hooks
     team.pre_hooks = pre_hooks
     team.post_hooks = post_hooks
+
+    team.verifiers = list(verifiers) if verifiers else None
+    team.verification = verification
+    # Coerce now so a bad entry (a bare Scorer, a callable with an unknown parameter
+    # name) fails at construction, not mid-run. Rebuilt lazily on copies.
+    if team.verifiers:
+        from agno.verifiers.base import coerce_verifier
+
+        team._verifiers = [coerce_verifier(v) for v in team.verifiers]
+    else:
+        team._verifiers = None
 
     team.input_schema = input_schema
     team.output_schema = output_schema

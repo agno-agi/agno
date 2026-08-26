@@ -21,8 +21,11 @@ try:
 except ImportError:
     httpx = None  # type: ignore[assignment]
 
-# Terminal run statuses (RunStatus enum values from agno.run.base)
-_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED"}
+# Terminal run statuses (RunStatus enum values from agno.run.base). String
+# literals on purpose - this poller reads statuses off HTTP responses - so a
+# new terminal RunStatus member must ALSO be added here or the poll loop
+# spins until timeout on runs that end with it.
+_TERMINAL_STATUSES = {"COMPLETED", "CANCELLED", "ERROR", "PAUSED", "UNVERIFIED"}
 
 # Default polling interval in seconds for background run status checks
 _DEFAULT_POLL_INTERVAL = 30
@@ -561,6 +564,12 @@ class ScheduleExecutor:
                 elif run_status == "CANCELLED":
                     status = "failed"
                     error = data.get("error") or "Run was cancelled"
+                elif run_status == "UNVERIFIED":
+                    # The run produced an answer but its verifiers never
+                    # passed within budget - a failed outcome for scheduling
+                    # purposes, with its own message.
+                    status = "failed"
+                    error = data.get("error") or "Run ended unverified: its verifiers did not pass within budget"
                 else:
                     status = "failed"
                     error = data.get("error") or f"Run failed with status {run_status}"

@@ -188,6 +188,9 @@ def _map_run_status_to_task_state(status: Optional[RunStatus]) -> TaskState:
         RunStatus.error: TaskState.failed,
         RunStatus.cancelled: TaskState.canceled,
         RunStatus.paused: TaskState.working,
+        # An unverified run must surface as failed: the default below maps unknown
+        # statuses to completed, which would misreport a run whose verifiers never passed.
+        RunStatus.unverified: TaskState.failed,
     }
     return _mapping.get(status, TaskState.completed)
 

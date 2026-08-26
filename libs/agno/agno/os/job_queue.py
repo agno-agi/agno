@@ -195,6 +195,9 @@ _TICKET_STATUS_TO_API = {
     "completed": "COMPLETED",
     "failed": "ERROR",
     "cancelled": "CANCELLED",
+    # Terminal like completed, never retried: an unverified run executed to
+    # settlement with a real answer - only its verification budget was spent.
+    "unverified": "UNVERIFIED",
 }
 
 
@@ -1128,7 +1131,11 @@ class QueueWorker:
 
             session = await aread_or_create_session(component, session_id=job["session_id"], user_id=job.get("user_id"))
             run = session.get_run(job["id"])
-            if isinstance(run, RunOutput) and run.status not in (RunStatus.completed, RunStatus.cancelled):
+            if isinstance(run, RunOutput) and run.status not in (
+                RunStatus.completed,
+                RunStatus.cancelled,
+                RunStatus.unverified,
+            ):
                 run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 run.content = run.content or error
                 session.upsert_run(run=run)
@@ -1150,6 +1157,7 @@ class QueueWorker:
             if isinstance(team_run, TeamRunOutput) and team_run.status not in (
                 RunStatus.completed,
                 RunStatus.cancelled,
+                RunStatus.unverified,
             ):
                 team_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 team_run.content = team_run.content or error
@@ -1165,7 +1173,11 @@ class QueueWorker:
                 # No session row means no run row to orphan
                 return RunPersistOutcome.UPDATED
             workflow_run = workflow_session.get_run(job["id"])
-            if workflow_run is not None and workflow_run.status not in (RunStatus.completed, RunStatus.cancelled):
+            if workflow_run is not None and workflow_run.status not in (
+                RunStatus.completed,
+                RunStatus.cancelled,
+                RunStatus.unverified,
+            ):
                 workflow_run.status = RunStatus.cancelled if status == "cancelled" else RunStatus.error
                 workflow_run.content = workflow_run.content or error
                 workflow_session.upsert_run(run=workflow_run)
@@ -1665,6 +1677,14 @@ class QueueWorker:
                 error_content = str(getattr(result, "content", "") or "run errored")
                 await self._aretry_or_fail_ticket(job_id, attempt, error_content, self._retry_delay(attempt))
             else:
+                # COMPLETED and UNVERIFIED both settle here, and neither may
+                # retry: an unverified run executed to settlement with a real
+                # answer - only its verification budget was spent. The ticket
+                # records executed-to-settlement; the run row and the stream
+                # sentinel carry the true terminal status. The ticket status
+                # stays "completed" because store retention only reaps
+                # completed/failed/cancelled tickets - an "unverified" ticket
+                # row would leak past every store's cleanup.
                 await self._asettle_ticket(job_id, attempt, "completed")
         except asyncio.CancelledError:
             # Shutdown drain: the run was interrupted, not failed by its own

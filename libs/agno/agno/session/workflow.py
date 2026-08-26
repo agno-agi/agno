@@ -168,8 +168,9 @@ class WorkflowSession:
         if not self.runs:
             return []
 
-        # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in self.runs if run.status == RunStatus.completed]
+        # Get finished runs only (exclude current/pending run). Unverified runs are
+        # included: they carry a real transcript even though their verifiers never passed.
+        completed_runs = [run for run in self.runs if run.status in (RunStatus.completed, RunStatus.unverified)]
 
         if num_runs is not None:
             if num_runs <= 0:
