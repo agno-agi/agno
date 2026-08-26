@@ -12,7 +12,7 @@ from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIChat
 from agno.registry import Registry
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput, UserInputField
+from agno.workflow.types import HumanReview, StepInput, StepOutput, UserInputField
 from agno.workflow.workflow import Workflow, get_workflow_by_id
 
 # ---------------------------------------------------------------------------
@@ -62,28 +62,30 @@ workflow = Workflow(
             name="GenerateContent",
             description="Generate content with user-specified preferences",
             agent=content_agent,
-            requires_user_input=True,
-            user_input_message="Please provide your content preferences:",
-            user_input_schema=[
-                UserInputField(
-                    name="tone",
-                    field_type="str",
-                    description="Tone: 'formal', 'casual', or 'technical'",
-                    required=True,
-                ),
-                UserInputField(
-                    name="length",
-                    field_type="str",
-                    description="Length: 'short', 'medium', or 'long'",
-                    required=True,
-                ),
-                UserInputField(
-                    name="include_examples",
-                    field_type="bool",
-                    description="Include practical examples?",
-                    required=False,
-                ),
-            ],
+            human_review=HumanReview(
+                requires_user_input=True,
+                user_input_message="Please provide your content preferences:",
+                user_input_schema=[
+                    UserInputField(
+                        name="tone",
+                        field_type="str",
+                        description="Tone: 'formal', 'casual', or 'technical'",
+                        required=True,
+                    ),
+                    UserInputField(
+                        name="length",
+                        field_type="str",
+                        description="Length: 'short', 'medium', or 'long'",
+                        required=True,
+                    ),
+                    UserInputField(
+                        name="include_examples",
+                        field_type="bool",
+                        description="Include practical examples?",
+                        required=False,
+                    ),
+                ],
+            ),
         ),
         Step(
             name="FormatOutput",
@@ -120,11 +122,12 @@ if __name__ == "__main__":
     # Verify HITL user input config survived the round-trip
     if loaded_workflow.steps:
         for step in loaded_workflow.steps:
-            if hasattr(step, "requires_user_input") and step.requires_user_input:
+            hr = getattr(step, "human_review", None)
+            if hr and hr.requires_user_input:
                 print(f"\n  Step '{step.name}' has HITL user input config:")
-                print(f"    requires_user_input: {step.requires_user_input}")
-                print(f"    user_input_message: {step.user_input_message}")
-                print(f"    user_input_schema: {step.user_input_schema}")
+                print(f"    requires_user_input: {hr.requires_user_input}")
+                print(f"    user_input_message: {hr.user_input_message}")
+                print(f"    user_input_schema: {hr.user_input_schema}")
 
     # Run the loaded workflow
     print("\nRunning loaded workflow...")
