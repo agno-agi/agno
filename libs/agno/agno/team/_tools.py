@@ -463,6 +463,22 @@ def _determine_tools_for_model(
             # We add the tools, which are callable functions
             try:
                 _func = Function.from_callable(tool, strict=strict)
+                # Detect @approval sentinel on raw callable
+                _approval_type = getattr(tool, "_agno_approval_type", None)
+                if _approval_type is not None:
+                    _func.approval_type = _approval_type
+                    if _approval_type == "required" and not any(
+                        [_func.requires_user_input, _func.requires_confirmation, _func.external_execution]
+                    ):
+                        _func.requires_confirmation = True
+                    elif _approval_type == "audit" and not any(
+                        [_func.requires_user_input, _func.requires_confirmation, _func.external_execution]
+                    ):
+                        raise ValueError(
+                            "@approval(type='audit') requires at least one HITL flag "
+                            "('requires_confirmation', 'requires_user_input', or 'external_execution') "
+                            "to be set on @tool()."
+                        )
                 _func = _func.model_copy(deep=True)
                 if _func.name in _function_names:
                     log_warning(

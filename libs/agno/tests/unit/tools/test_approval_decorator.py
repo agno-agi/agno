@@ -1,5 +1,7 @@
 """Unit tests for the @approval decorator and its interaction with @tool."""
 
+from unittest.mock import MagicMock
+
 import pytest
 
 from agno.approval import ApprovalType, approval
@@ -274,3 +276,94 @@ def test_toolkit_propagation():
     assert isinstance(func, Function)
     assert func.approval_type == "required"
     assert func.requires_confirmation is True
+
+
+# =============================================================================
+# Test 11: @approval on a bare callable survives agent and team tool parsing
+# =============================================================================
+
+
+def _parse_agent_tools(tools):
+    from agno.agent._tools import parse_tools
+    from agno.agent.agent import Agent
+    from agno.run.base import RunContext
+
+    agent = Agent(name="approval-agent", tools=tools)
+    return parse_tools(
+        agent,
+        tools=tools,
+        model=MagicMock(supports_native_structured_outputs=False),
+        run_context=RunContext(run_id="test-run", session_id="test-session"),
+    )
+
+
+def _parse_team_tools(tools):
+    from agno.run.base import RunContext
+    from agno.run.team import TeamRunOutput
+    from agno.session import TeamSession
+    from agno.team._tools import _determine_tools_for_model
+    from agno.team.team import Team
+
+    team = Team(name="approval-team", members=[], tools=tools)
+    return _determine_tools_for_model(
+        team=team,
+        model=MagicMock(supports_native_structured_outputs=False),
+        run_response=TeamRunOutput(run_id="test-run", session_id="test-session", team_id="test-team"),
+        run_context=RunContext(run_id="test-run", session_id="test-session"),
+        team_run_context={},
+        session=TeamSession(session_id="test-session"),
+        async_mode=False,
+    )
+
+
+def test_agent_raw_callable_sentinel():
+    """A bare callable decorated only with @approval (no @tool wrapper) must
+    come out of the agent parse loop with the approval gate applied."""
+
+    @approval
+    def delete_file(path: str) -> str:
+        """Delete a file at the given path."""
+        return f"deleted {path}"
+
+    functions = _parse_agent_tools([delete_file])
+    func = next(f for f in functions if isinstance(f, Function) and f.name == "delete_file")
+    assert func.approval_type == "required"
+    assert func.requires_confirmation is True
+
+
+def test_team_raw_callable_sentinel():
+    """A bare callable decorated only with @approval (no @tool wrapper) must
+    come out of the team parse loop with the approval gate applied — without
+    this, an approval-gated tool registered on a Team executes ungated."""
+
+    @approval
+    def delete_file(path: str) -> str:
+        """Delete a file at the given path."""
+        return f"deleted {path}"
+
+    functions = _parse_team_tools([delete_file])
+    func = next(f for f in functions if isinstance(f, Function) and f.name == "delete_file")
+    assert func.approval_type == "required"
+    assert func.requires_confirmation is True
+
+
+# =============================================================================
+# Test 12: audit-without-HITL on a bare callable is dropped, not run ungated
+# =============================================================================
+
+
+def test_raw_callable_audit_without_hitl_is_dropped():
+    """A bare callable can never carry a HITL flag, so @approval(type='audit')
+    on one is a misconfiguration. Both parse loops raise internally, catch in
+    the callable branch's handler, and skip the tool — it must not register."""
+
+    @approval(type="audit")
+    def bare_audit(x: int) -> int:
+        """Audit without HITL."""
+        return x
+
+    agent_functions = _parse_agent_tools([bare_audit])
+    assert not any(isinstance(f, Function) and f.name == "bare_audit" for f in agent_functions)
+
+    team_functions = _parse_team_tools([bare_audit])
+    assert not any(isinstance(f, Function) and f.name == "bare_audit" for f in team_functions)
