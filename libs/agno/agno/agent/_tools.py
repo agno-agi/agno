@@ -31,7 +31,7 @@ from agno.run.agent import RunOutput, RunOutputEvent
 from agno.run.messages import RunMessages
 from agno.session import AgentSession
 from agno.tools import Toolkit
-from agno.tools.function import Function
+from agno.tools.function import Function, entrypoint_accepts_media
 from agno.tools.toolkit import (
     ToolkitKey,
     _emits_toolkit_instructions,
@@ -447,7 +447,7 @@ def parse_tools(
                     )
                     continue
                 _function_names.append(name)
-                _func = _func.model_copy(deep=True)
+                _func = _func._per_run_copy()
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team
@@ -480,7 +480,7 @@ def parse_tools(
                 continue
             _function_names.append(tool.name)
 
-            tool = tool.model_copy(deep=True)
+            tool = tool._per_run_copy()
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
             tool.process_entrypoint(strict=effective_strict)
@@ -517,6 +517,8 @@ def parse_tools(
                     continue
                 _function_names.append(function_name)
 
+                # from_callable caches the derivation and returns an isolated
+                # per-run copy, so no further copy is needed before mutating it.
                 _func = Function.from_callable(tool, strict=strict)
                 # Detect @approval sentinel on raw callable
                 _approval_type = getattr(tool, "_agno_approval_type", None)
@@ -534,7 +536,6 @@ def parse_tools(
                             "('requires_confirmation', 'requires_user_input', or 'external_execution') "
                             "to be set on @tool()."
                         )
-                _func = _func.model_copy(deep=True)
                 _func._agent = agent
                 if agent._team is not None:
                     _func._team = agent._team
@@ -570,11 +571,9 @@ def determine_tools_for_model(
 
     # Update the session state for the functions
     if _functions:
-        from inspect import signature
-
         # Check if any functions need media before collecting
         needs_media = any(
-            any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
+            entrypoint_accepts_media(func.entrypoint)
             for func in _functions
             if isinstance(func, Function) and func.entrypoint is not None
         )
