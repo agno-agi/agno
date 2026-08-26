@@ -288,32 +288,21 @@ def attach_routes(
 
             if session_config.has_db:
                 try:
-                    if session_config.is_async_db:
-                        sessions = await session_config.db.get_sessions(
-                            session_type=session_config.session_type,
-                            user_id=user_id,
-                            component_id=entity_id,
-                            limit=1,
-                            sort_by="updated_at",
-                            sort_order="desc",
-                        )
-                    else:
-                        sessions = session_config.db.get_sessions(
-                            session_type=session_config.session_type,
-                            user_id=user_id,
-                            component_id=entity_id,
-                            limit=1,
-                            sort_by="updated_at",
-                            sort_order="desc",
-                        )
-                    if sessions:
-                        current = sessions[0]
+                    # Re-read by the exact session_id this run used, not "latest for
+                    # this user": two messages from the same user run as concurrent
+                    # background tasks, so latest-by-timestamp can resolve to the
+                    # other run's session. This picks the right row; concurrent
+                    # writes to session_data are still last-writer-wins.
+                    # `or session_id` covers the cancellation path, which builds a
+                    # RunOutput carrying no session.
+                    run_session_id = response.session_id or session_id
+                    current = await entity.aget_session(session_id=run_session_id)  # type: ignore[union-attr]
+                    if current is not None:
                         ref = build_conversation_ref(service_url, conversation_id, bot_identity)
                         current.session_data = merge_conversation_ref(current.session_data, ref)
-                        if session_config.is_async_db:
-                            await session_config.db.upsert_session(current)
-                        else:
-                            session_config.db.upsert_session(current)
+                        # aget_session returns the session union; each entity's
+                        # asave_session narrows to its own type, which mypy cannot see.
+                        await entity.asave_session(current)  # type: ignore[union-attr, arg-type]
                 except Exception as e:
                     log_warning(f"Could not persist conversation reference (non-fatal): {e}")
 
