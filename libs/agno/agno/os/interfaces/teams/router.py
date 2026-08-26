@@ -229,24 +229,35 @@ def attach_routes(
 
             default_session_id = f"teams:{entity_id}:{user_id}"
             session_id = default_session_id
-            latest_session = None
             if session_config.has_db:
                 try:
                     session_filter = dict(
                         session_type=session_config.session_type,
                         user_id=user_id,
                         component_id=entity_id,
-                        limit=1,
-                        sort_by="updated_at",
+                        # created_at, not updated_at: upsert rewrites updated_at on every
+                        # save, so a run still in flight when `/new` arrives re-stamps the
+                        # old session to that same second and re-entrenches it.
+                        sort_by="created_at",
                         sort_order="desc",
+                        # A window rather than limit=1: equal created_at values come back
+                        # in arbitrary scan order.
+                        limit=5,
+                        # Only ids and timestamps are read, so skip building every
+                        # session's RunOutput objects. include_runs=False would also skip
+                        # fetching them, but most non-SQL backends reject that kwarg.
+                        deserialize=False,
                     )
                     if session_config.is_async_db:
-                        sessions = await session_config.db.get_sessions(**session_filter)
+                        results = await session_config.db.get_sessions(**session_filter)
                     else:
-                        sessions = session_config.db.get_sessions(**session_filter)
-                    if sessions:
-                        latest_session = sessions[0]
-                        session_id = latest_session.session_id
+                        results = session_config.db.get_sessions(**session_filter)
+                    rows = results[0] if isinstance(results, tuple) else results
+                    if rows:
+                        # A `/new` id is the default id plus `:<hex8>`, so on an exact
+                        # created_at tie the string order resolves to the newer session.
+                        newest = max(rows, key=lambda row: (row["created_at"], row["session_id"]))
+                        session_id = newest["session_id"]
                 except Exception as e:
                     log_warning(f"Session lookup failed, using default: {e}")
 
