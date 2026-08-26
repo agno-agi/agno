@@ -48,19 +48,6 @@ from agno.utils.schema import (
 
 T = TypeVar("T")
 
-# Re-export with underscore aliases for internal use and backward compatibility
-_identity_injected_types = identity_injected_types
-_ANNOTATION_DEPTH_CAP = ANNOTATION_DEPTH_CAP
-_unwrap_annotation = unwrap_annotation
-_is_union = is_union
-_annotation_reaches = annotation_reaches
-_reaches_identity = reaches_identity
-_annotation_binds = annotation_binds
-_is_framework_typed = is_framework_typed
-_is_bare_media_typed = is_bare_media_typed
-_is_schema_excluded = is_schema_excluded
-
-
 # What a cache entry holds. Bump this whenever the meaning of a stored value
 # changes: entries written under any other version are discarded unread, which
 # costs one re-execution and keeps a stale reading from reaching a model.
@@ -259,7 +246,7 @@ def _mentions_base_model(hint: Any, seen: Optional[List[Any]] = None) -> bool:
 
     An alias may name itself (``type JSON = str | list[JSON]``), so the seen
     list stops the walk from following one round and round."""
-    hint = _unwrap_annotation(hint)
+    hint = unwrap_annotation(hint)
     if isinstance(hint, type):
         try:
             return issubclass(hint, BaseModel)
@@ -314,8 +301,8 @@ def _union_names_type(hint: Any, wanted: tuple) -> bool:
     Used to decide whether pydantic's validate_call can introspect the
     signature: one Agent/Team member anywhere in a union is enough to break it.
     """
-    hint = _unwrap_annotation(hint)
-    if not _is_union(hint):
+    hint = unwrap_annotation(hint)
+    if not is_union(hint):
         return False
     return any(_member_names_type(arg, wanted) for arg in get_args(hint) if arg is not type(None))
 
@@ -324,7 +311,7 @@ def _member_names_type(arg: Any, wanted: tuple) -> bool:
     """Whether one union member names a wanted type. The member is unwrapped first:
     a PEP 695 alias nested inside a union (``type C = RunContext; type M = C | None``)
     is a TypeAliasType, not a type, and would otherwise slip past both checks."""
-    arg = _unwrap_annotation(arg)
+    arg = unwrap_annotation(arg)
     return (isinstance(arg, type) and issubclass(arg, wanted)) or _union_names_type(arg, wanted)
 
 
@@ -337,8 +324,8 @@ def _union_is_only(hint: Any, wanted: tuple) -> bool:
     (owner: Union[str, Agent]) keeps a half the model can legitimately fill --
     the model can send a string, never a live Agent -- so it stays in the
     schema. Optional[Agent] has no such half."""
-    hint = _unwrap_annotation(hint)
-    if not _is_union(hint):
+    hint = unwrap_annotation(hint)
+    if not is_union(hint):
         return False
     members = [arg for arg in get_args(hint) if arg is not type(None)]
     if not members:
@@ -349,7 +336,7 @@ def _union_is_only(hint: Any, wanted: tuple) -> bool:
 def _member_is_only(arg: Any, wanted: tuple) -> bool:
     """Whether one union member is a wanted type, unwrapping a nested PEP 695 alias
     first for the same reason as _member_names_type."""
-    arg = _unwrap_annotation(arg)
+    arg = unwrap_annotation(arg)
     return (isinstance(arg, type) and issubclass(arg, wanted)) or _union_is_only(arg, wanted)
 
 
@@ -650,10 +637,10 @@ def _derive_entrypoint_schema(
                 # "return"; it is not an injectable parameter.
                 if param_name == "return":
                     continue
-                if _is_schema_excluded(hint):
+                if is_schema_excluded(hint):
                     del type_hints[param_name]
                     excluded_params.append(param_name)
-                    if _is_bare_media_typed(hint):
+                    if is_bare_media_typed(hint):
                         hidden_media_params.append(param_name)
         except Exception:
             pass
@@ -1009,13 +996,13 @@ def _compute_framework_params(entrypoint: Callable) -> Tuple[Set[str], bool]:
         # `ctx: RunContext` left ctx unclassified and model-facing -- the
         # parameter's own protection undone by an unrelated neighbour.
         try:
-            # Identity only, not _is_schema_excluded. A bare media parameter is
+            # Identity only, not is_schema_excluded. A bare media parameter is
             # hidden from the schema, but dropping a value supplied for it
             # displaces nothing: media is injected by reserved name alone, so the
             # caller's own media never lands there under any behaviour. Dropping
             # would only make the parameter unfillable by anything, which v2.8.7
             # did not do.
-            owned = _is_framework_typed(hint)
+            owned = is_framework_typed(hint)
         except Exception:
             owned = True  # Cannot classify it, so do not hand it to the model.
         if owned:
@@ -1445,13 +1432,13 @@ class Function(BaseModel):
             # guard rejects a model-supplied value for them on this path too. See #6344.
             framework_typed_params: Set[str] = set()
             try:
-                # Identity only, not _is_schema_excluded: v2.8.7's from_callable never
+                # Identity only, not is_schema_excluded: v2.8.7's from_callable never
                 # hid media by type, so a bare media param on a plain callable stays
                 # the model's to fill (pydantic coerces the dict) -- unlike the
                 # process_entrypoint path, which hid it then and hides it now.
                 for _pname in sig.parameters:
                     _hint = type_hints.get(_pname)
-                    if _hint is not None and _is_framework_typed(_hint):
+                    if _hint is not None and is_framework_typed(_hint):
                         framework_typed_params.add(_pname)
             except Exception:
                 pass
@@ -1756,7 +1743,7 @@ class Function(BaseModel):
                 # list[Agent]]` to validate_call, which then failed to resolve
                 # Agent's own forward references and took registration of the
                 # whole tool down.
-                if _annotation_reaches(hint, framework_types):
+                if annotation_reaches(hint, framework_types):
                     return func
         except Exception:
             pass
@@ -2002,7 +1989,7 @@ class Function(BaseModel):
             return None
         if hint is None or hint is type(None):
             return None
-        return _unwrap_annotation(hint)
+        return unwrap_annotation(hint)
 
     def _save_to_cache(self, cache_file: str, result: Any):
         """Save result to cache."""
@@ -2252,7 +2239,7 @@ class FunctionCall(BaseModel):
         # cases like `my_agent: Agent`, `custom_team: Team` or `ctx: RunContext`.
         # See issue #6344.
         #
-        # Every identity annotation _is_framework_typed hides from the model-facing
+        # Every identity annotation is_framework_typed hides from the model-facing
         # schema is bound here, union spellings included (owner: Optional[Agent],
         # ctx: Union[str, RunContext]). A wielder without the object binds None --
         # a tool registered on a Team has no Agent, and a required `owner: Agent`
@@ -2280,9 +2267,9 @@ class FunctionCall(BaseModel):
                 # positional-only one cannot be passed by name either.
                 if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD, Parameter.POSITIONAL_ONLY):
                     continue
-                if not _is_framework_typed(hint):
+                if not is_framework_typed(hint):
                     continue
-                hint = _unwrap_annotation(hint)
+                hint = unwrap_annotation(hint)
                 # The same resolver that decided to hide it. Matching only a
                 # bare type or a direct union left the shapes the schema rule
                 # newly recognised -- a TypeVar bound to RunContext, an aliased
@@ -2295,7 +2282,7 @@ class FunctionCall(BaseModel):
                         ((Team,), self.function._team),
                         ((RunContext,), self.function._run_context),
                     )
-                    if _annotation_binds(hint, wanted)
+                    if annotation_binds(hint, wanted)
                 ]
                 if not matches:
                     continue
@@ -2316,7 +2303,7 @@ class FunctionCall(BaseModel):
         The reserved identity names, plus every name the framework claimed by
         ANNOTATION. Both paths that populate ``_framework_params``
         (``Function._resolve_framework_params`` and ``from_callable``) add a
-        typed parameter only when ``_is_framework_typed`` says it is
+        typed parameter only when ``is_framework_typed`` says it is
         identity-bearing, never for media, so anything there that is not a
         reserved name got there by being identity-typed.
 
