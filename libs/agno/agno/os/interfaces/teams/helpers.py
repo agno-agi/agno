@@ -54,9 +54,18 @@ class TeamsConfig:
         Raises ``ValueError`` if ``app_id`` or ``app_password`` cannot be
         resolved from either source.
         """
+        from agno.os.interfaces.teams.security import dev_bypass_enabled
+
         aid = app_id or os.getenv("MICROSOFT_APP_ID")
         secret = app_password or os.getenv("MICROSOFT_APP_PASSWORD")
         tid = tenant_id or os.getenv("MICROSOFT_APP_TENANT_ID") or "botframework.com"
+
+        # Local development runs without credentials: there is no audience to
+        # verify inbound tokens against and no client secret to fetch an
+        # outbound one with. The JWT bypass is gated on this same absence, so
+        # allowing it here is what keeps that mode reachable.
+        if dev_bypass_enabled():
+            return cls(app_id=aid or "", app_password=secret or "", tenant_id=tid, request_timeout=request_timeout)
 
         if not aid:
             raise ValueError("MICROSOFT_APP_ID is not set. Set the environment variable or pass app_id.")
