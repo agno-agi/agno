@@ -17,7 +17,6 @@ _jwks_cache: Dict[str, Any] = {
     "keys": None,  # list[dict]
     "fetched_at": 0.0,
     "jwks_uri": None,
-    "valid_token_issuers": None,  # list[str]
 }
 _jwks_lock = Lock()
 
@@ -55,7 +54,6 @@ def _get_jwks() -> List[Dict[str, Any]]:
         _jwks_cache["keys"] = keys
         _jwks_cache["fetched_at"] = now
         _jwks_cache["jwks_uri"] = jwks_uri
-        _jwks_cache["valid_token_issuers"] = metadata.get("issuer")
         return keys
 
 
