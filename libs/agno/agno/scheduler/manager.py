@@ -42,8 +42,9 @@ class ScheduleManager:
 
     def close(self) -> None:
         """Shut down the internal thread pool (if created)."""
-        if self._pool is not None:
-            self._pool.shutdown(wait=False)
+        pool = getattr(self, "_pool", None)
+        if pool is not None:
+            pool.shutdown(wait=False)
             self._pool = None
 
     def __del__(self) -> None:
