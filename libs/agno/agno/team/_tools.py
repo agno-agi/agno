@@ -33,7 +33,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.tools import Toolkit
-from agno.tools.function import Function
+from agno.tools.function import Function, entrypoint_accepts_media
 from agno.tools.toolkit import (
     ToolkitKey,
     _emits_toolkit_instructions,
@@ -401,7 +401,7 @@ def _determine_tools_for_model(
                     )
                     continue
                 _function_names.append(name)
-                _func = _func.model_copy(deep=True)
+                _func = _func._per_run_copy()
 
                 _func._team = team
                 # Respect the function's explicit strict setting if set
@@ -434,7 +434,7 @@ def _determine_tools_for_model(
                     add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
-            tool = tool.model_copy(deep=True)
+            tool = tool._per_run_copy()
             tool._team = team
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
@@ -462,8 +462,9 @@ def _determine_tools_for_model(
         elif callable(tool):
             # We add the tools, which are callable functions
             try:
+                # from_callable caches the derivation and returns an isolated
+                # per-run copy, so no further copy is needed before mutating it.
                 _func = Function.from_callable(tool, strict=strict)
-                _func = _func.model_copy(deep=True)
                 if _func.name in _function_names:
                     log_warning(
                         f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
@@ -482,11 +483,9 @@ def _determine_tools_for_model(
                 log_warning(f"Could not add tool {tool}: {str(e)}")
 
     if _functions:
-        from inspect import signature
-
         # Check if any functions need media before collecting
         needs_media = any(
-            any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
+            entrypoint_accepts_media(func.entrypoint)
             for func in _functions
             if isinstance(func, Function) and func.entrypoint is not None
         )
