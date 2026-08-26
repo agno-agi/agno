@@ -24,7 +24,7 @@ from agno.session.team import TeamSession
 from agno.session.workflow import WorkflowSession
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.workflow import RemoteWorkflow, Workflow
 
 _ERROR_MESSAGE = "Sorry, there was an error processing your message. Please try again later."
@@ -227,7 +227,8 @@ def attach_routes(
                     )
                 return
 
-            log_info(f"Processing Teams message from {user_id[:12]}: {parsed.text}")
+            log_info(f"Processing Teams message from user {user_id[:12]}")
+            log_debug(f"Message content: {parsed.text}")
 
             default_session_id = f"teams:{entity_id}:{user_id}"
             session_id = default_session_id

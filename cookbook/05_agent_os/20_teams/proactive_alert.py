@@ -29,7 +29,7 @@ from agno.os import AgentOS
 from agno.os.interfaces.teams import MicrosoftTeams
 
 # ---------------------------------------------------------------------------
-# Build the bot as usual
+# Create the Teams AgentOS
 # ---------------------------------------------------------------------------
 
 db = SqliteDb(
@@ -88,12 +88,13 @@ def _demo_alert_worker():
     asyncio.run(_loop())
 
 
-threading.Thread(target=_demo_alert_worker, daemon=True).start()
-
-
 # ---------------------------------------------------------------------------
 # Run the Teams Server
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    # Started here, not at import: `app` above is the ASGI entry point, so an
+    # `uvicorn proactive_alert:app` or a reload worker would otherwise spawn the
+    # demo loop as a side effect of importing the module.
+    threading.Thread(target=_demo_alert_worker, daemon=True).start()
     agent_os.serve(app=app)
