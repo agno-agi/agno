@@ -262,3 +262,59 @@ def test_sync_send_alert_returns_false_on_missing_session():
         assert ok is False
     finally:
         env_patch.stop()
+
+
+# ---------------------------------------------------------------------------
+# Bot-token reuse across alerts
+# ---------------------------------------------------------------------------
+
+
+def _counting_post(token_fetches, activity_posts):
+    """Stand in for the token endpoint and the Bot Connector, counting logins."""
+    import httpx
+
+    async def fake_post(self, url, data=None, headers=None, json=None):
+        url_s = str(url)
+        req = httpx.Request("POST", url_s)
+        if "login.microsoftonline.com" in url_s:
+            token_fetches.append(url_s)
+            return httpx.Response(200, request=req, json={"access_token": "tok", "expires_in": 3600})
+        activity_posts.append(json)
+        return httpx.Response(201, request=req, json={"id": "out-1"})
+
+    return fake_post
+
+
+@pytest.mark.asyncio
+async def test_two_alerts_reuse_one_bot_token():
+    """The cached bot token lives on TeamsConfig, so building a fresh config per
+    call throws it away and re-authenticates every time. telegram's BotState
+    fills its bot info once and keeps it on the interface's state object."""
+    teams, agent, env_patch = _build_teams_interface()
+    try:
+        agent.db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])
+        token_fetches: list = []
+        activity_posts: list = []
+        with patch("httpx.AsyncClient.post", new=_counting_post(token_fetches, activity_posts)):
+            assert await teams.asend_alert(user_id="user-1", text="one") is True
+            assert await teams.asend_alert(user_id="user-1", text="two") is True
+        assert len(activity_posts) == 2
+        assert len(token_fetches) == 1
+    finally:
+        env_patch.stop()
+
+
+def test_two_sync_alerts_reuse_one_bot_token():
+    """Same for the sync wrapper — it shares the interface's config too."""
+    teams, agent, env_patch = _build_teams_interface()
+    try:
+        agent.db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])
+        token_fetches: list = []
+        activity_posts: list = []
+        with patch("httpx.AsyncClient.post", new=_counting_post(token_fetches, activity_posts)):
+            assert teams.send_alert(user_id="user-1", text="one") is True
+            assert teams.send_alert(user_id="user-1", text="two") is True
+        assert len(activity_posts) == 2
+        assert len(token_fetches) == 1
+    finally:
+        env_patch.stop()
