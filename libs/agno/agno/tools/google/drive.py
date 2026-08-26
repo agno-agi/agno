@@ -46,7 +46,7 @@ from typing import Any, List, Optional, Tuple, Union, cast
 from agno.exceptions import PathSecurityError
 from agno.tools.google.auth import google_authenticate
 from agno.tools.google.base import GoogleToolkit
-from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.log import log_debug, log_error
 from agno.utils.path_safety import safe_join_filename
 
 try:
@@ -265,9 +265,6 @@ class GoogleDriveTools(GoogleToolkit):
         scopes: Optional[List[str]] = None,
         credentials_path: Optional[str] = None,
         token_path: Optional[str] = None,
-        # Deprecated aliases (use credentials_path, oauth_port instead)
-        creds_path: Optional[str] = None,
-        auth_port: Optional[int] = None,
         # Service account auth — alternative to OAuth for server/bot deployments
         service_account_path: Optional[str] = None,
         delegated_user: Optional[str] = None,
@@ -299,15 +296,6 @@ class GoogleDriveTools(GoogleToolkit):
         add_instructions: bool = True,
         **kwargs,
     ):
-        # Handle deprecated aliases
-        if creds_path is not None:
-            log_warning("creds_path is deprecated, use credentials_path instead")
-            if credentials_path is None:
-                credentials_path = creds_path
-        if auth_port is not None:
-            log_warning("auth_port is deprecated, use oauth_port instead")
-            if oauth_port is None:
-                oauth_port = auth_port
         if oauth_port is None:
             oauth_port = 5050
 

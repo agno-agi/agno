@@ -1,7 +1,40 @@
-from typing import Any, Dict, List
+from hashlib import md5
+from typing import Any, Dict, List, Tuple
 from unittest.mock import MagicMock
 
 import pytest
+
+
+class DeterministicEmbedder:
+    """A tiny embedder that needs no network or API key."""
+
+    enable_batch = False
+
+    def __init__(self, dimensions: int = 8):
+        self.dimensions = dimensions
+
+    def get_embedding(self, text: str) -> List[float]:
+        # md5, not builtin hash(): PYTHONHASHSEED would embed the same text differently each run.
+        vector = [0.0] * self.dimensions
+        vector[int(md5(text.encode()).hexdigest(), 16) % self.dimensions] = 1.0
+        return vector
+
+    def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        return self.get_embedding(text), {"total_tokens": 1}
+
+    async def async_get_embedding(self, text: str) -> List[float]:
+        return self.get_embedding(text)
+
+    async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
+        return self.get_embedding(text), {"total_tokens": 1}
+
+    def embed(self, document, *args, **kwargs):
+        document.embedding = self.get_embedding(document.content)
+        document.usage = {"total_tokens": 1}
+        return document
+
+    async def async_embed(self, document, *args, **kwargs):
+        return self.embed(document)
 
 
 @pytest.fixture(scope="session")

@@ -61,6 +61,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "openrouter-responses": ("agno.models.openrouter", "OpenRouterResponses", "OpenRouterResponses", "openrouter"),
     "perplexity": ("agno.models.perplexity", "Perplexity", "Perplexity", "perplexity"),
     "portkey": ("agno.models.portkey", "Portkey", "Portkey", "portkey"),
+    "ramp": ("agno.models.ramp", "RampRouter", "RampRouter", "ramprouter"),
     "requesty": ("agno.models.requesty", "Requesty", "Requesty", "requesty"),
     "sambanova": ("agno.models.sambanova", "Sambanova", "Sambanova", "sambanova"),
     "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
@@ -72,6 +73,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "vertexai-claude": ("agno.models.vertexai.claude", "Claude", "Claude", "vertexai"),
     "vllm": ("agno.models.vllm", "VLLM", "VLLM", "vllm"),
     "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
+    "xai-responses": ("agno.models.xai", "xAIResponses", "xAIResponses", "xai"),
     "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
 }
 
