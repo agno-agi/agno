@@ -207,7 +207,10 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
         if not content:
             skipped.append("file")
             continue
-        files.append(File(content=content, mime_type=mime or "application/octet-stream"))
+        # Pass None for unsupported types to avoid File validation errors. The
+        # filename rides along so the model can still infer the type from it.
+        safe_mime = mime if mime in File.valid_mime_types() else None
+        files.append(File(content=content, mime_type=safe_mime, filename=att.get("name")))
     if files:
         run_kwargs["files"] = files
 
