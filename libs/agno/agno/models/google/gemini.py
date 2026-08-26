@@ -905,13 +905,36 @@ class Gemini(Model):
                 log_debug(f"Skipping message with role '{role}' that has no parts")
                 continue
 
-            final_message = Content(role=role, parts=message_parts)
-            formatted_messages.append(final_message)
+            # Gemini 3.7 treats a function response as a completed turn. Keep
+            # media returned by the tool in a following user turn instead of
+            # placing it in the same Content object.
+            if (
+                message.role == "tool"
+                and len(message_parts) > 1
+                and getattr(message_parts[0], "function_response", None) is not None
+            ):
+                formatted_messages.append(Content(role=role, parts=message_parts[:1]))
+                formatted_messages.append(Content(role=role, parts=message_parts[1:]))
+            else:
+                formatted_messages.append(Content(role=role, parts=message_parts))
 
         # Merge consecutive messages with the same role (Gemini API rejects consecutive same-role messages)
         merged: List[Content] = []
         for msg in formatted_messages:
-            if merged and merged[-1].role == msg.role:
+            previous_has_function_response = (
+                any(getattr(part, "function_response", None) is not None for part in merged[-1].parts)
+                if merged
+                else False
+            )
+            current_has_media = any(
+                getattr(part, "inline_data", None) is not None or getattr(part, "file_data", None) is not None
+                for part in msg.parts
+            )
+            if (
+                merged
+                and merged[-1].role == msg.role
+                and not (previous_has_function_response and current_has_media)
+            ):
                 merged[-1].parts.extend(msg.parts)
             else:
                 merged.append(msg)
