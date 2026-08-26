@@ -100,5 +100,5 @@ tools = [Workspace(".", allow_paths=[".env.example"])]
 
 ```bash
 .venvs/demo/bin/python cookbook/91_tools/workspace_tools/basic_usage.py
-.venvs/demo/bin/python cookbook/91_tools/workspace_tools/with_confirmation.py
+.venvs/demo/bin/python cookbook/91_tools/workspace_tools/workspace_tools_with_confirmation.py
 ```
