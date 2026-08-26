@@ -90,6 +90,74 @@ async def test_send_alert_returns_false_when_session_has_no_ref():
         env_patch.stop()
 
 
+# === Which session's reference an alert uses ===
+
+
+def _conv_ref(conv_id):
+    return {"service_url": "https://svc", "conversation_id": conv_id, "bot_identity": {"id": "28:bot"}}
+
+
+def _write_session(db, session_id, created_at, conv_id=None):
+    from agno.session.agent import AgentSession
+
+    db.upsert_sessions(
+        [
+            AgentSession(
+                session_id=session_id,
+                user_id="user-1",
+                agent_id="agent-1",
+                created_at=created_at,
+                updated_at=created_at,
+                session_data={"teams_conversation_ref": _conv_ref(conv_id)} if conv_id else None,
+            )
+        ],
+        preserve_updated_at=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_alert_uses_the_newest_session_that_carries_a_ref(tmp_path):
+    """`/new` starts a session with no conversation reference on it. Until the
+    user's next message the only reference that can be delivered to sits on the
+    session before it."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.interfaces.teams import MicrosoftTeams
+
+    db = SqliteDb(db_file=str(tmp_path / "alerts.db"))
+    stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=db)
+    send_target = "agno.os.interfaces.teams.teams.send_teams_message_async"
+
+    with patch.dict(
+        "os.environ",
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        clear=True,
+    ):
+        teams = MicrosoftTeams(agent=stub_agent)
+
+        _write_session(db, "teams:agent-1:user-1", 1_700_000_000, conv_id="conv-A")
+        with patch(send_target, new_callable=AsyncMock) as mock_send:
+            assert await teams.asend_alert(user_id="user-1", text="one") is True
+        assert mock_send.call_args.kwargs["conversation_id"] == "conv-A"
+
+        # `/new`: newest session, and it carries no reference yet
+        _write_session(db, "teams:agent-1:user-1:0a1b2c3d", 1_700_000_060)
+        with patch(send_target, new_callable=AsyncMock) as mock_send:
+            assert await teams.asend_alert(user_id="user-1", text="two") is True
+        assert mock_send.call_args.kwargs["conversation_id"] == "conv-A"
+
+        # the user's next inbound message lands a reference on the new session
+        _write_session(db, "teams:agent-1:user-1:0a1b2c3d", 1_700_000_060, conv_id="conv-B")
+        with patch(send_target, new_callable=AsyncMock) as mock_send:
+            assert await teams.asend_alert(user_id="user-1", text="three") is True
+        # the ref moved with the conversation; it did not stay pinned to the old one
+        assert mock_send.call_args.kwargs["conversation_id"] == "conv-B"
+
+        # a user with no reference anywhere is still False, with nothing sent
+        with patch(send_target, new_callable=AsyncMock) as mock_send:
+            assert await teams.asend_alert(user_id="user-2", text="four") is False
+        mock_send.assert_not_called()
+
+
 # === Guardrails: no DB / lookup errors / async DB ===
 
 

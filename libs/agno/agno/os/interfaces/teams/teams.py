@@ -94,9 +94,12 @@ class MicrosoftTeams(BaseInterface):
     async def asend_alert(self, user_id: str, text: str) -> bool:
         """Push a message to a user without an inbound trigger.
 
-        Returns False, without raising, when the entity has no db or the user
-        has no stored conversation reference. Transport failures after the
-        reference is found do raise.
+        Delivers to the newest session carrying a conversation reference, which
+        is not always the newest session -- `/new` starts one without a
+        reference until the user's next message. Returns False, without raising,
+        when the entity has no db, when the lookup fails, or when none of the
+        user's recent sessions carries a reference. Transport failures after one
+        is found do raise.
         """
         entity, entity_type = self._resolve_entity()
         db = getattr(entity, "db", None)
@@ -110,8 +113,13 @@ class MicrosoftTeams(BaseInterface):
             session_type=_SESSION_DISPATCH[entity_type][0],
             user_id=user_id,
             component_id=entity_id,
-            limit=1,
-            sort_by="updated_at",
+            # A window rather than limit=1: `/new` starts a session with no reference
+            # on it, so the newest session is unreachable until the user's next
+            # message. Same window the router uses to resolve the current session.
+            limit=5,
+            # created_at, not updated_at: upsert rewrites updated_at on every save,
+            # which lets a write to an older session float it above the current one.
+            sort_by="created_at",
             sort_order="desc",
         )
         try:
@@ -123,10 +131,11 @@ class MicrosoftTeams(BaseInterface):
             log_warning(f"MicrosoftTeams.asend_alert: session lookup failed: {e}")
             return False
 
-        if not sessions:
-            return False
-
-        ref = extract_conversation_ref(sessions[0].session_data)  # type: ignore[union-attr]
+        ref = None
+        for session in sessions:
+            ref = extract_conversation_ref(session.session_data)  # type: ignore[union-attr]
+            if ref:
+                break
         if not ref:
             return False
 
