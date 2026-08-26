@@ -517,7 +517,7 @@ def _isolated_manager_copy(manager: Any, db: Any = None, reset_stats: bool = Fal
     store; a model already set on the manager gets the cache-off treatment.
 
     Note: stats are no longer accumulated on the manager (async-safety fix).
-    They are returned per-call and stored on run_response.compression_stats.
+    They are returned per-call and stored in run_response.metrics.additional_metrics.
     The reset_stats parameter is kept for API compatibility but is now a no-op.
     """
     manager_copy = copy.copy(manager)

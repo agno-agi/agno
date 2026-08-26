@@ -5051,7 +5051,9 @@ async def _acontinue_run(
 
                 # Pre-loop compaction: compress history BEFORE model call
                 if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
-                    log_debug(f"[AGENT-CONTINUE-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
+                    log_debug(
+                        f"[AGENT-CONTINUE-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages"
+                    )
                     compaction_result = await agent.compaction_manager.acompact(
                         run_messages.messages,
                         run_response=run_response,

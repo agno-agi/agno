@@ -227,6 +227,9 @@ class ModelResponse:
 
             data["response_usage"] = _MessageMetrics.from_dict(data["response_usage"])
 
+        # Remove legacy compression_stats from old cache files (now in metrics.additional_metrics)
+        data.pop("compression_stats", None)
+
         return cls(**data)
 
 

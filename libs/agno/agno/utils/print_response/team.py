@@ -5,6 +5,7 @@ from pydantic import BaseModel
 
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
+from agno.metrics import get_compaction_stats
 from agno.models.message import Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
@@ -277,14 +278,7 @@ def print_response(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats at end of tool calls
-                    if team.compaction_manager is not None and team.compaction_manager.stats:
-                        stats = team.compaction_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                        team.compaction_manager.stats.clear()
+                    # Compression stats are now on run_response.metrics (not available during streaming)
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -657,13 +651,7 @@ def print_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats if available (don't clear - will be cleared in final_panels)
-                    if team.compaction_manager is not None and team.compaction_manager.stats:
-                        stats = team.compaction_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    # Compression stats are now on run_response.metrics (not available during streaming)
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -893,14 +881,15 @@ def print_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats at end of tool calls
-                if team.compaction_manager is not None and team.compaction_manager.stats:
-                    stats = team.compaction_manager.stats
+                # Add compression stats (read from run_response.metrics)
+                stats: Dict[str, Any] = (
+                    get_compaction_stats(run_response.metrics) if isinstance(run_response, TeamRunOutput) else {}
+                )
+                if stats:
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                    team.compaction_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,
@@ -1210,14 +1199,7 @@ async def aprint_response(
 
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats at end of tool calls
-                    if team.compaction_manager is not None and team.compaction_manager.stats:
-                        stats = team.compaction_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                        team.compaction_manager.stats.clear()
+                    # Compression stats are now on run_response.metrics (not available during streaming)
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -1588,13 +1570,7 @@ async def aprint_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Add compression stats if available (don't clear - will be cleared in final_panels)
-                    if team.compaction_manager is not None and team.compaction_manager.stats:
-                        stats = team.compaction_manager.stats
-                        saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-                        orig = stats.get("original_size", 1)
-                        if stats.get("tool_results_compressed", 0) > 0:
-                            tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+                    # Compression stats are now on run_response.metrics (not available during streaming)
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -1842,14 +1818,15 @@ async def aprint_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats at end of tool calls
-                if team.compaction_manager is not None and team.compaction_manager.stats:
-                    stats = team.compaction_manager.stats
+                # Add compression stats (read from run_response.metrics)
+                stats: Dict[str, Any] = (
+                    get_compaction_stats(run_response.metrics) if isinstance(run_response, TeamRunOutput) else {}
+                )
+                if stats:
                     saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-                    team.compaction_manager.stats.clear()
 
                 team_tool_calls_panel = create_panel(
                     content=tool_calls_text,

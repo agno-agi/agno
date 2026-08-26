@@ -831,3 +831,57 @@ def merge_background_metrics(
                     metrics.additional_metrics[k] += v
                 else:
                     metrics.additional_metrics[k] = v
+
+
+# ---------------------------------------------------------------------------
+# Compaction Stats Helpers
+# ---------------------------------------------------------------------------
+
+COMPACTION_STATS_PREFIX = "compaction_"
+
+
+def accumulate_compaction_stats(
+    run_metrics: Optional["RunMetrics"],
+    stats: Dict[str, Any],
+) -> None:
+    """Accumulate compaction stats into run_metrics.additional_metrics.
+
+    Stats keys are prefixed with 'compaction_' to avoid collisions with other
+    metrics in additional_metrics (e.g., eval_duration).
+
+    Args:
+        run_metrics: The run's metrics object. If None, does nothing.
+        stats: Dict with keys like 'tool_results_compressed', 'original_size', etc.
+    """
+    if not stats or run_metrics is None:
+        return
+    if run_metrics.additional_metrics is None:
+        run_metrics.additional_metrics = {}
+    am = run_metrics.additional_metrics
+    for key, value in stats.items():
+        prefixed_key = f"{COMPACTION_STATS_PREFIX}{key}"
+        if isinstance(value, (int, float)):
+            am[prefixed_key] = am.get(prefixed_key, 0) + value
+        else:
+            am[prefixed_key] = value
+
+
+def get_compaction_stats(run_metrics: Optional["RunMetrics"]) -> Dict[str, Any]:
+    """Extract compaction stats from run_metrics.additional_metrics.
+
+    Returns stats with the 'compaction_' prefix stripped, for use in events
+    and display code that expects the original key names.
+
+    Args:
+        run_metrics: The run's metrics object. If None, returns empty dict.
+
+    Returns:
+        Dict with keys like 'tool_results_compressed', 'original_size', etc.
+    """
+    if run_metrics is None or run_metrics.additional_metrics is None:
+        return {}
+    return {
+        k.removeprefix(COMPACTION_STATS_PREFIX): v
+        for k, v in run_metrics.additional_metrics.items()
+        if k.startswith(COMPACTION_STATS_PREFIX)
+    }

@@ -11,6 +11,7 @@ from rich.text import Text
 
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
+from agno.metrics import get_compaction_stats
 from agno.models.message import Message
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, RunPausedEvent
@@ -195,7 +196,6 @@ def print_response_stream(
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
-                compaction_manager=agent.compaction_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -220,10 +220,6 @@ def print_response_stream(
             panels.append(summary_panel)
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
-
-        # Clear compression stats after final display
-        if agent.compaction_manager is not None:
-            agent.compaction_manager.stats.clear()
 
         response_timer.stop()
 
@@ -402,7 +398,6 @@ async def aprint_response_stream(
                 show_reasoning=show_reasoning,
                 show_full_reasoning=show_full_reasoning,
                 accumulated_tool_calls=accumulated_tool_calls,
-                compaction_manager=agent.compaction_manager,
             )
             panels.extend(additional_panels)
             if panels:
@@ -428,10 +423,6 @@ async def aprint_response_stream(
             live_log.update(Group(*panels))
             agent.session_summary_manager.summaries_updated = False
 
-        # Clear compression stats after final display
-        if agent.compaction_manager is not None:
-            agent.compaction_manager.stats.clear()
-
         response_timer.stop()
 
         # Final update to remove the "Working..." status
@@ -448,7 +439,6 @@ def build_panels_stream(
     show_reasoning: bool = True,
     show_full_reasoning: bool = False,
     accumulated_tool_calls: Optional[List] = None,
-    compaction_manager: Optional[Any] = None,
 ):
     from rich.markdown import Markdown
 
@@ -493,13 +483,8 @@ def build_panels_stream(
 
         tool_calls_text = tool_calls_content.plain.rstrip()
 
-        # Add compression stats if available (don't clear - caller will clear after final display)
-        if compaction_manager is not None and compaction_manager.stats:
-            stats = compaction_manager.stats
-            saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
-            orig = stats.get("original_size", 1)
-            if stats.get("tool_results_compressed", 0) > 0:
-                tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
+        # Compression stats are now on run_response.metrics (not available during streaming)
+        # Stats will be shown in the final non-streaming summary if needed
 
         tool_calls_panel = create_panel(
             content=tool_calls_text,
@@ -642,7 +627,6 @@ def print_response(
             show_full_reasoning=show_full_reasoning,
             tags_to_include_in_markdown=tags_to_include_in_markdown,
             markdown=markdown,
-            compaction_manager=agent.compaction_manager,
         )
         panels.extend(additional_panels)
 
@@ -762,7 +746,6 @@ async def aprint_response(
             show_full_reasoning=show_full_reasoning,
             tags_to_include_in_markdown=tags_to_include_in_markdown,
             markdown=markdown,
-            compaction_manager=agent.compaction_manager,
         )
         panels.extend(additional_panels)
 
@@ -856,14 +839,13 @@ def build_panels(
 
         tool_calls_text = tool_calls_content.plain.rstrip()
 
-        # Add compression stats if available
-        if compaction_manager is not None and compaction_manager.stats:
-            stats = compaction_manager.stats
+        # Add compression stats if available (read from run_response.metrics)
+        stats = get_compaction_stats(run_response.metrics) if isinstance(run_response, RunOutput) else {}
+        if stats:
             saved = stats.get("original_size", 0) - stats.get("compressed_size", 0)
             orig = stats.get("original_size", 1)
             if stats.get("tool_results_compressed", 0) > 0:
                 tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-            compaction_manager.stats.clear()
 
         tool_calls_panel = create_panel(
             content=tool_calls_text,

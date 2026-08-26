@@ -39,7 +39,7 @@ from agno.exceptions import (
     RunCancelledException,
 )
 from agno.media import Audio, File, Image, Video
-from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
+from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics, accumulate_compaction_stats
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
@@ -698,7 +698,6 @@ class Model(ABC):
 
         _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
         _compaction_manager = compaction_manager if _compress_tool_results else None
-        _compaction_stats: Dict[str, Any] = {}
 
         while True:
             # Compress tool results if compression is enabled and threshold is met
@@ -708,8 +707,7 @@ class Model(ABC):
                 stats = _compaction_manager.compact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                for key, value in stats.items():
-                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
+                accumulate_compaction_stats(run_response.metrics if run_response else None, stats)
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -879,10 +877,6 @@ class Model(ABC):
         if self.cache_response:
             self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
 
-        # Store compression stats on run_response (async-safe, per-run)
-        if run_response is not None and _compaction_stats:
-            run_response.compression_stats = _compaction_stats
-
         return model_response
 
     async def aresponse(
@@ -929,7 +923,6 @@ class Model(ABC):
 
         _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
         _compaction_manager = compaction_manager if _compress_tool_results else None
-        _compaction_stats: Dict[str, Any] = {}
 
         function_call_count = 0
 
@@ -941,8 +934,7 @@ class Model(ABC):
                 stats = await _compaction_manager.acompact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                for key, value in stats.items():
-                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
+                accumulate_compaction_stats(run_response.metrics if run_response else None, stats)
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -1110,10 +1102,6 @@ class Model(ABC):
         # Save to cache if enabled
         if self.cache_response:
             self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
-
-        # Store compression stats on run_response (async-safe, per-run)
-        if run_response is not None and _compaction_stats:
-            run_response.compression_stats = _compaction_stats
 
         return model_response
 
@@ -1429,7 +1417,6 @@ class Model(ABC):
 
         _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
         _compaction_manager = compaction_manager if _compress_tool_results else None
-        _compaction_stats: Dict[str, Any] = {}
 
         function_call_count = 0
 
@@ -1443,12 +1430,11 @@ class Model(ABC):
                 stats = _compaction_manager.compact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                for key, value in stats.items():
-                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
-                # Emit compression completed event with stats
+                accumulate_compaction_stats(run_response.metrics if run_response else None, stats)
+                # Emit compression completed event with this pass's stats
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compaction_stats.copy(),
+                    compression_stats=stats,
                 )
 
             assistant_message = Message(role=self.assistant_message_role)
@@ -1715,7 +1701,6 @@ class Model(ABC):
 
         _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
         _compaction_manager = compaction_manager if _compress_tool_results else None
-        _compaction_stats: Dict[str, Any] = {}
 
         function_call_count = 0
 
@@ -1729,12 +1714,11 @@ class Model(ABC):
                 stats = await _compaction_manager.acompact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
-                for key, value in stats.items():
-                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
-                # Emit compression completed event with stats
+                accumulate_compaction_stats(run_response.metrics if run_response else None, stats)
+                # Emit compression completed event with this pass's stats
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compaction_stats.copy(),
+                    compression_stats=stats,
                 )
 
             # Create assistant message and stream data
