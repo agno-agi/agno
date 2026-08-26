@@ -432,7 +432,7 @@ def test_transient_introspection_failure_heals_on_the_next_run():
         del globals()["DefinedLater"]
 
 
-def test_closure_tools_still_parse_and_run_without_the_cache():
+def test_closure_tools_still_parse_and_run_with_lifetime_cache():
     def make(suffix: str):
         def lookup(query: str) -> str:
             """Look something up.
@@ -532,6 +532,47 @@ def test_wrapper_with_a_stateful_callable_cell_is_not_cached():
     del state, dynamic, parsed
     gc.collect()
     assert finalizer() is None
+
+
+def test_toolkit_bound_methods_reuse_lifetime_scoped_introspection(monkeypatch):
+    """Toolkit methods are the common tool shape and must keep the cache win.
+
+    Their cache belongs to the toolkit rather than the module: repeated runs
+    reuse schema derivation and the validation wrapper, while dropping the
+    toolkit can still drop the whole cache.
+    """
+    import copy
+
+    import agno.tools.function as function_module
+    from agno.tools.calculator import CalculatorTools
+
+    derivations = 0
+    derive_entrypoint_schema = function_module._derive_entrypoint_schema
+
+    def counted_derivation(*args, **kwargs):
+        nonlocal derivations
+        derivations += 1
+        return derive_entrypoint_schema(*args, **kwargs)
+
+    monkeypatch.setattr(function_module, "_derive_entrypoint_schema", counted_derivation)
+
+    kit = CalculatorTools()
+    agent = Agent(model=MockModel(), tools=[kit], telemetry=False)
+    first = parse_tools(agent, agent.tools, agent.model)
+    second = parse_tools(agent, agent.tools, agent.model)
+
+    assert derivations == len(kit.functions)
+    assert all(left.entrypoint is right.entrypoint for left, right in zip(first, second))
+
+    # Copying a toolkit must not copy a validation wrapper still bound to the
+    # original owner. The copied toolkit builds and then reuses its own cache.
+    copied_kit = copy.deepcopy(kit)
+    copied_agent = Agent(model=MockModel(), tools=[copied_kit], telemetry=False)
+    copied_first = parse_tools(copied_agent, copied_agent.tools, copied_agent.model)
+    copied_second = parse_tools(copied_agent, copied_agent.tools, copied_agent.model)
+    assert derivations == len(kit.functions) + len(copied_kit.functions)
+    assert all(left.entrypoint is right.entrypoint for left, right in zip(copied_first, copied_second))
+    assert all(left.entrypoint is not right.entrypoint for left, right in zip(first, copied_first))
 
 
 def test_per_run_bound_methods_are_not_pinned_when_callable_caching_is_disabled():
@@ -671,7 +712,8 @@ def test_decorator_wrappers_over_long_lived_functions_still_cache():
             return "ok"
 
     # An instance-bound method can also come from a per-run callable factory;
-    # without provenance proving otherwise, it must not enter a global cache.
+    # without provenance proving otherwise, it must not enter the global
+    # cache. It still gets the owner-lifetime cache exercised above.
     assert _cache_stable(Kit(name="kit").lookup) is False
 
 
