@@ -30,14 +30,13 @@ Bot Connector can reach.
 
 | Variable | Purpose |
 |---|---|
-| `MICROSOFT_APP_ID` | Bot Framework application id; optional only when `MICROSOFT_APP_SKIP_JWT_VALIDATION=true` |
-| `MICROSOFT_APP_PASSWORD` | Client secret for the Bot Framework application; optional under the same bypass |
+| `MICROSOFT_APP_ID` | Bot Framework application id; optional only in the credential-free bypass mode below |
+| `MICROSOFT_APP_PASSWORD` | Client secret for the Bot Framework application; optional under the same mode |
 | `MICROSOFT_APP_TENANT_ID` | Entra tenant guid; leave unset for multi-tenant bots |
 | `OPENAI_API_KEY` | Model calls for both `basic.py` and `proactive_alert.py` |
 
-Managed Identity (`UserAssignedMSI`) is not supported in v1 — planned for v2 via a
-pluggable `token_provider` hook so operators can wire in `IDENTITY_ENDPOINT` without
-changing the interface signature.
+Managed Identity (`UserAssignedMSI`) is not supported: the interface authenticates
+with a client secret.
 
 ## Configure Microsoft
 
@@ -84,17 +83,18 @@ AgentOS also exposes `/health`, `/config`, and its normal REST surface.
 
 ## Sessions and Commands
 
-Each Teams user is mapped to a session id of the form
+Each Teams user starts on a session id of the form
 `teams:<entity_id>:<user_id>`, where `user_id` is the Entra `aadObjectId` when
 available and the channel-scoped id otherwise. Send `/new` to start a fresh
-conversation; the previous session is preserved in storage.
+conversation — it gains a random suffix and becomes the one subsequent messages
+resolve to; the previous session is preserved in storage.
 
 ## Proactive Alerts
 
-Every inbound message silently persists the caller's `serviceUrl`,
-`conversation.id`, and the bot's `recipient` object into that user's latest
-session (`session_data.teams_conversation_ref`). Any code with a reference to
-the `MicrosoftTeams` instance can later push a message without an inbound
+Every inbound message persists the caller's `serviceUrl`, `conversation.id`,
+and the bot's `recipient` object onto the session that run used
+(`session_data.teams_conversation_ref`). Any code with a reference to the
+`MicrosoftTeams` instance can later push a message without an inbound
 trigger:
 
 ```python
@@ -165,19 +165,15 @@ supports:
 export MICROSOFT_APP_SKIP_JWT_VALIDATION=true
 ```
 
-The bypass applies **only when no `MICROSOFT_APP_ID` is configured**. With an
-app id set there is a real audience to verify against, so the flag is ignored
-and inbound activities are validated as usual — the variable cannot downgrade a
-configured deployment. In that credential-free mode `MICROSOFT_APP_ID` and
-`MICROSOFT_APP_PASSWORD` become optional, and outbound delivery is unavailable
-(fetching a bot token needs the client secret), so it is for exercising the
-inbound path only.
+The bypass applies **only when neither credential is configured**. With an app id
+set there is a real audience to verify against, so the flag is ignored and inbound
+activities are validated as usual — the variable cannot downgrade a configured
+deployment, and setting one credential without the other is refused at startup.
+Outbound delivery is unavailable in this mode (fetching a bot token needs the
+client secret), so it exercises the inbound path only.
 
 ## Test Scope
 
-`TEST_LOG.md` records construction plus a live round-trip through Azure
-"Test in Web Chat" over an ngrok tunnel, and a follow-up install into an actual
-Microsoft Teams client belonging to a user in a different tenant via that
-tenant admin's "Manage apps" approval flow. Unit tests under
-`libs/agno/tests/unit/os/interfaces/test_teams_*.py` cover JWT validation,
-helper behavior, and `asend_alert` / `send_alert` semantics.
+Unit tests under `libs/agno/tests/unit/os/interfaces/test_teams_*.py` cover JWT
+validation, helper behavior, and `asend_alert` / `send_alert` semantics. They run
+offline. `TEST_LOG.md` records what each example was run against.

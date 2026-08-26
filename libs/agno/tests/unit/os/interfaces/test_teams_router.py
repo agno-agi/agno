@@ -1,18 +1,3 @@
-"""Unit tests for the Teams webhook router.
-
-Focus areas:
-  - `/status` liveness endpoint
-  - `POST /messages` JWT rejection + malformed body handling
-  - `_format_reasoning` filter
-  - `_resolve_session_config` dispatch for agent/team/workflow
-  - `/new` conversation reset command
-  - the post-run conversation-reference write
-
-Most of these pin the routing surface only. The conversation-reference test
-does drive inbound → arun → the post-run write, with the outbound Bot
-Connector calls stubbed; real delivery is covered by live testing.
-"""
-
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
@@ -35,14 +20,9 @@ def _stub_agent_with_db():
 
 
 def _build_test_client(agent=None, team=None, workflow=None):
-    """Attach the router to a FastAPI app and return (TestClient, env_patch).
-
-    Env is the local-development configuration: no credentials, bypass flag set.
-    That is the only shape in which the bypass applies — with an app id
-    configured the flag is ignored and every request would 403. Caller must
-    ``env_patch.stop()`` after the request runs — the flag is read lazily inside
-    the webhook, so the context must outlive request dispatch.
-    """
+    """No credentials plus the bypass flag: the only shape in which the bypass
+    applies. Caller must ``env_patch.stop()`` after the request runs, since the
+    flag is read lazily inside the webhook."""
     router = APIRouter()
     env_patch = patch.dict(
         "os.environ",
@@ -56,9 +36,7 @@ def _build_test_client(agent=None, team=None, workflow=None):
     return TestClient(app), env_patch
 
 
-# ---------------------------------------------------------------------------
-# attach_routes: required entity guard
-# ---------------------------------------------------------------------------
+# === attach_routes: required entity guard ===
 
 
 def test_attach_routes_requires_entity():
@@ -72,9 +50,7 @@ def test_attach_routes_requires_entity():
             attach_routes(router)
 
 
-# ---------------------------------------------------------------------------
-# _SESSION_DISPATCH shape
-# ---------------------------------------------------------------------------
+# === _SESSION_DISPATCH shape ===
 
 
 def test_session_dispatch_covers_all_entity_kinds():
@@ -89,9 +65,7 @@ def test_session_dispatch_covers_all_entity_kinds():
     assert _SESSION_DISPATCH["workflow"][2] == "workflow_id"
 
 
-# ---------------------------------------------------------------------------
-# _resolve_session_config
-# ---------------------------------------------------------------------------
+# === _resolve_session_config ===
 
 
 def test_resolve_session_config_flags_sync_db():
@@ -136,9 +110,7 @@ def test_resolve_session_config_workflow_dispatch():
     assert cfg.id_field == "workflow_id"
 
 
-# ---------------------------------------------------------------------------
-# _format_reasoning
-# ---------------------------------------------------------------------------
+# === _format_reasoning ===
 
 
 def test_format_reasoning_strips_action_lines():
@@ -166,9 +138,7 @@ def test_format_reasoning_strips_whitespace_per_line():
     assert _format_reasoning(raw) == "hello\nworld"
 
 
-# ---------------------------------------------------------------------------
-# GET /status
-# ---------------------------------------------------------------------------
+# === GET /status ===
 
 
 def test_status_endpoint_reports_available():
@@ -181,14 +151,11 @@ def test_status_endpoint_reports_available():
         env_patch.stop()
 
 
-# ---------------------------------------------------------------------------
-# POST /messages — JWT rejection and body validation
-# ---------------------------------------------------------------------------
+# === POST /messages — JWT rejection and body validation ===
 
 
 def test_webhook_rejects_when_jwt_fails():
-    """When the dev bypass is NOT set, missing/invalid Authorization must
-    yield 403 — the router MUST enforce the check even before parsing JSON."""
+    """Enforced before the body is parsed."""
     router = APIRouter()
     with patch.dict(
         "os.environ",
@@ -205,8 +172,6 @@ def test_webhook_rejects_when_jwt_fails():
 
 
 def test_webhook_accepts_with_skip_flag_and_returns_processing():
-    """With dev bypass on, well-formed JSON body is accepted and dispatched
-    to a background task — the endpoint returns immediately with status=processing."""
     client, env_patch = _build_test_client(agent=_stub_agent_with_db())
     try:
         resp = client.post(
@@ -232,16 +197,12 @@ def test_webhook_rejects_malformed_json():
         env_patch.stop()
 
 
-# ---------------------------------------------------------------------------
-# Post-run conversation-reference write
-# ---------------------------------------------------------------------------
+# === Post-run conversation-reference write ===
 
 
 def test_conversation_ref_is_written_to_the_run_session_not_the_newest():
-    """The ref must land on the session the run used, not on whichever session is
-    newest when the run finishes. A second message from the same user runs as a
-    concurrent background task and can create or touch a newer session in
-    between, so the two are not the same row."""
+    """A concurrent message from the same user can make a newer session exist by
+    the time this run finishes, so the two are not the same row."""
     run_session = SimpleNamespace(session_id="teams:agent-1:user-1:OLD", session_data={"existing": "kept"})
     newer_session = SimpleNamespace(session_id="teams:agent-1:user-1:NEW", session_data={})
     seen = {}
@@ -302,6 +263,9 @@ def test_conversation_ref_is_written_to_the_run_session_not_the_newest():
     # and it got there by asking for that id, not by taking whatever was newest
     assert seen["requested"] == "teams:agent-1:user-1:OLD"
     assert seen["saved"].session_id == "teams:agent-1:user-1:OLD"
+
+
+# === Operation ids ===
 
 
 def test_operation_ids_include_entity_name_suffix():

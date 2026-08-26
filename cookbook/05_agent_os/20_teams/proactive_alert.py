@@ -2,19 +2,16 @@
 Send a Proactive Alert to a Teams User
 ======================================
 
-Once a user has chatted with the bot at least once, the interface stores a
-conversation reference in that user's latest session. Any code — a scheduled
-job, a webhook handler, another agent's tool — can then call
-`teams.asend_alert(user_id, text)` (or the sync `teams.send_alert(...)`
-wrapper) to push a message into Teams without an inbound trigger.
-
-This example runs the bot server AND schedules a one-off alert 30 seconds
-after startup, so you can watch the flow end-to-end:
+Push a message into Teams without an inbound trigger, using the conversation
+reference stored on the user's session by their first message. Call
+`teams.asend_alert(user_id, text)` from a coroutine, or `teams.send_alert(...)`
+from a script. This example serves the bot and schedules one alert after 30s:
 
   1. Start this file
-  2. Message the bot at least once in Teams (any text)  → conversation ref saved
-  3. Wait for the scheduled alert to fire               → proactive message
+  2. Message the bot at least once in Teams  → conversation ref saved
+  3. Wait for the scheduled alert to fire    → proactive message
 
+Prerequisites: ALERT_USER_ID (see README.md), plus the credentials basic.py needs
 Run: .venvs/demo/bin/python cookbook/05_agent_os/20_teams/proactive_alert.py
 """
 

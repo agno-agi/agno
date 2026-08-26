@@ -1,14 +1,3 @@
-"""Tests for MicrosoftTeams.asend_alert / send_alert — the proactive-message path.
-
-The alert flow is:
-  1. Caller invokes teams.asend_alert(user_id, text) (or the sync send_alert wrapper)
-  2. Class looks up user's latest session via entity.db
-  3. Extracts teams_conversation_ref from session_data
-  4. Calls send_teams_message_async with the saved fields
-
-These tests mock the DB + the outbound helper so no real HTTP happens.
-"""
-
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -18,12 +7,8 @@ from agno.db.base import BaseDb
 
 
 def _build_teams_interface(env=None):
-    """Build a MicrosoftTeams instance with a stub agent so we can exercise asend_alert
-    without booting AgentOS. Patches env vars TeamsConfig.init would need.
-
-    Uses MagicMock(spec=BaseDb) so `isinstance(db, BaseDb)` succeeds without
-    having to implement BaseDb's ~50 abstract methods.
-    """
+    """MagicMock(spec=BaseDb) so ``isinstance(db, BaseDb)`` succeeds without
+    implementing BaseDb's ~50 abstract methods."""
     from unittest.mock import patch as _patch
 
     from agno.os.interfaces.teams import MicrosoftTeams
@@ -52,9 +37,7 @@ def _make_session_with_ref(service_url="https://svc", conv_id="conv-1"):
     )
 
 
-# ---------------------------------------------------------------------------
-# Happy path
-# ---------------------------------------------------------------------------
+# === Happy path ===
 
 
 @pytest.mark.asyncio
@@ -77,9 +60,7 @@ async def test_send_alert_delivers_when_ref_saved():
         env_patch.stop()
 
 
-# ---------------------------------------------------------------------------
-# Missing ref / no history
-# ---------------------------------------------------------------------------
+# === Missing ref / no history ===
 
 
 @pytest.mark.asyncio
@@ -109,9 +90,7 @@ async def test_send_alert_returns_false_when_session_has_no_ref():
         env_patch.stop()
 
 
-# ---------------------------------------------------------------------------
-# Guardrails: no DB / lookup errors / async DB
-# ---------------------------------------------------------------------------
+# === Guardrails: no DB / lookup errors / async DB ===
 
 
 @pytest.mark.asyncio
@@ -135,8 +114,7 @@ async def test_send_alert_returns_false_when_entity_has_no_db():
 
 @pytest.mark.asyncio
 async def test_send_alert_swallows_lookup_errors():
-    """DB errors should log-and-return-False, not raise. Callers get a clean
-    boolean; downstream code doesn't crash mid-batch of alerts."""
+    """A clean boolean, so a batch of alerts does not abort mid-way."""
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(side_effect=RuntimeError("db down"))
@@ -148,9 +126,7 @@ async def test_send_alert_swallows_lookup_errors():
         env_patch.stop()
 
 
-# ---------------------------------------------------------------------------
-# Team / Workflow entity binding — proves _resolve_entity covers all 3 paths
-# ---------------------------------------------------------------------------
+# === Team / Workflow entity binding ===
 
 
 @pytest.mark.asyncio
@@ -195,9 +171,7 @@ async def test_send_alert_works_with_workflow_entity():
         mock_send.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# AsyncBaseDb path — asend_alert must await get_sessions when the db is async
-# ---------------------------------------------------------------------------
+# === AsyncBaseDb path — asend_alert must await get_sessions when the db is async ===
 
 
 @pytest.mark.asyncio
@@ -223,9 +197,7 @@ async def test_send_alert_awaits_async_db():
         mock_send.assert_awaited_once()
 
 
-# ---------------------------------------------------------------------------
-# Constructor validation
-# ---------------------------------------------------------------------------
+# === Constructor validation ===
 
 
 def test_microsoft_teams_requires_entity():
@@ -235,14 +207,10 @@ def test_microsoft_teams_requires_entity():
         MicrosoftTeams()
 
 
-# ---------------------------------------------------------------------------
-# send_alert — blocking wrapper around asend_alert
-# ---------------------------------------------------------------------------
+# === send_alert — blocking wrapper around asend_alert ===
 
 
 def test_sync_send_alert_delegates_to_async():
-    """The sync send_alert should run asend_alert to completion via asyncio.run
-    and propagate the boolean result."""
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])
@@ -264,9 +232,7 @@ def test_sync_send_alert_returns_false_on_missing_session():
         env_patch.stop()
 
 
-# ---------------------------------------------------------------------------
-# Bot-token reuse across alerts
-# ---------------------------------------------------------------------------
+# === Bot-token reuse across alerts ===
 
 
 def _counting_post(token_fetches, activity_posts):
@@ -287,9 +253,7 @@ def _counting_post(token_fetches, activity_posts):
 
 @pytest.mark.asyncio
 async def test_two_alerts_reuse_one_bot_token():
-    """The cached bot token lives on TeamsConfig, so building a fresh config per
-    call throws it away and re-authenticates every time. telegram's BotState
-    fills its bot info once and keeps it on the interface's state object."""
+    """The cached token lives on TeamsConfig, so a per-call config re-authenticates."""
     teams, agent, env_patch = _build_teams_interface()
     try:
         agent.db.get_sessions = MagicMock(return_value=[_make_session_with_ref()])

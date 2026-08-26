@@ -91,13 +91,6 @@ def attach_routes(
     request_timeout: int = 30,
     config: Optional[TeamsConfig] = None,
 ) -> APIRouter:
-    """Attach ``/status`` and ``/messages`` routes for a Teams-bound entity.
-
-    Exactly one of ``agent`` / ``team`` / ``workflow`` must be provided;
-    remaining arguments configure webhook processing (reasoning echo, user
-    context injection) and Bot Framework credentials (falling back to the
-    ``MICROSOFT_APP_*`` env vars via :meth:`TeamsConfig.init`).
-    """
     if agent is None and team is None and workflow is None:
         raise ValueError("Either agent, team, or workflow must be provided.")
 
@@ -293,13 +286,10 @@ def attach_routes(
 
             if session_config.has_db:
                 try:
-                    # Re-read by the exact session_id this run used, not "latest for
-                    # this user": two messages from the same user run as concurrent
-                    # background tasks, so latest-by-timestamp can resolve to the
-                    # other run's session. This picks the right row; concurrent
-                    # writes to session_data are still last-writer-wins.
-                    # `or session_id` covers the cancellation path, which builds a
-                    # RunOutput carrying no session.
+                    # By exact session_id, not latest-by-user: concurrent messages
+                    # from one user would otherwise land the ref on the other run's
+                    # session. `or session_id` covers the cancellation path, whose
+                    # RunOutput carries none.
                     run_session_id = response.session_id or session_id
                     current = await entity.aget_session(session_id=run_session_id)  # type: ignore[union-attr]
                     if current is not None:
