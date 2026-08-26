@@ -1,5 +1,6 @@
 import types
 import weakref
+from collections import OrderedDict
 from dataclasses import dataclass
 from functools import lru_cache, partial, wraps
 from importlib.metadata import version
@@ -984,6 +985,9 @@ def _derive_entrypoint_schema(
 # whose object graphs are alive in the registering agent anyway.
 _INTROSPECTION_CACHE_SIZE = 4096
 _LIFETIME_INTROSPECTION_CACHE_SIZE = 32
+# Larger than the broadest built-in Toolkit surface, but finite when one
+# persistent owner dynamically binds a new closure function on every run.
+_LIFETIME_OWNER_CACHE_SIZE = 64
 _LIFETIME_CACHE_ATTRIBUTE = "_agno_tool_introspection_caches"
 _lifetime_cache_lock = RLock()
 _lifetime_caches: "weakref.WeakSet[_CallableLifetimeCache]" = weakref.WeakSet()
@@ -1063,11 +1067,11 @@ class _CallableLifetimeCache:
 
 
 class _CallableLifetimeCacheStore:
-    """Caches for methods that share one bound owner, keyed by function."""
+    """Bounded caches for methods that share one bound owner, keyed by function."""
 
     def __init__(self, owner: Any):
         self.owner_id = id(owner)
-        self.entries: Dict[Any, _CallableLifetimeCache] = {}
+        self.entries: OrderedDict[Any, _CallableLifetimeCache] = OrderedDict()
 
     def __copy__(self) -> "_CallableLifetimeCacheStore":
         # A copied callable/Toolkit gets an empty store on first use. Reusing
@@ -1121,11 +1125,14 @@ def _get_lifetime_cache(entrypoint: Callable) -> Optional[_CallableLifetimeCache
             # private-name collision is.
             return None
 
-        cache = store.entries.get(cache_key)
-        if cache is None:
+        try:
+            cache = store.entries.pop(cache_key)
+        except KeyError:
             cache = _CallableLifetimeCache(entrypoint)
-            store.entries[cache_key] = cache
             _lifetime_caches.add(cache)
+        store.entries[cache_key] = cache
+        if len(store.entries) > _LIFETIME_OWNER_CACHE_SIZE:
+            store.entries.popitem(last=False)
         return cache
 
 

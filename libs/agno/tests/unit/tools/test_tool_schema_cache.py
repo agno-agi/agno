@@ -615,6 +615,51 @@ def test_per_run_bound_methods_are_not_pinned_when_callable_caching_is_disabled(
         _clear_tool_introspection_caches()
 
 
+def test_long_lived_owner_evicts_dynamic_bound_method_caches():
+    """A persistent owner may bind a fresh closure on every run. Its method
+    cache must stay bounded and release state from evicted functions."""
+    import gc
+    import types
+    import weakref
+
+    from agno.tools.function import _LIFETIME_CACHE_ATTRIBUTE, _LIFETIME_OWNER_CACHE_SIZE
+
+    class Owner:
+        pass
+
+    class RunState:
+        def __init__(self, index: int):
+            self.index = index
+
+    def bind(owner, state):
+        def lookup(self, query: str) -> str:
+            return f"{query}-{state.index}"
+
+        return types.MethodType(lookup, owner)
+
+    owner = Owner()
+    references = []
+    overflow = 3
+    for index in range(_LIFETIME_OWNER_CACHE_SIZE + overflow):
+        state = RunState(index)
+        bound = bind(owner, state)
+        references.append(weakref.ref(state))
+        parsed = Function.from_callable(bound)
+        assert parsed.entrypoint is not None and parsed.entrypoint(query="q") == f"q-{index}"
+
+    del state, bound, parsed
+    gc.collect()
+
+    store = getattr(owner, _LIFETIME_CACHE_ATTRIBUTE)
+    assert len(store.entries) == _LIFETIME_OWNER_CACHE_SIZE
+    assert all(reference() is None for reference in references[:overflow])
+    assert all(reference() is not None for reference in references[overflow:])
+
+    del owner, store
+    gc.collect()
+    assert all(reference() is None for reference in references)
+
+
 def test_wrappers_over_one_base_keep_their_own_identities():
     """Two per-run wrappers sharing a __wrapped__ base must each dispatch to
     themselves; a cache keyed past the wrapper would serve one for the other."""
