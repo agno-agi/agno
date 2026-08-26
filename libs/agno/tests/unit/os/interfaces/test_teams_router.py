@@ -36,19 +36,16 @@ def _stub_agent_with_db():
 def _build_test_client(agent=None, team=None, workflow=None):
     """Attach the router to a FastAPI app and return (TestClient, env_patch).
 
-    Env is patched so TeamsConfig.init succeeds without touching real secrets,
-    and JWT validation is bypassed via the dev flag. Caller must ``env_patch.stop()``
-    after the request runs — the flag is read lazily inside the webhook, so the
-    context must outlive request dispatch.
+    Env is the local-development configuration: no credentials, bypass flag set.
+    That is the only shape in which the bypass applies — with an app id
+    configured the flag is ignored and every request would 403. Caller must
+    ``env_patch.stop()`` after the request runs — the flag is read lazily inside
+    the webhook, so the context must outlive request dispatch.
     """
     router = APIRouter()
     env_patch = patch.dict(
         "os.environ",
-        {
-            "MICROSOFT_APP_ID": "app-id",
-            "MICROSOFT_APP_PASSWORD": "secret",
-            "MICROSOFT_APP_SKIP_JWT_VALIDATION": "true",
-        },
+        {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"},
         clear=True,
     )
     env_patch.start()

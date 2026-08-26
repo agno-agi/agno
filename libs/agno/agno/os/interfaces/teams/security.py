@@ -21,7 +21,12 @@ _jwks_cache: Dict[str, Any] = {
 _jwks_lock = Lock()
 
 
-def _skip_validation_enabled() -> bool:
+def dev_bypass_enabled() -> bool:
+    """True when the operator explicitly opted out of JWT validation for local dev.
+
+    Public within the package: TeamsConfig consults it too, because credentials
+    are optional in exactly this mode.
+    """
     return os.getenv("MICROSOFT_APP_SKIP_JWT_VALIDATION", "").lower() == "true"
 
 
@@ -71,12 +76,25 @@ def validate_bot_framework_jwt(auth_header: Optional[str], app_id: str) -> bool:
     False to a 403 response. Raises HTTPException(500) only if `pyjwt[crypto]` is
     not installed (a configuration error, not a validation failure).
 
-    Set `MICROSOFT_APP_SKIP_JWT_VALIDATION=true` to bypass for local development —
-    a warning is logged so it's obvious in logs.
+    `MICROSOFT_APP_SKIP_JWT_VALIDATION=true` bypasses the check for local
+    development, and only when no app id is configured — a deployment with
+    credentials cannot be downgraded by an env var.
     """
-    if _skip_validation_enabled():
-        log_warning("MICROSOFT_APP_SKIP_JWT_VALIDATION=true — Bot Framework JWT check disabled")
-        return True
+    if not app_id:
+        # Explicit opt-out: operator must deliberately set this for local dev.
+        # Gated on the absence of credentials the way whatsapp/security.py gates
+        # on a missing WHATSAPP_APP_SECRET; with an app id there is a real
+        # audience to verify against, so the flag is ignored below.
+        if dev_bypass_enabled():
+            log_warning("MICROSOFT_APP_SKIP_JWT_VALIDATION=true — Bot Framework JWT check disabled")
+            return True
+        raise HTTPException(
+            status_code=500,
+            detail=(
+                "MICROSOFT_APP_ID is not set. Set MICROSOFT_APP_SKIP_JWT_VALIDATION=true "
+                "for local development."
+            ),
+        )
 
     if not auth_header or not auth_header.lower().startswith("bearer "):
         return False

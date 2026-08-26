@@ -48,20 +48,47 @@ def test_malformed_jwt_returns_false():
 
 
 def test_skip_flag_bypasses_validation():
+    # No app id configured — the only shape in which the bypass applies.
     with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
-        assert validate_bot_framework_jwt(None, APP_ID) is True
-        assert validate_bot_framework_jwt("Bearer garbage", APP_ID) is True
-        assert validate_bot_framework_jwt("", APP_ID) is True
+        assert validate_bot_framework_jwt(None, "") is True
+        assert validate_bot_framework_jwt("Bearer garbage", "") is True
+        assert validate_bot_framework_jwt("", "") is True
 
 
 def test_skip_flag_case_insensitive():
     with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "True"}, clear=True):
-        assert validate_bot_framework_jwt(None, APP_ID) is True
+        assert validate_bot_framework_jwt(None, "") is True
 
 
 def test_skip_flag_false_still_validates():
     with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "false"}, clear=True):
         assert validate_bot_framework_jwt(None, APP_ID) is False
+
+
+def test_skip_flag_is_ignored_when_credentials_are_configured():
+    """A configured deployment must not be downgradable by an env var.
+
+    whatsapp/security.py consults its bypass only when WHATSAPP_APP_SECRET is
+    absent, and the framework decides enforcement the same way
+    (os/app.py: auth_configured = bool(... or jwt_env_configured or security_key)).
+    With an app id configured there is a real audience to verify against, so the
+    flag must not disable the check.
+    """
+    with patch.dict(
+        "os.environ",
+        {"MICROSOFT_APP_ID": APP_ID, "MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"},
+        clear=True,
+    ):
+        assert validate_bot_framework_jwt(None, APP_ID) is False
+        assert validate_bot_framework_jwt("Bearer garbage", APP_ID) is False
+
+
+def test_skip_flag_bypasses_only_without_credentials():
+    """The local-development path stays open: no credentials configured, flag set
+    explicitly, nothing to validate against."""
+    with patch.dict("os.environ", {"MICROSOFT_APP_SKIP_JWT_VALIDATION": "true"}, clear=True):
+        assert validate_bot_framework_jwt(None, "") is True
+        assert validate_bot_framework_jwt("Bearer garbage", "") is True
 
 
 # === Signature verification path (mocked jwt.decode) ===

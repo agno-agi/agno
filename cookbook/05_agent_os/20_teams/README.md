@@ -30,8 +30,8 @@ Bot Connector can reach.
 
 | Variable | Purpose |
 |---|---|
-| `MICROSOFT_APP_ID` | Bot Framework application id |
-| `MICROSOFT_APP_PASSWORD` | Client secret for the Bot Framework application |
+| `MICROSOFT_APP_ID` | Bot Framework application id; optional only when `MICROSOFT_APP_SKIP_JWT_VALIDATION=true` |
+| `MICROSOFT_APP_PASSWORD` | Client secret for the Bot Framework application; optional under the same bypass |
 | `MICROSOFT_APP_TENANT_ID` | Entra tenant guid; leave unset for multi-tenant bots |
 | `OPENAI_API_KEY` | Model calls for both `basic.py` and `proactive_alert.py` |
 
@@ -164,7 +164,13 @@ supports:
 export MICROSOFT_APP_SKIP_JWT_VALIDATION=true
 ```
 
-Never use that bypass in production.
+The bypass applies **only when no `MICROSOFT_APP_ID` is configured**. With an
+app id set there is a real audience to verify against, so the flag is ignored
+and inbound activities are validated as usual — the variable cannot downgrade a
+configured deployment. In that credential-free mode `MICROSOFT_APP_ID` and
+`MICROSOFT_APP_PASSWORD` become optional, and outbound delivery is unavailable
+(fetching a bot token needs the client secret), so it is for exercising the
+inbound path only.
 
 ## Test Scope
 
