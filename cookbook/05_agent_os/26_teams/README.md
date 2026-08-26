@@ -111,9 +111,11 @@ message, and alerts keep working across that gap.
 
 Both return `True` on delivery and `False` when the entity has no database, when
 the session lookup fails, or when none of that user's recent sessions carries a
-reference (typically because they have never chatted with the bot). Safe to call
-from scheduled jobs, background tasks, or other request handlers. See
-`proactive_alert.py` for a working example.
+reference (typically because they have never chatted with the bot). Failing to
+deliver to a reference that does exist is the one case that raises instead of
+returning `False`, so a caller that loops on the return value has to handle both.
+Call it from scheduled jobs, background tasks, or other request handlers; see
+`proactive_alert.py` for a working example of both paths.
 
 ### Finding a Recipient's `user_id`
 
@@ -149,12 +151,16 @@ it and the channel-scoped `from.id` otherwise:
    .venvs/demo/bin/python cookbook/05_agent_os/26_teams/proactive_alert.py
    ```
 
-Proactive delivery only succeeds against a live conversation reference. Web
-Chat conversations expire when the browser tab closes, and `asend_alert` will
-receive a `403` from the Bot Connector against a stale reference. That surfaces
-as a raised exception, not `False` — a scheduler that loops on the return value
-needs its own `try`/`except` around the call. Use a reference captured from a
-real Teams client for reliable delivery.
+Proactive delivery only succeeds against a live conversation reference, and its
+two failure modes want opposite handling. `False` means no reference is stored
+yet — retryable, and the thing to wait for. A reference that exists but no longer
+works is rejected by the Bot Connector, which surfaces as a raised
+`httpx.HTTPError` rather than `False`; retrying that address is a loop that never
+ends. The same clause also catches a transport failure, which is not a dead
+address but is not worth a retry every fifteen seconds either.
+`proactive_alert.py` catches the raise, logs which user it was for, and stops.
+References captured from a real Teams client outlast ones from a Web Chat test
+window, so prefer them for anything you want to keep working.
 
 ## Webhook Security
 
