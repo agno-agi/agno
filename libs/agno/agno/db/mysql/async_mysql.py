@@ -34,6 +34,7 @@ from agno.db.utils import (
     json_serializer,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
+    run_cache_eligible,
     run_index_lock_name,
     table_schema_mismatch_error,
     validate_pagination,
@@ -991,10 +992,9 @@ class AsyncMySQLDb(AsyncBaseDb):
                     runs_table is not None
                     and not legacy_runs
                     and deserialize
-                    and session.get("session_type") == SessionType.AGENT.value
-                    and (session_type is None or session_type == SessionType.AGENT)
+                    and run_cache_eligible(session.get("session_type"), session_type)
                 ):
-                    # Fully-migrated agent session on the per-turn path: fetch
+                    # Fully-migrated session on the per-turn path: fetch
                     # the rows raw and serve run objects from the cache instead
                     # of rebuilding every run on every read.
                     run_rows = await self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
@@ -1020,7 +1020,9 @@ class AsyncMySQLDb(AsyncBaseDb):
 
             if run_rows is not None:
                 session_obj = deserialize_session(session_type, session)
-                session_obj.runs = self._run_object_cache.runs_from_rows(session_id, run_rows)  # type: ignore[union-attr]
+                session_obj.runs = self._run_object_cache.runs_from_rows(
+                    session_id, run_rows, session_type=session.get("session_type")
+                )  # type: ignore[union-attr]
                 return session_obj
             return deserialize_session(session_type, session)
 

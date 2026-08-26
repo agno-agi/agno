@@ -122,17 +122,19 @@ def deserialize_history_run(run_dict: Dict[str, Any], session_type: Optional[str
     return None
 
 
-def run_cache_eligible(row_session_type: Optional[str], requested: Optional["SessionType"]) -> bool:
+def run_cache_eligible(row_session_type: Optional[str], requested: Optional[Union["SessionType", str]]) -> bool:
     """True when a session row can serve its runs from the run-object cache:
     the row's type is one the per-type run dispatch above knows, and the
     caller either did not constrain the type or asked for the row's own.
     A mismatched request keeps the pre-cache full-load path, which resolves
-    the conflict the same way it always has."""
+    the conflict the same way it always has. Callers pass the requested type
+    as a SessionType or its plain string value; both are honored, as the
+    adapters' own comparisons always have."""
     from agno.db.base import SessionType
 
     if row_session_type not in (SessionType.AGENT.value, SessionType.TEAM.value, SessionType.WORKFLOW.value):
         return False
-    return requested is None or requested.value == row_session_type
+    return requested is None or getattr(requested, "value", requested) == row_session_type
 
 
 class SessionRunObjectCache:
