@@ -3,7 +3,7 @@ Test script to verify memory events are working correctly.
 Steps:
 1. Run: `./cookbook/scripts/run_pgvector.sh` to start a postgres container with pgvector
 2. Run: `pip install openai sqlalchemy 'psycopg[binary]' pgvector` to install the dependencies
-3. Run: `python cookbook/11_models/openai/chat/access_memories_in_memory_completed_event.py`
+3. Run: `python cookbook/90_models/openai/chat/access_memories_in_memory_completed_event.py`
 """
 
 from agno.agent import Agent
