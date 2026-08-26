@@ -9,7 +9,7 @@ three tools to the agent:
 - list_files: List files matching a glob pattern
 - get_file: Read the full contents of a specific file
 
-Run: `python cookbook/07_knowledge/protocol/file_system.py`
+Run: `python cookbook/07_knowledge/09_archive/protocol/file_system.py`
 """
 
 from agno.agent import Agent

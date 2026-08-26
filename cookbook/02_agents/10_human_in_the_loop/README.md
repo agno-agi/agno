@@ -12,6 +12,7 @@ Examples for confirmation flows, user input prompts, and external tool handling.
 - `mixed_external_and_regular_tools.py` - Mixed external and regular tools in a single agent.
 - `user_input_required.py` - Tools that require user input.
 - `confirmation_with_session_state.py` - Confirmation flow where the tool modifies session_state before pausing. Verifies that state changes survive the pause/continue round-trip.
+- `side_effecting_tool_approval.py` - Deterministic no-credentials example showing rejected calls skip the side effect and approved calls resume exactly once.
 
 ## Prerequisites
 - Load environment variables with `direnv allow` (including `OPENAI_API_KEY`).

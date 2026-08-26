@@ -9,7 +9,7 @@ Once running, the AgentOS API lets you browse sources, upload
 content from any configured source, and search the knowledge base.
 
 Run:
-    python cookbook/07_knowledge/cloud/cloud_agentos.py
+    python cookbook/07_knowledge/09_archive/cloud/cloud_agentos.py
 
 Key Concepts:
 - Each source type has its own config: S3Config, GcsConfig, SharePointConfig, GitHubConfig, AzureBlobConfig

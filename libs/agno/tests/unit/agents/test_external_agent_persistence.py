@@ -71,6 +71,17 @@ def test_session_read_returns_runs(agent):
     assert agent.get_run_output(out.run_id, session_id="s1") is not None
 
 
+def test_get_run_output_returns_an_isolated_copy(agent):
+    out = asyncio.run(agent._arun_non_stream("hello", session_id="s1", user_id="u1"))
+    fetched = agent.get_run_output(out.run_id, session_id="s1")
+    assert fetched is not None
+
+    fetched.content = "mutated by caller"
+
+    retrieved = agent.db.get_session(session_id="s1", session_type=None)
+    assert retrieved.runs[0].content == "echo: hello"
+
+
 def test_run_indexes_are_sequential(agent):
     for text in ("one", "two", "three"):
         asyncio.run(agent._arun_non_stream(text, session_id="s1", user_id="u1"))
