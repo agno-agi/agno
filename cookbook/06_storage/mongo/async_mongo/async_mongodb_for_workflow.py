@@ -1,6 +1,6 @@
 """
 Run: `pip install openai ddgs pymongo motor` to install dependencies
-Run: `python cookbook/db/mongo/async_mongo/async_mongodb_for_workflow.py` to run the workflow
+Run: `python cookbook/06_storage/mongo/async_mongo/async_mongodb_for_workflow.py` to run the workflow
 
 Run a local MongoDB server using:
 ```bash
@@ -13,7 +13,7 @@ docker run -d \
 ```
 or use our script:
 ```bash
-./scripts/run_mongodb.sh
+./cookbook/scripts/run_mongodb.sh
 ```
 """
 

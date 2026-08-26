@@ -38,16 +38,8 @@ uv pip install -U anthropic ddgs agno
 
 ### 4. Run basic agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/aws/claude/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/aws/claude/basic.py
+python cookbook/90_models/aws/claude/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -55,25 +47,25 @@ python cookbook/92_models/aws/claude/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/aws/claude/tool_use.py
+python cookbook/90_models/aws/claude/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/aws/claude/structured_output.py
+python cookbook/90_models/aws/claude/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/92_models/aws/claude/storage.py
+python cookbook/90_models/aws/claude/db.py
 ```
 
 ### 8. Run Agent that uses knowledge
 
 ```shell
-python cookbook/92_models/aws/claude/knowledge.py
+python cookbook/90_models/aws/claude/knowledge.py
 ```
 
 ### 9. Adaptive Thinking with `output_config`

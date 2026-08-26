@@ -81,7 +81,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - The `VectorDb` interface is defined in `libs/agno/agno/vectordb/base.py`
    - Import your `VectorDb` Class in `libs/agno/agno/vectordb/<your_db>/__init__.py`.
    - Checkout the [`libs/agno/agno/vectordb/pgvector/pgvector`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/vectordb/pgvector/pgvector.py) file for an example.
-4. Add a recipe for using your `VectorDb` under `cookbook/07_knowledge/vector_db/<your_db>`.
+4. Add a recipe for using your `VectorDb` under `cookbook/07_knowledge/09_archive/vector_dbs/<your_db>`.
    - Checkout [`cookbook/07_knowledge/09_archive/vector_dbs/pgvector_db`](https://github.com/agno-agi/agno/blob/main/cookbook/07_knowledge/09_archive/vector_dbs/pgvector_db.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
@@ -118,7 +118,7 @@ Make sure all tests pass before submitting your pull request. If you add new fea
    - CI enforces registration: `test_every_model_subclass_is_registered` statically discovers every
      concrete `Model` subclass and fails if one is missing. If your class is an abstract base rather
      than a user-selectable provider, add it to that test's allowlist instead.
-6. Add a recipe for using your Model provider under `cookbook/models/<your_model>`.
+6. Add a recipe for using your Model provider under `cookbook/90_models/<your_model>`.
    - Checkout [`agno/cookbook/90_models/aws/claude`](https://github.com/agno-agi/agno/tree/main/cookbook/90_models/aws/claude) for an example.
    - Show both the model class and string syntax in your examples
 7. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
@@ -128,13 +128,13 @@ Make sure all tests pass before submitting your pull request. If you add new fea
 
 1. Setup your local environment by following the [Development setup](#development-setup).
 2. Create a new directory under `libs/agno/agno/tools` for the new Tool.
-3. Create a Class for your Tool that inherits the `Toolkit` Class from `libs/agno/agno/tools/toolkit/toolkit.py`.
+3. Create a Class for your Tool that inherits the `Toolkit` Class from `libs/agno/agno/tools/toolkit.py`.
    - Your Class will be in `libs/agno/agno/tools/<your_tool>.py`.
    - Make sure to register all functions in your class via a flag.
    - Checkout the [`agno/tools/youtube.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/youtube.py) file for an example.
    - If your tool requires an API key, checkout the [`agno/tools/serpapi.py`](https://github.com/agno-agi/agno/blob/main/libs/agno/agno/tools/serpapi.py) as well.
-4. Add a recipe for using your Tool under `cookbook/tools/<your_tool>`.
-   - Checkout [`agno/cookbook/91_tools/youtube_tools`](https://github.com/agno-agi/agno/blob/main/cookbook/91_tools/youtube_tools.py) for an example.
+4. Add a recipe for using your Tool under `cookbook/91_tools/<your_tool>`.
+   - Checkout [`agno/cookbook/91_tools/youtube_tools.py`](https://github.com/agno-agi/agno/blob/main/cookbook/91_tools/youtube_tools.py) for an example.
 5. Important: Format and validate your code by running `./scripts/format.sh` and `./scripts/validate.sh`.
 6. Submit a pull request.
 

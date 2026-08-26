@@ -25,16 +25,8 @@ uv pip install -U anthropic ddgs duckdb yfinance agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/anthropic/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/anthropic/basic.py
+python cookbook/90_models/anthropic/basic.py
 ```
 
 ### 5. Run Agent with Tools
@@ -42,19 +34,19 @@ python cookbook/92_models/anthropic/basic.py
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/anthropic/tool_use.py
+python cookbook/90_models/anthropic/tool_use.py
 ```
 
 ### 6. Run Agent that returns structured output
 
 ```shell
-python cookbook/92_models/anthropic/structured_output.py
+python cookbook/90_models/anthropic/structured_output.py
 ```
 
 ### 7. Run Agent that uses storage
 
 ```shell
-python cookbook/92_models/anthropic/storage.py
+python cookbook/90_models/anthropic/db.py
 ```
 
 ### 8. Run Agent that uses knowledge
@@ -65,37 +57,31 @@ export OPENAI_API_KEY=***
 ```
 
 ```shell
-python cookbook/92_models/anthropic/knowledge.py
+python cookbook/90_models/anthropic/knowledge.py
 ```
 
 ### 9. Run Agent that uses memory
 
 ```shell
-python cookbook/92_models/anthropic/memory.py
+python cookbook/90_models/anthropic/memory.py
 ```
 
 ### 10. Run Agent that analyzes an image
 
 ```shell
-python cookbook/92_models/anthropic/image_agent.py
+python cookbook/90_models/anthropic/image_input_url.py
 ```
 
 ### 11. Run Agent with Thinking enabled
 
-- Streaming on
 ```shell
-python cookbook/92_models/anthropic/thinking.py
-```
-- Streaming off
-
-```shell
-python cookbook/92_models/anthropic/thinking_stream.py
+python cookbook/90_models/anthropic/thinking.py
 ```
 
 ### 12. Run Agent with Interleaved Thinking
 
 ```shell
-python cookbook/92_models/anthropic/financial_analyst_thinking.py
+python cookbook/90_models/anthropic/financial_analyst_thinking.py
 ```
 
 ### 13. Adaptive Thinking with `output_config`
