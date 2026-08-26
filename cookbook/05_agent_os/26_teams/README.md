@@ -151,8 +151,10 @@ it and the channel-scoped `from.id` otherwise:
 
 Proactive delivery only succeeds against a live conversation reference. Web
 Chat conversations expire when the browser tab closes, and `asend_alert` will
-receive a `403` from the Bot Connector against a stale reference. Use a
-reference captured from a real Teams client for reliable delivery.
+receive a `403` from the Bot Connector against a stale reference. That surfaces
+as a raised exception, not `False` — a scheduler that loops on the return value
+needs its own `try`/`except` around the call. Use a reference captured from a
+real Teams client for reliable delivery.
 
 ## Webhook Security
 

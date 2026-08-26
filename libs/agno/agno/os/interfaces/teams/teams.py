@@ -22,8 +22,8 @@ class MicrosoftTeams(BaseInterface):
 
     Serves ``GET /status`` and the Bot Framework webhook ``POST /messages``
     under ``prefix``. ``send_alert`` / ``asend_alert`` push a message to a user
-    who has chatted with the bot before, using the conversation reference the
-    first inbound message stored on their session.
+    who has chatted with the bot before, using the conversation reference their
+    inbound messages stored.
     """
 
     type = "teams"
@@ -131,6 +131,11 @@ class MicrosoftTeams(BaseInterface):
             log_warning(f"MicrosoftTeams.asend_alert: session lookup failed: {e}")
             return False
 
+        # First match, not the router's client-side max: this scan examines every
+        # candidate, so a created_at tie cannot hide a reference behind whichever
+        # row the backend returns first. Rows stay deserialized here (the router
+        # asks for raw ones) because this reads session_data, a JSON column whose
+        # raw form is backend-dependent.
         ref = None
         for session in sessions:
             ref = extract_conversation_ref(session.session_data)  # type: ignore[union-attr]

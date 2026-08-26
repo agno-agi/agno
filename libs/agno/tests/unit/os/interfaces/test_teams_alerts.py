@@ -97,7 +97,7 @@ def _conv_ref(conv_id):
     return {"service_url": "https://svc", "conversation_id": conv_id, "bot_identity": {"id": "28:bot"}}
 
 
-def _write_session(db, session_id, created_at, conv_id=None):
+def _write_session(db, session_id, created_at, conv_id=None, updated_at=None):
     from agno.session.agent import AgentSession
 
     db.upsert_sessions(
@@ -107,7 +107,7 @@ def _write_session(db, session_id, created_at, conv_id=None):
                 user_id="user-1",
                 agent_id="agent-1",
                 created_at=created_at,
-                updated_at=created_at,
+                updated_at=created_at if updated_at is None else updated_at,
                 session_data={"teams_conversation_ref": _conv_ref(conv_id)} if conv_id else None,
             )
         ],
@@ -156,6 +156,32 @@ async def test_alert_uses_the_newest_session_that_carries_a_ref(tmp_path):
         with patch(send_target, new_callable=AsyncMock) as mock_send:
             assert await teams.asend_alert(user_id="user-2", text="four") is False
         mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_alert_orders_candidates_by_created_at_not_updated_at(tmp_path):
+    """Any save on an older session rewrites its updated_at. Ordering the
+    candidates on that would resurrect its reference over the current one's."""
+    from agno.db.sqlite import SqliteDb
+    from agno.os.interfaces.teams import MicrosoftTeams
+
+    db = SqliteDb(db_file=str(tmp_path / "alerts_order.db"))
+    stub_agent = SimpleNamespace(id="agent-1", name="Stub", db=db)
+
+    # Older session, but written to most recently.
+    _write_session(db, "teams:agent-1:user-1", 1_700_000_000, conv_id="conv-A", updated_at=1_700_000_900)
+    _write_session(db, "teams:agent-1:user-1:0a1b2c3d", 1_700_000_060, conv_id="conv-B")
+
+    with patch.dict(
+        "os.environ",
+        {"MICROSOFT_APP_ID": "app-id", "MICROSOFT_APP_PASSWORD": "secret"},
+        clear=True,
+    ):
+        teams = MicrosoftTeams(agent=stub_agent)
+        with patch("agno.os.interfaces.teams.teams.send_teams_message_async", new_callable=AsyncMock) as mock_send:
+            assert await teams.asend_alert(user_id="user-1", text="hi") is True
+
+    assert mock_send.call_args.kwargs["conversation_id"] == "conv-B"
 
 
 # === Guardrails: no DB / lookup errors / async DB ===
