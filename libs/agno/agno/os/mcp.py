@@ -37,6 +37,11 @@ from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
+from agno.tools.function import (
+    AGNO_INJECTED_PARAMS,
+    FRAMEWORK_INJECTED_PARAMS,
+    _is_schema_excluded,
+)
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -107,12 +112,20 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
+        # Forward mcp_output_schema to FastMCP. None = no JSON wrapping (raw content).
+        output_schema = getattr(tool, "mcp_output_schema", ...)
+        mcp.add_tool(
+            Tool.from_function(
+                _inject_user_id(entrypoint), name=name, description=description, output_schema=output_schema
+            )
+        )
         return
 
     # Plain callable: name/description inferred from ``__name__``/docstring.
     if callable(tool):
-        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
+        # Check for mcp_output_schema attribute on the callable itself
+        output_schema = getattr(tool, "mcp_output_schema", ...)
+        mcp.add_tool(Tool.from_function(_inject_user_id(tool), output_schema=output_schema))
         return
 
     raise TypeError(
@@ -127,21 +140,40 @@ def _inject_user_id(fn: Callable) -> Callable:
     resolved JWT subject at call time and drops it from the wrapper's signature -- so it
     does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
 
-    Also hides ``run_context`` from the schema: RunContext contains FilterExpr which
-    Pydantic cannot serialize, and it is framework-injected anyway.
+    Also hides framework-injected params (agent, team, run_context, media types) from the
+    schema using the same logic as agno.tools.function -- both by name and by type annotation.
+    This prevents Pydantic schema crashes (e.g. RunContext contains FilterExpr which cannot
+    be serialized) and keeps framework params out of the MCP tool schema.
     """
     try:
         sig = inspect.signature(fn)
     except (ValueError, TypeError):
         return fn
 
-    # Framework-injected params hidden from MCP schema
-    hidden_params = {"user_id", "run_context"}
-    has_hidden = any(p in sig.parameters for p in hidden_params)
-    if not has_hidden:
+    # Same logic as Function.process_entrypoint in agno.tools.function:
+    # 1. Exclude by name: framework-injected params + user_id (MCP-specific for JWT auth)
+    excluded_params = ["return", "self", *FRAMEWORK_INJECTED_PARAMS, "user_id"]
+    excluded_params.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
+
+    # 2. Exclude by type: params whose type annotation is schema-excluded
+    #    (e.g. ctx: RunContext, my_agent: Agent). See issue #6344.
+    try:
+        from typing import get_type_hints
+
+        type_hints = get_type_hints(fn)
+        for param_name, hint in list(type_hints.items()):
+            if param_name == "return":
+                continue
+            if _is_schema_excluded(hint):
+                excluded_params.append(param_name)
+    except Exception:
+        pass
+
+    # Check if any params in the signature are excluded
+    if not any(name in excluded_params for name in sig.parameters):
         return fn
 
-    visible_params = [p for name, p in sig.parameters.items() if name not in hidden_params]
+    visible_params = [p for name, p in sig.parameters.items() if name not in excluded_params]
     new_sig = sig.replace(parameters=visible_params)
 
     has_user_id = "user_id" in sig.parameters
