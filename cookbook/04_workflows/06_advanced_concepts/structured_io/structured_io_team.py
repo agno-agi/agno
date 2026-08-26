@@ -118,7 +118,7 @@ marketing_expert = Agent(
 
 project_manager = Agent(
     name="Project Manager",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Create detailed project plans and timelines",
     instructions=[
         "Develop comprehensive implementation plans",
@@ -129,7 +129,7 @@ project_manager = Agent(
 
 budget_analyst = Agent(
     name="Budget Analyst",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Analyze costs and provide budget recommendations",
     instructions=[
         "Estimate project costs and resource requirements",
@@ -145,7 +145,7 @@ research_team = Team(
     name="AI Research Team",
     members=[research_specialist, data_analyst],
     delegate_to_all_members=True,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     description="A collaborative team that researches AI trends and extracts structured insights",
     output_schema=ResearchFindings,
     instructions=[
@@ -160,7 +160,7 @@ strategy_team = Team(
     name="Content Strategy Team",
     members=[content_strategist, marketing_expert],
     delegate_to_all_members=True,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     description="A strategic team that creates comprehensive content strategies",
     output_schema=ContentStrategy,
     instructions=[
@@ -175,7 +175,7 @@ planning_team = Team(
     name="Content Planning Team",
     members=[project_manager, budget_analyst],
     delegate_to_all_members=True,
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     description="A planning team that creates detailed implementation plans",
     output_schema=FinalContentPlan,
     instructions=[

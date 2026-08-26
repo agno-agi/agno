@@ -16,7 +16,7 @@ from agno.models.azure import AzureAIFoundry
 # ---------------------------------------------------------------------------
 def run_example() -> None:
     agent = Agent(
-        model=AzureAIFoundry(id="gpt-4o"),
+        model=AzureAIFoundry(id="gpt-5.6-luna"),
         reasoning_model=AzureAIFoundry(
             id="DeepSeek-R1",
             azure_endpoint=os.getenv("AZURE_ENDPOINT"),

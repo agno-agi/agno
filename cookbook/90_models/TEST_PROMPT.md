@@ -51,5 +51,5 @@ Final response format:
 
 | Provider | File | Status | Notes |
 |----------|------|--------|-------|
-| `openai/chat` | `basic.py` | PASS | GPT-4o responded correctly |
+| `openai/chat` | `basic.py` | PASS | gpt-5.6-luna responded correctly |
 | `ollama/chat` | `basic.py` | SKIP | Ollama server not running |
