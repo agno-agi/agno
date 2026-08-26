@@ -21,7 +21,7 @@ Setup:
   4. Set GOOGLE_SERVICE_ACCOUNT_FILE and GOOGLE_DELEGATED_USER env vars
 
 Run:
-  .venvs/demo/bin/python cookbook/91_tools/google/google_service_account.py
+  .venvs/demo/bin/python cookbook/91_tools/google/workspace/service_account.py
 """
 
 from os import getenv
