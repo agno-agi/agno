@@ -34,6 +34,7 @@ from agno.verifiers.fingerprints import (
 )
 from agno.verifiers.scorer import ScorerVerifier
 from agno.verifiers.shell import ShellVerifier
+from agno.verifiers.tools import DIVERGENCE_DIRECTIVE, divergence_report, verified_tool
 from agno.verifiers.types import (
     REPORT_CAP_BYTES,
     StopReason,
@@ -45,6 +46,7 @@ from agno.verifiers.types import (
 
 __all__ = [
     "DEFAULT_EXCLUDES",
+    "DIVERGENCE_DIRECTIVE",
     "REPORT_CAP_BYTES",
     "CallableFingerprint",
     "GitWorktreeFingerprint",
@@ -58,5 +60,7 @@ __all__ = [
     "VerificationAttempt",
     "VerificationConfig",
     "Verifier",
+    "divergence_report",
+    "verified_tool",
     "verifier",
 ]

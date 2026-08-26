@@ -381,3 +381,37 @@ def test_stop_after_tool_call_still_verifies_and_reenters():
     assert out.status == RunStatus.completed
     assert out.verification.status == "verified"
     assert len(out.verification.attempts) == 2
+
+
+def test_report_replays_exactly_once_in_next_runs_history(tmp_path):
+    """The report is real transcript: a later run in the same session sees it in history
+    exactly once — no duplicated prefix, no stripping."""
+    from agno.db.sqlite import SqliteDb
+
+    model = ScriptedModel(
+        [
+            _text("claimed done"),
+            _text("actually done"),
+            _text("second run answer"),
+        ]
+    )
+    agent = Agent(
+        model=model,
+        verifiers=[fail_once()],
+        db=SqliteDb(db_file=str(tmp_path / "history.db")),
+        add_history_to_context=True,
+    )
+    first = agent.run("do the work", session_id="hist-1")
+    assert first.verification.status == "verified"
+
+    agent2 = Agent(
+        model=model,
+        db=SqliteDb(db_file=str(tmp_path / "history.db")),
+        add_history_to_context=True,
+    )
+    second = agent2.run("follow up", session_id="hist-1")
+    history_reports = [m for m in (second.messages or []) if m.role == "user" and "<verification" in str(m.content)]
+    assert len(history_reports) == 1, (
+        f"expected the report exactly once in the follow-up run's transcript, got {len(history_reports)}"
+    )
+    assert second.status == RunStatus.completed
