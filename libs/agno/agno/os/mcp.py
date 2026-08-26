@@ -112,12 +112,12 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
+        mcp.add_tool(Tool.from_function(_wrap_custom_tool(entrypoint), name=name, description=description))
         return
 
     # Plain callable: name/description inferred from ``__name__``/docstring.
     if callable(tool):
-        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
+        mcp.add_tool(Tool.from_function(_wrap_custom_tool(tool)))
         return
 
     raise TypeError(
@@ -125,42 +125,45 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     )
 
 
-def _inject_user_id(fn: Callable) -> Callable:
-    """Hide framework params from MCP schema and inject user_id from JWT at runtime.
+def _get_excluded_params(fn: Callable) -> tuple:
+    """Compute params to hide from MCP schema.
 
-    Wraps ``fn`` to:
-    1. Remove framework params from the signature (hidden from MCP clients)
-    2. Inject ``user_id`` from the authenticated JWT subject at call time
+    Returns (excluded_params, signature). Same logic as toolkit's process_entrypoint.
     """
+    from typing import get_type_hints
+
     try:
         sig = inspect.signature(fn)
     except (ValueError, TypeError):
-        return fn
+        return [], None
 
     # 1. Exclude by name
-    excluded_params = [*FRAMEWORK_INJECTED_PARAMS, "user_id"]
-    excluded_params.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
+    excluded = [*FRAMEWORK_INJECTED_PARAMS, "user_id"]
+    excluded.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
 
     # 2. Exclude by type
     try:
-        from typing import get_type_hints
-
         type_hints = get_type_hints(fn)
         for param_name, hint in list(type_hints.items()):
             if param_name == "return":
                 continue
             if is_schema_excluded(hint):
-                excluded_params.append(param_name)
+                excluded.append(param_name)
     except Exception:
         pass
 
-    # Check if any params in the signature are excluded
-    if not any(name in excluded_params for name in sig.parameters):
+    return excluded, sig
+
+
+def _wrap_custom_tool(fn: Callable) -> Callable:
+    """Wrap custom tool to hide framework params and inject user_id at runtime."""
+    excluded, sig = _get_excluded_params(fn)
+
+    if sig is None or not any(name in excluded for name in sig.parameters):
         return fn
 
-    visible_params = [p for name, p in sig.parameters.items() if name not in excluded_params]
+    visible_params = [p for name, p in sig.parameters.items() if name not in excluded]
     new_sig = sig.replace(parameters=visible_params)
-
     has_user_id = "user_id" in sig.parameters
 
     if inspect.iscoroutinefunction(fn):
