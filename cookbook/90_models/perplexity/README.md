@@ -23,29 +23,21 @@ uv pip install -U ddgs duckdb agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/cohere/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/cohere/basic.py
+python cookbook/90_models/perplexity/basic.py
 ```
 
 ### 5. Run Agent with Tools
 
-- DuckDuckGo Search
+- Web Search
 
 ```shell
-python cookbook/92_models/cohere/tool_use.py
+python cookbook/90_models/perplexity/web_search.py
 ```
 
 ### 6. Run Agent with Knowledge
 
 ```shell
-python cookbook/92_models/perplexity/knowledge.py
+python cookbook/90_models/perplexity/knowledge.py
 ```
 
