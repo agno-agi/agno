@@ -53,6 +53,7 @@ from agno.db.sqlite.utils import (
 )
 from agno.db.utils import (
     HISTORY_SKIP_STATUSES,
+    SessionRunObjectCache,
     build_single_run_row,
     deserialize_run,
     deserialize_session,
@@ -76,7 +77,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 try:
-    from sqlalchemy import Column, MetaData, String, Table, and_, func, or_, select, text
+    from sqlalchemy import Column, MetaData, String, Table, Text, and_, func, or_, select, text
     from sqlalchemy.dialects import sqlite
     from sqlalchemy.engine import Engine, create_engine
     from sqlalchemy.exc import IntegrityError
@@ -242,6 +243,12 @@ class SqliteDb(BaseDb):
 
         # Initialize database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+
+        # Deserialized history-run objects, keyed per run by the raw row text;
+        # see SessionRunObjectCache for the invalidation and immutability
+        # contract. Per adapter instance, so it can never serve runs across
+        # databases.
+        self._run_object_cache = SessionRunObjectCache()
 
         # SingletonThreadPool (SQLite's pool for in-memory databases, any URL
         # spelling) gives every thread its own private database, so "this
@@ -934,6 +941,28 @@ class SqliteDb(BaseDb):
         )
         return [json.loads(row[0]) if isinstance(row[0], str) else row[0] for row in sess.execute(stmt).fetchall()]
 
+    def _get_session_run_rows(self, sess, runs_table: Table, session_id: str) -> List[Tuple[str, str]]:
+        """(run_id, raw run_data text) for the whole session, in insertion order.
+
+        The raw text feeds the run-object cache, which parses and rebuilds a
+        run only when its text changed since the last read. The cast keeps the
+        JSON column's result processor out of the way -- the whole point is to
+        not parse unchanged rows.
+        """
+        stmt = (
+            select(runs_table.c.run_id, runs_table.c.run_data.cast(Text))
+            .where(runs_table.c.session_id == session_id)
+            .order_by(
+                runs_table.c.run_index.asc(),
+                runs_table.c.created_at.asc(),
+                runs_table.c.run_id.asc(),
+            )
+        )
+        return [
+            (run_id, run_data if isinstance(run_data, str) else json.dumps(run_data))
+            for run_id, run_data in sess.execute(stmt).fetchall()
+        ]
+
     def _get_sessions_runs_data(
         self, sess, runs_table: Table, session_ids: List[str]
     ) -> Dict[str, List[Dict[str, Any]]]:
@@ -1274,6 +1303,8 @@ class SqliteDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results([session_id])
+            # A deleted session's deserialized history must not stay resident.
+            self._run_object_cache.drop_session(session_id)
             return True
 
         except Exception as e:
@@ -1326,6 +1357,8 @@ class SqliteDb(BaseDb):
 
             # Cascade offloaded tool results after the session delete commits.
             self._cascade_tool_results(cascade_ids)
+            for deleted_id in cascade_ids:
+                self._run_object_cache.drop_session(deleted_id)
 
         except Exception as e:
             log_error(f"Error deleting sessions: {str(e)}")
@@ -1512,6 +1545,7 @@ class SqliteDb(BaseDb):
                 # Attach the runs stored in the runs table, merged with any runs still
                 # sitting in the legacy `runs` column (so partially-migrated sessions
                 # don't silently lose history).
+                run_rows: Optional[List[Tuple[str, str]]] = None
                 if session_raw is not None:
                     legacy_runs = session_raw.get("runs")
                     if runs_table is not None and runs_limit is not None and not legacy_runs:
@@ -1519,6 +1553,18 @@ class SqliteDb(BaseDb):
                         session_raw["runs"] = self._get_session_runs_data(
                             sess=sess, runs_table=runs_table, session_id=session_id, limit=runs_limit
                         )
+                    elif (
+                        runs_table is not None
+                        and not legacy_runs
+                        and deserialize
+                        and session_raw.get("session_type") == SessionType.AGENT.value
+                        and (session_type is None or session_type == SessionType.AGENT)
+                    ):
+                        # Fully-migrated agent session on the per-turn path: fetch
+                        # the rows raw and serve run objects from the cache instead
+                        # of rebuilding every run on every read.
+                        run_rows = self._get_session_run_rows(sess=sess, runs_table=runs_table, session_id=session_id)
+                        session_raw["runs"] = None
                     elif runs_table is not None:
                         # Full load + merge. Also the un-migrated fallback: the legacy blob
                         # holds the whole history in one column, so "last N" can't be pushed
@@ -1536,6 +1582,10 @@ class SqliteDb(BaseDb):
                 if not session_raw or not deserialize:
                     return session_raw
 
+            if run_rows is not None:
+                session_obj = deserialize_session(session_type, session_raw)
+                session_obj.runs = self._run_object_cache.runs_from_rows(session_id, run_rows)  # type: ignore[union-attr]
+                return session_obj
             return deserialize_session(session_type, session_raw)
 
         except Exception as e:
