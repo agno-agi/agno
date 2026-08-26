@@ -1,6 +1,6 @@
 """
 1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/singlestore_storage/singlestore_storage_for_team.py` to run the team
+2. Run: `python cookbook/06_storage/singlestore/singlestore_for_team.py` to run the team
 """
 
 from os import getenv

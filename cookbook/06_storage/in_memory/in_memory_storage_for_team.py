@@ -1,6 +1,6 @@
 """
 1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/in_memory_storage/in_memory_storage_for_team.py` to run the team
+2. Run: `python cookbook/06_storage/in_memory/in_memory_storage_for_team.py` to run the team
 """
 
 from typing import List
