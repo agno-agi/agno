@@ -8,13 +8,33 @@ the corresponding runtime pieces, including the DB-backed queue worker
 import asyncio
 import contextlib
 import inspect
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Awaitable, Dict, List, Optional, Protocol, Sequence, Union
 
 from agno.job_queue.config import QueueConfig, RedisCoordination
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
+    from agno.agent import Agent, AgentFactory, RemoteAgent
+    from agno.agent.protocol import AgentProtocol
+    from agno.db.base import AsyncBaseDb, BaseDb
     from agno.run.status_persist import RunPersistOutcome
+    from agno.team import RemoteTeam, Team, TeamFactory
+    from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
+
+    # A component a ticket can name: what the run endpoints resolve.
+    QueueableComponent = Union[Agent, RemoteAgent, AgentProtocol, Team, RemoteTeam, Workflow, RemoteWorkflow]
+    # An entry of an AgentOS code registry (os.agents / os.teams / os.workflows).
+    RegisteredComponent = Union[QueueableComponent, AgentFactory, TeamFactory, WorkflowFactory]
+
+
+class ComponentResolver(Protocol):
+    """Resolves the component a ticket names. ``scope`` is passed only for
+    tickets that carry one (see ``queue_scope``); the result may be sync or
+    awaitable."""
+
+    def __call__(
+        self, component_type: str, component_id: str, scope: Optional[Dict[str, Any]] = ...
+    ) -> Union[Optional["QueueableComponent"], Awaitable[Optional["QueueableComponent"]]]: ...
 
 
 def apply_queue_config(config: QueueConfig) -> None:
@@ -261,7 +281,7 @@ def payload_is_queueable(payload: Any) -> bool:
         return False
 
 
-def _is_component_factory(candidate: Any) -> bool:
+def _is_component_factory(candidate: "RegisteredComponent") -> bool:
     from agno.agent.factory import AgentFactory
     from agno.team.factory import TeamFactory
     from agno.workflow.factory import WorkflowFactory
@@ -269,7 +289,12 @@ def _is_component_factory(candidate: Any) -> bool:
     return isinstance(candidate, (AgentFactory, TeamFactory, WorkflowFactory))
 
 
-def component_is_queueable(component: Any, component_id: str, registry: Any, db: Any) -> bool:
+def component_is_queueable(
+    component: Optional["QueueableComponent"],
+    component_id: str,
+    registry: Optional[Sequence["RegisteredComponent"]],
+    db: Optional[Union["BaseDb", "AsyncBaseDb"]],
+) -> bool:
     """True when the durable worker can re-resolve ``component`` at claim time.
 
     Two sources exist, mirroring the HTTP resolution order:
@@ -387,7 +412,7 @@ class QueueWorker:
     def __init__(
         self,
         store: Any,
-        resolve_component: Any,
+        resolve_component: ComponentResolver,
         config: QueueConfig,
         worker_id: Optional[str] = None,
         stop_timeout: int = _DEFAULT_STOP_TIMEOUT,
@@ -788,16 +813,18 @@ class QueueWorker:
             await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
-    async def _aresolve_job_component(self, job: Dict[str, Any]) -> Any:
+    async def _aresolve_job_component(self, job: Dict[str, Any]) -> Optional["QueueableComponent"]:
         """Resolve the component a ticket names, honoring the resolution
         scope stamped at accept time. Tickets without a scope (registry
         components, pre-scope producers) resolve by type/id alone, so a
         two-argument resolver keeps working; resolvers may be sync or async."""
+        # component_type / component_id are required ticket fields (QueuedJob)
+        component_type, component_id = job["component_type"], job["component_id"]
         scope = (job.get("payload") or {}).get("scope")
         if scope:
-            resolved = self.resolve_component(job.get("component_type"), job.get("component_id"), scope=scope)
+            resolved = self.resolve_component(component_type, component_id, scope=scope)
         else:
-            resolved = self.resolve_component(job.get("component_type"), job.get("component_id"))
+            resolved = self.resolve_component(component_type, component_id)
         if inspect.isawaitable(resolved):
             resolved = await resolved
         return resolved
@@ -817,7 +844,9 @@ class QueueWorker:
         failure path."""
         from agno.run.base import RunStatus
 
-        component = await self._aresolve_job_component(job)
+        component: Any = await self._aresolve_job_component(
+            job
+        )  # runtime dispatch on component_type; the executor body predates the typed resolver
         if component is None or not callable(getattr(component, "aget_run_output", None)):
             return False
         try:
@@ -1139,7 +1168,9 @@ class QueueWorker:
     async def _persist_run_error_inner(
         self, job: Dict[str, Any], error: str, status: str
     ) -> Optional["RunPersistOutcome"]:
-        component = await self._aresolve_job_component(job)
+        component: Any = await self._aresolve_job_component(
+            job
+        )  # runtime dispatch on component_type; the executor body predates the typed resolver
         if component is None:
             # A deploy removed the component: the run row (if any) is
             # unreachable, so the caller must keep the ticket alive for a
@@ -1547,7 +1578,9 @@ class QueueWorker:
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
         payload = job.get("payload") or {}
-        component_for_stamp = await self._aresolve_job_component(job)
+        component_for_stamp: Any = await self._aresolve_job_component(
+            job
+        )  # runtime dispatch on component_type; the executor body predates the typed resolver
         if (
             job_type == "run"
             and component_for_stamp is not None
@@ -1608,7 +1641,9 @@ class QueueWorker:
             # has no executor for. Fail it visibly rather than guessing.
             await self._asettle_ticket(job_id, attempt, "failed", f"No executor registered for job type {job_type!r}")
             return
-        component = await self._aresolve_job_component(job)
+        component: Any = await self._aresolve_job_component(
+            job
+        )  # runtime dispatch on component_type; the executor body predates the typed resolver
         if component is None:
             # Same rule as every terminal path: never terminalize the ticket
             # while the run row (prepared PENDING at accept) cannot be
@@ -2450,26 +2485,37 @@ async def queue_lifespan(app: Any, agent_os: Any):
             "a shared event stream."
         )
 
-    async def resolve_component(component_type: str, component_id: str, scope: Optional[Dict[str, Any]] = None) -> Any:
-        registry = {
+    async def resolve_component(
+        component_type: str, component_id: str, scope: Optional[Dict[str, Any]] = None
+    ) -> Optional["QueueableComponent"]:
+        registry: Optional[Sequence["RegisteredComponent"]] = {
             "agent": agent_os.agents,
             "team": agent_os.teams,
             "workflow": agent_os.workflows,
         }.get(component_type)
-        resolved: Any = None
+        resolved: Optional["QueueableComponent"] = None
+        from agno.agent import Agent, AgentFactory
+        from agno.team import Team, TeamFactory
+        from agno.workflow import Workflow, WorkflowFactory
+
         for candidate in registry or []:
-            if getattr(candidate, "id", None) == component_id:
+            if getattr(candidate, "id", None) != component_id:
+                continue
+            if isinstance(candidate, (AgentFactory, TeamFactory, WorkflowFactory)):
+                # Factory-backed components are rejected at submit time (they
+                # need request context), so no ticket names one; nothing to do
+                break
+            if isinstance(candidate, (Agent, Team, Workflow)):
                 # Fresh copy per execution, mirroring the HTTP path: queued
                 # runs must not share mutable state with concurrent runs on
-                # the registry instance. (Factory-backed components are
-                # rejected at submit time - they need request context.)
+                # the registry instance
+                try:
+                    resolved = candidate.deep_copy()
+                except Exception:
+                    resolved = candidate
+            else:
                 resolved = candidate
-                if callable(getattr(candidate, "deep_copy", None)):
-                    try:
-                        resolved = candidate.deep_copy()
-                    except Exception:
-                        resolved = candidate
-                break
+            break
         if resolved is None and agent_os.db is not None:
             # Off-registry: the accepting endpoint rehydrated the component
             # from the db (components API / version pin). Replay that load
@@ -2480,15 +2526,10 @@ async def queue_lifespan(app: Any, agent_os: Any):
             # was already authorized (draft preview) at accept time.
             from agno.os.utils import get_agent_by_id_async, get_team_by_id_async, get_workflow_by_id_async
 
-            loader = {
-                "agent": get_agent_by_id_async,
-                "team": get_team_by_id_async,
-                "workflow": get_workflow_by_id_async,
-            }.get(component_type)
             scope = scope or {}
-            if loader is not None:
-                try:
-                    resolved = await loader(  # type: ignore[operator]
+            try:
+                if component_type == "agent":
+                    resolved = await get_agent_by_id_async(
                         component_id,
                         None,
                         db=agent_os.db,
@@ -2497,19 +2538,36 @@ async def queue_lifespan(app: Any, agent_os: Any):
                         create_fresh=True,
                         user_id=scope.get("user_id"),
                     )
-                except Exception as e:
-                    log_error(
-                        f"Job queue: could not rehydrate {component_type}/{component_id} from the db "
-                        f"(scope={scope}): {e}"
+                elif component_type == "team":
+                    resolved = await get_team_by_id_async(
+                        component_id,
+                        None,
+                        db=agent_os.db,
+                        registry=getattr(agent_os, "registry", None),
+                        version=scope.get("version"),
+                        create_fresh=True,
+                        user_id=scope.get("user_id"),
                     )
-                    resolved = None
-        if resolved is not None and component_type == "team":
-            # Mirror the HTTP path's per-request copy: member HITL
-            # continue reloads member tool state from the DB and
-            # depends on this - the registry instance carries the
-            # class default (False)
-            with contextlib.suppress(Exception):
-                resolved.store_member_responses = True
+                elif component_type == "workflow":
+                    resolved = await get_workflow_by_id_async(
+                        component_id,
+                        None,
+                        db=agent_os.db,
+                        registry=getattr(agent_os, "registry", None),
+                        version=scope.get("version"),
+                        create_fresh=True,
+                        user_id=scope.get("user_id"),
+                    )
+            except Exception as e:
+                log_error(
+                    f"Job queue: could not rehydrate {component_type}/{component_id} from the db (scope={scope}): {e}"
+                )
+                resolved = None
+        if isinstance(resolved, Team):
+            # Mirror the HTTP path's per-request copy: member HITL continue
+            # reloads member tool state from the DB and depends on this - the
+            # registry instance carries the class default (False)
+            resolved.store_member_responses = True
         return resolved
 
     worker = QueueWorker(
