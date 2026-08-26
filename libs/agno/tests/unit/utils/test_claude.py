@@ -154,3 +154,37 @@ class TestFormatFileForMessage:
 
         assert result["source"]["type"] == "url"
         assert "citations" not in result
+
+
+class TestUrlDocumentMimeTypes:
+    def test_pdf_url_stays_a_url_source(self):
+        result = _format_file_for_message(File(url="https://example.com/doc.pdf", mime_type="application/pdf"))
+
+        assert result["source"]["type"] == "url"
+        assert result["source"]["url"] == "https://example.com/doc.pdf"
+
+    def test_unknown_mime_type_url_stays_a_url_source(self):
+        result = _format_file_for_message(File(url="https://example.com/doc.pdf"))
+
+        assert result["source"]["type"] == "url"
+
+    def test_non_pdf_url_is_fetched_and_sent_as_text(self, monkeypatch):
+        """Anthropic accepts a url document source for PDFs only. Media storage signs a url for
+        every offloaded File whatever its type, so a csv reaching the provider as a url document
+        comes back a 400 -- it has to be fetched and sent as bytes instead."""
+        monkeypatch.setattr("agno.media.media._bytes_from_url", lambda url: b"a,b\n1,2\n")
+
+        result = _format_file_for_message(File(url="https://example.com/data.csv", mime_type="text/csv"))
+
+        assert result["source"]["type"] == "text"
+        assert result["source"]["media_type"] == "text/plain"
+        assert result["source"]["data"] == "a,b\n1,2\n"
+
+    def test_non_pdf_binary_url_is_fetched_and_base64_encoded(self, monkeypatch):
+        monkeypatch.setattr("agno.media.media._bytes_from_url", lambda url: b"\x00\x01BINARY")
+
+        result = _format_file_for_message(File(url="https://example.com/a.docx", mime_type="application/msword"))
+
+        assert result["source"]["type"] == "base64"
+        assert result["source"]["media_type"] == "application/msword"
+        assert base64.standard_b64decode(result["source"]["data"]) == b"\x00\x01BINARY"

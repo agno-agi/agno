@@ -712,6 +712,46 @@ class TestListRegistryWithManagers:
         assert managers[0]["name"] == "My Memory"
         assert managers[0]["metadata"]["add_memories"] is True
 
+    def test_list_registry_with_learning_machine(self, settings):
+        """Named learning machines are listed with the same summary Studio's
+        list_learning shows; an unnamed machine is not a registry resource."""
+        from agno.learn import LearningMachine
+        from agno.learn.config import LearningMode, UserMemoryConfig
+
+        registry = Registry(
+            learning=[
+                LearningMachine(
+                    name="shared-brain",
+                    namespace="team_west",
+                    user_memory=UserMemoryConfig(mode=LearningMode.AGENTIC),
+                    entity_memory=True,
+                ),
+                LearningMachine(user_memory=True),
+            ]
+        )
+
+        app = FastAPI()
+        router = get_registry_router(registry=registry, settings=settings)
+        app.include_router(router)
+        client = TestClient(app)
+
+        response = client.get("/registry")
+        assert response.status_code == 200
+        machines = [c for c in response.json()["data"] if c["type"] == "learning"]
+        assert len(machines) == 1
+        assert machines[0]["name"] == "shared-brain"
+        assert machines[0]["metadata"]["namespace"] == "team_west"
+        assert machines[0]["metadata"]["stores"] == {
+            "user_memory": {"mode": "agentic"},
+            "entity_memory": {"mode": "agentic", "namespace": "team_west"},
+        }
+        assert machines[0]["metadata"]["model_id"] is None
+        assert machines[0]["metadata"]["class_path"].endswith("LearningMachine")
+
+        filtered = client.get("/registry", params={"resource_type": "learning"})
+        assert filtered.status_code == 200
+        assert [c["name"] for c in filtered.json()["data"]] == ["shared-brain"]
+
     def test_list_registry_with_session_summary_manager(self, settings):
         """Test list_registry includes session summary managers with metadata."""
         from agno.session.summary import SessionSummaryManager

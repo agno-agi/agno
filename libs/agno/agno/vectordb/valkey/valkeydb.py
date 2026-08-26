@@ -85,7 +85,7 @@ def _decode_value(val: Any) -> str:
     return str(val) if val is not None else ""
 
 
-class ValkeyDB(VectorDb):
+class ValkeyDb(VectorDb):
     """
     Valkey class for managing vector operations with Valkey and valkey-search.
 
@@ -98,6 +98,7 @@ class ValkeyDB(VectorDb):
     # shared chunks store the sentinel owner and the scope query matches either.
     USER_ID_FIELD: str = "user_id"
     SHARED_OWNER_TAG: str = "__shared__"
+    MAX_USER_ID_BYTES: int = 4096
     # Reserved owner tag that is never stored; negating it is the match-all
     # keyword query (valkey-search rejects a bare '*' outside a KNN pre-filter).
     MATCH_ALL_TAG: str = "__match_all__"
@@ -130,7 +131,7 @@ class ValkeyDB(VectorDb):
         description: Optional[str] = None,
     ):
         """
-        Initialize the ValkeyDB instance.
+        Initialize the ValkeyDb instance.
 
         Args:
             index_name (str): Name of the Valkey index to store vector data.
@@ -199,7 +200,10 @@ class ValkeyDB(VectorDb):
         self._glide_client: Optional[GlideClient] = glide_client
         self._client_initialized: bool = glide_client is not None
 
-        log_debug(f"Initialized ValkeyDB with index '{self.index_name}'")
+        # Whether the live index schema has the owner field; resolved lazily and cached
+        self._owner_field_exists: Optional[bool] = None
+
+        log_debug(f"Initialized ValkeyDb with index '{self.index_name}'")
 
     def _get_client(self) -> GlideClient:
         """Get or create the GlideClient."""
@@ -273,30 +277,46 @@ class ValkeyDB(VectorDb):
         match-all tag would break the match-all query, braces can never be
         matched by a scope clause, wildcards match other owners' tags even
         when escaped, and an empty string is an owner tag no scope clause can
-        ever match.
+        ever match. Whitespace is trimmed and a NUL byte or over-long value
+        truncated at index time, so either would index as another owner's tag.
+
+        '|' is allowed: it is escaped at every interpolation site and OIDC
+        subject ids contain it.
         """
         if user_id is None:
             return
         if user_id == "":
-            raise ValueError("user_id must not be an empty string; use None for unscoped access")
+            raise ValueError("user_id must not be an empty string")
+        if "\x00" in user_id:
+            raise ValueError("user_id must not contain a NUL byte")
+        if len(user_id.encode()) > self.MAX_USER_ID_BYTES:
+            raise ValueError(f"user_id must not exceed {self.MAX_USER_ID_BYTES} bytes")
         if self.USER_ID_SEPARATOR in user_id:
             raise ValueError("user_id must not contain the reserved separator character (0x1f)")
         if user_id == self.SHARED_OWNER_TAG:
-            raise ValueError(f"user_id must not equal the reserved shared-owner tag '{self.SHARED_OWNER_TAG}'")
+            raise ValueError(
+                f"user_id must not be '{self.SHARED_OWNER_TAG}' - that value is reserved to mark content "
+                "shared with every user"
+            )
         if user_id == self.MATCH_ALL_TAG:
             raise ValueError(f"user_id must not equal the reserved match-all tag '{self.MATCH_ALL_TAG}'")
         if "{" in user_id or "}" in user_id:
             raise ValueError("user_id must not contain brace characters ('{' or '}')")
         if "*" in user_id or "?" in user_id:
             raise ValueError("user_id must not contain wildcard characters ('*' or '?')")
+        if user_id != user_id.strip():
+            raise ValueError("user_id must not have leading or trailing whitespace")
 
     def _scoped_doc_id(self, base_id: str, user_id: Optional[str]) -> str:
         """Fold the owner into the deterministic id so two users uploading the
         same content get distinct keys. The shared bucket keeps the legacy id.
+
+        The base id is digested first so a variable-length id cannot shift the
+        '_' boundary and collide with another owner's key.
         """
         if user_id is None:
             return base_id
-        return hash_string_sha256(f"{base_id}_{user_id}")
+        return hash_string_sha256(f"{hash_string_sha256(base_id)}_{user_id}")
 
     def _parse_hash(self, doc: Document, user_id: Optional[str] = None) -> Dict[str, Any]:
         """Create a dict serializable into a Valkey HASH structure.
@@ -396,6 +416,51 @@ class ValkeyDB(VectorDb):
                     break
         return names
 
+    def _user_id_field_exists(self) -> bool:
+        """Cached check for whether the live index schema contains the owner tag field.
+
+        Valkey shipped with this field from the start, so no index Agno created can lack it
+        and there is no backfill for it in the v2 -> v3 migration. The check is kept for an
+        index created outside Agno — a provisioning script or a hand-written ``FT.CREATE`` —
+        where a scope filter on an unindexed field is rejected and read back as "no results".
+
+        An inconclusive inspection (connection failure, etc.) assumes "migrated" for
+        this call alone and does not cache.
+        """
+        if self._owner_field_exists is None:
+            try:
+                answer = self.USER_ID_FIELD in self._indexed_field_names()
+                self._owner_field_exists = answer
+            except Exception:
+                log_warning(
+                    f"Could not inspect Valkey index '{self.index_name}' for the "
+                    f"'{self.USER_ID_FIELD}' field; proceeding as migrated for this operation."
+                )
+                return True
+        return self._owner_field_exists
+
+    def _require_owner_field(self, user_id: Optional[str]) -> bool:
+        """Gate every owner-tag reference on the live index schema.
+
+        Returns True when the field is indexed, False when it is missing and the
+        operation is unscoped. A scoped operation on a pre-v3 index raises rather
+        than matching nothing.
+        """
+        if self._user_id_field_exists():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate an index rebuild — re-inspect once before refusing
+        self._owner_field_exists = None
+        if self._user_id_field_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but Valkey index '{self.index_name}' has no "
+            f"'{self.USER_ID_FIELD}' field, so a scoped search cannot match anything. Agno always "
+            "creates the field, so this index was created elsewhere — drop it with FT.DROPINDEX "
+            "(without DD, which keeps the stored vectors) and let ValkeyDb.create() rebuild it."
+        )
+
     def create(self) -> None:
         """Create the Valkey index if it does not exist."""
         try:
@@ -407,6 +472,7 @@ class ValkeyDB(VectorDb):
                     prefixes=[self.prefix],
                 )
                 glide_ft.create(client, self.index_name, schema, options)
+                self._owner_field_exists = None  # Reset cache after index creation
                 log_debug(f"Created Valkey index: {self.index_name}")
             else:
                 log_debug(f"Valkey index already exists: {self.index_name}")
@@ -414,7 +480,10 @@ class ValkeyDB(VectorDb):
                     log_warning(
                         f"Valkey index '{self.index_name}' was created without the "
                         f"'{self.USER_ID_FIELD}' field; per-user scoped searches will not match. "
-                        f"Drop and recreate the index to enable per-user isolation."
+                        "Agno always creates the field, so this index was created elsewhere. Drop "
+                        "it with FT.DROPINDEX (without DD, which keeps the stored vectors) and let "
+                        "ValkeyDb.create() rebuild it. Do not call drop() — it deletes the vectors "
+                        "along with the index."
                     )
         except Exception as e:
             log_error(f"Error creating Valkey index: {str(e)}")
@@ -458,11 +527,19 @@ class ValkeyDB(VectorDb):
             log_error(f"Error checking if ID exists: {str(e)}")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
-        """Check if a document with the given content hash exists."""
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check if a document with the given content hash exists.
+
+        user_id set  -> only the caller's own chunks count. None -> the shared
+        bucket alone (the sentinel owner tag), never every owner; the same
+        bucket ``_dedupe_query`` clears.
+        """
+        # Outside the try: an invalid user_id must raise, not be swallowed into False.
+        self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             client = self._get_client()
-            query = f"@content_hash:{{{_escape_tag_value(content_hash)}}}"
+            query = self._dedupe_query(content_hash, user_id)
             options = FtSearchOptions(
                 limit=FtSearchLimit(0, 0),
             )
@@ -481,8 +558,9 @@ class ValkeyDB(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert documents into the Valkey index."""
+        self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
-            self._validate_user_id(user_id)
             client = self._get_client()
             for doc in documents:
                 parsed_doc = self._parse_hash(doc, user_id=user_id)
@@ -532,8 +610,9 @@ class ValkeyDB(VectorDb):
         Strategy: delete existing docs with the same content_hash (scoped to the
         caller's bucket), then insert new docs.
         """
+        self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
-            self._validate_user_id(user_id)
             # Find and delete existing docs for this content_hash in the caller's bucket
             self._delete_by_query(self._dedupe_query(content_hash, user_id))
             # Insert new docs
@@ -640,8 +719,10 @@ class ValkeyDB(VectorDb):
         """
         if self.search_type == SearchType.hybrid:
             raise ValueError("Hybrid search is currently unsupported for Valkey")
+        # Outside the try: an invalid user_id must raise, not be swallowed into [].
+        self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
-            self._validate_user_id(user_id)
             if filters and isinstance(filters, List):
                 filters = self._filter_exprs_to_dict(cast(List[FilterExpr], filters))
             if self.search_type == SearchType.keyword:
@@ -680,6 +761,7 @@ class ValkeyDB(VectorDb):
             user_id (Optional[str]): Scope results to this owner plus shared chunks.
                 None applies no scope (admin view).
         """
+        self._require_owner_field(user_id)
         try:
             client = self._get_client()
             query_embedding = self.embedder.get_embedding(query)
@@ -733,6 +815,7 @@ class ValkeyDB(VectorDb):
             FT.SEARCH, so query punctuation cannot alter the filter or user-scope
             clauses. A query with no alphanumeric terms matches every chunk in scope.
         """
+        self._require_owner_field(user_id)
         try:
             client = self._get_client()
             escaped_query = _escape_query_text(query)
@@ -773,6 +856,8 @@ class ValkeyDB(VectorDb):
             # Also delete all keys with the prefix
             self._delete_all_keys()
             log_debug(f"Deleted Valkey index: {self.index_name}")
+            # Next index under this name may differ — re-resolve lazily
+            self._owner_field_exists = None
             return True
         except Exception as e:
             if "not found" in str(e).lower():
@@ -788,6 +873,7 @@ class ValkeyDB(VectorDb):
         result = await asyncio.to_thread(self.drop)
         if not result:
             raise RuntimeError(f"Failed to drop Valkey index: {self.index_name}")
+        # sync drop() already cleared the cache
 
     def exists(self) -> bool:
         """Check if the Valkey index exists."""
@@ -865,9 +951,10 @@ class ValkeyDB(VectorDb):
         """Delete documents by content ID.
 
         user_id set  -> delete only the caller's own chunks (must NOT touch
-        the shared bucket). None -> delete across all owners (legacy/admin).
+        the shared bucket). None -> the admin view, deleting across every owner.
         """
         self._validate_user_id(user_id)
+        self._require_owner_field(user_id)
         try:
             if user_id is None:
                 return self._delete_by_tag_filter("content_id", content_id)
@@ -932,14 +1019,11 @@ class ValkeyDB(VectorDb):
         return []
 
     def _delete_by_tag_filter(self, tag_field: str, tag_value: str) -> bool:
-        """Delete all documents matching a tag filter in a single batch call."""
-        keys = self._find_keys_by_tag(tag_field, tag_value)
-        if not keys:
-            return False
-        client = self._get_client()
-        deleted = client.delete(cast(List[Union[str, bytes]], keys))
-        log_debug(f"Deleted {deleted} documents with {tag_field}='{tag_value}'")
-        return deleted is not None and int(deleted) > 0
+        """Delete all documents matching a tag filter.
+
+        Goes through ``_delete_by_query`` so matches past the first page are not left behind.
+        """
+        return self._delete_by_query(f"@{tag_field}:{{{_escape_tag_value(tag_value)}}}")
 
     def _delete_by_query(self, query: str) -> bool:
         """Delete all documents matching an FT.SEARCH query.
@@ -960,7 +1044,7 @@ class ValkeyDB(VectorDb):
             result_map = results[1]
             if not isinstance(result_map, dict) or not result_map:
                 break
-            keys: List[Union[str, bytes]] = [_decode_value(k) for k in result_map.keys()]
+            keys: List[Union[str, bytes, bytearray, memoryview]] = [_decode_value(k) for k in result_map.keys()]
             deleted = client.delete(keys)
             if deleted is not None and int(deleted) > 0:
                 any_deleted = True
@@ -980,7 +1064,7 @@ class ValkeyDB(VectorDb):
             cursor = scan_result[0]  # type: ignore[assignment]
             keys = scan_result[1]
             if keys:
-                str_keys: List[Union[str, bytes]] = [_decode_value(k) for k in keys]
+                str_keys: List[Union[str, bytes, bytearray, memoryview]] = [_decode_value(k) for k in keys]
                 client.delete(str_keys)
             cursor_str = cursor.decode("utf-8") if isinstance(cursor, bytes) else str(cursor)
             if cursor_str == "0":

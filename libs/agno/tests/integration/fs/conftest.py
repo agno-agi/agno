@@ -17,6 +17,7 @@ import os
 
 import pytest
 from sqlalchemy import create_engine, text
+from sqlalchemy.exc import OperationalError
 
 from agno.fs.db import DbFileSystem
 
@@ -27,10 +28,23 @@ DIALECTS = ["sqlite", "postgresql"]
 
 @pytest.fixture(scope="session")
 def pg_engine():
-    """Eager-connect Postgres engine with a private, per-process schema."""
+    """Eager-connect Postgres engine with a private, per-process schema.
+
+    Skips when no server is reachable. CI runs this directory in a job with no
+    database service (the release workflow's `test-remaining`, which excludes the
+    other db-dependent suites by path), so an unguarded connect fails the whole
+    job. Skipping keeps the SQLite half of every matrix running there while the
+    Postgres half still runs for anyone with the container up. The skip is loud
+    in pytest output, so a genuinely broken local Postgres is still visible.
+    """
     engine = create_engine(PG_URL)
+    try:
+        with engine.begin() as conn:
+            conn.execute(text("SELECT 1"))
+    except OperationalError as e:
+        engine.dispose()
+        pytest.skip(f"Postgres not reachable at {PG_URL} ({type(e).__name__}); run cookbook/scripts/run_pgvector.sh")
     with engine.begin() as conn:
-        conn.execute(text("SELECT 1"))
         conn.execute(text(f'CREATE SCHEMA IF NOT EXISTS "{PG_SCHEMA}"'))
     yield engine
     with engine.begin() as conn:
