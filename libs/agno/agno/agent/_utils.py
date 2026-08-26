@@ -122,7 +122,6 @@ SHARED_BY_REFERENCE_FIELDS = (
     "parser_model",
     "output_model",
     "session_summary_manager",
-    "culture_manager",
     "compression_manager",
     "learning",
     "skills",
@@ -201,7 +200,7 @@ def deep_copy_field(agent: Agent, field_name: str, field_value: Any) -> Any:
                 try:
                     # Share MCP tools (they maintain server connections)
                     is_mcp_tool = hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
+                        c.__name__ == "MCPTools" for c in type(tool).__mro__
                     )
                     if is_mcp_tool:
                         copied_tools.append(tool)

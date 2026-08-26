@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import (
+    TYPE_CHECKING,
     Any,
     AsyncIterator,
     Callable,
@@ -21,7 +22,6 @@ from typing import (
 from pydantic import BaseModel
 
 from agno.agent import (
-    _cli,
     _default_tools,
     _init,
     _managers,
@@ -33,21 +33,25 @@ from agno.agent import (
     _utils,
 )
 from agno.compression.manager import CompressionManager
-from agno.culture.manager import CultureManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.eval.base import BaseEval
 from agno.filters import FilterExpr
 from agno.guardrails import BaseGuardrail
 from agno.knowledge.protocol import KnowledgeProtocol
-from agno.learn.machine import LearningMachine
+
+if TYPE_CHECKING:
+    from agno.learn.machine import LearningMachine
+
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.memory import MemoryManager
 from agno.metrics import SessionMetrics
 from agno.models.base import Model
 from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
-from agno.models.response import ToolExecution
+
+if TYPE_CHECKING:
+    from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -123,8 +127,6 @@ class Agent:
     enable_agentic_memory: bool = False
     # If True, the agent creates/updates user memories at the end of runs
     update_memory_on_run: bool = False
-    # Soon to be deprecated. Use update_memory_on_run
-    enable_user_memories: Optional[bool] = None
     # If True, the agent adds a reference to the user memories in the response
     add_memories_to_context: Optional[bool] = None
 
@@ -133,7 +135,7 @@ class Agent:
     db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
     # --- Checkpointing ---
-    # When to persist run state to the database. See specs/agno/features/checkpointing/.
+    # When to persist run state to the database.
     #   "runs"  — default, write only at terminal states (today's behavior)
     #   "tool-batch" — write after each model turn (post-gather barrier)
     #   "tools" — reserved for 3.0; raises NotImplementedError in 2.x
@@ -198,12 +200,9 @@ class Agent:
     _run_hooks_in_background: Optional[bool] = None
 
     # --- Agent Reasoning ---
-    # Enable reasoning by working through the problem step by step.
-    reasoning: bool = False
+    # Enable reasoning by providing a reasoning_model (must be a native reasoning model).
     reasoning_model: Optional[Model] = None
     reasoning_agent: Optional[Agent] = None
-    reasoning_min_steps: int = 1
-    reasoning_max_steps: int = 10
 
     # --- Default tools ---
     # Add a tool that allows the Model to read the chat history.
@@ -221,6 +220,8 @@ class Agent:
     send_media_to_model: bool = True
     # If True, store media in run output
     store_media: bool = True
+    # If set (and store_media is True), media is uploaded here and only references are stored
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # If True, store tool results in run output
     store_tool_messages: bool = True
     # If True, store history messages in run output.
@@ -313,7 +314,7 @@ class Agent:
     parse_response: bool = True
     # Use model enforced structured_outputs if supported (e.g. OpenAIChat)
     structured_outputs: Optional[bool] = None
-    # Intead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
+    # Instead of providing the model with the Pydantic output schema, add a JSON description of the output schema to the system message instead.
     use_json_mode: bool = False
     # Save the response to a file
     save_response_to_file: Optional[str] = None
@@ -349,22 +350,19 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
-    # --- Experimental Features ---
-    # --- Agent Culture ---
-    # Culture manager to use for this agent
-    culture_manager: Optional[CultureManager] = None
-    # Enable the agent to manage cultural knowledge
-    enable_agentic_culture: bool = False
-    # Update cultural knowledge after every run
-    update_cultural_knowledge: bool = False
-    # If True, the agent adds cultural knowledge in the response
-    add_culture_to_context: Optional[bool] = None
-
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
     # Compression manager for compressing tool call results
     compression_manager: Optional[CompressionManager] = None
+
+    # --- Result Offloading ---
+    # Store tool results longer than a threshold as files and leave a short
+    # envelope with a result id in the message. True uses the defaults
+    # (16000 characters, one read_result page); a ResultStore sets the
+    # threshold, preview, lifetime and payload location. Unset, an agent
+    # inherits a team's store as a member; False keeps offloading off there too.
+    offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
     # --- Debug ---
     # Enable debug logs
@@ -402,9 +400,6 @@ class Agent:
         search_past_sessions: Optional[bool] = False,
         num_past_sessions_to_search: Optional[int] = None,
         num_past_session_runs_in_search: Optional[int] = None,
-        # Deprecated params — kept for backward compatibility
-        search_session_history: Optional[bool] = None,
-        num_history_sessions: Optional[int] = None,
         dependencies: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: bool = False,
         db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
@@ -412,18 +407,19 @@ class Agent:
         memory_manager: Optional[MemoryManager] = None,
         enable_agentic_memory: bool = False,
         update_memory_on_run: bool = False,
-        enable_user_memories: Optional[bool] = None,  # Soon to be deprecated. Use update_memory_on_run
         add_memories_to_context: Optional[bool] = None,
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
+        offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
         max_tool_calls_from_history: Optional[int] = None,
         store_media: bool = True,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
         knowledge: Optional[KnowledgeProtocol] = None,
@@ -440,11 +436,8 @@ class Agent:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
-        reasoning: bool = False,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
-        reasoning_min_steps: int = 1,
-        reasoning_max_steps: int = 10,
         read_chat_history: bool = False,
         search_knowledge: bool = True,
         add_search_knowledge_instructions: bool = True,
@@ -493,10 +486,6 @@ class Agent:
         store_events: bool = False,
         events_to_skip: Optional[List[RunEvent]] = None,
         role: Optional[str] = None,
-        culture_manager: Optional[CultureManager] = None,
-        enable_agentic_culture: bool = False,
-        update_cultural_knowledge: bool = False,
-        add_culture_to_context: Optional[bool] = None,
         debug_mode: bool = False,
         debug_level: Literal[1, 2] = 1,
         telemetry: bool = True,
@@ -524,12 +513,6 @@ class Agent:
         self.enable_agentic_state = enable_agentic_state
         self.cache_session = cache_session
 
-        # Deprecated param mapping
-        if search_session_history is not None and not search_past_sessions:
-            search_past_sessions = search_session_history
-        if num_history_sessions is not None and num_past_sessions_to_search is None:
-            num_past_sessions_to_search = num_history_sessions
-
         self.search_past_sessions = search_past_sessions
         self.num_past_sessions_to_search = num_past_sessions_to_search
         self.num_past_session_runs_in_search = num_past_session_runs_in_search
@@ -543,12 +526,7 @@ class Agent:
 
         self.memory_manager = memory_manager
         self.enable_agentic_memory = enable_agentic_memory
-
-        if enable_user_memories is not None:
-            self.update_memory_on_run = enable_user_memories
-        else:
-            self.update_memory_on_run = update_memory_on_run
-        self.enable_user_memories = self.update_memory_on_run  # Soon to be deprecated. Use update_memory_on_run
+        self.update_memory_on_run = update_memory_on_run
 
         self.add_memories_to_context = add_memories_to_context
 
@@ -564,6 +542,14 @@ class Agent:
         self.compress_tool_results = compress_tool_results
         self.compression_manager = compression_manager
 
+        # Result offloading settings
+        self.offload_tool_results = offload_tool_results
+        self._result_store: Optional["ResultStore"] = None
+        # The store a team handed down, so a later team can replace or clear it
+        self._inherited_result_store: Optional["ResultStore"] = None
+        # The setting the store was built from, so a changed setting rebuilds it
+        self._result_store_setting: Union[bool, "ResultStore", None] = None
+
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
         self.num_history_messages = num_history_messages
@@ -578,6 +564,7 @@ class Agent:
         self.max_tool_calls_from_history = max_tool_calls_from_history
 
         self.store_media = store_media
+        self.media_storage = media_storage
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
 
@@ -611,11 +598,8 @@ class Agent:
         self.pre_hooks = pre_hooks
         self.post_hooks = post_hooks
 
-        self.reasoning = reasoning
         self.reasoning_model = reasoning_model  # type: ignore[assignment]
         self.reasoning_agent = reasoning_agent
-        self.reasoning_min_steps = reasoning_min_steps
-        self.reasoning_max_steps = reasoning_max_steps
 
         self.read_chat_history = read_chat_history
         self.search_knowledge = search_knowledge
@@ -676,11 +660,6 @@ class Agent:
         if self.events_to_skip is None:
             self.events_to_skip = [RunEvent.run_content]
 
-        self.culture_manager = culture_manager
-        self.enable_agentic_culture = enable_agentic_culture
-        self.update_cultural_knowledge = update_cultural_knowledge
-        self.add_culture_to_context = add_culture_to_context
-
         self.debug_mode = debug_mode
         if debug_level not in [1, 2]:
             log_warning(f"Invalid debug level: {debug_level}. Setting to 1.")
@@ -696,6 +675,8 @@ class Agent:
 
         # If we are caching the agent session
         self._cached_session: Optional[AgentSession] = None
+        # The db the cached session was loaded from; the cache is only valid for that db
+        self._cached_session_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
 
         self._tool_instructions: Optional[List[str]] = None
         self._team: Optional[Any] = None
@@ -707,7 +688,7 @@ class Agent:
         self._mcp_tools_initialized_on_run: List[Any] = []
         self._connectable_tools_initialized_on_run: List[Any] = []
 
-        # Lazy-initialized shared thread pool executor for background tasks (memory, cultural knowledge, etc.)
+        # Lazy-initialized shared thread pool executor for background tasks (memory, learning, etc.)
         self._background_executor: Optional[Any] = None
 
         # Callable factory settings
@@ -734,6 +715,36 @@ class Agent:
     @property
     def cached_session(self) -> Optional[AgentSession]:
         return self._cached_session
+
+    def _get_cached_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[AgentSession]:
+        """Return the cached session if it matches session_id/user_id and the current db."""
+        cached = getattr(self, "_cached_session", None)
+        if cached is None:
+            return None
+        if getattr(self, "_cached_session_db", None) is not self.db:
+            # The cached session was loaded from a previously assigned db; serving it
+            # would leak that db's runs into the current one, so drop it.
+            self._cached_session = None
+            self._cached_session_db = None
+            return None
+        if cached.session_id != session_id:
+            return None
+        if user_id is not None and cached.user_id != user_id:
+            return None
+        return cached
+
+    def _set_cached_session(self, session: AgentSession) -> None:
+        self._cached_session = session
+        self._cached_session_db = self.db
+
+    @property
+    def result_store(self) -> Optional["ResultStore"]:
+        """The store offloaded tool results go to, or None when offloading is off."""
+        if self._result_store is None and self.offload_tool_results:
+            from agno.agent import _init
+
+            _init.set_result_store(self)
+        return self._result_store
 
     @property
     def learning_machine(self) -> Optional[LearningMachine]:
@@ -975,16 +986,27 @@ class Agent:
         label: Optional[str] = None,
         version: Optional[int] = None,
         strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Agent"]:
-        return _storage.load(cls, id=id, db=db, registry=registry, label=label, version=version, strict=strict)
+        return _storage.load(
+            cls,
+            id=id,
+            db=db,
+            registry=registry,
+            label=label,
+            version=version,
+            strict=strict,
+            published_only=published_only,
+        )
 
     def delete(
         self,
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
-        return _storage.delete(self, db=db, hard_delete=hard_delete)
+        return _storage.delete(self, db=db, hard_delete=hard_delete, require_no_dependents=require_no_dependents)
 
     def get_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -1076,11 +1098,11 @@ class Agent:
     async def aget_session_metrics(self, session_id: Optional[str] = None) -> Optional[SessionMetrics]:
         return await _session.aget_session_metrics(self, session_id=session_id)
 
-    def delete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
-        return _session.delete_session(self, session_id=session_id, user_id=user_id)
+    def delete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False) -> None:
+        return _session.delete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
-    async def adelete_session(self, session_id: str, user_id: Optional[str] = None) -> None:
-        return await _session.adelete_session(self, session_id=session_id, user_id=user_id)
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False) -> None:
+        return await _session.adelete_session(self, session_id=session_id, user_id=user_id, delete_media=delete_media)
 
     def get_session_messages(
         self,
@@ -1140,12 +1162,6 @@ class Agent:
     async def aget_user_memories(self, user_id: Optional[str] = None) -> Optional[List[UserMemory]]:
         return await _managers.aget_user_memories(self, user_id=user_id)
 
-    def get_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return _managers.get_culture_knowledge(self)
-
-    async def aget_culture_knowledge(self) -> Optional[List[CulturalKnowledge]]:
-        return await _managers.aget_culture_knowledge(self)
-
     # ---------------------------------------------------------------
     # _response module delegates
     # ---------------------------------------------------------------
@@ -1162,7 +1178,7 @@ class Agent:
         )
 
     def add_to_knowledge(self, query: str, result: str) -> str:
-        return _default_tools.add_to_knowledge(self, query=query, result=result)
+        return _default_tools.add_to_knowledge(self, query=query, result=result, user_id=self.user_id)
 
     # ---------------------------------------------------------------
     # _cli module delegates
@@ -1196,6 +1212,8 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return _cli.agent_print_response(
             self,
             input=input,
@@ -1252,6 +1270,8 @@ class Agent:
         tags_to_include_in_markdown: Optional[Set[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return await _cli.agent_aprint_response(
             self,
             input=input,
@@ -1292,6 +1312,8 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return _cli.cli_app(
             self,
             input=input,
@@ -1317,6 +1339,8 @@ class Agent:
         exit_on: Optional[List[str]] = None,
         **kwargs: Any,
     ) -> None:
+        from agno.agent import _cli
+
         return await _cli.acli_app(
             self,
             input=input,
@@ -1563,7 +1587,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
@@ -1582,7 +1605,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         stream: Literal[True] = True,
         stream_events: Optional[bool] = False,
@@ -1600,7 +1622,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         input: Optional[str] = None,
         continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -1624,7 +1645,6 @@ class Agent:
             self,
             run_response=run_response,
             run_id=run_id,
-            updated_tools=updated_tools,
             requirements=requirements,
             input=input,
             continue_from=continue_from,
@@ -1653,7 +1673,6 @@ class Agent:
         stream: Literal[False] = False,
         stream_events: Optional[bool] = None,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1672,7 +1691,6 @@ class Agent:
         stream: Literal[True] = True,
         stream_events: Optional[bool] = None,
         run_id: Optional[str] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
@@ -1688,7 +1706,6 @@ class Agent:
         run_response: Optional[RunOutput] = None,
         *,
         run_id: Optional[str] = None,  # type: ignore
-        updated_tools: Optional[List[ToolExecution]] = None,
         requirements: Optional[List[RunRequirement]] = None,
         input: Optional[str] = None,
         continue_from: Union[int, Literal["end", "last_user"]] = "end",
@@ -1713,7 +1730,6 @@ class Agent:
             self,
             run_response=run_response,
             run_id=run_id,
-            updated_tools=updated_tools,
             requirements=requirements,
             input=input,
             continue_from=continue_from,
@@ -1747,7 +1763,9 @@ def get_agent_by_id(
     version: Optional[int] = None,
     label: Optional[str] = None,
     registry: Optional["Registry"] = None,
+    user_id: Optional[str] = None,
     strict: bool = False,
+    published_only: bool = True,
 ) -> Optional["Agent"]:
     """
     Get an Agent by id from the database (new entities/configs schema).
@@ -1761,6 +1779,7 @@ def get_agent_by_id(
         id: Agent entity_id.
         label: Optional label.
         registry: Optional Registry for reconstructing unserializable components.
+        user_id: If set, only resolve the agent when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the agent was not found.
 
@@ -1774,7 +1793,22 @@ def get_agent_by_id(
     from agno.utils.log import log_error
 
     try:
-        row = db.get_config(component_id=id, label=label, version=version)
+        # Only resolve the agent if owned by this user, unowned (shared), or published.
+        if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
+            return None
+
+        if published_only and version is None and label is None:
+            # Dispatch surfaces resolve only a published version; a draft-only
+            # component is not runnable. Uses the
+            # component row rather than get_current_config so third-party
+            # adapters with only the old surface keep working.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            row = db.get_config(component_id=id, version=current_version)
+        else:
+            row = db.get_config(component_id=id, label=label, version=version)
         if row is None:
             return None
 
@@ -1803,23 +1837,71 @@ def get_agent_by_id(
         return None
 
 
+# Rows fetched per list_components call while collecting the full catalog.
+_COMPONENT_LIST_PAGE = 100
+
+# Ceiling on rows collected per listing. Every listed row costs a get_config
+# read plus a full rehydration, and other users' published components share
+# the catalog, so an unbounded scan could turn one listing into thousands of
+# DB reads.
+_COMPONENT_LIST_CAP = 1000
+
+
 def get_agents(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
     exclude_component_ids: Optional[Set[str]] = None,
+    user_id: Optional[str] = None,
 ) -> List["Agent"]:
     """
     Get all agents from the database.
 
     Sets _version and _stage on each agent from the component metadata.
+
+    Args:
+        db: Database to load agents from
+        registry: Optional registry for rehydrating tools
+        exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load agents owned by this user, unowned (shared), or published.
     """
     from agno.utils.log import log_error
 
     agents: List[Agent] = []
     try:
-        components, _ = db.list_components(
-            component_type=ComponentType.AGENT, exclude_component_ids=exclude_component_ids
-        )
+        # The DB default page is one small page and the catalog can exceed it
+        # (other users' published components compete for the same slots), so
+        # page until the filtered total is exhausted or the cap is hit.
+        components: List[Dict[str, Any]] = []
+        seen_component_ids: Set[str] = set()
+        scanned = 0
+        while True:
+            page, total = db.list_components(
+                component_type=ComponentType.AGENT,
+                exclude_component_ids=exclude_component_ids,
+                user_id=user_id,
+                limit=_COMPONENT_LIST_PAGE,
+                offset=scanned,
+            )
+            scanned += len(page)
+            for row in page:
+                # Each page is its own read, so a row created between two of
+                # them shifts the window and hands back something an earlier
+                # page already carried.
+                row_id = row.get("component_id")
+                if row_id is None or row_id in seen_component_ids:
+                    continue
+                seen_component_ids.add(row_id)
+                components.append(row)
+            # A total that is not a count says nothing about what is left, so
+            # this page is all there is to read. BaseDb documents an int, but
+            # the baseline discarded the total entirely and an adapter that
+            # returns None was fine; comparing against it would raise here and
+            # the caller would get an empty listing instead of a short one.
+            if not page or not isinstance(total, int) or scanned >= total:
+                break
+            if scanned >= _COMPONENT_LIST_CAP:
+                log_warning(f"Agent listing truncated by safety cap: returning {len(components)} of {total} components")
+                break
         for component in components:
             try:
                 config = db.get_config(component_id=component["component_id"])

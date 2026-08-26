@@ -1,13 +1,14 @@
+from copy import copy
 from dataclasses import asdict, dataclass, field
 from enum import Enum
 from time import time
-from typing import Any, Dict, List, Optional, Sequence, Union
+from typing import Any, Dict, List, Optional, Sequence, Union, get_args
 
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
+from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message
-from agno.models.metrics import RunMetrics
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
@@ -680,6 +681,11 @@ TeamRunOutputEvent = Union[
     CustomEvent,
 ]
 
+# Cached union members for isinstance checks: rebuilding
+# tuple(get_args(TeamRunOutputEvent)) per streamed chunk is measurable on the
+# hot event-dispatch path.
+TEAM_RUN_OUTPUT_EVENT_TYPES = get_args(TeamRunOutputEvent)
+
 # Map event string to dataclass for team events
 TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.run_started.value: RunStartedEvent,
@@ -786,6 +792,11 @@ class TeamRunOutput:
     events: Optional[List[Union[RunOutputEvent, TeamRunOutputEvent]]] = None
 
     status: RunStatus = RunStatus.running
+    # Queue-attempt generation stamp: set by the queue worker when attempt N
+    # claims this run. Terminal writes carry their attempt and are fenced
+    # against a NEWER stored value, so a presumed-dead attempt's late write
+    # cannot clobber its successor. None outside durable-queue execution.
+    queue_attempt: Optional[int] = None
 
     # User control flow (HITL) requirements to continue a run when paused, in order of arrival
     requirements: Optional[list[RunRequirement]] = None
@@ -826,33 +837,42 @@ class TeamRunOutput:
     def is_cancelled(self):
         return self.status == RunStatus.cancelled
 
+    # Fields hand-serialized in to_dict below; nulled on a shallow copy before
+    # asdict so their (deep, expensive) recursive serialization never runs.
+    # member_responses and input are the heaviest: they nest full member run
+    # outputs that asdict used to serialize once only to be overwritten.
+    _HAND_SERIALIZED_FIELDS = (
+        "messages",
+        "metrics",
+        "status",
+        "tools",
+        "metadata",
+        "images",
+        "videos",
+        "audio",
+        "files",
+        "response_audio",
+        "citations",
+        "events",
+        "additional_input",
+        "reasoning_steps",
+        "reasoning_messages",
+        "references",
+        "requirements",
+        "followups",
+        "member_responses",
+        "input",
+    )
+
     def to_dict(self) -> Dict[str, Any]:
-        _dict = {
-            k: v
-            for k, v in asdict(self).items()
-            if v is not None
-            and k
-            not in [
-                "messages",
-                "metrics",
-                "status",
-                "tools",
-                "metadata",
-                "images",
-                "videos",
-                "audio",
-                "files",
-                "response_audio",
-                "citations",
-                "events",
-                "additional_input",
-                "reasoning_steps",
-                "reasoning_messages",
-                "references",
-                "requirements",
-                "followups",
-            ]
-        }
+        light_copy = copy(self)
+        for field_name in self._HAND_SERIALIZED_FIELDS:
+            setattr(light_copy, field_name, None)
+        if light_copy.content and isinstance(light_copy.content, BaseModel):
+            # Re-serialized below via model_dump under the same truthiness
+            # condition; asdict would deep-copy it here for nothing
+            light_copy.content = None
+        _dict = {k: v for k, v in asdict(light_copy).items() if v is not None}
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
 
@@ -901,7 +921,9 @@ class TeamRunOutput:
             else:
                 _dict["response_audio"] = self.response_audio
 
-        if self.member_responses:
+        # An empty list still serializes as [] (the field defaults to [], and
+        # consumers of the serialized form have always seen the key present)
+        if self.member_responses is not None:
             _dict["member_responses"] = [
                 response.to_dict() if hasattr(response, "to_dict") else response for response in self.member_responses
             ]

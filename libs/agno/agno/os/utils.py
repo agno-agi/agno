@@ -11,7 +11,7 @@ from starlette.middleware.cors import CORSMiddleware
 from agno.agent import Agent, AgentFactory, RemoteAgent
 from agno.agent.protocol import AgentProtocol
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.exceptions import ComponentRehydrationError
+from agno.exceptions import AgnoError, ComponentRehydrationError
 from agno.factory import (
     FactoryContextRequired,
     FactoryError,
@@ -24,7 +24,7 @@ from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.models.message import Message
 from agno.os.config import AgentOSConfig
-from agno.registry import Registry
+from agno.registry import Registry, ToolSource
 from agno.remote.base import RemoteDb, RemoteKnowledge
 from agno.run.agent import RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -33,6 +33,23 @@ from agno.team import RemoteTeam, Team, TeamFactory
 from agno.tools import Function, Toolkit
 from agno.utils.log import log_debug, log_warning, logger
 from agno.workflow import RemoteWorkflow, Workflow, WorkflowFactory
+
+
+class AgnoHTTPException(HTTPException):
+    """HTTPException raised from an ``AgnoError`` that keeps the error's identity.
+
+    Routers that wrap database and model calls in a blanket ``except Exception`` use this
+    to re-raise an ``AgnoError`` with its own status code. The owned-app exception handler
+    copies ``error_id`` and ``error_type`` into the JSON body so clients can branch on them
+    (``migration_required_error``, ``model_provider_error``, ...) instead of parsing
+    ``detail``. On a caller-supplied app FastAPI's default handler still answers with the
+    right status code and ``detail``.
+    """
+
+    def __init__(self, error: AgnoError, detail: Optional[str] = None):
+        super().__init__(status_code=error.status_code, detail=detail if detail is not None else str(error))
+        self.error_id: Optional[str] = getattr(error, "error_id", None)
+        self.error_type: Optional[str] = getattr(error, "type", None)
 
 
 def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> Optional[datetime]:
@@ -59,6 +76,47 @@ def to_utc_datetime(value: Optional[Union[str, int, float, date, datetime]]) -> 
             return None
 
     return datetime.fromtimestamp(value, tz=timezone.utc)
+
+
+# Matched to the most generous object-store metadata budget.
+MAX_FILES_METADATA_BYTES = 8000
+
+
+def parse_files_metadata(files_metadata: Optional[str]) -> List[Optional[Dict[str, Any]]]:
+    """Parse the per-file metadata array, refusing one too large to persist.
+
+    Rejected rather than truncated: a caller who sends metadata expects to read it back.
+    """
+    if not files_metadata:
+        return []
+    if len(files_metadata.encode("utf-8")) > MAX_FILES_METADATA_BYTES:
+        raise HTTPException(
+            status_code=422,
+            detail=f"files_metadata exceeds the {MAX_FILES_METADATA_BYTES}-byte limit",
+        )
+    try:
+        parsed = json.loads(files_metadata)
+    except json.JSONDecodeError as e:
+        log_warning(f"Invalid files_metadata JSON: {files_metadata}: {str(e)}")
+        return []
+    if not isinstance(parsed, list):
+        return []
+    # Coerce non-object entries to None so the matching file is still processed without metadata.
+    return [m if isinstance(m, dict) else None for m in parsed]
+
+
+def drop_media_references(media_dicts: Any) -> Any:
+    """Drop ``media_reference`` from inbound media dicts.
+
+    A reference is a pointer into the configured storage bucket, minted by the offload engine and
+    trusted downstream. Honouring one from a request body would let a caller name any key the
+    AgentOS credentials can reach, persist it onto their own session, and read it back.
+    """
+    if isinstance(media_dicts, list):
+        for item in media_dicts:
+            if isinstance(item, dict):
+                item.pop("media_reference", None)
+    return media_dicts
 
 
 async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[str, Any]:
@@ -105,14 +163,27 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             kwargs.pop("dependencies")
             log_warning(f"Invalid dependencies parameter couldn't be loaded: {dependencies}: {str(e)}")
 
-    if metadata := kwargs.get("metadata"):
-        try:
-            if isinstance(metadata, str):
-                metadata_dict = json.loads(metadata)  # type: ignore
-                kwargs["metadata"] = metadata_dict
-        except json.JSONDecodeError as e:
-            kwargs.pop("metadata")
-            log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
+    # Presence, not truthiness: an empty form value is not a JSON object either and
+    # has to be dropped here rather than reach the run methods as a bare string.
+    if "metadata" in kwargs:
+        metadata = kwargs["metadata"]
+        decoded_metadata: Any = metadata
+        metadata_decoded = True
+        if isinstance(metadata, str):
+            try:
+                decoded_metadata = json.loads(metadata)
+            except json.JSONDecodeError as e:
+                metadata_decoded = False
+                kwargs.pop("metadata")
+                log_warning(f"Invalid metadata parameter couldn't be loaded: {metadata}: {str(e)}")
+        if metadata_decoded:
+            if decoded_metadata is not None and not isinstance(decoded_metadata, dict):
+                # metadata is a caller-writable form field holding a JSON object. An
+                # array, string or number cannot be merged with the run's own metadata
+                # and the run methods cannot consume it, so this is a client error and
+                # must be answered as one instead of failing deeper in the stack.
+                raise HTTPException(status_code=400, detail="Invalid metadata parameter: expected a JSON object")
+            kwargs["metadata"] = decoded_metadata
 
     # Handle media parameters. AgnoClient (e.g. remote agent/team members) sends them as
     # JSON strings of media dicts with base64-encoded content, the format produced by
@@ -133,7 +204,7 @@ async def get_request_kwargs(request: Request, endpoint_func: Callable) -> Dict[
             continue
         kwargs.pop(form_key)
         try:
-            reconstructed_media = reconstructor(json.loads(media_value))
+            reconstructed_media = reconstructor(drop_media_references(json.loads(media_value)))
             if reconstructed_media:
                 kwargs[kwarg_key] = reconstructed_media
         except json.JSONDecodeError as e:
@@ -272,6 +343,379 @@ def format_sse_event_with_index(
     except Exception:
         clean_json = event.to_json(separators=(",", ":"), indent=None)
         return f"event: message\ndata: {clean_json}\n\n"
+
+
+# Idle window between tail items before a keepalive (and the settled-ticket
+# truth probe) fires; module-level so tests can shrink it.
+_TAIL_IDLE_RECHECK_SECONDS = 30.0
+
+
+def sse_error_frame(message: str) -> str:
+    """A wire-safe SSE error frame.
+
+    The payload goes through json.dumps: hand-interpolating exception text
+    into an f-string frame emitted invalid JSON the moment the message
+    contained a quote, backslash, or newline.
+    """
+    return f"event: error\ndata: {json.dumps({'event': 'error', 'error': message})}\n\n"
+
+
+async def queued_run_tail_streamer(run_id: str, from_index: Optional[int] = None) -> Any:
+    """SSE response for a durably queued STREAMING run: tail the event stream.
+
+    ONE implementation for all three routers. The run executes on whichever
+    replica's worker claims it; this connection just observes. Keepalives
+    cover the queued wait and silent stretches; a disconnect is harmless
+    (resume replays); the complete output is guaranteed via the run row even
+    if this stream is never watched.
+
+    Honest close (the ticket-consulting wrapper LOOP is parked,
+    evidence-gated - see the ledger): when the tail ends WITHOUT the run
+    having reached a terminal stream state - the status key expired while
+    the job sat queued past the TTL, or a producer died - and the durable
+    ticket still vouches for the run, emit an explicit ``stream_expired``
+    event instead of a silent, terminal-looking close. A real SSE event
+    type, not a comment: it must reach client handlers (unknown types are
+    ignored by standard consumers). Under the deployment-affinity
+    misconfiguration (jobs queued forever) clients will reconnect hourly -
+    expected and diagnostic, not a bug.
+    """
+    import asyncio
+    import contextlib
+
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+    from agno.utils.log import log_error
+
+    event_stream = get_event_stream()
+    tail_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for tail_item in event_stream.tail(run_id, last_event_index=from_index):
+                await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Queued stream tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
+        finally:
+            await tail_queue.put(None)
+
+    pump_task = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(tail_queue.get(), timeout=_TAIL_IDLE_RECHECK_SECONDS)
+            except asyncio.TimeoutError:
+                # Idle recheck. If the durable ticket has SETTLED while the
+                # stream never received its terminal sentinel (a lost
+                # terminal write - the producer died between settling the
+                # ticket and closing the stream), nothing will ever end this
+                # tail: it used to keepalive silently until the stream state
+                # expired. Tell the client the truth instead, once, and end -
+                # the complete output is guaranteed via the run row.
+                closed_frame: Optional[str] = None
+                with contextlib.suppress(Exception):
+                    from agno.os.job_queue import get_active_queue_worker, ticket_status_to_api
+
+                    worker = get_active_queue_worker()
+                    job = await worker.store.get_job(run_id) if worker is not None else None
+                    if (
+                        job is not None
+                        and job.get("job_type", "run") == "run"
+                        and job.get("status") in ("completed", "failed", "cancelled")
+                    ):
+                        stream_status = await event_stream.get_run_status(run_id)
+                        if stream_status is None or stream_status in (RunStatus.pending, RunStatus.running):
+                            payload = {
+                                "event": "stream_expired",
+                                "run_id": run_id,
+                                "status": ticket_status_to_api(job.get("status", "")) or "ERROR",
+                                "message": "The run finished but its stream lost the terminal event; "
+                                "poll the run for the complete output.",
+                            }
+                            closed_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+                if closed_frame is not None:
+                    yield closed_frame
+                    return
+                yield ": keepalive\n\n"
+                continue
+            if item is None:
+                break
+            _ev_index, sse_data = item
+            yield sse_data
+        # The tail ended. If the run's stream state is gone or non-terminal
+        # while its durable ticket still says queued/running, the close is a
+        # lie - tell the client the truth, once, and end.
+        expired_frame: Optional[str] = None
+        with contextlib.suppress(Exception):
+            status = await event_stream.get_run_status(run_id)
+            if status is None or status in (RunStatus.pending, RunStatus.running):
+                from agno.os.job_queue import get_active_queue_worker
+
+                worker = get_active_queue_worker()
+                job = await worker.store.get_job(run_id) if worker is not None else None
+                if (
+                    job is not None
+                    and job.get("job_type", "run") == "run"
+                    and job.get("status")
+                    in (
+                        "queued",
+                        "running",
+                    )
+                ):
+                    payload = {
+                        "event": "stream_expired",
+                        "run_id": run_id,
+                        "status": "PENDING" if job["status"] == "queued" else "RUNNING",
+                        "message": "Stream state expired while the run is still accepted; "
+                        "reconnect (or poll the run) to resume.",
+                    }
+                    expired_frame = f"event: stream_expired\ndata: {json.dumps(payload)}\n\n"
+        if expired_frame is not None:
+            yield expired_frame
+    finally:
+        pump_task.cancel()
+        # Suppress everything: an exception re-raised here reaches the ASGI
+        # layer on a response whose headers are already sent
+        with contextlib.suppress(BaseException):
+            await pump_task
+
+
+def stored_event_replay_dicts(
+    run_output: Any, run_id: str, last_event_index: Optional[int] = None
+) -> List[Dict[str, Any]]:
+    """DB-fallback replay payloads, honoring the client's floor.
+
+    ONE implementation for every replay surface (the three SSE resume routes
+    and the workflow WS subscription) - the old per-surface loops ignored
+    last_event_index and renumbered every stored event from zero: duplicates
+    for partially-caught-up clients, and destroyed index continuity (stream
+    indices are NOT gapless - retries and continuation legs leave real gaps
+    that positional renumbering compacted away).
+
+    Events stamped at publish carry their real stream index (event_index);
+    those are floor-filtered and replayed under their stored index.
+    Unstamped legacy events keep the positional fallback and are never
+    floor-filtered: a floor from live-stream indices does not speak their
+    numbering.
+    """
+    floor = last_event_index if last_event_index is not None else -1
+    dicts: List[Dict[str, Any]] = []
+    for position, event in enumerate(getattr(run_output, "events", None) or []):
+        event_dict = event.to_dict()
+        stored_index = event_dict.get("event_index")
+        if stored_index is not None and int(stored_index) <= floor:
+            continue
+        event_dict["event_index"] = int(stored_index) if stored_index is not None else position
+        if "run_id" not in event_dict:
+            event_dict["run_id"] = run_id
+        dicts.append(event_dict)
+    return dicts
+
+
+def stored_event_replay_frames(run_output: Any, run_id: str, last_event_index: Optional[int] = None) -> List[str]:
+    """SSE framing over ``stored_event_replay_dicts`` (the PATH-3 resume
+    routes). The meta frame's total reflects what is actually replayed."""
+    from agno.utils.serialize import json_serializer
+
+    frames: List[str] = []
+    for event_dict in stored_event_replay_dicts(run_output, run_id, last_event_index):
+        event_type = event_dict.get("event", "message")
+        frames.append(
+            f"event: {event_type}\n"
+            f"data: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        )
+    status = run_output.status.value if hasattr(run_output.status, "value") else (run_output.status or "unknown")
+    meta = {
+        "event": "replay",
+        "run_id": run_id,
+        "status": status,
+        "total_events": len(frames),
+        "message": "Run completed. Replaying stored events from database.",
+    }
+    frames.insert(0, f"event: replay\ndata: {json.dumps(meta)}\n\n")
+    return frames
+
+
+async def astream_index_floor(
+    component: Any, run_id: str, session_id: Optional[str], user_id: Optional[str] = None
+) -> Optional[int]:
+    """Durable index floor for a reopen: max stored event_index on the run
+    row (stamped at publish - see BaseRunOutputEvent.event_index). Read this
+    ONLY when the stream's counter is actually gone (get_last_index < 0):
+    it costs a session read, and a live counter never needs it. Fail-open:
+    None means no seed, which is exactly today's behavior."""
+    import contextlib
+
+    with contextlib.suppress(Exception):
+        run_output = await component.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)
+        indices = [
+            e.event_index
+            for e in (getattr(run_output, "events", None) or [])
+            if getattr(e, "event_index", None) is not None
+        ]
+        if indices:
+            return max(indices)
+    return None
+
+
+async def amark_continue_stream_running(
+    run_id: str, component: Any = None, session_id: Optional[str] = None, user_id: Optional[str] = None
+) -> None:
+    """Sync the event stream at the START of a continue: re-register the run
+    (idempotent - a cross-replica continue lands on a replica whose stream has
+    never seen it) and mark it RUNNING so /resume and reconnects stop treating
+    it as PAUSED while the post-approval leg executes. Fail-open: coordination
+    writes must never kill the continue.
+
+    When the caller passes its component, an EXPIRED index counter (paused
+    run outliving the TTL across a deploy/restart) is re-seeded from the run
+    row's stored indices - without that, the continuation restarts at index 0
+    and resuming clients dedup away every post-approval event."""
+    import contextlib
+
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+
+    with contextlib.suppress(Exception):
+        event_stream = get_event_stream()
+        await event_stream.register_run(run_id, RunStatus.pending)
+        floor = None
+        if component is not None and await event_stream.get_last_index(run_id) < 0:
+            floor = await astream_index_floor(component, run_id, session_id, user_id)
+        # Invalidate the settled pause the way the durable path does: PAUSED
+        # is tail-terminal in the stream (status AND a sentinel event), and
+        # the status write below only covers the first half - a tail attached
+        # before this leg's first event would read the stale pause sentinel
+        # and close empty. reopen_run is atomic per implementation and
+        # declines if a racing writer already moved the status past PAUSED;
+        # it also clears the pause's completed_at so the reopened run cannot
+        # be reaped mid-continuation, and seeds the index counter from the
+        # durable floor when the stream's own counter expired.
+        if not await event_stream.reopen_run(run_id, floor=floor):
+            # Declined: the status already moved past PAUSED (a racing writer
+            # finished or took over the leg). Stamping RUNNING over that
+            # newer state would resurrect a settled stream until the
+            # streamer's finally heals it - honor the reopen contract and
+            # leave the stream alone; the continue itself proceeds.
+            return
+        await event_stream.set_run_status(run_id, RunStatus.running)
+
+
+async def acomplete_continue_stream(
+    component: Any,
+    run_id: str,
+    session_id: Optional[str],
+    only_if_tracked: bool = False,
+    final_status: Any = None,
+) -> Optional[Any]:
+    """Sync the event stream at the END of a continue with the run row's true
+    final status. Without this, a continue of a formerly-queued/streamed run
+    leaves the stream PAUSED forever - /resume replays the stale paused
+    snapshot after the run completed. A re-paused continue re-parks the
+    stream as PAUSED (resumable), never a COMPLETED sentinel.
+
+    The status is resolved from ``session.get_run(run_id)`` - NEVER
+    ``session.runs[-1]``: under interleaving, another run appended to the same
+    session makes the last row a different run.
+
+    only_if_tracked: for the non-stream continue paths - sync only when the
+    event stream already knows the run. A run that never rode the queue or a
+    stream needs no stream view, and completing an unknown run would
+    fabricate one.
+
+    final_status: caller-provided status (e.g. the returned run output's) to
+    skip the session read; falls back to the run-row read when unusable.
+    """
+    import asyncio
+    import contextlib
+
+    from agno.os.event_streams import get_event_stream
+    from agno.run.base import RunStatus
+
+    event_stream = get_event_stream()
+    if only_if_tracked:
+        tracked = None
+        with contextlib.suppress(Exception):
+            tracked = await event_stream.get_run_status(run_id)
+        if tracked is None:
+            return None
+    if final_status is None:
+        with contextlib.suppress(Exception):
+            session = await component.aget_session(session_id=session_id)
+            if session is not None:
+                final_status = getattr(session.get_run(run_id), "status", None)
+    if isinstance(final_status, str) and not isinstance(final_status, RunStatus):
+        # DB round-trips can degrade the enum to a plain str
+        with contextlib.suppress(ValueError):
+            final_status = RunStatus(final_status)
+    if not isinstance(final_status, RunStatus):
+        final_status = RunStatus.completed
+    with contextlib.suppress(Exception):
+        await asyncio.shield(event_stream.complete_run(run_id, final_status))
+    # Returned so callers (the durable continue seams) can settle the queue
+    # ticket with the same resolved status instead of re-reading the row
+    return final_status
+
+
+async def afinalize_continue_stream(
+    component: Any,
+    run_id: str,
+    session_id: Optional[str],
+    queue_worker: Any = None,
+    only_if_tracked: bool = False,
+    final_status: Any = None,
+) -> Optional[Any]:
+    """The inline continue's terminal-sync obligation as ONE unit that
+    survives client-disconnect cancellation: resolve the run's final status,
+    close the stream view (acomplete_continue_stream), settle a paused
+    ticket (asettle_paused_ticket).
+
+    A disconnecting client cancels the response task, and the first
+    unshielded await in this sequence used to leak that cancellation
+    (contextlib.suppress(Exception) does not catch CancelledError) -
+    abandoning the stream view as RUNNING with no producer (immortal on
+    Redis, whose TTL refresher had enrolled the run, so /resume tails spun
+    on keepalives forever) and skipping the ticket settle entirely. The
+    obligation now runs in its OWN task: the caller's cancellation
+    re-raises here, but the task completes on the loop regardless.
+    """
+    import asyncio
+
+    async def _obligation() -> Optional[Any]:
+        final = await acomplete_continue_stream(
+            component, run_id, session_id, only_if_tracked=only_if_tracked, final_status=final_status
+        )
+        if queue_worker is not None:
+            from agno.os.job_queue import asettle_paused_ticket
+
+            await asettle_paused_ticket(queue_worker, run_id, final)
+        return final
+
+    task = asyncio.ensure_future(_obligation())
+    try:
+        return await asyncio.shield(task)
+    except asyncio.CancelledError:
+        # The obligation finishes in the background; retrieve its eventual
+        # result so it never warns, and let the cancellation propagate so
+        # the response task still ends as cancelled
+        task.add_done_callback(lambda t: t.cancelled() or t.exception())
+        raise
+
+
+def replayed_payload_to_sse(payload: Any, event_index: int, run_id: str) -> str:
+    """Convert an event-stream replay payload to an SSE string.
+
+    In-memory replay returns structured event objects; distributed backends
+    (e.g. Redis) return SSE-formatted strings directly. Consumers of
+    ``BaseEventStream.replay()`` use this to handle both.
+    """
+    if isinstance(payload, str):
+        return payload
+    return format_sse_event_with_index(payload, event_index=event_index, run_id=run_id)
 
 
 async def get_db(
@@ -422,7 +866,20 @@ def get_knowledge_instance(
             f"Please specify knowledge_id parameter. Available IDs: {knowledge_ids}",
         )
 
-    # No identifiers provided - list available IDs
+    # No identifiers provided. With nothing registered there is nothing to disambiguate, so the
+    # message below would assert a condition its own empty list disproves. A caller that named
+    # a db_id or knowledge_id is answered above, where "not found" is the more precise answer.
+    if not knowledge_instances:
+        raise HTTPException(
+            status_code=503,
+            detail=(
+                "No knowledge base is available on this AgentOS. A Knowledge is served over "
+                "/knowledge only once it has a contents_db: pass Knowledge(..., contents_db=<db>) "
+                "to AgentOS(knowledge=[...]), or to an agent or team."
+            ),
+        )
+
+    # List available IDs
     knowledge_ids = []
     for k in knowledge_instances:
         if k.contents_db:
@@ -695,25 +1152,25 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     return None
 
 
-def process_image(file: UploadFile) -> Image:
+def process_image(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Image:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Image(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Image(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_audio(file: UploadFile) -> Audio:
+def process_audio(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Audio:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Audio(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Audio(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
-def process_video(file: UploadFile) -> Video:
+def process_video(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Video:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
-    return Video(content=content, format=extract_format(file), mime_type=file.content_type)
+    return Video(content=content, format=extract_format(file), mime_type=file.content_type, metadata=metadata)
 
 
 # Map document file extensions to their canonical MIME type, used to recover a valid
@@ -757,7 +1214,7 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     return file.content_type
 
 
-def process_document(file: UploadFile) -> Optional[FileMedia]:
+def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Optional[FileMedia]:
     content = file.file.read()
     if not content:
         raise HTTPException(status_code=400, detail="Empty file")
@@ -769,6 +1226,7 @@ def process_document(file: UploadFile) -> Optional[FileMedia]:
         filename=file.filename,
         format=extract_format(file),
         mime_type=_resolve_document_mime_type(file),
+        metadata=metadata,
     )
 
 
@@ -842,6 +1300,90 @@ def find_factory_by_id(
     return None
 
 
+def draft_preview_identity(request: Any) -> tuple:
+    """(actor, privileged) for the draft-preview gate.
+
+    ``privileged`` is True only for a caller allowed to preview anyone's
+    draft: the admin scope, or no authentication at all (no request, or no
+    auth middleware ran). A plain authenticated caller keeps its raw
+    identity even when ``user_isolation`` is off - that flag widens reads,
+    never the right to run another owner's draft.
+    """
+    if request is None:
+        return None, True
+    from agno.os.middleware.user_scope import _has_admin_scope
+
+    user_id = getattr(request.state, "user_id", None)
+    scopes = getattr(request.state, "scopes", None)
+    admin_scope_raw = getattr(request.state, "admin_scope", None)
+    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
+    if scopes is None and user_id is None:
+        # No auth middleware ran: authorization is off.
+        return None, True
+    if _has_admin_scope(list(scopes or []), admin_scope=admin_scope):
+        return None, True
+    return (user_id if isinstance(user_id, str) else None), False
+
+
+def may_read_draft_configs(
+    component_row: Optional[Dict[str, Any]], actor: Optional[str], privileged: bool = False
+) -> bool:
+    """Whether this caller may read a component's draft-stage configs.
+
+    The REST twin of the toolkit's rule. Publishing puts a component on the
+    platform, but it publishes one version: everything above the live pointer
+    is the owner's work in progress. A caller who can see a component reads its
+    published stage only, unless it owns the row, the row is unowned (shared),
+    or the caller is privileged (admin, or authorization off).
+
+    Seeing is not reading every stage -- the route already decided visibility
+    with ``get_component(user_id=...)`` before asking this.
+    """
+    if privileged or actor is None or component_row is None:
+        return True
+    owner = component_row.get("user_id")
+    return owner is None or owner == actor
+
+
+def allow_draft_preview(
+    db: Optional[Union[BaseDb, AsyncBaseDb]],
+    component_id: str,
+    version: Optional[int],
+    actor: Optional[str],
+    privileged: bool = False,
+) -> bool:
+    """Whether an explicit-version run may proceed.
+
+    Published versions were always reachable, so pinning one is never gated.
+    A draft version is a control-plane preview: allowed for the component's
+    owner and for privileged callers (admin scope, or authorization off);
+    an authenticated non-admin with no usable identity is denied. Everyone
+    denied gets the same not-found the component would produce, so drafts
+    are not disclosed. Returns True when there is nothing to gate (no
+    version, no sync db, or no such config) - resolution then produces its
+    own not-found.
+    """
+    if version is None or not isinstance(db, BaseDb):
+        return True
+    try:
+        row = db.get_config(component_id=component_id, version=version)
+    except NotImplementedError:
+        return True
+    if not isinstance(row, dict):
+        return True
+    if row.get("stage") == "published":
+        return True
+    if privileged:
+        return True
+    if actor is None:
+        return False
+    try:
+        component = db.get_component(component_id=component_id)
+    except NotImplementedError:
+        return True
+    return bool(isinstance(component, dict) and component.get("user_id") == actor)
+
+
 def get_agent_by_id(
     agent_id: str,
     agents: Optional[Sequence[Union[Agent, RemoteAgent, AgentProtocol, AgentFactory]]] = None,
@@ -850,7 +1392,9 @@ def get_agent_by_id(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Get an agent by ID, optionally creating a fresh instance for request isolation.
 
@@ -905,7 +1449,15 @@ def get_agent_by_id(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db,
+                id=agent_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -925,7 +1477,9 @@ async def get_agent_by_id_async(
     version: Optional[int] = None,
     create_fresh: bool = False,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Agent, RemoteAgent, AgentProtocol]]:
     """Async variant of get_agent_by_id that supports async factories."""
     if agent_id is None:
@@ -955,7 +1509,15 @@ async def get_agent_by_id_async(
         from agno.agent.agent import get_agent_by_id as get_agent_by_id_db
 
         try:
-            db_agent = get_agent_by_id_db(db=db, id=agent_id, version=version, registry=registry, strict=strict)
+            db_agent = get_agent_by_id_db(
+                db=db,
+                id=agent_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_agent
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -975,7 +1537,9 @@ def get_team_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Get a team by ID, optionally creating a fresh instance for request isolation.
 
@@ -1022,7 +1586,15 @@ def get_team_by_id(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db,
+                id=team_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1042,7 +1614,9 @@ async def get_team_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Team, RemoteTeam]]:
     """Async variant of get_team_by_id that supports async factories."""
     if team_id is None:
@@ -1066,7 +1640,15 @@ async def get_team_by_id_async(
         from agno.team.team import get_team_by_id as get_team_by_id_db
 
         try:
-            db_team = get_team_by_id_db(db=db, id=team_id, version=version, registry=registry, strict=strict)
+            db_team = get_team_by_id_db(
+                db=db,
+                id=team_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
+            )
             return db_team
         except ComponentRehydrationError:
             # Broken is not "not found": propagate so the caller can refuse loudly.
@@ -1086,7 +1668,9 @@ def get_workflow_by_id(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Get a workflow by ID, optionally creating a fresh instance for request isolation.
 
@@ -1139,7 +1723,13 @@ def get_workflow_by_id(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+                db=db,
+                id=workflow_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -1160,7 +1750,9 @@ async def get_workflow_by_id_async(
     version: Optional[int] = None,
     registry: Optional[Registry] = None,
     ctx: Optional[RequestContext] = None,
+    user_id: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Optional[Union[Workflow, RemoteWorkflow]]:
     """Async variant of get_workflow_by_id that supports async factories."""
     if workflow_id is None:
@@ -1187,7 +1779,13 @@ async def get_workflow_by_id_async(
 
         try:
             db_workflow = get_workflow_by_id_db(
-                db=db, id=workflow_id, version=version, registry=registry, strict=strict
+                db=db,
+                id=workflow_id,
+                version=version,
+                registry=registry,
+                user_id=user_id,
+                strict=strict,
+                published_only=published_only,
             )
             return db_workflow
         except ComponentRehydrationError:
@@ -1225,6 +1823,52 @@ def resolve_origins(user_origins: Optional[List[str]] = None, default_origins: O
     ]
 
 
+def resolve_ws_deployment_scope_config(app: FastAPI) -> Tuple[Optional[str], bool]:
+    """The deployment's admin scope and user-isolation flag, as the HTTP surface sees them.
+
+    Both settings are configured independently of any JWT key source: a
+    deployment authenticated by security key or by service-account tokens
+    carries a custom admin scope and user isolation exactly as a JWT one does,
+    and the auth layer stamps both on ``app.state`` in every one of those modes.
+    Reading them only where a JWT validator exists left the WebSocket surface
+    ruling on the DEFAULT scope name while REST ruled on the configured one -
+    so the configured admin scope was demoted on WebSockets, and the default
+    scope name was promoted there.
+
+    Order of precedence:
+      1. ``app.state``, populated eagerly by AgentOS for every authenticated
+         mode and lazily by the auth middleware on the first HTTP request.
+      2. the auth middleware's own ``add_middleware`` kwargs, which cover the
+         manual setup path before any HTTP request has run and the keyless
+         (security-key / service-account) layer that never populates state.
+
+    A deployment with no auth layer at all configures neither, so both surfaces
+    fall back to the default admin scope and to isolation off.
+    """
+    state = getattr(app, "state", None)
+    admin_scope_raw = getattr(state, "admin_scope", None) if state is not None else None
+    admin_scope: Optional[str] = admin_scope_raw if isinstance(admin_scope_raw, str) and admin_scope_raw else None
+    user_isolation = bool(getattr(state, "user_isolation_enabled", False)) if state is not None else False
+
+    if admin_scope is not None and user_isolation:
+        return admin_scope, user_isolation
+
+    from agno.os.middleware.jwt import AuthMiddleware
+
+    for entry in getattr(app, "user_middleware", None) or []:
+        if getattr(entry, "cls", None) is not AuthMiddleware:
+            continue
+        kwargs = getattr(entry, "kwargs", {}) or {}
+        if admin_scope is None:
+            candidate = kwargs.get("admin_scope")
+            if isinstance(candidate, str) and candidate:
+                admin_scope = candidate
+        if not user_isolation:
+            user_isolation = bool(kwargs.get("user_isolation", False))
+
+    return admin_scope, user_isolation
+
+
 def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     """Resolve JWT auth config for the WebSocket entrypoint.
 
@@ -1241,19 +1885,32 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
     This helper bridges that gap by walking ``app.user_middleware`` to find a
     ``JWTMiddleware`` entry, building a validator from its kwargs the same way
     the middleware does, and caching the result on ``app.state``.
+
+    The admin scope and the user-isolation flag are resolved separately, on
+    every path: they are deployment settings that outlive the JWT question, and
+    a WebSocket that read them only when a validator exists disagreed with REST
+    on every security-key and service-account deployment.
     """
+    state = getattr(app, "state", None)
+    if state is None:
+        return {
+            "validator": None,
+            "verify_audience": False,
+            "audience": None,
+            "admin_scope": None,
+            "user_isolation": False,
+            "auth_required": False,
+        }
+
+    deployment_admin_scope, deployment_user_isolation = resolve_ws_deployment_scope_config(app)
     blank: Dict[str, Any] = {
         "validator": None,
         "verify_audience": False,
         "audience": None,
-        "admin_scope": None,
-        "user_isolation": False,
+        "admin_scope": deployment_admin_scope,
+        "user_isolation": deployment_user_isolation,
         "auth_required": False,
     }
-
-    state = getattr(app, "state", None)
-    if state is None:
-        return blank
 
     validator = getattr(state, "jwt_validator", None)
     if validator is not None:
@@ -1261,8 +1918,8 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
             "validator": validator,
             "verify_audience": getattr(state, "jwt_verify_audience", False),
             "audience": getattr(state, "jwt_audience", None),
-            "admin_scope": getattr(state, "admin_scope", None),
-            "user_isolation": bool(getattr(state, "user_isolation_enabled", False)),
+            "admin_scope": deployment_admin_scope,
+            "user_isolation": deployment_user_isolation,
             "auth_required": True,
         }
 
@@ -1288,16 +1945,9 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
                 getenv("JWT_VERIFICATION_KEY") or getenv("JWT_JWKS_FILE")
             ):
                 continue
-            # Mirror JWTMiddleware.__init__ deprecated secret_key handling:
-            # append to verification_keys so manual setups using secret_key
-            # still get a working WebSocket validator.
-            verification_keys = list(kwargs.get("verification_keys") or [])
-            legacy_secret = kwargs.get("secret_key")
-            if legacy_secret and legacy_secret not in verification_keys:
-                verification_keys.append(legacy_secret)
             try:
                 lazy_validator = JWTValidator(
-                    verification_keys=verification_keys or None,
+                    verification_keys=kwargs.get("verification_keys"),
                     jwks_file=kwargs.get("jwks_file"),
                     algorithm=kwargs.get("algorithm", "RS256"),
                     validate=kwargs.get("validate", True),
@@ -1315,8 +1965,12 @@ def resolve_ws_jwt_config(app: FastAPI) -> Dict[str, Any]:
 
             verify_audience = bool(kwargs.get("verify_audience", False))
             audience = kwargs.get("audience")
-            admin_scope = kwargs.get("admin_scope")
-            user_isolation = bool(kwargs.get("user_isolation", False))
+            # The admin scope and isolation flag come from the deployment-wide
+            # resolution, which already read this entry's kwargs: an app carrying
+            # more than one auth layer must not answer differently depending on
+            # which one happens to hold the JWT key.
+            admin_scope = deployment_admin_scope
+            user_isolation = deployment_user_isolation
 
             # Cache on app.state so subsequent WebSocket connections and the
             # HTTP middleware see the same validator instance.
@@ -1461,10 +2115,8 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
     # Check the team tools
     if team.tools and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 if tool not in mcp_tools:
                     mcp_tools.append(tool)
 
@@ -1474,10 +2126,8 @@ def collect_mcp_tools_from_team(team: Team, mcp_tools: List[Any]) -> None:
             if isinstance(member, Agent):
                 if member.tools and isinstance(member.tools, list):
                     for tool in member.tools:
-                        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                        if hasattr(type(tool), "__mro__") and any(
-                            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                        ):
+                        # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                        if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                             if tool not in mcp_tools:
                                 mcp_tools.append(tool)
 
@@ -1492,16 +2142,14 @@ def collect_mcp_tools_from_registry(registry: Optional[Registry], mcp_tools: Lis
     Registry tools are not attached to any agent, team or workflow, so the
     other collectors never see them. They still must be connected in the
     AgentOS lifespan: components created from registry tools (e.g. via
-    StudioTool) serialize a toolkit's functions at persist time, and an
+    StudioTools) serialize a toolkit's functions at persist time, and an
     unconnected MCP toolkit has none -- its tools would be silently dropped.
     """
     if registry is None or not registry.tools:
         return
     for tool in registry.tools:
-        # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-        if hasattr(type(tool), "__mro__") and any(
-            c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-        ):
+        # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+        if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
             if tool not in mcp_tools:
                 mcp_tools.append(tool)
 
@@ -1541,10 +2189,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         if step.agent:
             if step.agent.tools and isinstance(step.agent.tools, list):
                 for tool in step.agent.tools:
-                    # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                    if hasattr(type(tool), "__mro__") and any(
-                        c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                    ):
+                    # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                    if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                         if tool not in mcp_tools:
                             mcp_tools.append(tool)
         # Check step's team
@@ -1566,10 +2212,8 @@ def collect_mcp_tools_from_workflow_step(step: Any, mcp_tools: List[Any]) -> Non
         # Direct agent in workflow steps
         if step.tools and isinstance(step.tools, list):
             for tool in step.tools:
-                # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-                if hasattr(type(tool), "__mro__") and any(
-                    c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-                ):
+                # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+                if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                     if tool not in mcp_tools:
                         mcp_tools.append(tool)
 
@@ -1637,12 +2281,17 @@ def collect_components_from_agent(agent: Any, registry: Registry, visited: Set[i
     tools = getattr(agent, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool)
+            registry.add_tool(tool, source=ToolSource.DISCOVERED)
 
     registry.add_schema(getattr(agent, "input_schema", None))
     registry.add_schema(getattr(agent, "output_schema", None))
     registry.add_db(getattr(agent, "db", None))
     _collect_components_from_knowledge(getattr(agent, "knowledge", None), registry)
+    # A named LearningMachine on a code-defined component is a registry
+    # resource: its stored config references it by name, so the registry the
+    # AgentOS resolves through must hold it. add_learning ignores True, None
+    # and unnamed (inline) machines.
+    registry.add_learning(getattr(agent, "learning", None))
 
 
 def collect_components_from_team(team: Any, registry: Registry, visited: Set[int]) -> None:
@@ -1660,12 +2309,13 @@ def collect_components_from_team(team: Any, registry: Registry, visited: Set[int
     tools = getattr(team, "tools", None)
     if isinstance(tools, list):
         for tool in tools:
-            registry.add_tool(tool)
+            registry.add_tool(tool, source=ToolSource.DISCOVERED)
 
     registry.add_schema(getattr(team, "input_schema", None))
     registry.add_schema(getattr(team, "output_schema", None))
     registry.add_db(getattr(team, "db", None))
     _collect_components_from_knowledge(getattr(team, "knowledge", None), registry)
+    registry.add_learning(getattr(team, "learning", None))
 
     members = getattr(team, "members", None)
     if isinstance(members, list):
@@ -2034,6 +2684,69 @@ def stringify_input_content(input_content: Union[str, Dict[str, Any], List[Any],
 # High-level resolvers with error handling for routers
 # ---------------------------------------------------------------------------
 
+from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY, RESERVED_RUN_METADATA_KEYS  # noqa: E402
+
+
+def stamp_component_version(kwargs: Dict[str, Any], version: Optional[int]) -> None:
+    """Record an explicitly requested component version in the run metadata.
+
+    Mutates ``kwargs`` in place: merges the stamp into any caller-provided
+    ``metadata`` dict (a copy - the request-state dict is never mutated).
+
+    The stamp is authoritative for lifecycle re-resolution, so a caller must
+    never supply it. ``metadata`` is a caller-writable form field, so every
+    inbound runtime-owned key is stripped first - a forged version stamp
+    survives an unpinned run and lets ``/continue`` dispatch a draft the
+    caller was refused at run-start, and a forged dispatch lineage would
+    pre-seed or reset the runner's cycle guard. The version key is (re)written
+    only when a version was pinned via the route's own ``version`` parameter.
+    No pinned version means no stamp, so unpinned runs keep their legacy shape
+    unless the caller sent their own (now-sanitized) metadata.
+    """
+    inbound = kwargs.get("metadata")
+    if inbound is not None and not isinstance(inbound, dict):
+        # Only a mapping can carry (or forge) the stamp. The run routes reject a
+        # non-object ``metadata`` at the request seam, so this only guards callers
+        # that build kwargs themselves: with no version pinned there is nothing to
+        # write, so the value is left exactly as it arrived; with one pinned the
+        # stamp is authoritative for lifecycle re-resolution and must not be
+        # dropped, so it replaces a value nothing downstream could have read.
+        if version is None:
+            return
+        inbound = None
+    had_metadata = inbound is not None
+    metadata = dict(inbound or {})
+    # Strip every forged runtime key before trusting the route's own pinned
+    # version; only the version key is (conditionally) rewritten below.
+    for reserved_key in RESERVED_RUN_METADATA_KEYS:
+        metadata.pop(reserved_key, None)
+    if version is not None:
+        metadata[COMPONENT_VERSION_METADATA_KEY] = version
+    # Only touch kwargs when there is a stamp to write or metadata to sanitize;
+    # a purely unpinned run with no caller metadata keeps its legacy shape.
+    if metadata or had_metadata:
+        kwargs["metadata"] = metadata
+
+
+def stamped_component_version(run_output: Any) -> Optional[int]:
+    """The component version recorded on a run at start, or None.
+
+    None (no stamp, pre-stamp legacy runs, or an unusable value) means the
+    caller must keep today's unpinned resolution.
+    """
+    metadata = getattr(run_output, "metadata", None)
+    if not isinstance(metadata, dict):
+        return None
+    value = metadata.get(COMPONENT_VERSION_METADATA_KEY)
+    if isinstance(value, bool):  # bool is an int; a True stamp is garbage
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.isdigit():
+        # JSON round-trips through form fields/stores may stringify the int
+        return int(value)
+    return None
+
 
 async def resolve_agent(
     agent_id: str,
@@ -2046,6 +2759,7 @@ async def resolve_agent(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Union[Agent, RemoteAgent, AgentProtocol]:
     """Resolve an agent by ID with proper error handling for both factory and non-factory paths.
 
@@ -2057,6 +2771,18 @@ async def resolve_agent(
 
     Raises HTTPException on all error paths.
     """
+    # Owner scope for DB-BACKED components; no request means unscoped.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
+
+        scoped_user_id = get_scoped_user_id(request)
+    # An explicit draft version is a control-plane preview: owner/admin only.
+    preview_actor, preview_privileged = draft_preview_identity(request)
+    if not allow_draft_preview(db, agent_id, version, preview_actor, privileged=preview_privileged):
+        # Byte-identical to the route's plain not-found: the denial must not
+        # read differently from the component being absent.
+        raise HTTPException(status_code=404, detail="Agent not found")
     is_factory = agents and any(isinstance(a, AgentFactory) and a.id == agent_id for a in agents)
     if is_factory:
         if request is None:
@@ -2064,7 +2790,15 @@ async def resolve_agent(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             agent = await get_agent_by_id_async(
-                agent_id, agents, db, registry, version=version, create_fresh=True, ctx=ctx
+                agent_id,
+                agents,
+                db,
+                registry,
+                version=version,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
+                published_only=published_only,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2078,7 +2812,17 @@ async def resolve_agent(
             raise HTTPException(status_code=500, detail=f"Error in agent factory: {e}")
     else:
         try:
-            agent = get_agent_by_id(agent_id, agents, db, registry, version=version, create_fresh=True, strict=strict)
+            agent = get_agent_by_id(
+                agent_id,
+                agents,
+                db,
+                registry,
+                version=version,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
+                published_only=published_only,
+            )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
             # the refusal survives on caller-supplied apps with no handlers.
@@ -2103,12 +2847,21 @@ async def resolve_team(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Union[Team, RemoteTeam]:
-    """Resolve a team by ID with proper error handling for both factory and non-factory paths.
+    """Resolve a team by ID with proper error handling for both factory and non-factory paths."""
+    # Owner scope for DB-backed components; no request means unscoped.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
 
-    Raises HTTPException on all error paths; an unrehydratable db-backed team
-    is refused with a 422 unless strict=False.
-    """
+        scoped_user_id = get_scoped_user_id(request)
+    # An explicit draft version is a control-plane preview: owner/admin only.
+    preview_actor, preview_privileged = draft_preview_identity(request)
+    if not allow_draft_preview(db, team_id, version, preview_actor, privileged=preview_privileged):
+        # Byte-identical to the route's plain not-found: the denial must not
+        # read differently from the component being absent.
+        raise HTTPException(status_code=404, detail="Team not found")
     is_factory = teams and any(isinstance(t, TeamFactory) and t.id == team_id for t in teams)
     if is_factory:
         if request is None:
@@ -2116,7 +2869,15 @@ async def resolve_team(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             team = await get_team_by_id_async(
-                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+                team_id,
+                teams,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
+                published_only=published_only,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2131,7 +2892,15 @@ async def resolve_team(
     else:
         try:
             team = get_team_by_id(
-                team_id, teams, db=db, version=version, registry=registry, create_fresh=True, strict=strict
+                team_id,
+                teams,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
+                published_only=published_only,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
@@ -2157,12 +2926,21 @@ async def resolve_workflow(
     session_id: Optional[str] = None,
     factory_input: Optional[str] = None,
     strict: bool = True,
+    published_only: bool = True,
 ) -> Union[Workflow, RemoteWorkflow]:
-    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths.
+    """Resolve a workflow by ID with proper error handling for both factory and non-factory paths."""
+    # Owner scope for DB-backed components; no request means unscoped.
+    scoped_user_id = None
+    if request is not None:
+        from agno.os.middleware.user_scope import get_scoped_user_id
 
-    Raises HTTPException on all error paths; an unrehydratable db-backed
-    workflow is refused with a 422 unless strict=False.
-    """
+        scoped_user_id = get_scoped_user_id(request)
+    # An explicit draft version is a control-plane preview: owner/admin only.
+    preview_actor, preview_privileged = draft_preview_identity(request)
+    if not allow_draft_preview(db, workflow_id, version, preview_actor, privileged=preview_privileged):
+        # Byte-identical to the route's plain not-found: the denial must not
+        # read differently from the component being absent.
+        raise HTTPException(status_code=404, detail="Workflow not found")
     is_factory = workflows and any(isinstance(w, WorkflowFactory) and w.id == workflow_id for w in workflows)
     if is_factory:
         if request is None:
@@ -2170,7 +2948,15 @@ async def resolve_workflow(
         ctx = build_request_context(request, user_id=user_id, session_id=session_id, factory_input=factory_input)
         try:
             workflow = await get_workflow_by_id_async(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, ctx=ctx
+                workflow_id,
+                workflows,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                ctx=ctx,
+                user_id=scoped_user_id,
+                published_only=published_only,
             )
         except FactoryValidationError as e:
             raise HTTPException(status_code=400, detail=str(e))
@@ -2185,7 +2971,15 @@ async def resolve_workflow(
     else:
         try:
             workflow = get_workflow_by_id(
-                workflow_id, workflows, db=db, version=version, registry=registry, create_fresh=True, strict=strict
+                workflow_id,
+                workflows,
+                db=db,
+                version=version,
+                registry=registry,
+                create_fresh=True,
+                user_id=scoped_user_id,
+                strict=strict,
+                published_only=published_only,
             )
         except ComponentRehydrationError as e:
             # Broken is not "not found": answer with the error's own status so
