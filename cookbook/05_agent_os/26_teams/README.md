@@ -61,7 +61,7 @@ export MICROSOFT_APP_ID="..."
 export MICROSOFT_APP_PASSWORD="..."
 export OPENAI_API_KEY="..."
 
-.venvs/demo/bin/python cookbook/05_agent_os/20_teams/basic.py
+.venvs/demo/bin/python cookbook/05_agent_os/26_teams/basic.py
 ```
 
 The server must be running and publicly reachable when the first Teams message
@@ -146,7 +146,7 @@ it and the channel-scoped `from.id` otherwise:
 
    ```bash
    export ALERT_USER_ID="<full-user-id-from-the-query-above>"
-   .venvs/demo/bin/python cookbook/05_agent_os/20_teams/proactive_alert.py
+   .venvs/demo/bin/python cookbook/05_agent_os/26_teams/proactive_alert.py
    ```
 
 Proactive delivery only succeeds against a live conversation reference. Web

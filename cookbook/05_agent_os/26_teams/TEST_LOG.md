@@ -1,4 +1,4 @@
-# Test Log: 20_teams
+# Test Log: 26_teams
 
 Sentinel `MICROSOFT_APP_*` values suffice to construct either example; live
 rounds require a real Azure Bot resource. Importing either file needs no Bot
