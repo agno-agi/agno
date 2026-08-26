@@ -3123,10 +3123,36 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     return forked
 
 
+def _bind_run_context_to_run(run_context: RunContext, run_response: RunOutput) -> None:
+    """Point ``run_context`` at the run that will actually execute.
+
+    The context is built before the fork, so on a forked continuation it still holds the
+    parent's run_id. Left alone, every tool, tool hook and reasoning step of the continuation
+    files its work under the parent run, and session_state carries a stale current_run_id.
+    Re-pointing it is a no-op for an in-place continuation, where the id does not change.
+    """
+    run_id = run_response.run_id
+    if not run_id:
+        return
+    run_context.run_id = run_id
+    if isinstance(run_context.session_state, dict):
+        # The owner and session ids are stripped before session_state is persisted, so a
+        # continuation that reloaded its state has lost them and they are restored here. Both
+        # are passed as `or None` so an empty value can never overwrite a good one - the
+        # session_id guard downstream is `is not None`, which "" would satisfy.
+        _initialize_session_state(
+            run_context.session_state,
+            user_id=run_context.user_id or None,
+            session_id=run_context.session_id or None,
+            run_id=run_id,
+        )
+
+
 def _apply_continue_modifiers(
     run_response: RunOutput,
     fork: bool,
     message_index: Optional[int],
+    run_context: Optional[RunContext] = None,
 ) -> RunOutput:
     """Apply ``fork`` and/or ``message_index`` to a loaded run_response.
 
@@ -3134,12 +3160,17 @@ def _apply_continue_modifiers(
     a new instance when forking. Called from continue_run_dispatch /
     acontinue_run_dispatch after a run is loaded and before validation, so the
     rest of the dispatch operates on the modified state.
+
+    ``run_context`` is re-pointed at the resulting run. It is threaded through here rather
+    than left to each call site so that no future fork path can forget it.
     """
     if fork:
         idx = message_index if message_index is not None else len(run_response.messages or [])
-        return _fork_run(run_response, idx)
-    if message_index is not None:
+        run_response = _fork_run(run_response, idx)
+    elif message_index is not None:
         _truncate_run_to_checkpoint(run_response, message_index)
+    if run_context is not None:
+        _bind_run_context_to_run(run_context, run_response)
     return run_response
 
 
@@ -3476,10 +3507,6 @@ def continue_run_dispatch(
         user_id=user_id,
     )
 
-    # Resolve dependencies
-    if run_context.dependencies is not None:
-        resolve_run_dependencies(agent, run_context=run_context)
-
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
         if run_response.status == RunStatus.cancelled:
@@ -3508,7 +3535,7 @@ def continue_run_dispatch(
             fork = True
         # If regenerated_from lineage applies, record it before truncating.
         original_run_id_for_lineage = run_response.run_id if regenerate else None
-        run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+        run_response = _apply_continue_modifiers(run_response, fork, continue_index, run_context)
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
@@ -3567,7 +3594,7 @@ def continue_run_dispatch(
         # ``run_id`` variable still points at the ORIGINAL run — used for approval
         # lookups (the fork inherits the original's resolved approval, if any).
         # ``run_response.run_id`` is what gets persisted as the new sibling run.
-        run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+        run_response = _apply_continue_modifiers(run_response, fork, continue_index, run_context)
         if regenerate and original_run_id_for_lineage:
             run_response.regenerated_from = original_run_id_for_lineage
             if replace_original is not False and run_response.forked_from_run_id:
@@ -3611,6 +3638,13 @@ def continue_run_dispatch(
             # else: nothing to resolve — fall through to resume from current state
     else:
         raise ValueError("Either run_response or run_id must be provided.")
+
+    # Resolve dependencies AFTER the fork. A callable dependency may derive run-scoped
+    # values from run_context, and continuing a completed run forks a sibling with a new
+    # run_id. Resolving first would hand every factory the PARENT's id, so a run-scoped
+    # namespace, audit client or output path would file this work under the run before it.
+    if run_context.dependencies is not None:
+        resolve_run_dependencies(agent, run_context=run_context)
 
     # If the caller supplied a new user-message string (unified /continue body
     # field ``input``), append it to run_response.messages before building
@@ -4772,11 +4806,7 @@ async def _acontinue_run(
                     run_context, run_response=run_response, run_id=run_id, session=agent_session
                 )
 
-                # 2. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
-
-                # 3. Update metadata and session state
+                # 2. Update metadata and session state
                 update_metadata(agent, session=agent_session)
 
                 # Initialize session state. Get it from DB if relevant.
@@ -4792,7 +4822,7 @@ async def _acontinue_run(
                     run_id=run_context.run_id,
                 )
 
-                # 4. Prepare run response
+                # 3. Prepare run response
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
@@ -4817,7 +4847,7 @@ async def _acontinue_run(
                     if not fork and run_response.status == RunStatus.completed:
                         fork = True
                     original_run_id_for_lineage = run_response.run_id if regenerate else None
-                    run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_response = _apply_continue_modifiers(run_response, fork, continue_index, run_context)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -4868,7 +4898,7 @@ async def _acontinue_run(
                     # on the modified state. The local ``run_id`` continues to refer to the
                     # original run (used for HITL approval lookups); ``run_response.run_id``
                     # is the new UUID when fork=True.
-                    run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_response = _apply_continue_modifiers(run_response, fork, continue_index, run_context)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -4913,6 +4943,14 @@ async def _acontinue_run(
                         # else: nothing to resolve — fall through to resume from current state
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
+
+                # 4. Resolve dependencies AFTER the fork. A callable dependency may derive
+                # run-scoped values from run_context, and continuing a completed run forks a
+                # sibling with a new run_id. Resolving first would hand every factory the
+                # PARENT's id, so a run-scoped namespace, audit client or output path would
+                # file this work under the run before it.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
@@ -5297,11 +5335,7 @@ async def _acontinue_run_stream(
                     run_id=run_context.run_id,
                 )
 
-                # 3. Resolve dependencies
-                if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
-
-                # 4. Prepare run response
+                # 3. Prepare run response
                 if run_response is not None:
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
@@ -5326,7 +5360,7 @@ async def _acontinue_run_stream(
                     if not fork and run_response.status == RunStatus.completed:
                         fork = True
                     original_run_id_for_lineage = run_response.run_id if regenerate else None
-                    run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_response = _apply_continue_modifiers(run_response, fork, continue_index, run_context)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -5378,7 +5412,7 @@ async def _acontinue_run_stream(
                     # on the modified state. The local ``run_id`` continues to refer to the
                     # original run (used for HITL approval lookups); ``run_response.run_id``
                     # is the new UUID when fork=True.
-                    run_response = _apply_continue_modifiers(run_response, fork, continue_index)
+                    run_response = _apply_continue_modifiers(run_response, fork, continue_index, run_context)
                     if regenerate and original_run_id_for_lineage:
                         run_response.regenerated_from = original_run_id_for_lineage
                         if replace_original is not False and run_response.forked_from_run_id:
@@ -5423,6 +5457,14 @@ async def _acontinue_run_stream(
                         # else: nothing to resolve — fall through to resume from current state
                 else:
                     raise ValueError("Either run_response or run_id must be provided.")
+
+                # 4. Resolve dependencies AFTER the fork. A callable dependency may derive
+                # run-scoped values from run_context, and continuing a completed run forks a
+                # sibling with a new run_id. Resolving first would hand every factory the
+                # PARENT's id, so a run-scoped namespace, audit client or output path would
+                # file this work under the run before it.
+                if run_context.dependencies is not None:
+                    await aresolve_run_dependencies(agent, run_context=run_context)
 
                 # If the caller supplied a new user-message string (unified /continue
                 # body field ``input``), append it to run_response.messages before
