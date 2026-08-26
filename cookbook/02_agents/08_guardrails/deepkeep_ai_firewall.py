@@ -6,10 +6,17 @@ This example shows how to use DeepKeep AI Firewall as custom guardrails for
 Agno Agents. DeepKeep runs before user input reaches the model and after model
 output is generated.
 
+Requirements:
+- pip install agno-deepkeep
+- DEEPKEEP_API_KEY and DEEPKEEP_BASE_URL set
+
 Set credentials before running:
 
     export DEEPKEEP_API_KEY="dk_..."
     export DEEPKEEP_BASE_URL="https://api.example.deepkeep.ai"
+
+Usage:
+    python cookbook/02_agents/08_guardrails/deepkeep_ai_firewall.py
 """
 
 from agno.agent import Agent
