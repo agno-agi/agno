@@ -81,8 +81,6 @@ class GoogleSheetsTools(GoogleToolkit):
         token_path: Optional[str] = None,
         service_account_path: Optional[str] = None,
         oauth_port: int = 0,
-        # Deprecated alias (use credentials_path instead)
-        creds_path: Optional[str] = None,
         read_sheet: bool = True,
         create_sheet: bool = False,
         update_sheet: bool = False,
@@ -127,14 +125,6 @@ class GoogleSheetsTools(GoogleToolkit):
         self.spreadsheet_id = spreadsheet_id
         self.spreadsheet_range = spreadsheet_range
         # Determine required scopes based on operations if no custom scopes provided
-        # Handle deprecated alias
-        if creds_path is not None:
-            from agno.utils.log import log_warning
-
-            log_warning("creds_path is deprecated, use credentials_path instead")
-            if credentials_path is None:
-                credentials_path = creds_path
-
         if scopes is None:
             self.scopes = []
             if _read_sheet:

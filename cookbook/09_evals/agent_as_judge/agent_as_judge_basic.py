@@ -77,8 +77,8 @@ async def run_async_evaluation():
     async_eval_runs = await async_db.get_eval_runs()
     print(f"Total evaluations stored: {len(async_eval_runs)}")
     if async_eval_runs:
-        latest = async_eval_runs[-1]
-        print(f"Eval ID: {latest.run_id}")
+        latest = async_eval_runs[0]
+        print(f"Run ID: {latest.run_id}")
         print(f"Name: {latest.name}")
 
 
@@ -98,8 +98,8 @@ if __name__ == "__main__":
     sync_eval_runs = sync_db.get_eval_runs()
     print(f"Total evaluations stored: {len(sync_eval_runs)}")
     if sync_eval_runs:
-        latest = sync_eval_runs[-1]
-        print(f"Eval ID: {latest.run_id}")
+        latest = sync_eval_runs[0]
+        print(f"Run ID: {latest.run_id}")
         print(f"Name: {latest.name}")
 
     asyncio.run(run_async_evaluation())

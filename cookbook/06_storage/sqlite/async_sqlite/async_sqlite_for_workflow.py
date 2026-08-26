@@ -1,6 +1,6 @@
 """
 Run: `pip install openai ddgs sqlalchemy aiosqlite` to install dependencies
-Run: `python cookbook/db/async_sqlite/async_sqlite_for_workflow.py` to run the workflow
+Run: `python cookbook/06_storage/sqlite/async_sqlite/async_sqlite_for_workflow.py` to run the workflow
 """
 
 import asyncio

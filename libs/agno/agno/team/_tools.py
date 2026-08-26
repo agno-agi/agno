@@ -50,6 +50,7 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
+from agno.utils.message import copy_history_message
 from agno.utils.team import (
     get_member_id,
     get_team_member_interactions_str,
@@ -95,10 +96,8 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Add provided tools - only if tools is a static list
     if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 if tool.refresh_connection:  # type: ignore
                     try:
                         is_alive = await tool.is_alive()  # type: ignore
@@ -144,6 +143,7 @@ def _determine_tools_for_model(
         _read_past_session_function,
         _search_past_sessions_function,
         _update_session_state_tool,
+        create_add_to_knowledge_tool,
         create_knowledge_search_tool,
     )
     from agno.team._init import _connect_connectable_tools
@@ -181,10 +181,8 @@ def _determine_tools_for_model(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 # Only add the tool if it successfully connected and built its tools
                 if check_mcp_tools and not tool.initialized:  # type: ignore
                     continue
@@ -211,6 +209,13 @@ def _determine_tools_for_model(
 
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
+
+    # Read-back tools for offloaded results
+    if team._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        _tools.append(get_read_result_function(team, run_context=run_context, async_mode=async_mode))
+        _tools.append(get_search_result_function(team, run_context=run_context, async_mode=async_mode))
 
     if team.search_past_sessions:
         _tools.append(
@@ -247,7 +252,7 @@ def _determine_tools_for_model(
         )
 
     if resolved_knowledge is not None and team.update_knowledge:
-        _tools.append(team.add_to_knowledge)
+        _tools.append(create_add_to_knowledge_tool(team, run_context=run_context))
 
     # Add tools for accessing skills
     if team.skills is not None:
@@ -268,7 +273,8 @@ def _determine_tools_for_model(
             run_context=run_context,
             session=session,
             team_run_context=team_run_context,
-            user_id=user_id,
+            # Members run as the user_id resolved on run_context, not the caller's argument
+            user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,
             async_mode=async_mode,
@@ -307,7 +313,8 @@ def _determine_tools_for_model(
             session=session,
             team_run_context=team_run_context,
             input=user_message_content,
-            user_id=user_id,
+            # Members run as the user_id resolved on run_context, not the caller's argument
+            user_id=run_context.user_id if run_context else user_id,
             stream=stream or False,
             stream_events=stream_events or False,
             async_mode=async_mode,
@@ -533,14 +540,7 @@ def _get_history_for_member_agent(
     )
 
     if len(history) > 0:
-        # Create a deep copy of the history messages to avoid modifying the original messages
-        history_copy = [deepcopy(msg) for msg in history]
-
-        # Tag each message as coming from history
-        for _msg in history_copy:
-            _msg.from_history = True
-
-        return history_copy
+        return [copy_history_message(msg) for msg in history]
     return []
 
 

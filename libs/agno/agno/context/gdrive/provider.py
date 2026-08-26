@@ -143,7 +143,7 @@ class GoogleDriveContextProvider(ContextProvider):
         if self._tools is None:
             self._tools = GoogleDriveTools(
                 service_account_path=self._sa_path,
-                creds_path=self._credentials_path,
+                credentials_path=self._credentials_path,
                 token_path=self._token_path,
                 corpora=self._corpora,
                 supports_all_drives=self._supports_all_drives,

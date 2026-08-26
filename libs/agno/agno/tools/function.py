@@ -759,6 +759,9 @@ RUNTIME_ONLY_FIELDS = (
     "cache_results",
     "cache_dir",
     "cache_ttl",
+    # A code-declared trait that discovery reports; the live registry Function
+    # owns it, not the persisted config.
+    "has_side_effects",
 )
 
 
@@ -806,6 +809,12 @@ class Function(BaseModel):
 
     # The function to be called.
     entrypoint: Optional[Callable] = None
+    # Whether calling this function changes external state. None = undeclared,
+    # which is what every toolkit shipped here reports: the trait is opt-in and
+    # is declared on the Function object, so discovery labels capability only
+    # for the tools whose author set it.
+    has_side_effects: Optional[bool] = None
+
     # If True, the entrypoint processing is skipped and the Function is used as is.
     skip_entrypoint_processing: bool = False
     # If True, the function call will show the result along with sending it to the model.
@@ -1423,9 +1432,19 @@ class Function(BaseModel):
         # Apply strict mode to the entire schema
         self.parameters = make_nested_strict(self.parameters)
 
+        # `parameters` can arrive straight from a tool provider rather than from
+        # `get_json_schema`: an MCP server advertises an argument-free tool as
+        # `{"type": "object"}`, with no `properties` key at all. Normalise it to the
+        # same empty map the no-parameter default uses, so strict mode emits a
+        # complete schema instead of raising on the rewrite below.
+        properties = self.parameters.get("properties")
+        if not isinstance(properties, dict):
+            properties = {}
+            self.parameters["properties"] = properties
+
         self.parameters["required"] = [
             name
-            for name in self.parameters["properties"]
+            for name in properties
             if name not in ("return", "self")
             and name not in FRAMEWORK_INJECTED_PARAMS
             and name not in AGNO_INJECTED_PARAMS

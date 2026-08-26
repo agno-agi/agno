@@ -3,7 +3,6 @@ import time
 import pytest
 
 from agno.agent import Agent, RunOutput  # noqa
-from agno.culture.manager import CultureManager
 from agno.db.base import SessionType
 from agno.eval.accuracy import AccuracyEval
 from agno.eval.agent_as_judge import AgentAsJudgeEval
@@ -332,51 +331,6 @@ def test_memory_model_metrics_fields(shared_db):
         assert entry.input_tokens > 0
 
 
-def test_culture_metrics_sync(shared_db):
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        culture_manager=CultureManager(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db),
-        update_cultural_knowledge=True,
-        db=shared_db,
-    )
-    response = agent.run("Our team always does code reviews before merging PRs.")
-
-    assert "culture_model" in response.metrics.details
-    assert sum(metric.total_tokens for metric in response.metrics.details["culture_model"]) > 0
-
-
-@pytest.mark.asyncio
-async def test_culture_metrics_async(shared_db):
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        culture_manager=CultureManager(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db),
-        update_cultural_knowledge=True,
-        db=shared_db,
-    )
-    response = await agent.arun("We use trunk-based development with feature flags.")
-
-    assert "culture_model" in response.metrics.details
-    assert sum(metric.total_tokens for metric in response.metrics.details["culture_model"]) > 0
-
-
-def test_culture_model_metrics_fields(shared_db):
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        culture_manager=CultureManager(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db),
-        update_cultural_knowledge=True,
-        db=shared_db,
-    )
-    response = agent.run("We deploy to production on Tuesdays.")
-
-    culture_entries = response.metrics.details.get("culture_model", [])
-    assert len(culture_entries) >= 1
-
-    for entry in culture_entries:
-        assert isinstance(entry, ModelMetrics)
-        assert entry.id is not None
-        assert entry.provider is not None
-
-
 def test_tool_call_metrics_sync():
     agent = Agent(model=OpenAIChat(id="gpt-4o-mini"), tools=[add])
     response = agent.run("Add 10 and 20.")
@@ -661,41 +615,6 @@ def test_all_three_combined(shared_db):
         assert sum(metric.total_tokens for metric in response.metrics.details[key]) > 0
 
 
-def test_culture_plus_eval_sync(shared_db):
-    eval_hook = AgentAsJudgeEval(
-        name="Culture Eval",
-        model=OpenAIChat(id="gpt-4o-mini"),
-        criteria="Response should acknowledge the cultural practice",
-        scoring_strategy="binary",
-    )
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        culture_manager=CultureManager(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db),
-        update_cultural_knowledge=True,
-        post_hooks=[eval_hook],
-        db=shared_db,
-    )
-    response = agent.run("We always write unit tests before merging code.")
-
-    assert "culture_model" in response.metrics.details
-    assert "eval_model" in response.metrics.details
-
-
-def test_culture_plus_memory_sync(shared_db):
-    agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
-        culture_manager=CultureManager(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db),
-        update_cultural_knowledge=True,
-        memory_manager=MemoryManager(model=OpenAIChat(id="gpt-4o-mini"), db=shared_db),
-        update_memory_on_run=True,
-        db=shared_db,
-    )
-    response = agent.run("My name is Eve. Our team uses pair programming.")
-
-    assert "culture_model" in response.metrics.details
-    assert "memory_model" in response.metrics.details
-
-
 def test_multi_run_memory_session(shared_db):
     agent = Agent(
         model=OpenAIChat(id="gpt-4o-mini"),
@@ -753,13 +672,6 @@ def test_no_memory_key_without_memory():
     response = agent.run("Hello")
 
     assert "memory_model" not in response.metrics.details
-
-
-def test_no_culture_key_without_culture():
-    agent = Agent(model=OpenAIChat(id="gpt-4o-mini"))
-    response = agent.run("Hello")
-
-    assert "culture_model" not in response.metrics.details
 
 
 def test_eval_duration_tracked():

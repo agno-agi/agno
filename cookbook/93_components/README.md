@@ -34,6 +34,7 @@ The Agent-as-Config feature allows you to:
 | `registry.py` | Use a registry for non-serializable components |
 | `auto_populate_registry.py` | Inspect how AgentOS auto-discovers components from teams and workflows |
 | `auto_populate_registry_os.py` | Serve an AgentOS and see the auto-discovered components over the API |
+| `user_isolation_os.py` | Serve an AgentOS with per-user component isolation |
 
 ---
 

@@ -144,6 +144,19 @@ class HITLHandler:
     ) -> StreamState:
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
         try:
+            # Inline-door admission gate: Slack-driven runs are ticketless by
+            # construction today (the interface submits inline), but a durable
+            # ticket for this run_id - however it got here - owns the
+            # continuation; the existing except below turns the 409/503 into
+            # a logged non-execution, never a double-run.
+            from agno.os.job_queue import araise_if_ticket_owns_continue, get_active_queue_worker
+
+            await araise_if_ticket_owns_continue(
+                get_active_queue_worker(),
+                ctx.run_id,
+                component_type=self.entity_type,
+                component_id=getattr(self.entity, "id", None),
+            )
             response_stream: Any = self.entity.acontinue_run(  # type: ignore[union-attr, call-arg, call-overload]
                 run_id=ctx.run_id,
                 requirements=requirements,
@@ -171,6 +184,20 @@ class HITLHandler:
             log_error(
                 f"[HITL] continuation append failed: run_id={ctx.run_id} slack_error={slack_error_code(exc)!r} | {exc}"
             )
+        # Status-only stream sync (parity with the REST continue doors): a
+        # formerly-queued/streamed run's stream view must stop saying PAUSED
+        # once the continue settles - otherwise every later /resume replays
+        # the stale paused snapshot, and on Redis the pausing replica's TTL
+        # refresher keeps those keys alive indefinitely. only_if_tracked
+        # leaves never-streamed runs alone; a re-paused continue re-parks the
+        # stream as PAUSED. Best-effort: a stream-backend failure must not
+        # eat the Slack response.
+        try:
+            from agno.os.utils import acomplete_continue_stream
+
+            await acomplete_continue_stream(self.entity, ctx.run_id, session_id, only_if_tracked=True)
+        except Exception as exc:
+            log_error(f"[HITL] continue stream sync failed for run={ctx.run_id}: {exc}")
         return state
 
     async def complete_or_repause(

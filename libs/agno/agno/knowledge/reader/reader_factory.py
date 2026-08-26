@@ -30,7 +30,7 @@ class ReaderFactory:
         },
         "docx": {
             "name": "DocxReader",
-            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+            "description": "Extracts text content from Microsoft Word documents (.docx format)",
         },
         "pptx": {
             "name": "PptxReader",
@@ -141,7 +141,7 @@ class ReaderFactory:
 
         config: Dict[str, Any] = {
             "name": "Docx Reader",
-            "description": "Extracts text content from Microsoft Word documents (.docx and .doc formats)",
+            "description": "Extracts text content from Microsoft Word documents (.docx format)",
         }
         config.update(kwargs)
         return DocxReader(**config)
@@ -363,6 +363,20 @@ class ReaderFactory:
 
         module = importlib.import_module(module_path)
         return getattr(module, class_name)
+
+    @classmethod
+    def get_missing_read_time_packages(cls, reader_key: str, content_type: Optional[str] = None) -> List[str]:
+        """Declared read-time packages a reader needs that are not importable.
+
+        Returns an empty list for a reader whose class cannot be imported at all: its module
+        scope already reports what is missing, and this table only covers what that import
+        cannot see.
+        """
+        try:
+            reader_class = cls.get_reader_class(reader_key)
+        except Exception:
+            return []
+        return reader_class.get_missing_read_time_packages(content_type)  # type: ignore[attr-defined]
 
     @classmethod
     def create_reader(cls, reader_key: str, **kwargs) -> Reader:
