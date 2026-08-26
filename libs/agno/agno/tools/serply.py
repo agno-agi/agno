@@ -19,9 +19,9 @@ class SerplyTools(Toolkit):
         api_key (Optional[str]): Serply API key. If not provided, uses SERPLY_API_KEY env var.
         num_results (int): Default number of results to return. Default is 10.
         timeout (int): Request timeout in seconds. Default is 30.
-        enable_search_web (bool): Enable Google web search. Default is True.
-        enable_search_news (bool): Enable Google News search. Default is False.
-        enable_search_scholar (bool): Enable Google Scholar search. Default is False.
+        search_web (bool): Enable Google web search. Default is True.
+        search_news (bool): Enable Google News search. Default is False.
+        search_scholar (bool): Enable Google Scholar search. Default is False.
         all (bool): If True, enable every search tool regardless of the individual flags.
     """
 
@@ -30,9 +30,9 @@ class SerplyTools(Toolkit):
         api_key: Optional[str] = None,
         num_results: int = 10,
         timeout: int = 30,
-        enable_search_web: bool = True,
-        enable_search_news: bool = False,
-        enable_search_scholar: bool = False,
+        search_web: bool = True,
+        search_news: bool = False,
+        search_scholar: bool = False,
         all: bool = False,
         **kwargs,
     ):
@@ -45,11 +45,11 @@ class SerplyTools(Toolkit):
         self.base_url = "https://api.serply.io/v1"
 
         tools: List[Any] = []
-        if all or enable_search_web:
+        if all or search_web:
             tools.append(self.search_web)
-        if all or enable_search_news:
+        if all or search_news:
             tools.append(self.search_news)
-        if all or enable_search_scholar:
+        if all or search_scholar:
             tools.append(self.search_scholar)
 
         super().__init__(name="serply_tools", tools=tools, **kwargs)

@@ -124,7 +124,7 @@ def test_init_all_enabled():
 
 
 def test_init_select_tools():
-    tools = SerplyTools(api_key="k", enable_search_web=False, enable_search_scholar=True)
+    tools = SerplyTools(api_key="k", search_web=False, search_scholar=True)
     names = [f.name for f in tools.functions.values()]
     assert names == ["search_scholar"]
 

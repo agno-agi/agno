@@ -27,7 +27,7 @@ agent = Agent(
 
 # Example 2: News search
 news_agent = Agent(
-    tools=[SerplyTools(enable_search_web=False, enable_search_news=True)],
+    tools=[SerplyTools(search_web=False, search_news=True)],
     description="You are a news agent that finds the latest news on any topic.",
     instructions=[
         "Search Google News for recent articles on the given topic.",
@@ -37,7 +37,7 @@ news_agent = Agent(
 
 # Example 3: Scholar search
 scholar_agent = Agent(
-    tools=[SerplyTools(enable_search_web=False, enable_search_scholar=True)],
+    tools=[SerplyTools(search_web=False, search_scholar=True)],
     description="You are a research assistant that finds academic papers.",
     instructions=[
         "Search Google Scholar for papers that match the user's request.",
