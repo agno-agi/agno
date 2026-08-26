@@ -137,7 +137,7 @@ def attach_routes(
     )
     async def webhook(request: Request, background_tasks: BackgroundTasks):
         auth_header = request.headers.get("Authorization")
-        if not validate_bot_framework_jwt(auth_header, config.app_id):
+        if not await validate_bot_framework_jwt(auth_header, config.app_id):
             log_warning("Rejected inbound Teams activity: JWT validation failed")
             raise HTTPException(status_code=403, detail="Invalid Bot Framework token")
 
