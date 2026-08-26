@@ -147,8 +147,8 @@ def test_http_api_records_actor_from_jwt():
     store.set_role_scopes("runner", ["agents:read"])  # role must exist before PUT /scopes
     sink.events.clear()
     client.put("/authz/roles/runner/scopes", headers=_auth("alice"), json={"scopes": ["agents:*:run"]})
-    client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"})
-    client.delete("/authz/users/bob/roles/runner", headers=_auth("alice"))
+    client.post("/authz/subjects/bob/roles", headers=_auth("alice"), json={"role": "runner"})
+    client.delete("/authz/subjects/bob/roles/runner", headers=_auth("alice"))
 
     actions = [(e.action, e.target, e.actor) for e in sink.events]
     assert actions == [
@@ -334,7 +334,7 @@ def test_audit_endpoint_returns_trail(tmp_path):
     # make a couple of changes over the API
     client.post("/authz/roles", headers=_auth("alice"), json={"slug": "runner"})
     client.put("/authz/roles/runner/scopes", headers=_auth("alice"), json={"scopes": ["agents:*:run"]})
-    client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"})
+    client.post("/authz/subjects/bob/roles", headers=_auth("alice"), json={"role": "runner"})
 
     # admin can read the trail; newest first, paginated {data, meta}
     r = client.get("/authz/audit", headers=_auth("alice"))

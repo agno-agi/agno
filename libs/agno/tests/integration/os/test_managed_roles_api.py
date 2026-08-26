@@ -82,7 +82,7 @@ def test_non_admin_is_403(client_and_store):
     client, _ = client_and_store
     # bob is a viewer, not an admin
     assert client.get("/authz/roles", headers=_auth("bob")).status_code == 403
-    assert client.post("/authz/users/carol/roles", headers=_auth("bob"), json={"role": "viewer"}).status_code == 403
+    assert client.post("/authz/subjects/carol/roles", headers=_auth("bob"), json={"role": "viewer"}).status_code == 403
 
 
 def test_admin_token_scope_is_not_trusted_without_a_scope_plane(client_and_store):
@@ -108,7 +108,7 @@ def test_admin_token_scope_is_not_trusted_without_a_scope_plane(client_and_store
     assert client.post("/authz/roles", headers=_admin_scope_auth("mallory"), json={"slug": "pwn"}).status_code == 403
     assert (
         client.post(
-            "/authz/users/mallory/roles", headers=_admin_scope_auth("mallory"), json={"role": "admin"}
+            "/authz/subjects/mallory/roles", headers=_admin_scope_auth("mallory"), json={"role": "admin"}
         ).status_code
         == 403
     )
@@ -163,12 +163,12 @@ def test_admin_crud_role(client_and_store):
 
 def test_admin_assign_and_revoke(client_and_store):
     client, store = client_and_store
-    r = client.post("/authz/users/carol/roles", headers=_auth("alice"), json={"role": "viewer"})
+    r = client.post("/authz/subjects/carol/roles", headers=_auth("alice"), json={"role": "viewer"})
     assert r.status_code == 200
     assert r.json()["role"] == "viewer"  # singular: one role per user
     assert store.roles_of("carol") == ["viewer"]
 
-    r = client.delete("/authz/users/carol/roles/viewer", headers=_auth("alice"))
+    r = client.delete("/authz/subjects/carol/roles/viewer", headers=_auth("alice"))
     assert r.status_code == 200
     assert store.roles_of("carol") == []
 
@@ -184,13 +184,13 @@ def test_granting_via_api_takes_effect_on_next_request(client_and_store):
         client.put("/authz/roles/runner/scopes", headers=_auth("alice"), json={"scopes": ["agents:*:run"]}).status_code
         == 200
     )
-    assert client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "runner"}).status_code == 200
+    assert client.post("/authz/subjects/bob/roles", headers=_auth("alice"), json={"role": "runner"}).status_code == 200
 
     # bob can now run — same token, no re-mint
     assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code != 403
 
     # admin revokes it; bob is blocked again
-    assert client.delete("/authz/users/bob/roles/runner", headers=_auth("alice")).status_code == 200
+    assert client.delete("/authz/subjects/bob/roles/runner", headers=_auth("alice")).status_code == 200
     assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
 
 

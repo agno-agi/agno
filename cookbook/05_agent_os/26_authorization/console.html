@@ -12,7 +12,7 @@
   the endpoints, so it doubles as living documentation of the API:
 
     GET/POST/PATCH/DELETE /users        directory (search, sort, paginate)
-    POST   /authz/users/{id}/roles            set THE role (one per user, replaces)
+    POST   /authz/subjects/{id}/roles            set THE role (one per user, replaces)
     GET    /authz/roles + /roles/{slug}/scopes role + permission management
     GET    /authz/scopes                       the permission catalog
     GET    /authz/audit, /authz/decisions      the two trails (search, sort, paginate)
@@ -326,8 +326,8 @@ async function newHeist() {
     "agents:*:read",
     { scope: "agents:vault-agent:run", effect: "deny" },
   ]});
-  const cur = await api("GET", `/authz/users/${heist.who}/roles`);
-  if (cur.role) await api("DELETE", `/authz/users/${heist.who}/roles/${cur.role}`);  // start role-less
+  const cur = await api("GET", `/authz/subjects/${heist.who}/roles`);
+  if (cur.role) await api("DELETE", `/authz/subjects/${heist.who}/roles/${cur.role}`);  // start role-less
   heist.token = (await api("POST", "/dev/mint", { sub: heist.who })).token;
   heist.phase = "nobody"; heist.betrayed = false;
   $("h-log").innerHTML = "";
@@ -376,7 +376,7 @@ async function advance(label, denied, body) {
 
 // ---- inline shortcuts (the same calls the other tabs make) ------------------
 async function hireIntern() {
-  await api("POST", `/authz/users/${heist.who}/roles`, { role: "intern" });
+  await api("POST", `/authz/subjects/${heist.who}/roles`, { role: "intern" });
   hlog("🪪", "lupin is now an <b>intern</b>. go on, knock."); renderHeist();
 }
 async function grantRun() {
@@ -505,8 +505,8 @@ async function become(user) {
   $("p-role").innerHTML = ["<option value=''>— no role —</option>",
     ...state.roles.map((r) => `<option ${r === user.role ? "selected" : ""}>${esc(r)}</option>`)].join("");
   $("p-role").onchange = async (e) => {
-    if (e.target.value) await api("POST", `/authz/users/${user.id}/roles`, { role: e.target.value });
-    else if (user.role) await api("DELETE", `/authz/users/${user.id}/roles/${user.role}`);
+    if (e.target.value) await api("POST", `/authz/subjects/${user.id}/roles`, { role: e.target.value });
+    else if (user.role) await api("DELETE", `/authz/subjects/${user.id}/roles/${user.role}`);
     user.role = e.target.value || null;
     plog("🎭", `${user.id} is now ${user.role ?? "role-less"} — same token, new powers`, "", "");
     loadPlayground();
@@ -575,8 +575,8 @@ async function loadUsers() {
   pager($("u-pager"), meta, st, loadUsers);
 }
 async function setRole(user, select) {
-  if (select.value) await api("POST", `/authz/users/${user.id}/roles`, { role: select.value });
-  else if (user.role) await api("DELETE", `/authz/users/${user.id}/roles/${user.role}`);
+  if (select.value) await api("POST", `/authz/subjects/${user.id}/roles`, { role: select.value });
+  else if (user.role) await api("DELETE", `/authz/subjects/${user.id}/roles/${user.role}`);
   loadUsers();
 }
 async function createUser() {

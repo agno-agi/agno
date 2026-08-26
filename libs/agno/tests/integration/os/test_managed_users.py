@@ -492,12 +492,12 @@ def test_assign_unknown_role_is_rejected():
     client = TestClient(app)
 
     # unknown role -> 404, nothing written
-    r = client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "does-not-exist"})
+    r = client.post("/authz/subjects/bob/roles", headers=_auth("alice"), json={"role": "does-not-exist"})
     assert r.status_code == 404, r.text
     assert roles.roles_of("bob") == []
     # an existing role still assigns
     roles.set_role_scopes("viewer", ["agents:*:read"])
-    ok = client.post("/authz/users/bob/roles", headers=_auth("alice"), json={"role": "viewer"})
+    ok = client.post("/authz/subjects/bob/roles", headers=_auth("alice"), json={"role": "viewer"})
     assert ok.status_code == 200, ok.text
     assert roles.roles_of("bob") == ["viewer"]
 

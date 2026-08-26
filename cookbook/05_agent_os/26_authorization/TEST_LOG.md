@@ -88,7 +88,7 @@ route gate and the per-resource gate.
 **Description:** Serves the `/authz` admin API through `AgentOS.serve()`. Started
 in the background and driven over HTTP, then terminated.
 
-**Result:** Admin `GET /authz/users` and `GET /authz/roles` returned 200; an
+**Result:** Admin `GET /users` and `GET /authz/roles` returned 200; an
 unauthenticated request returned 401; a viewer token on an admin route returned
 403; a viewer read returned 200.
 

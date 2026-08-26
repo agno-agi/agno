@@ -48,9 +48,9 @@ Roles admin API -- get_roles_router (default prefix ``/authz``):
     DELETE /authz/roles/{slug}                   delete a role
     PUT    /authz/roles/{slug}/scopes            replace scopes
     PATCH  /authz/roles/{slug}/scopes            diff scopes (upsert/remove)
-    GET    /authz/users/{subject}/roles          a subject's roles
-    POST   /authz/users/{subject}/roles          assign a role        {"role": "..."}
-    DELETE /authz/users/{subject}/roles/{role}   revoke a role
+    GET    /authz/subjects/{subject}/roles       a subject's roles
+    POST   /authz/subjects/{subject}/roles       assign a role        {"role": "..."}
+    DELETE /authz/subjects/{subject}/roles/{role} revoke a role
 
 User directory admin API -- get_users_router (default prefix ``/users``):
     GET    /users                                list users (paginated, roles merged in)
@@ -471,16 +471,16 @@ def get_roles_router(
         roles = store.roles_of(subject)
         return roles[0] if roles else None
 
-    @router.get("/users/{subject}/roles")
+    @router.get("/subjects/{subject}/roles")
     def get_user_role(subject: str) -> dict:
         return {"subject": subject, "role": _role_of(subject)}
 
-    @router.post("/users/{subject}/roles")
+    @router.post("/subjects/{subject}/roles")
     def assign_role(subject: str, body: AssignRoleRequest, actor: str = Depends(require_admin)) -> dict:
         """Set the subject's role. One role per subject: this REPLACES any
         current role (a role select in a UI, not a multi-grant)."""
         # Validate the role exists first. Without this, an arbitrary string is written as
-        # a role assignment -- and a transposed call (POST /users/<role-slug>/roles with
+        # a role assignment -- and a transposed call (POST /subjects/<role-slug>/roles with
         # {"role": "<a user id>"}) would turn that user id into a "role name" in the shared
         # subject/role namespace, which the collision guard then refuses on every request,
         # silently denying that user all access with no trace in the role views.
@@ -488,7 +488,7 @@ def get_roles_router(
         store.assign(subject, body.role, actor=actor)
         return {"subject": subject, "role": _role_of(subject)}
 
-    @router.delete("/users/{subject}/roles/{role}")
+    @router.delete("/subjects/{subject}/roles/{role}")
     def revoke_role(subject: str, role: str, actor: str = Depends(require_admin)) -> dict:
         store.unassign(subject, role, actor=actor)
         return {"subject": subject, "role": _role_of(subject)}

@@ -88,7 +88,7 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 # The directory is managed through the store itself here (upsert / set_disabled), which
-# is all the enforcement needs. An admin HTTP API for it (/authz/users, /authz/roles)
+# is all the enforcement needs. An admin HTTP API for it (/users, /authz/roles)
 # ships with the `/authz` router -- see manage_users_and_roles.py.
 
 

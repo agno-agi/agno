@@ -14,7 +14,7 @@ are peers -- get_roles_router and get_users_router:
     GET    /authz/roles                 list roles
     POST   /authz/roles                 create a role (PUT/PATCH .../{slug}/scopes for permissions)
     GET    /authz/scopes                the permission catalog (for a UI grid)
-    POST   /authz/users/{id}/roles      set a user's role (replaces)  -- role assignment is authz
+    POST   /authz/subjects/{id}/roles      set a user's role (replaces)  -- role assignment is authz
     GET    /authz/audit                 the change trail (search/sort/paginate)
     GET    /authz/decisions             the access trail (search/sort/paginate)
     GET    /users                       list users (one role each; search/sort/paginate)
