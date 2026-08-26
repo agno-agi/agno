@@ -3,9 +3,11 @@
 import asyncio
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
+from urllib.parse import unquote
 
 import pytest
 
+from agno.db.schemas.scheduler import COMPONENT_VERSION_METADATA_KEY, SCHEDULE_OWNER_HEADER, Schedule
 from agno.scheduler.executor import ScheduleExecutor, _to_form_value
 
 
@@ -326,3 +328,162 @@ class TestExecutorExecute:
         mock_db.update_schedule_run.assert_called()
         cancel_call = mock_db.update_schedule_run.call_args
         assert cancel_call[1]["status"] == "cancelled"
+
+
+class TestScheduleOwnerAttribution:
+    """Test that the schedule owner, not the payload, decides who a scheduled call runs as."""
+
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok")
+
+    @staticmethod
+    def _schedule(**overrides):
+        defaults = {
+            "id": "sched-1",
+            "name": "nightly",
+            "cron_expr": "0 0 * * *",
+            "endpoint": "/agents/my-agent/runs",
+            "method": "POST",
+        }
+        defaults.update(overrides)
+        return Schedule(**defaults)
+
+    @staticmethod
+    async def _headers_sent(executor, schedule):
+        """Run _call_endpoint for a non-run endpoint and return the headers."""
+        mock_resp = MagicMock()
+        mock_resp.status_code = 200
+        mock_resp.text = "OK"
+
+        mock_client = AsyncMock()
+        mock_client.is_closed = False
+        mock_client.request = AsyncMock(return_value=mock_resp)
+        executor._client = mock_client
+
+        await executor._call_endpoint(schedule)
+        return mock_client.request.call_args.kwargs["headers"]
+
+    @pytest.mark.asyncio
+    async def test_payload_user_id_cannot_impersonate_the_owner(self, executor):
+        schedule = self._schedule(user_id="alice", payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert bg.await_args.args[3]["user_id"] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_unowned_schedule_sends_no_user_id(self, executor):
+        schedule = self._schedule(user_id=None, payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert "user_id" not in bg.await_args.args[3]
+
+    @pytest.mark.asyncio
+    async def test_owner_header_is_sent_on_run_endpoints(self, executor):
+        schedule = self._schedule(user_id="alice", payload={"message": "hi"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert bg.await_args.args[2][SCHEDULE_OWNER_HEADER] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_owner_header_is_sent_on_non_run_endpoints(self, executor):
+        schedule = self._schedule(user_id="alice", endpoint="/schedules/someone-elses", method="DELETE")
+        headers = await self._headers_sent(executor, schedule)
+
+        assert headers[SCHEDULE_OWNER_HEADER] == "alice"
+
+    @pytest.mark.asyncio
+    async def test_unowned_schedule_sends_no_owner_header(self, executor):
+        schedule = self._schedule(user_id=None, endpoint="/schedules/someone-elses", method="DELETE")
+        headers = await self._headers_sent(executor, schedule)
+
+        assert SCHEDULE_OWNER_HEADER not in headers
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("owner", ["alice smith", "user/1", "ünicode", " padded "])
+    async def test_owner_is_percent_encoded_for_the_hop(self, executor, owner):
+        """Header values must be latin-1 and survive whitespace stripping, so the owner is encoded."""
+        schedule = self._schedule(user_id=owner, endpoint="/config", method="GET")
+        headers = await self._headers_sent(executor, schedule)
+
+        raw = headers[SCHEDULE_OWNER_HEADER]
+        raw.encode("latin-1")  # raises if the owner rode along un-encoded
+        assert unquote(raw) == owner
+
+    @pytest.mark.asyncio
+    async def test_empty_string_owner_is_forwarded_not_dropped(self, executor):
+        """The guard is ``is not None``, so an owner of ``""`` rides along instead of being dropped."""
+        schedule = self._schedule(user_id="", endpoint="/config", method="GET")
+        headers = await self._headers_sent(executor, schedule)
+
+        assert headers[SCHEDULE_OWNER_HEADER] == ""
+
+    @pytest.mark.asyncio
+    async def test_empty_string_owner_reaches_the_run_payload(self, executor):
+        schedule = self._schedule(user_id="", payload={"message": "hi", "user_id": "victim"})
+        with patch.object(executor, "_background_run", new=AsyncMock(return_value={})) as bg:
+            await executor._call_endpoint(schedule)
+
+        assert bg.await_args.args[3]["user_id"] == ""
+        assert bg.await_args.args[2][SCHEDULE_OWNER_HEADER] == ""
+
+
+class TestForwardedMetadataIsAlwaysAcceptable:
+    """A stored payload must never make a schedule fail on every tick.
+
+    Run endpoints take ``metadata`` as a JSON object and answer 4xx for
+    anything else. The executor forwards stored payloads verbatim, so a
+    schedule created with a non-object metadata -- accepted at create time,
+    and accepted by the run routes before this contract tightened -- would
+    fail every attempt of every tick with no tick able to repair it.
+    """
+
+    @pytest.fixture
+    def executor(self):
+        return ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok", poll_interval=0)
+
+    async def _forwarded(self, executor, metadata):
+        """The form payload the executor would send to a run endpoint."""
+        captured = {}
+
+        async def _capture(client, url, headers, payload, resource_type, resource_id, timeout_seconds):
+            captured.update(payload)
+            return {"status": "success"}
+
+        schedule = Schedule(
+            id="sched-1",
+            name="s",
+            endpoint="/agents/a1/runs",
+            method="POST",
+            cron_expr="* * * * *",
+            payload={"message": "hi", "metadata": metadata},
+        )
+        with patch.object(executor, "_get_client", AsyncMock(return_value=MagicMock())):
+            with patch.object(executor, "_background_run", side_effect=_capture):
+                await executor._call_endpoint(schedule)
+        return captured
+
+    @pytest.mark.asyncio
+    async def test_a_json_array_metadata_is_dropped(self, executor):
+        assert "metadata" not in await self._forwarded(executor, '["tag"]')
+
+    @pytest.mark.asyncio
+    async def test_a_decoded_list_metadata_is_dropped(self, executor):
+        assert "metadata" not in await self._forwarded(executor, ["tag"])
+
+    @pytest.mark.asyncio
+    async def test_a_scalar_metadata_is_dropped(self, executor):
+        assert "metadata" not in await self._forwarded(executor, "hello")
+
+    @pytest.mark.asyncio
+    async def test_an_object_metadata_still_rides(self, executor):
+        forwarded = await self._forwarded(executor, {"team": "growth"})
+        assert json.loads(forwarded["metadata"]) == {"team": "growth"}
+
+    @pytest.mark.asyncio
+    async def test_the_reserved_version_key_is_still_stripped(self, executor):
+        forwarded = await self._forwarded(executor, {"team": "growth", COMPONENT_VERSION_METADATA_KEY: 7})
+        assert json.loads(forwarded["metadata"]) == {"team": "growth"}
