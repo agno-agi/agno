@@ -521,6 +521,59 @@ async def test_download_attachments_unsupported_mime_passes_none():
 
 
 @pytest.mark.asyncio
+async def test_download_attachments_prefers_content_download_url():
+    """Teams file attachments carry the pre-authorised link in content.downloadUrl;
+    contentUrl points at SharePoint. Slack reads url_private and Telegram resolves
+    get_file for the same reason — use the provider's designated download field."""
+    parsed = ActivityContent(
+        text="see attached",
+        image_attachments=[],
+        file_attachments=[
+            {
+                "contentType": "application/vnd.microsoft.teams.file.download.info",
+                "name": "report.pdf",
+                "contentUrl": "https://sharepoint.example/personal/report.pdf",
+                "content": {"downloadUrl": "https://download.example/preauth/report.pdf", "uniqueId": "u1"},
+            }
+        ],
+    )
+    cfg = _make_config()
+    requested = []
+
+    async def fake_download(url, config, use_bot_token=True):
+        requested.append(url)
+        return b"pdfbytes", "application/pdf"
+
+    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+        run_kwargs, skipped = await download_attachments_async(parsed, cfg)
+
+    assert requested == ["https://download.example/preauth/report.pdf"]
+    assert skipped == []
+    assert run_kwargs["files"][0].content == b"pdfbytes"
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_falls_back_to_content_url():
+    """Inline attachments without a content.downloadUrl still use contentUrl."""
+    parsed = ActivityContent(
+        text="hi",
+        image_attachments=[],
+        file_attachments=[{"contentUrl": "https://ex/plain.pdf", "name": "plain.pdf"}],
+    )
+    cfg = _make_config()
+    requested = []
+
+    async def fake_download(url, config, use_bot_token=True):
+        requested.append(url)
+        return b"bytes", "application/pdf"
+
+    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+        await download_attachments_async(parsed, cfg)
+
+    assert requested == ["https://ex/plain.pdf"]
+
+
+@pytest.mark.asyncio
 async def test_download_attachments_supported_mime_is_preserved():
     """A type on the allowlist must survive unchanged — the guard must not blanket-None."""
     parsed = ActivityContent(

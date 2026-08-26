@@ -152,6 +152,19 @@ def extract_activity_content(activity: dict) -> Optional[ActivityContent]:
     return ActivityContent(text=text, image_attachments=image_atts, file_attachments=file_atts)
 
 
+def _attachment_download_url(att: dict) -> Optional[str]:
+    """Return the pre-authorised download link for an attachment.
+
+    Teams file attachments carry it in ``content.downloadUrl``; ``contentUrl``
+    points at SharePoint, which expects user credentials rather than the bot
+    token and answers an unauthenticated fetch with a login page.
+    """
+    content = att.get("content")
+    if isinstance(content, dict) and content.get("downloadUrl"):
+        return content["downloadUrl"]
+    return att.get("contentUrl")
+
+
 async def _download_attachment(
     url: str, config: TeamsConfig, use_bot_token: bool = True
 ) -> Tuple[Optional[bytes], Optional[str]]:
@@ -200,7 +213,7 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
 
     files: List[File] = []
     for att in parsed.file_attachments:
-        url = att.get("contentUrl")
+        url = _attachment_download_url(att)
         if not url:
             continue
         content, mime = await _download_attachment(url, config)
