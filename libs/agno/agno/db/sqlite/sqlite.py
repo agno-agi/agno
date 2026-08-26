@@ -107,6 +107,8 @@ class SqliteDb(BaseDb):
         learnings_table: Optional[str] = None,
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
+        monitors_table: Optional[str] = None,
+        monitor_events_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -145,6 +147,8 @@ class SqliteDb(BaseDb):
             learnings_table (Optional[str]): Name of the table to store learning records.
             schedules_table (Optional[str]): Name of the table to store cron schedules.
             schedule_runs_table (Optional[str]): Name of the table to store schedule run history.
+            monitors_table (Optional[str]): Name of the table to store monitors.
+            monitor_events_table (Optional[str]): Name of the table to store monitor events.
             mcp_oauth_clients_table (Optional[str]): Name of the table to store MCP OAuth client registrations.
             mcp_oauth_transactions_table (Optional[str]): Name of the table to store MCP OAuth transactions.
             mcp_oauth_codes_table (Optional[str]): Name of the table to store MCP OAuth authorization codes.
@@ -180,6 +184,8 @@ class SqliteDb(BaseDb):
             learnings_table=learnings_table,
             schedules_table=schedules_table,
             schedule_runs_table=schedule_runs_table,
+            monitors_table=monitors_table,
+            monitor_events_table=monitor_events_table,
             approvals_table=approvals_table,
             auth_tokens_table=auth_tokens_table,
             service_accounts_table=service_accounts_table,
@@ -287,6 +293,8 @@ class SqliteDb(BaseDb):
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
+            monitors_table=data.get("monitors_table"),
+            monitor_events_table=data.get("monitor_events_table"),
             approvals_table=data.get("approvals_table"),
             service_accounts_table=data.get("service_accounts_table"),
             id=data.get("id"),
@@ -330,6 +338,8 @@ class SqliteDb(BaseDb):
             (self.learnings_table_name, "learnings"),
             (self.schedules_table_name, "schedules"),
             (self.schedule_runs_table_name, "schedule_runs"),
+            (self.monitors_table_name, "monitors"),
+            (self.monitor_events_table_name, "monitor_events"),
             (self.approvals_table_name, "approvals"),
             (self.service_accounts_table_name, "service_accounts"),
             (self.tool_results_table_name, "tool_results"),
@@ -372,6 +382,7 @@ class SqliteDb(BaseDb):
                 traces_table_name=self.trace_table_name,
                 schedules_table_name=self.schedules_table_name,
                 session_table_name=self.session_table_name,
+                monitors_table_name=self.monitors_table_name,
             ).copy()
 
             # Register FK parent tables on the metadata first, so SQLAlchemy
@@ -730,6 +741,22 @@ class SqliteDb(BaseDb):
                 create_table_if_not_found=create_table_if_not_found,
             )
             return self.tool_results_table
+
+        elif table_type == "monitors":
+            self.monitors_table = self._get_or_create_table(
+                table_name=self.monitors_table_name,
+                table_type="monitors",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.monitors_table
+
+        elif table_type == "monitor_events":
+            self.monitor_events_table = self._get_or_create_table(
+                table_name=self.monitor_events_table_name,
+                table_type="monitor_events",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.monitor_events_table
 
         elif table_type == "approvals":
             self.approvals_table = self._get_or_create_table(
@@ -6930,7 +6957,9 @@ class SqliteDb(BaseDb):
             log_debug(f"Error claiming schedule: {e}")
             return None
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
+    def release_schedule(
+        self, schedule_id: str, next_run_at: Optional[int] = None, expected_worker: Optional[str] = None
+    ) -> bool:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
@@ -6939,7 +6968,12 @@ class SqliteDb(BaseDb):
             if next_run_at is not None:
                 updates["next_run_at"] = next_run_at
             with self.Session() as sess, sess.begin():
-                result = sess.execute(table.update().where(table.c.id == schedule_id).values(**updates))
+                stmt = table.update().where(table.c.id == schedule_id)
+                # Fenced release: a run that outlived its lock was reclaimed by a
+                # peer, and clearing that peer's lock here would fire the schedule again.
+                if expected_worker is not None:
+                    stmt = stmt.where(table.c.locked_by == expected_worker)
+                result = sess.execute(stmt.values(**updates))
                 return result.rowcount > 0
         except Exception as e:
             log_debug(f"Error releasing schedule: {e}")
@@ -7012,6 +7046,347 @@ class SqliteDb(BaseDb):
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error getting schedule runs: {e}")
+            return [], 0
+
+    # -- Monitor methods --
+    # ``claim_pending_monitor`` takes no user_id: the poller has to run monitors
+    # across all users.
+    def get_monitor(self, monitor_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="monitors")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == monitor_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting monitor: {e}")
+            return None
+
+    def get_monitor_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="monitors")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.name == name)
+                # Names are unique per owner: ``None`` addresses the unowned bucket,
+                # never another owner's monitor of the same name.
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                else:
+                    stmt = stmt.where(table.c.user_id.is_(None))
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting monitor by name: {e}")
+            return None
+
+    def get_monitors(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="monitors")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                # Build base query with filters
+                base_query = select(table)
+                if status is not None:
+                    base_query = base_query.where(table.c.status == status)
+                if user_id is not None:
+                    base_query = base_query.where(table.c.user_id == user_id)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(base_query.alias())
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error listing monitors: {e}")
+            return [], 0
+
+    def create_monitor(self, monitor_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="monitors", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create monitors table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**monitor_data))
+            return monitor_data
+        except Exception as e:
+            log_error(f"Error creating monitor: {str(e)}")
+            raise
+
+    def update_monitor(
+        self,
+        monitor_id: str,
+        user_id: Optional[str] = None,
+        expected_lease: Optional[Tuple[str, int]] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.monitor import validate_monitor_update
+
+        validate_monitor_update(kwargs)
+        try:
+            table = self._get_table(table_type="monitors")
+            if table is None:
+                return None
+            kwargs["updated_at"] = int(time.time())
+            with self.Session() as sess, sess.begin():
+                stmt = table.update().where(table.c.id == monitor_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                # Fenced write: the monitor's work is a live subprocess, so a
+                # superseded execution must not steal the lock back or overwrite the
+                # new holder's status. The attempt is what makes "an older me"
+                # expressible. None means the caller no longer holds the lease.
+                if expected_lease is not None:
+                    stmt = stmt.where(table.c.locked_by == expected_lease[0], table.c.attempt == expected_lease[1])
+                result = sess.execute(stmt.values(**kwargs))
+                if expected_lease is not None and (result.rowcount or 0) == 0:
+                    return None
+            return self.get_monitor(monitor_id, user_id=user_id)
+        except Exception as e:
+            # Let a unique-violation (rename onto a name taken in the same owner bucket)
+            # propagate so the router maps it to 409
+            from agno.db.utils import is_unique_violation
+
+            if is_unique_violation(e):
+                raise
+            # A fenced caller reads None as "a peer holds this row now" and stands
+            # down -- for the monitor that means killing a live subprocess. A
+            # transient DB fault must never be able to say that: it would take
+            # down healthy monitors and hand their work to nobody. Only a real
+            # lease mismatch gets to return None, so faults propagate instead.
+            if expected_lease is not None:
+                raise
+            log_debug(f"Error updating monitor: {e}")
+            return None
+
+    def delete_monitor(self, monitor_id: str, user_id: Optional[str] = None) -> bool:
+        try:
+            table = self._get_table(table_type="monitors")
+            if table is None:
+                return False
+            events_table = self._get_table(table_type="monitor_events")
+            with self.Session() as sess, sess.begin():
+                # Delete the monitor first: a scoped miss must leave storage untouched,
+                # so nothing may be removed before we know the owner check passed.
+                delete_stmt = table.delete().where(table.c.id == monitor_id)
+                if user_id is not None:
+                    delete_stmt = delete_stmt.where(table.c.user_id == user_id)
+                result = sess.execute(delete_stmt)
+                if (result.rowcount or 0) == 0:
+                    return False
+                # The FK is ON DELETE CASCADE, so the events are already gone on
+                # backends that enforce it; this covers the ones that do not.
+                if events_table is not None:
+                    sess.execute(events_table.delete().where(events_table.c.monitor_id == monitor_id))
+                return True
+        except Exception as e:
+            log_debug(f"Error deleting monitor: {e}")
+            return False
+
+    def claim_pending_monitor(
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 300,
+        excluded_user_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        try:
+            from sqlalchemy import and_
+
+            table = self._get_table(table_type="monitors")
+            if table is None:
+                return None
+            now = int(time.time())
+            stale_lock_threshold = now - lock_grace_seconds
+            # Pending monitors that are unlocked or stale-locked, plus running or
+            # stopping monitors whose worker stopped heartbeating (orphaned)
+            # A self-reclaim is allowed and is how orphan recovery works: the
+            # attempt bump below invalidates whatever the previous execution
+            # still writes, so the two can never both act on this row.
+            claimable = or_(
+                and_(
+                    table.c.status == "pending",
+                    or_(
+                        table.c.locked_by.is_(None),
+                        table.c.locked_at <= stale_lock_threshold,
+                    ),
+                ),
+                and_(
+                    table.c.status.in_(["running", "stopping"]),
+                    or_(
+                        table.c.locked_at.is_(None),
+                        table.c.locked_at <= stale_lock_threshold,
+                    ),
+                ),
+            )
+            # Owners already at their in-flight cap are skipped so the oldest-first
+            # order cannot let one tenant hold every slot. Unowned rows are never
+            # excluded: a NULL user_id means isolation is off, or an admin created
+            # the row, so there is no tenant boundary to enforce -- and they have
+            # to be spelled out, because SQL's NOT IN is NULL-valued for a NULL
+            # column and would silently drop every one of them.
+            if excluded_user_ids:
+                claimable = and_(claimable, or_(table.c.user_id.is_(None), table.c.user_id.notin_(excluded_user_ids)))
+            with self.Session() as sess, sess.begin():
+                stmt = select(table).where(claimable).order_by(table.c.created_at.asc()).limit(1)
+                row = sess.execute(stmt).fetchone()
+                if row is None:
+                    return None
+                monitor = dict(row._mapping)
+                # Atomically claim it
+                result = sess.execute(
+                    table.update()
+                    .where(table.c.id == monitor["id"], claimable)
+                    .values(locked_by=worker_id, locked_at=now, attempt=table.c.attempt + 1)
+                )
+                if result.rowcount == 0:
+                    return None
+                monitor["locked_by"] = worker_id
+                monitor["locked_at"] = now
+                monitor["attempt"] = (monitor.get("attempt") or 0) + 1
+                return monitor
+        except Exception as e:
+            log_debug(f"Error claiming monitor: {e}")
+            return None
+
+    def heartbeat_monitors(self, worker_id: str, monitor_ids: List[str]) -> int:
+        """Refresh locked_at for this worker's in-flight monitors; returns the count."""
+        if not monitor_ids:
+            return 0
+        try:
+            table = self._get_table(table_type="monitors")
+            if table is None:
+                return 0
+            now = int(time.time())
+            with self.Session() as sess, sess.begin():
+                # No status filter: the caller's in-flight set decides what is
+                # live, and a monitor that has finished already cleared its lock,
+                # so locked_by is the whole condition.
+                result = sess.execute(
+                    table.update()
+                    .where(table.c.id.in_(monitor_ids), table.c.locked_by == worker_id)
+                    .values(locked_at=now)
+                )
+                return result.rowcount or 0
+        except Exception as e:
+            log_error(
+                f"Monitor heartbeat failed for worker {worker_id} "
+                f"({len(monitor_ids)} monitors, e.g. {monitor_ids[0]}): {e}"
+            )
+            return 0
+
+    def cleanup_monitor_events(self, retention_seconds: int) -> int:
+        try:
+            table = self._get_table(table_type="monitor_events")
+            if table is None:
+                return 0
+            cutoff = int(time.time()) - retention_seconds
+            with self.Session() as sess, sess.begin():
+                result = sess.execute(table.delete().where(table.c.created_at < cutoff))
+                return result.rowcount or 0
+        except Exception as e:
+            log_debug(f"Error cleaning up monitor events: {e}")
+            return 0
+
+    def create_monitor_event(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            table = self._get_table(table_type="monitor_events", create_table_if_not_found=True)
+            if table is None:
+                raise RuntimeError("Failed to get or create monitor_events table")
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.insert().values(**event_data))
+            return event_data
+        except Exception as e:
+            # The only integrity constraint on this table is the parent monitor
+            # FK, so a violation means the monitor was deleted mid-run and the
+            # cascade took its events. That is the delete working; the caller
+            # still gets the exception, it just is not an operator's problem.
+            from agno.db.utils import is_integrity_error
+
+            if is_integrity_error(e):
+                log_debug(f"Monitor event dropped: its monitor was deleted ({str(e)[:120]})")
+                raise
+            log_error(f"Error creating monitor event: {str(e)}")
+            raise
+
+    def update_monitor_event(self, monitor_event_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="monitor_events")
+            if table is None:
+                return None
+            with self.Session() as sess, sess.begin():
+                sess.execute(table.update().where(table.c.id == monitor_event_id).values(**kwargs))
+            return self.get_monitor_event(monitor_event_id)
+        except Exception as e:
+            log_debug(f"Error updating monitor event: {e}")
+            return None
+
+    def get_monitor_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        try:
+            table = self._get_table(table_type="monitor_events")
+            if table is None:
+                return None
+            with self.Session() as sess:
+                stmt = select(table).where(table.c.id == event_id)
+                if user_id is not None:
+                    stmt = stmt.where(table.c.user_id == user_id)
+                result = sess.execute(stmt).fetchone()
+                return dict(result._mapping) if result else None
+        except Exception as e:
+            log_debug(f"Error getting monitor event: {e}")
+            return None
+
+    def get_monitor_events(
+        self,
+        monitor_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        delivery_status: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        try:
+            table = self._get_table(table_type="monitor_events")
+            if table is None:
+                return [], 0
+            with self.Session() as sess:
+                base_filter = table.c.monitor_id == monitor_id
+                if user_id is not None:
+                    base_filter = and_(base_filter, table.c.user_id == user_id)
+                # "pending" is the one worth asking for: it is where a delivery
+                # that was never completed comes to rest.
+                if delivery_status is not None:
+                    base_filter = and_(base_filter, table.c.delivery_status == delivery_status)
+
+                # Get total count
+                count_stmt = select(func.count()).select_from(table).where(base_filter)
+                total_count = sess.execute(count_stmt).scalar() or 0
+
+                # Calculate offset from page
+                offset = (page - 1) * limit
+
+                # Get paginated results
+                stmt = select(table).where(base_filter).order_by(table.c.seq.desc()).limit(limit).offset(offset)
+                results = sess.execute(stmt).fetchall()
+                return [dict(row._mapping) for row in results], total_count
+        except Exception as e:
+            log_debug(f"Error getting monitor events: {e}")
             return [], 0
 
     # -- Approval methods --

@@ -23,6 +23,10 @@ from agno.db.base import AsyncBaseDb, BaseDb
 from agno.job_queue import QueueConfig
 from agno.knowledge.knowledge import Knowledge
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+
+# Imported from the leaf module, not the package: agno.monitor pulls in the
+# executor, which imports back into agno.os.
+from agno.monitor.config import MonitorConfig
 from agno.os.config import (
     AgentOSConfig,
     AuthorizationConfig,
@@ -62,6 +66,7 @@ from agno.os.routers.learnings import get_learnings_router
 from agno.os.routers.media import get_media_router
 from agno.os.routers.memory import get_memory_router
 from agno.os.routers.metrics import get_metrics_router
+from agno.os.routers.monitors import get_monitor_router
 from agno.os.routers.registry import get_registry_router
 from agno.os.routers.schedules import get_schedule_router
 from agno.os.routers.service_accounts import get_service_accounts_router
@@ -227,6 +232,73 @@ async def scheduler_lifespan(app: FastAPI, agent_os: "AgentOS"):
     await poller.stop()
 
 
+@asynccontextmanager
+async def monitor_lifespan(app: FastAPI, agent_os: "AgentOS"):
+    """Start and stop the monitor poller."""
+    from agno.monitor import MonitorExecutor, MonitorPoller
+    from agno.monitor.poller import MIN_LOCK_GRACE_SECONDS
+
+    if agent_os._scheduler_base_url is None:
+        log_info(
+            "scheduler_base_url not set, using default http://127.0.0.1:7777. "
+            "If your server is running on a different port, set scheduler_base_url to match."
+        )
+    # An adapter without the monitor methods would otherwise let the poller log a
+    # claim error on every tick, forever -- and NotImplementedError stringifies to
+    # nothing, so the operator gets "Error claiming monitor:" and no cause. Refuse
+    # at startup instead. Probed by comparing against the base stub, not by
+    # callable(): BaseDb declares the monitor family, so callable() is True for
+    # every adapter. resolve_queue_store can use callable() only because claim_job
+    # is absent from BaseDb entirely.
+    from agno.db.utils import implements_db_method
+
+    if not implements_db_method(agent_os.db, "claim_pending_monitor"):
+        raise ValueError(
+            f"Enabling monitors requires a database implementing the monitor methods; got "
+            f"{type(agent_os.db).__name__}. SqliteDb supports monitors."
+        )
+
+    config = agent_os._monitor_config
+    if config is None:
+        raise ValueError("monitor_lifespan started with monitors disabled")
+
+    if config.lock_grace_seconds < MIN_LOCK_GRACE_SECONDS:
+        raise ValueError(
+            f"MonitorConfig.lock_grace_seconds must be at least {MIN_LOCK_GRACE_SECONDS} (a few heartbeats); "
+            f"got {config.lock_grace_seconds}. A shorter grace expires a healthy monitor's "
+            "lock between heartbeats, and the poller reclaims work it is already running."
+        )
+
+    base_url = agent_os._scheduler_base_url or "http://127.0.0.1:7777"
+    internal_token = agent_os._internal_service_token
+    if internal_token is None:
+        raise ValueError("internal_service_token must be set when monitors are enabled")
+
+    executor = MonitorExecutor(
+        base_url=base_url,
+        internal_service_token=internal_token,
+        watch_commands=config.watch_commands,
+        base_dir=config.base_dir,
+    )
+    poller = MonitorPoller(
+        db=agent_os.db,
+        executor=executor,
+        poll_interval=config.poll_interval,
+        max_concurrent=config.max_concurrent,
+        max_concurrent_per_user=config.max_concurrent_per_user,
+        lock_grace_seconds=config.lock_grace_seconds,
+        retention_seconds=config.retention_seconds,
+    )
+
+    app.state.monitor_executor = executor
+    app.state.monitor_poller = poller
+    await poller.start()
+
+    yield
+
+    await poller.stop()
+
+
 def _combine_app_lifespans(lifespans: list) -> Any:
     """Combine multiple FastAPI app lifespan context managers into one."""
     if len(lifespans) == 1:
@@ -310,6 +382,7 @@ class AgentOS:
         scheduler: bool = False,
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
+        monitors: Union[bool, MonitorConfig] = False,
         internal_service_token: Optional[str] = None,
     ):
         """Initialize AgentOS.
@@ -379,8 +452,17 @@ class AgentOS:
             registry: Optional registry to use for the AgentOS
             scheduler: Whether to enable the cron scheduler
             scheduler_poll_interval: Seconds between scheduler poll cycles (default: 15)
-            scheduler_base_url: Base URL for scheduler HTTP calls (default: http://127.0.0.1:7777)
-            internal_service_token: Token for scheduler-to-OS auth (auto-generated if not provided)
+            scheduler_base_url: Base URL for scheduler and monitor HTTP calls (default: http://127.0.0.1:7777)
+            monitors: Background watches: a monitor watches a path, runs a command the
+                operator declared, or follows a run, and turns what it sees into events
+                that can start real model runs. True enables the poller and the /monitors
+                routes with every default; a MonitorConfig enables them and says what may
+                be watched (base_dir, watch_commands) and how much of the deployment one
+                tenant may take (max_concurrent, max_concurrent_per_user, max_per_user).
+                See MonitorConfig for what each field bounds and what goes wrong without
+                it. Requires a db implementing the monitor methods (SQLite, Postgres or
+                MongoDB, sync or async).
+            internal_service_token: Token for scheduler/monitor-to-OS auth (auto-generated if not provided)
         """
         if not agents and not workflows and not teams and not knowledge and not db:
             raise ValueError("Either agents, teams, workflows, knowledge bases or a database must be provided.")
@@ -475,7 +557,17 @@ class AgentOS:
         self._scheduler_enabled = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
         self._scheduler_base_url = scheduler_base_url
-        if self._scheduler_enabled and not internal_service_token:
+
+        # Monitor configuration (shares base URL and token with the scheduler).
+        # Resolved to a config or None here so every read site below asks the
+        # same object, and "are monitors on" is one question: is it None.
+        self._monitor_config: Optional[MonitorConfig] = None
+        if isinstance(monitors, MonitorConfig):
+            self._monitor_config = monitors
+        elif monitors:
+            self._monitor_config = MonitorConfig()
+
+        if (self._scheduler_enabled or self._monitor_config is not None) and not internal_service_token:
             import secrets
 
             internal_service_token = secrets.token_urlsafe(32)
@@ -647,12 +739,29 @@ class AgentOS:
                     include_workflows=self.workflows,
                 )
             )
+            # Only when the poller is running. Registering these without it lets a
+            # caller create monitors that sit pending forever with nothing to claim
+            # them and no signal that nothing ever will.
+            if self._monitor_config is not None:
+                updated_routers.append(
+                    get_monitor_router(
+                        os_db=self.db,
+                        settings=self.settings,
+                        include_agents=self.agents,
+                        include_teams=self.teams,
+                        include_workflows=self.workflows,
+                        max_per_user=self._monitor_config.max_per_user,
+                        watch_commands=self._monitor_config.watch_commands,
+                        base_dir=self._monitor_config.base_dir,
+                    )
+                )
             updated_routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             updated_routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
             for prefix, tag in [
                 ("/components", "Components"),
                 ("/schedules", "Schedules"),
+                ("/monitors", "Monitors"),
                 ("/approvals", "Approvals"),
                 ("/service-accounts", "Service Accounts"),
             ]:
@@ -1291,6 +1400,10 @@ class AgentOS:
             if self.queue is not None and self.queue.durable:
                 lifespans.append(partial(queue_lifespan, agent_os=self))
 
+            # The monitor lifespan (after db so tables exist)
+            if self._monitor_config is not None and self.db is not None:
+                lifespans.append(partial(monitor_lifespan, agent_os=self))
+
             # Launch telemetry starts here, after any pre-fork application
             # construction and after substantive worker startup lifespans.
             if self.telemetry:
@@ -1339,6 +1452,10 @@ class AgentOS:
             # The durable job queue worker (after db so tables exist)
             if self.queue is not None and self.queue.durable:
                 lifespans.append(partial(queue_lifespan, agent_os=self))
+
+            # The monitor lifespan (after db so tables exist)
+            if self._monitor_config is not None and self.db is not None:
+                lifespans.append(partial(monitor_lifespan, agent_os=self))
 
             # Launch telemetry starts here, after any pre-fork application
             # construction and after substantive worker startup lifespans.
@@ -1391,16 +1508,31 @@ class AgentOS:
                     include_workflows=self.workflows,
                 )
             )
+            # See the note on the other registration site: no poller, no routes.
+            if self._monitor_config is not None:
+                routers.append(
+                    get_monitor_router(
+                        os_db=self.db,
+                        settings=self.settings,
+                        include_agents=self.agents,
+                        include_teams=self.teams,
+                        include_workflows=self.workflows,
+                        max_per_user=self._monitor_config.max_per_user,
+                        watch_commands=self._monitor_config.watch_commands,
+                        base_dir=self._monitor_config.base_dir,
+                    )
+                )
             routers.append(get_approval_router(os_db=self.db, settings=self.settings))
             routers.append(get_service_accounts_router(os_db=self.db, settings=self.settings))
         else:
             log_debug(
-                "Components, Scheduler, Approval, and Service Account routers not enabled: "
+                "Components, Scheduler, Monitor, Approval, and Service Account routers not enabled: "
                 "requires a db to be provided to AgentOS"
             )
             for prefix, tag in [
                 ("/components", "Components"),
                 ("/schedules", "Schedules"),
+                ("/monitors", "Monitors"),
                 ("/approvals", "Approvals"),
                 ("/service-accounts", "Service Accounts"),
             ]:

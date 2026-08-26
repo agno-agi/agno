@@ -299,6 +299,76 @@ SCHEDULE_TABLE_SCHEMA = {
     ],
 }
 
+MONITOR_TABLE_SCHEMA = {
+    "id": {"type": String, "primary_key": True, "nullable": False},
+    "name": {"type": String, "nullable": False, "index": True},
+    "description": {"type": String, "nullable": True},
+    # Exactly one watch target per row: the paths to watch, the key of an
+    # operator-declared command, or the run to follow. Each path is stored
+    # already resolved and contained inside the deployment's root. The command
+    # itself is never stored -- it is resolved from the AgentOS declaration at
+    # run time.
+    #
+    # ``watch_path`` is JSON rather than a string because one monitor may watch
+    # several paths. They are handed to a single watcher together, so several
+    # paths are still one target: one lifecycle, and one honest answer for the
+    # row's status, exit code and event count.
+    "watch_path": {"type": JSON, "nullable": True},
+    "watch_command": {"type": String, "nullable": True},
+    "watch_run_id": {"type": String, "nullable": True},
+    # Extra glob patterns dropped from a path watch, on top of whatever
+    # ``use_default_filter`` leaves in place. JSON for the same reason
+    # ``watch_path`` is: it is a list of patterns, and packing it into one
+    # string would need a separator that no glob is allowed to contain.
+    "exclude": {"type": JSON, "nullable": True},
+    # Whether the watcher's own default exclusions apply -- .git, .venv,
+    # __pycache__, node_modules, compiled Python, editor swap files. NOT NULL
+    # with a default so "never set" and "turned off" cannot look alike: a watch
+    # that appears inert is usually watching something on that list, and turning
+    # the filter off is how its owner finds that out.
+    "use_default_filter": {"type": Boolean, "nullable": False, "default": True},
+    "endpoint": {"type": String, "nullable": True},
+    "method": {"type": String, "nullable": False},
+    "payload": {"type": JSON, "nullable": True},
+    "timeout_seconds": {"type": BigInteger, "nullable": False},
+    "persistent": {"type": Boolean, "nullable": False, "default": False},
+    "max_events": {"type": BigInteger, "nullable": False},
+    "status": {"type": String, "nullable": False, "index": True},
+    "exit_code": {"type": BigInteger, "nullable": True},
+    "error": {"type": String, "nullable": True},
+    "event_count": {"type": BigInteger, "nullable": False},
+    "started_at": {"type": BigInteger, "nullable": True},
+    "finished_at": {"type": BigInteger, "nullable": True},
+    "locked_by": {"type": String, "nullable": True},
+    "locked_at": {"type": BigInteger, "nullable": True},
+    # Lease generation. Bumped on every claim so a write from a superseded
+    # execution can be refused instead of racing the live one.
+    "attempt": {"type": BigInteger, "nullable": False, "default": 0},
+    # Enough to find and identify an orphaned subprocess from another worker.
+    "worker_host": {"type": String, "nullable": True},
+    "proc_pid": {"type": BigInteger, "nullable": True},
+    "proc_pgid": {"type": BigInteger, "nullable": True},
+    "proc_started_at": {"type": String, "nullable": True},
+    # Owner. NULL means system-created: migrations, legacy rows.
+    "user_id": {"type": String, "nullable": True, "index": True},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
+    "updated_at": {"type": BigInteger, "nullable": True},
+    "__composite_indexes__": [
+        {"name": "status_locked_at", "columns": ["status", "locked_at"]},
+        # Serves the "my monitors" list read, which filters on owner and
+        # optionally status, then orders by created_at.
+        {"name": "user_status_created_at", "columns": ["user_id", "status", "created_at"]},
+    ],
+    # Names are unique per owner. The router's check-then-insert races under
+    # concurrent creates, so the DB backs it with two partial unique indexes
+    # (NULLs are distinct in a plain unique constraint, and SQLite cannot drop
+    # a table-level constraint, so named partial indexes cover both buckets).
+    "_partial_unique_indexes": [
+        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "user_id IS NOT NULL"},
+        {"name": "uq_unowned_name", "columns": ["name"], "where": "user_id IS NULL"},
+    ],
+}
+
 APPROVAL_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "run_id": {"type": String, "nullable": False, "index": True},
@@ -419,11 +489,44 @@ TOOL_RESULTS_TABLE_SCHEMA = {
 }
 
 
+def _get_monitor_events_table_schema(monitors_table_name: str = "agno_monitors") -> dict[str, Any]:
+    """Get the monitor events table schema with a foreign key to the monitors table."""
+    return {
+        "id": {"type": String, "primary_key": True, "nullable": False},
+        "monitor_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            "foreign_key": f"{monitors_table_name}.id",
+            "ondelete": "CASCADE",
+        },
+        "seq": {"type": BigInteger, "nullable": False},
+        "content": {"type": String, "nullable": False},
+        "delivery_status": {"type": String, "nullable": True},
+        "status_code": {"type": BigInteger, "nullable": True},
+        "run_id": {"type": String, "nullable": True},
+        "session_id": {"type": String, "nullable": True},
+        "error": {"type": String, "nullable": True},
+        # Owner, denormalised from the parent monitor so an event read scopes
+        # without joining back to it.
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        # Unique, not just indexed. seq is computed client-side in _emit_event, so
+        # two executions of one monitor produce the same numbers -- the first
+        # duplicate then fails loudly here instead of interleaving two silent
+        # streams into one event history.
+        "_unique_constraints": [
+            {"name": "uq_monitor_id_seq", "columns": ["monitor_id", "seq"]},
+        ],
+    }
+
+
 def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
     schedules_table_name: str = "agno_schedules",
     session_table_name: str = "agno_sessions",
+    monitors_table_name: str = "agno_monitors",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -434,6 +537,7 @@ def get_table_schema_definition(
         schedules_table_name (str): The name of the schedules table (used for schedule_runs foreign key).
         session_table_name (str): The name of the sessions table (used for the
             runs table's ``session_id`` foreign key).
+        monitors_table_name (str): The name of the monitors table (used for monitor_events foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -445,6 +549,8 @@ def get_table_schema_definition(
         return _get_schedule_runs_table_schema(schedules_table_name)
     if table_type == "runs":
         return _get_run_table_schema(session_table_name)
+    if table_type == "monitor_events":
+        return _get_monitor_events_table_schema(monitors_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
@@ -461,6 +567,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
+        "monitors": MONITOR_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

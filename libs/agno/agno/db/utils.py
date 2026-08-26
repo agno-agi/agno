@@ -38,6 +38,8 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "learnings_table",
         "schedules_table",
         "schedule_runs_table",
+        "monitors_table",
+        "monitor_events_table",
         "approvals_table",
         "auth_tokens_table",
         "service_accounts_table",
@@ -48,6 +50,23 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "mcp_oauth_keys_table",
     }
 )
+
+
+def is_integrity_error(exc: Exception) -> bool:
+    """Whether ``exc`` is a DB integrity-constraint violation of any kind.
+
+    Same type-only matching as ``is_unique_violation`` and, on SQL backends, the
+    same exception -- the difference is what the caller knows about the table it
+    was writing. A caller that has only one constraint to violate can read this
+    as "that constraint", which is how ``create_monitor_event`` tells a deleted
+    parent apart from a fault worth an operator's attention.
+    """
+    try:
+        from sqlalchemy.exc import IntegrityError
+
+        return isinstance(exc, IntegrityError)
+    except ImportError:
+        return False
 
 
 def is_unique_violation(exc: Exception) -> bool:
@@ -1152,3 +1171,32 @@ def resolve_db_from_config(
             return registry_db
 
     return db_from_dict(db_data)
+
+
+def implements_db_method(db: Any, method_name: str) -> bool:
+    """Whether an adapter really implements an optional DB method.
+
+    ``callable(getattr(db, name, None))`` cannot answer this for anything the
+    base class declares: BaseDb and AsyncBaseDb define the optional families --
+    monitors among them -- as ``raise NotImplementedError`` stubs, so every
+    adapter appears to have them and the probe is always True. The job queue's
+    equivalent check works only because ``claim_job`` is absent from BaseDb
+    entirely; copying its shape without that precondition yields a guard that
+    can never fire.
+
+    Comparing against the base attribute answers the real question: did this
+    class (or something between it and the base) override the stub?
+
+    Resolved off the instance rather than off ``type(db)``: an adapter may carry
+    the method on the instance (a wrapper, a test double), and a class-only
+    lookup would report those as unsupported. Comparing the bound method's
+    ``__func__`` is what distinguishes "inherited the stub" from "has its own" --
+    anything not bound to a base stub, including a plain attribute, is its own.
+    """
+    from agno.db.base import AsyncBaseDb, BaseDb
+
+    own = getattr(db, method_name, None)
+    if own is None or not callable(own):
+        return False
+    underlying = getattr(own, "__func__", None)
+    return all(underlying is not getattr(base, method_name, None) for base in (BaseDb, AsyncBaseDb))
