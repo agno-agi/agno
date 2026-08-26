@@ -1,6 +1,6 @@
 """
 1. Run: `uv pip install openai ddgs newspaper4k lxml_html_clean agno` to install the dependencies
-2. Run: `python cookbook/storage/postgres_storage/postgres_storage_for_team.py` to run the team
+2. Run: `python cookbook/06_storage/postgres/postgres_for_team.py` to run the team
 """
 
 from typing import List

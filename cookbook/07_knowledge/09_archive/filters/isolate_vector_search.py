@@ -15,7 +15,7 @@ IMPORTANT: If you have existing production data and want to enable isolation, yo
 need to re-index your data with isolate_vector_search=True to add the linked_to metadata.
 Existing documents without linked_to metadata will NOT be found when isolation is enabled.
 
-Run: `python cookbook/07_knowledge/basic_operations/async/05_isolate_vector_search.py`
+Run: `python cookbook/07_knowledge/09_archive/filters/isolate_vector_search.py`
 """
 
 import asyncio
