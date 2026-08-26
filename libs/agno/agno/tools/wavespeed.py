@@ -27,8 +27,8 @@ class WaveSpeedTools(Toolkit):
         video_model: str = "bytedance/seedance-2.5/text-to-video",
         poll_interval: float = 1.0,
         timeout: float = 600.0,
-        enable_generate_image: bool = True,
-        enable_generate_video: bool = True,
+        generate_image: bool = True,
+        generate_video: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -42,9 +42,9 @@ class WaveSpeedTools(Toolkit):
         self.client = WaveSpeedClient(api_key=self.api_key)
 
         tools: List[Any] = []
-        if all or enable_generate_image:
+        if all or generate_image:
             tools.append(self.generate_image)
-        if all or enable_generate_video:
+        if all or generate_video:
             tools.append(self.generate_video)
 
         super().__init__(name="wavespeed_tools", tools=tools, **kwargs)

@@ -6,7 +6,7 @@ Demonstrates WaveSpeed tools.
 """
 
 from agno.agent import Agent
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.tools.wavespeed import WaveSpeedTools
 
 # ---------------------------------------------------------------------------
@@ -16,7 +16,7 @@ from agno.tools.wavespeed import WaveSpeedTools
 
 wavespeed_agent = Agent(
     name="WaveSpeed Media Generator Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     tools=[
         WaveSpeedTools(
             image_model="bytedance/seedream-v5.0-pro",
