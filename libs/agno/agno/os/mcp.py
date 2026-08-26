@@ -126,29 +126,22 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
 
 
 def _inject_user_id(fn: Callable) -> Callable:
-    """Inject the authenticated caller's user_id and hide framework params from MCP schema.
+    """Hide framework params from MCP schema and inject user_id from JWT at runtime.
 
-    If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
-    resolved JWT subject at call time and drops it from the wrapper's signature -- so it
-    does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
-
-    Also hides framework-injected params (agent, team, run_context, media types) from the
-    schema using the same logic as agno.tools.function -- both by name and by type annotation.
-    This prevents Pydantic schema crashes (e.g. RunContext contains FilterExpr which cannot
-    be serialized) and keeps framework params out of the MCP tool schema.
+    Wraps ``fn`` to:
+    1. Remove framework params from the signature (hidden from MCP clients)
+    2. Inject ``user_id`` from the authenticated JWT subject at call time
     """
     try:
         sig = inspect.signature(fn)
     except (ValueError, TypeError):
         return fn
 
-    # Same logic as Function.process_entrypoint in agno.tools.function:
-    # 1. Exclude by name: framework-injected params + user_id (MCP-specific for JWT auth)
-    excluded_params = ["return", "self", *FRAMEWORK_INJECTED_PARAMS, "user_id"]
+    # 1. Exclude by name
+    excluded_params = [*FRAMEWORK_INJECTED_PARAMS, "user_id"]
     excluded_params.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
 
-    # 2. Exclude by type: params whose type annotation is schema-excluded
-    #    (e.g. ctx: RunContext, my_agent: Agent). See issue #6344.
+    # 2. Exclude by type
     try:
         from typing import get_type_hints
 
