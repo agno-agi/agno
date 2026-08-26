@@ -1,5 +1,6 @@
 import asyncio
 import time
+from hashlib import md5
 from importlib import metadata
 from typing import Any, Dict, List, Optional, Union
 
@@ -14,11 +15,6 @@ from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
 try:
-    from hashlib import md5
-
-except ImportError:
-    raise ImportError("`hashlib` not installed. Please install using `pip install hashlib`")
-try:
     from pymongo import AsyncMongoClient, MongoClient, errors
     from pymongo.collection import Collection
     from pymongo.driver_info import DriverInfo
@@ -28,6 +24,9 @@ except ImportError:
     raise ImportError("`pymongo` not installed. Please install using `pip install pymongo`")
 
 DRIVER_METADATA = DriverInfo(name="Agno", version=metadata.version("agno"))
+
+# The owner is stored top-level rather than in meta_data so it can be a $vectorSearch filter field.
+USER_ID_FIELD = "user_id"
 
 
 class MongoDb(VectorDb):
@@ -326,6 +325,11 @@ class MongoDb(VectorDb):
                                     "path": "embedding",
                                     "similarity": self.distance_metric,
                                 },
+                                # Declared here so the owner scope can pre-filter inside $vectorSearch.
+                                {
+                                    "type": "filter",
+                                    "path": USER_ID_FIELD,
+                                },
                             ]
                         },
                         name=index_name,
@@ -373,6 +377,11 @@ class MongoDb(VectorDb):
                                 "numDimensions": embedding_dim,
                                 "path": "embedding",
                                 "similarity": self.distance_metric,
+                            },
+                            # Declared here so the owner scope can pre-filter inside $vectorSearch.
+                            {
+                                "type": "filter",
+                                "path": USER_ID_FIELD,
                             },
                         ]
                     },
@@ -508,18 +517,30 @@ class MongoDb(VectorDb):
             logger.exception("Error checking document ID existence")
             return False
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def _user_scope_filter(self, user_id: Optional[str]) -> Optional[Dict[str, Any]]:
+        """Build the owner scope for a search or delete: this user's chunks plus the shared (null) bucket.
+
+        ``None`` applies no scope. Null equality is used because the $vectorSearch pre-filter has no ``$exists``.
+        """
+        if user_id is None:
+            return None
+        return {"$or": [{USER_ID_FIELD: user_id}, {USER_ID_FIELD: None}]}
+
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if documents with the given content hash exist in the collection.
 
         Args:
             content_hash (str): The content hash to check.
+            user_id (Optional[str]): Owner to check, so another owner's identical upload is not judged
+                a duplicate. ``None`` addresses the shared bucket alone, not every owner.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
         """
         try:
             collection = self._get_collection()
-            result = collection.find_one({"content_hash": content_hash})
+            query: Dict[str, Any] = {"content_hash": content_hash, USER_ID_FIELD: user_id}
+            result = collection.find_one(query)
             exists = result is not None
             log_debug(f"Document with content_hash '{content_hash}' {'exists' if exists else 'does not exist'}")
             return exists
@@ -527,8 +548,21 @@ class MongoDb(VectorDb):
             logger.exception("Error checking content_hash existence")
             return False
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Insert documents into the MongoDB collection."""
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Insert documents into the MongoDB collection.
+
+        Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to insert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+        """
         log_debug(f"Inserting {len(documents)} documents")
         collection = self._get_collection()
 
@@ -538,7 +572,7 @@ class MongoDb(VectorDb):
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     raise ValueError(f"Failed to generate embedding for document: {document.id}")
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 prepared_docs.append(doc_data)
             except ValueError:
                 logger.exception(f"Error preparing document '{document.name}'")
@@ -554,17 +588,34 @@ class MongoDb(VectorDb):
             except Exception:
                 logger.exception("Error inserting documents")
 
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        """Upsert documents into the MongoDB collection."""
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Upsert documents into the MongoDB collection.
+
+        Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to upsert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+        """
         log_info(f"Upserting {len(documents)} documents")
         collection = self._get_collection()
+
+        # The ``_id`` is content-derived, so edited content writes new rows; clear the prior chunks first.
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
 
         for document in documents:
             try:
                 document.embed(embedder=self.embedder)
                 if document.embedding is None:
                     raise ValueError(f"Failed to generate embedding for document: {document.id}")
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -584,34 +635,52 @@ class MongoDb(VectorDb):
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         min_score: float = 0.0,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Search for documents using vector similarity."""
+        """Search for documents using vector similarity.
+
+        Args:
+            query (str): The query to search for.
+            limit (int): The maximum number of documents to return.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Metadata filters to apply.
+            min_score (float): Drop results scoring below this value; 0.0 keeps them all.
+            user_id (Optional[str]): Restrict results to this user's chunks plus shared ones; ``None`` sees all.
+        """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
         if self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query, limit=limit, filters=filters)
+            return self.hybrid_search(query, limit=limit, filters=filters, user_id=user_id)
 
         query_embedding = self.embedder.get_embedding(query)
         if query_embedding is None:
             log_error(f"Failed to generate embedding for query: {query}")
             return []
 
+        scope_filter = self._user_scope_filter(user_id)
+
         if self.cosmos_compatibility:
             # Azure Cosmos DB Mongo Vcore compatibility mode
             try:
                 collection = self._get_collection()
 
+                # Cosmos has no vector pre-filter, so scope after the search and over-fetch to absorb it.
+                k = min(limit * 4, 100) if scope_filter is not None else limit
+
                 # Construct the search pipeline
                 search_stage = {
                     "$search": {
-                        "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": limit, "nProbes": 2},
+                        "cosmosSearch": {"vector": query_embedding, "path": "embedding", "k": k, "nProbes": 2},
                         "returnStoredSource": True,
                     }
                 }
 
-                pipeline = [
-                    search_stage,
+                pipeline: List[Dict[str, Any]] = [search_stage]
+                # Must precede the $project below, which drops ``user_id``: a missing field matches {user_id: None}.
+                if scope_filter is not None:
+                    pipeline.append({"$match": scope_filter})
+                    pipeline.append({"$limit": limit})
+                pipeline.append(
                     {
                         "$project": {
                             "similarityScore": {"$meta": "searchScore"},
@@ -620,8 +689,8 @@ class MongoDb(VectorDb):
                             "content": 1,
                             "meta_data": 1,
                         }
-                    },
-                ]
+                    }
+                )
 
                 results = list(collection.aggregate(pipeline))
                 docs = [
@@ -645,16 +714,18 @@ class MongoDb(VectorDb):
             # MongoDB Atlas Search
             try:
                 collection = self._get_collection()
+                vector_search_stage: Dict[str, Any] = {
+                    "index": self.search_index_name,
+                    "limit": limit,
+                    "numCandidates": min(limit * 4, 100),
+                    "queryVector": query_embedding,
+                    "path": "embedding",
+                }
+                # Pre-filter inside $vectorSearch so scoping doesn't cut the result set below ``limit``.
+                if scope_filter is not None:
+                    vector_search_stage["filter"] = scope_filter
                 pipeline = [
-                    {
-                        "$vectorSearch": {
-                            "index": self.search_index_name,
-                            "limit": limit,
-                            "numCandidates": min(limit * 4, 100),
-                            "queryVector": query_embedding,
-                            "path": "embedding",
-                        }
-                    },
+                    {"$vectorSearch": vector_search_stage},
                     {"$set": {"score": {"$meta": "vectorSearchScore"}}},
                 ]
 
@@ -702,17 +773,31 @@ class MongoDb(VectorDb):
                 logger.exception("Error during search")
                 raise
 
-    def vector_search(self, query: str, limit: int = 5) -> List[Document]:
-        """Perform a vector-based search."""
-        log_debug("Performing vector search.")
-        return self.search(query, limit=limit)
+    def vector_search(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[Document]:
+        """Perform a vector-based search.
 
-    def keyword_search(self, query: str, limit: int = 5) -> List[Document]:
-        """Perform a keyword-based search."""
+        Args:
+            user_id: Restrict results to this owner's chunks plus shared ones; ``None`` sees all.
+        """
+        log_debug("Performing vector search.")
+        return self.search(query, limit=limit, user_id=user_id)
+
+    def keyword_search(self, query: str, limit: int = 5, user_id: Optional[str] = None) -> List[Document]:
+        """Perform a keyword-based search.
+
+        Args:
+            user_id: Restrict results to this owner's chunks plus shared ones; ``None`` sees all.
+        """
         try:
             collection = self._get_collection()
+            # Public entry point, so it carries the owner scope itself — a caller reaching it
+            # directly rather than through search() would otherwise read every owner's chunks.
+            query_filter: Dict[str, Any] = {"content": {"$regex": query, "$options": "i"}}
+            scope_filter = self._user_scope_filter(user_id)
+            if scope_filter is not None:
+                query_filter = {"$and": [query_filter, scope_filter]}
             cursor = collection.find(
-                {"content": {"$regex": query, "$options": "i"}},
+                query_filter,
                 {"_id": 1, "name": 1, "content": 1, "meta_data": 1, "content_id": 1},
             ).limit(limit)
             results = [
@@ -736,6 +821,7 @@ class MongoDb(VectorDb):
         query: str,
         limit: int = 5,
         filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector and keyword-based searches using Reciprocal Rank Fusion.
@@ -744,6 +830,12 @@ class MongoDb(VectorDb):
         The rank constant k is used in the RRF formula `1 / (rank + k)` to smooth scores.
 
         Reference: https://www.mongodb.com/docs/atlas/atlas-vector-search/tutorials/reciprocal-rank-fusion
+
+        Args:
+            query (str): The query to search for.
+            limit (int): The maximum number of documents to return.
+            filters (Optional[Dict[str, Any]]): Metadata filters to apply.
+            user_id (Optional[str]): Restrict results to this user's chunks plus shared ones; ``None`` sees all.
         """
 
         if self.cosmos_compatibility:
@@ -770,17 +862,68 @@ class MongoDb(VectorDb):
                 else:
                     mongo_filters[key] = value
 
-        pipeline = [
-            # Vector Search Branch
+        scope_filter = self._user_scope_filter(user_id)
+
+        vector_search_stage: Dict[str, Any] = {
+            "index": self.search_index_name,
+            "path": "embedding",
+            "queryVector": query_embedding,
+            "numCandidates": min(limit * 10, 200),
+            "limit": limit * 2,
+        }
+        # Vector branch: scope as a pre-filter inside $vectorSearch.
+        if scope_filter is not None:
+            vector_search_stage["filter"] = scope_filter
+
+        # Keyword branch: $search has no null-friendly pre-filter, so scope it with a $match.
+        keyword_branch_pipeline: List[Dict[str, Any]] = [
             {
-                "$vectorSearch": {
-                    "index": self.search_index_name,
-                    "path": "embedding",
-                    "queryVector": query_embedding,
-                    "numCandidates": min(limit * 10, 200),
-                    "limit": limit * 2,
+                "$search": {
+                    "index": "default",
+                    "text": {"query": query, "path": "content"},
                 }
             },
+        ]
+        if scope_filter is not None:
+            keyword_branch_pipeline.append({"$match": scope_filter})
+        keyword_branch_pipeline.extend(
+            [
+                {"$limit": limit * 2},
+                {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
+                {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
+                {
+                    "$addFields": {
+                        "_id": "$docs._id",
+                        "name": "$docs.name",
+                        "content": "$docs.content",
+                        "meta_data": "$docs.meta_data",
+                        "content_id": "$docs.content_id",
+                        "vs_score": 0.0,
+                        "fts_score": {
+                            "$divide": [
+                                self.hybrid_keyword_weight,
+                                {"$add": ["$rank", k, 1]},
+                            ]
+                        },
+                    }
+                },
+                {
+                    "$project": {
+                        "_id": 1,
+                        "name": 1,
+                        "content": 1,
+                        "meta_data": 1,
+                        "content_id": 1,
+                        "vs_score": 1,
+                        "fts_score": 1,
+                    }
+                },
+            ]
+        )
+
+        pipeline = [
+            # Vector Search Branch
+            {"$vectorSearch": vector_search_stage},
             {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
             {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
             {
@@ -815,44 +958,7 @@ class MongoDb(VectorDb):
             {
                 "$unionWith": {
                     "coll": self.collection_name,
-                    "pipeline": [
-                        {
-                            "$search": {
-                                "index": "default",
-                                "text": {"query": query, "path": "content"},
-                            }
-                        },
-                        {"$limit": limit * 2},
-                        {"$group": {"_id": None, "docs": {"$push": "$$ROOT"}}},
-                        {"$unwind": {"path": "$docs", "includeArrayIndex": "rank"}},
-                        {
-                            "$addFields": {
-                                "_id": "$docs._id",
-                                "name": "$docs.name",
-                                "content": "$docs.content",
-                                "meta_data": "$docs.meta_data",
-                                "content_id": "$docs.content_id",
-                                "vs_score": 0.0,
-                                "fts_score": {
-                                    "$divide": [
-                                        self.hybrid_keyword_weight,
-                                        {"$add": ["$rank", k, 1]},
-                                    ]
-                                },
-                            }
-                        },
-                        {
-                            "$project": {
-                                "_id": 1,
-                                "name": 1,
-                                "content": 1,
-                                "meta_data": 1,
-                                "content_id": 1,
-                                "vs_score": 1,
-                                "fts_score": 1,
-                            }
-                        },
-                    ],
+                    "pipeline": keyword_branch_pipeline,
                 }
             },
             # Combine and Rank
@@ -982,7 +1088,11 @@ class MongoDb(VectorDb):
         return True
 
     def prepare_doc(
-        self, content_hash: str, document: Document, filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        document: Document,
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         """Prepare a document for insertion or upsertion into MongoDB."""
 
@@ -994,6 +1104,9 @@ class MongoDb(VectorDb):
 
         cleaned_content = document.content.replace("\x00", "\ufffd")
         doc_id = md5(cleaned_content.encode("utf-8")).hexdigest()
+        # Fold the owner into the id so two owners' identical content get distinct _id values.
+        if user_id is not None:
+            doc_id = md5(f"{doc_id}_{user_id}".encode("utf-8")).hexdigest()
         doc_data = {
             "_id": doc_id,
             "name": document.name,
@@ -1002,6 +1115,7 @@ class MongoDb(VectorDb):
             "embedding": document.embedding,
             "content_id": document.content_id,
             "content_hash": content_hash,
+            USER_ID_FIELD: user_id,
         }
         log_debug(f"Prepared document: {doc_data['_id']}")
         return doc_data
@@ -1018,9 +1132,20 @@ class MongoDb(VectorDb):
             return 0
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Insert documents asynchronously."""
+        """Insert documents asynchronously.
+
+        Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to insert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+        """
         log_debug(f"Inserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
 
@@ -1066,7 +1191,7 @@ class MongoDb(VectorDb):
         prepared_docs = []
         for document in documents:
             try:
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 prepared_docs.append(doc_data)
             except ValueError:
                 logger.exception(f"Error preparing document '{document.name}'")
@@ -1083,11 +1208,27 @@ class MongoDb(VectorDb):
                 logger.exception("Error inserting documents asynchronously")
 
     async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Upsert documents asynchronously."""
+        """Upsert documents asynchronously.
+
+        Args:
+            content_hash (str): The content hash shared by these documents.
+            documents (List[Document]): The documents to upsert.
+            filters (Optional[Dict[str, Any]]): Metadata merged into every document.
+            user_id (Optional[str]): Owner of these chunks for per-user isolation.
+        """
         log_info(f"Upserting {len(documents)} documents asynchronously")
         collection = await self._get_async_collection()
+
+        # See the matching comment in ``upsert``.
+        # Both hit the sync client; off the loop so a slow server cannot stall it.
+        if await asyncio.to_thread(self.content_hash_exists, content_hash, user_id):
+            await asyncio.to_thread(self._delete_by_content_hash, content_hash, user_id)
 
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
@@ -1130,7 +1271,7 @@ class MongoDb(VectorDb):
 
         for document in documents:
             try:
-                doc_data = self.prepare_doc(content_hash, document, filters)
+                doc_data = self.prepare_doc(content_hash, document, filters, user_id=user_id)
                 await collection.update_one(
                     {"_id": doc_data["_id"]},
                     {"$set": doc_data},
@@ -1141,9 +1282,22 @@ class MongoDb(VectorDb):
                 logger.exception(f"Error upserting document '{document.name}' asynchronously")
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        min_score: float = 0.0,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
-        """Search for documents asynchronously."""
+        """Search for documents asynchronously.
+
+        Args:
+            query (str): The query to search for.
+            limit (int): The maximum number of documents to return.
+            filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Metadata filters to apply.
+            min_score (float): Drop results scoring below this value; 0.0 keeps them all.
+            user_id (Optional[str]): Restrict results to this user's chunks plus shared ones; ``None`` sees all.
+        """
         if isinstance(filters, List):
             log_warning("Filters Expressions are not supported in MongoDB. No filters will be applied.")
             filters = None
@@ -1154,18 +1308,25 @@ class MongoDb(VectorDb):
 
         try:
             collection = await self._get_async_collection()
+            vector_search_stage: Dict[str, Any] = {
+                "index": self.search_index_name,
+                "limit": limit,
+                "numCandidates": min(limit * 4, 100),
+                "queryVector": query_embedding,
+                "path": "embedding",
+            }
+            # Pre-filter inside $vectorSearch so scoping doesn't cut the result set below ``limit``.
+            scope_filter = self._user_scope_filter(user_id)
+            if scope_filter is not None:
+                vector_search_stage["filter"] = scope_filter
             pipeline = [
-                {
-                    "$vectorSearch": {
-                        "index": self.search_index_name,
-                        "limit": limit,
-                        "numCandidates": min(limit * 4, 100),
-                        "queryVector": query_embedding,
-                        "path": "embedding",
-                    }
-                },
+                {"$vectorSearch": vector_search_stage},
                 {"$set": {"score": {"$meta": "vectorSearchScore"}}},
             ]
+
+            match_filters: Dict[str, Any] = {}
+            if min_score > 0:
+                match_filters["score"] = {"$gte": min_score}
 
             # Handle filters if provided
             if filters:
@@ -1178,7 +1339,10 @@ class MongoDb(VectorDb):
                     else:
                         mongo_filters[key] = value
 
-                pipeline.append({"$match": mongo_filters})
+                match_filters.update(mongo_filters)
+
+            if match_filters:
+                pipeline.append({"$match": match_filters})
 
             pipeline.append({"$project": {"embedding": 0}})
 
@@ -1325,29 +1489,38 @@ class MongoDb(VectorDb):
             logger.exception(f"Error deleting documents with metadata '{metadata}'")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by content hash.
 
         Args:
             content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Owner to scope the delete to; ``None`` scopes to the shared bucket alone.
 
         Returns:
             bool: True if documents were deleted successfully, False otherwise.
         """
         try:
             collection = self._get_collection()
-            result = collection.delete_many({"content_hash": content_hash})
+            result = collection.delete_many({"content_hash": content_hash, USER_ID_FIELD: user_id})
             log_info(f"Deleted {result.deleted_count} documents with content_hash '{content_hash}'")
             return True
         except Exception:
             logger.exception(f"Error deleting documents by content_hash '{content_hash}'")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
-        """Delete documents by content ID."""
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete documents by content ID.
+
+        Args:
+            content_id (str): The content ID of the documents to delete.
+            user_id (Optional[str]): Restrict the delete to this owner's chunks; ``None`` deletes across all owners.
+        """
         try:
             collection = self._get_collection()
-            result = collection.delete_many({"content_id": content_id})
+            query: Dict[str, Any] = {"content_id": content_id}
+            if user_id is not None:
+                query[USER_ID_FIELD] = user_id
+            result = collection.delete_many(query)
 
             log_info(
                 f"Deleted {result.deleted_count} document(s) with content_id '{content_id}' from collection '{self.collection_name}'."
@@ -1373,6 +1546,9 @@ class MongoDb(VectorDb):
 
             update_operations = {}
             for key, value in metadata.items():
+                # The owner is a top-level field; never let a metadata write reassign it.
+                if key == USER_ID_FIELD:
+                    continue
                 update_operations[f"meta_data.{key}"] = value
                 update_operations[f"filters.{key}"] = value
 

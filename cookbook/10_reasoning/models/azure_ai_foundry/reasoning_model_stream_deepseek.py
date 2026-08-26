@@ -26,7 +26,6 @@ def run_example() -> None:
                 azure_endpoint=os.getenv("AZURE_ENDPOINT"),
                 api_key=os.getenv("AZURE_API_KEY"),
             ),
-            reasoning=True,
             instructions="Think step by step about the problem.",
         )
 

@@ -36,7 +36,7 @@ presigned_url = s3_client.generate_presigned_url(
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.7-flash"),
     markdown=True,
 )
 

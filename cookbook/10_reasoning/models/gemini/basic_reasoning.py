@@ -21,14 +21,14 @@ def run_example() -> None:
 
     # Create a regular agent (no reasoning)
     regular_agent = Agent(
-        model=Gemini(id="gemini-2.5-flash"),
+        model=Gemini(id="gemini-3.7-flash"),
         markdown=True,
     )
 
     # Create an agent with thinking budget
     reasoning_agent = Agent(
-        model=Gemini(id="gemini-2.5-flash"),
-        reasoning_model=Gemini(id="gemini-2.5-flash", thinking_budget=1024),
+        model=Gemini(id="gemini-3.7-flash"),
+        reasoning_model=Gemini(id="gemini-3.7-flash", thinking_budget=1024),
         markdown=True,
     )
 

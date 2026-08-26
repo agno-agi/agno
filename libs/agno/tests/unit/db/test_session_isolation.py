@@ -13,26 +13,26 @@ from agno.db.in_memory.in_memory_db import InMemoryDb
 @pytest.fixture
 def db():
     db = InMemoryDb()
-    db._sessions = [
-        {
+    db._sessions = {
+        "s1": {
             "session_id": "s1",
             "user_id": "alice",
             "session_type": "agent",
             "session_data": {"session_name": "Alice Session"},
         },
-        {
+        "s2": {
             "session_id": "s2",
             "user_id": "bob",
             "session_type": "agent",
             "session_data": {"session_name": "Bob Session"},
         },
-        {
+        "s3": {
             "session_id": "s3",
             "user_id": "alice",
             "session_type": "agent",
             "session_data": {"session_name": "Alice Session 2"},
         },
-    ]
+    }
     return db
 
 
@@ -41,7 +41,7 @@ class TestDeleteSessionIsolation:
         result = db.delete_session("s1", user_id="alice")
         assert result is True
         assert len(db._sessions) == 2
-        assert all(s["session_id"] != "s1" for s in db._sessions)
+        assert "s1" not in db._sessions
 
     def test_delete_other_users_session_blocked(self, db):
         result = db.delete_session("s1", user_id="bob")
@@ -63,19 +63,18 @@ class TestDeleteSessionsIsolation:
     def test_delete_own_sessions(self, db):
         db.delete_sessions(["s1", "s3"], user_id="alice")
         assert len(db._sessions) == 1
-        assert db._sessions[0]["session_id"] == "s2"
+        assert "s2" in db._sessions
 
     def test_delete_mixed_ownership_only_deletes_own(self, db):
         db.delete_sessions(["s1", "s2"], user_id="alice")
         assert len(db._sessions) == 2
-        remaining_ids = {s["session_id"] for s in db._sessions}
-        assert "s2" in remaining_ids
-        assert "s3" in remaining_ids
+        assert "s2" in db._sessions
+        assert "s3" in db._sessions
 
     def test_delete_without_user_id_wildcard(self, db):
         db.delete_sessions(["s1", "s2"], user_id=None)
         assert len(db._sessions) == 1
-        assert db._sessions[0]["session_id"] == "s3"
+        assert "s3" in db._sessions
 
     def test_delete_other_users_sessions_blocked(self, db):
         db.delete_sessions(["s1", "s3"], user_id="bob")
@@ -103,7 +102,7 @@ class TestRenameSessionIsolation:
             deserialize=False,
         )
         assert result is None
-        assert db._sessions[0]["session_data"]["session_name"] == "Alice Session"
+        assert db._sessions["s1"]["session_data"]["session_name"] == "Alice Session"
 
     def test_rename_without_user_id_wildcard(self, db):
         result = db.rename_session(
