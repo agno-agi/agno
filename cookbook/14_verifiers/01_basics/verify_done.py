@@ -45,7 +45,9 @@ agent = Agent(
 
 # A lazy prompt on purpose: the model may claim success without writing anything,
 # and the verifier holds it to the evidence.
-output = agent.run("Prepare a short report on the benefits of code review. Call it report.md.")
+output = agent.run(
+    "Prepare a short report on the benefits of code review. Call it report.md."
+)
 
 print("status:", output.status)
 print("verification:", output.verification.status, "/", output.verification.stop_reason)

@@ -377,9 +377,7 @@ def coerce_verifier(obj: Any) -> Verifier:
         return GuardedVerifier(obj)
     if callable(obj):
         return verifier(obj)
-    raise ValueError(
-        f"pass a Verifier, a callable, or wrap a Scorer in ScorerVerifier; got {type(obj).__name__}"
-    )
+    raise ValueError(f"pass a Verifier, a callable, or wrap a Scorer in ScorerVerifier; got {type(obj).__name__}")
 
 
 __all__ = [

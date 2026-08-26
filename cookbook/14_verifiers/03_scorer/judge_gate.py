@@ -43,6 +43,8 @@ print("verification:", output.verification.status, "/", output.verification.stop
 for attempt in output.verification.attempts:
     for verdict in attempt.verdicts:
         detail = verdict.data or {}
-        print("attempt", attempt.index, "-> passed:", verdict.passed, "| detail:", detail)
+        print(
+            "attempt", attempt.index, "-> passed:", verdict.passed, "| detail:", detail
+        )
 print()
 print(output.content)

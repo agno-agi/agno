@@ -41,12 +41,22 @@ for event in agent.run(
 ):
     name = getattr(event, "event", "")
     if name == "VerificationStarted":
-        print("\n[verification attempt", event.attempt, "of", event.max_attempts, "started]")
+        print(
+            "\n[verification attempt",
+            event.attempt,
+            "of",
+            event.max_attempts,
+            "started]",
+        )
     elif name == "VerificationCompleted":
         outcome = "passed" if event.passed else "failed"
         print("[verification attempt", event.attempt, outcome + "]")
         for verdict in event.verdicts or []:
-            print("  -", verdict["name"] + ":", "pass" if verdict["passed"] else verdict["summary"])
+            print(
+                "  -",
+                verdict["name"] + ":",
+                "pass" if verdict["passed"] else verdict["summary"],
+            )
     elif name == "RunContent":
         print(event.content or "", end="", flush=True)
 

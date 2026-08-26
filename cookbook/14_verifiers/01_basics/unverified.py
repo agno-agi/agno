@@ -50,4 +50,6 @@ print("attempts:", len(output.verification.attempts))
 session = agent.get_session(session_id="unverified-demo")
 stored = session.get_run(output.run_id)
 print("stored status:", stored.status)
-print("stored record:", stored.verification.status, "/", stored.verification.stop_reason)
+print(
+    "stored record:", stored.verification.status, "/", stored.verification.stop_reason
+)

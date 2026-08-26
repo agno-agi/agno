@@ -59,4 +59,6 @@ output = agent.run("Create a CHANGELOG.md for this repository with one initial e
 print("status:", output.status)
 print("verification:", output.verification.status, "/", output.verification.stop_reason)
 for attempt in output.verification.attempts:
-    print("attempt", attempt.index, "| noop:", attempt.noop, "| passed:", attempt.passed)
+    print(
+        "attempt", attempt.index, "| noop:", attempt.noop, "| passed:", attempt.passed
+    )

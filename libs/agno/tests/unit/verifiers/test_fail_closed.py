@@ -23,7 +23,6 @@ from agno.verifiers import (
     VerificationAttempt,
     verifier,
 )
-from agno.verifiers.base import coerce_verifier
 from agno.verifiers.types import ELISION, cap_text
 
 # ---------------------------------------------------------------------------

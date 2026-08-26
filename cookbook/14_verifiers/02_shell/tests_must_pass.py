@@ -58,11 +58,19 @@ agent = Agent(
 # Run
 # ---------------------------------------------------------------------------
 
-output = agent.run("The test in this project fails. Read the code and fix the bug in calc.py.")
+output = agent.run(
+    "The test in this project fails. Read the code and fix the bug in calc.py."
+)
 
 print("status:", output.status)
 print("verification:", output.verification.status, "/", output.verification.stop_reason)
 for attempt in output.verification.attempts:
     for verdict in attempt.verdicts:
         first_line = verdict.report.splitlines()[0] if verdict.report else ""
-        print("attempt", attempt.index, "->", "PASS" if verdict.passed else "FAIL", first_line)
+        print(
+            "attempt",
+            attempt.index,
+            "->",
+            "PASS" if verdict.passed else "FAIL",
+            first_line,
+        )

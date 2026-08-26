@@ -82,8 +82,14 @@ from agno.run.team import TaskIterationCompletedEvent as TeamTaskIterationComple
 from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedEvent
 from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
 from agno.run.team import TaskUpdatedEvent as TeamTaskUpdatedEvent
-from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
-from agno.run.team import TeamVerificationCompletedEvent, TeamVerificationStartedEvent
+from agno.run.team import (
+    TeamRunEvent,
+    TeamRunInput,
+    TeamRunOutput,
+    TeamRunOutputEvent,
+    TeamVerificationCompletedEvent,
+    TeamVerificationStartedEvent,
+)
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent

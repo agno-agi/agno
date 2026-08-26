@@ -26,7 +26,9 @@ workdir = Path(tempfile.mkdtemp(prefix="member_verified_"))
 
 def summary_exists(run_output) -> object:
     """The member's definition of done: summary.md exists."""
-    return True if (workdir / "summary.md").exists() else "summary.md does not exist yet"
+    return (
+        True if (workdir / "summary.md").exists() else "summary.md does not exist yet"
+    )
 
 
 writer = Agent(
@@ -46,7 +48,9 @@ team = Team(
 # Run
 # ---------------------------------------------------------------------------
 
-output = team.run("Have the writer produce summary.md: three sentences on why tests matter.")
+output = team.run(
+    "Have the writer produce summary.md: three sentences on why tests matter."
+)
 
 print("team status:", output.status)
 for member_run in output.member_responses or []:

@@ -1079,7 +1079,7 @@ def _run_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield started_event
+                        yield started_event  # type: ignore
                     decision = verification_gate.settle_attempt()
                     completed_event = handle_event(
                         decision.event,
@@ -1088,7 +1088,7 @@ def _run_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield completed_event
+                        yield completed_event  # type: ignore
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                         continue
@@ -2633,7 +2633,7 @@ async def _arun_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield started_event
+                        yield started_event  # type: ignore
                     decision = await verification_gate.asettle_attempt()
                     completed_event = handle_event(
                         decision.event,
@@ -2642,7 +2642,7 @@ async def _arun_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield completed_event
+                        yield completed_event  # type: ignore
                     if decision.reenter:
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                         continue
@@ -4270,7 +4270,7 @@ def _continue_run_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield started_event
+                        yield started_event  # type: ignore
                     decision = verification_gate.settle_attempt()
                     completed_event = handle_event(
                         decision.event,
@@ -4279,7 +4279,7 @@ def _continue_run_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield completed_event
+                        yield completed_event  # type: ignore
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                         continue
@@ -5906,7 +5906,7 @@ async def _acontinue_run_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield started_event
+                        yield started_event  # type: ignore
                     decision = await verification_gate.asettle_attempt()
                     completed_event = handle_event(
                         decision.event,
@@ -5915,7 +5915,7 @@ async def _acontinue_run_stream(
                         store_events=agent.store_events,
                     )
                     if stream_events:
-                        yield completed_event
+                        yield completed_event  # type: ignore
                     if decision.reenter:
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                         continue
