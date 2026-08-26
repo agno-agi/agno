@@ -16,24 +16,11 @@ _TOKEN_EXPIRY_SKEW_SECONDS = 60
 
 @dataclass
 class TeamsConfig:
-    """Runtime configuration + cached bot access token for a single interface instance.
-
-    Prefer :meth:`TeamsConfig.init` over constructing directly — it resolves
-    values from ``MICROSOFT_APP_*`` env vars when constructor args are None.
-    """
-
     app_id: str
     app_password: str
     tenant_id: str = "botframework.com"
     request_timeout: int = 30
-    # Note: `app_type` (MultiTenant / SingleTenant / UserAssignedMSI) is deliberately
-    # not modelled here. The token flow is client-credentials, so MultiTenant and
-    # SingleTenant behave identically (the tenant guid alone drives the token URL),
-    # and MSI needs a different auth path (IDENTITY_ENDPOINT). Deferred to v2 with
-    # real MSI support — plan is to add a small `token_provider` hook so operators
-    # can plug in Managed Identity without changing the interface signature.
 
-    # Cached bot access token (populated by _get_bot_token)
     _cached_token: Optional[str] = field(default=None, repr=False)
     _token_expires_at: float = field(default=0.0, repr=False)
 
@@ -45,18 +32,10 @@ class TeamsConfig:
         tenant_id: Optional[str] = None,
         request_timeout: int = 30,
     ) -> "TeamsConfig":
-        """Build a config using constructor args first, then env vars.
+        """Resolve config from constructor args, then ``MICROSOFT_APP_*`` env vars.
 
-        Env-var fallbacks:
-          - ``MICROSOFT_APP_ID`` / ``MICROSOFT_APP_PASSWORD`` — required, except
-            in the credential-free local-development mode below
-          - ``MICROSOFT_APP_TENANT_ID`` — defaults to ``botframework.com``
-
-        Raises ``ValueError`` if ``app_id`` or ``app_password`` cannot be
-        resolved from either source. The one exception is
-        ``MICROSOFT_APP_SKIP_JWT_VALIDATION=true`` with *neither* credential set,
-        which yields an empty config for exercising the inbound path offline;
-        one credential without the other is a misconfiguration and still raises.
+        Raises ``ValueError`` when a credential is missing, except under the
+        credential-free bypass below.
         """
         from agno.os.interfaces.teams.security import dev_bypass_enabled
 
@@ -64,12 +43,8 @@ class TeamsConfig:
         secret = app_password or os.getenv("MICROSOFT_APP_PASSWORD")
         tid = tenant_id or os.getenv("MICROSOFT_APP_TENANT_ID") or "botframework.com"
 
-        # Local development runs without credentials at all: nothing to verify
-        # inbound tokens against, no client secret to fetch an outbound one with.
-        # The JWT bypass is gated on that same absence, so allowing it here keeps
-        # the mode reachable. Both must be missing -- half-configured is a
-        # misconfiguration, and letting it through would leave app_id empty,
-        # which the validator reads as "no credentials" and waves past.
+        # Both must be missing, not either: half-configured would leave app_id
+        # empty, which the validator reads as "no credentials" and waves past.
         if dev_bypass_enabled() and not aid and not secret:
             return cls(app_id="", app_password="", tenant_id=tid, request_timeout=request_timeout)
 
@@ -118,8 +93,6 @@ async def _get_bot_token(config: TeamsConfig) -> str:
 
 @dataclass
 class ActivityContent:
-    """Normalised view of an inbound Teams Activity: cleaned text + split attachments."""
-
     text: str
 
     image_attachments: List[dict] = field(default_factory=list)
@@ -137,11 +110,8 @@ def _clean_mention_text(text: str) -> str:
 
 
 def extract_activity_content(activity: dict) -> Optional[ActivityContent]:
-    """Parse an inbound Teams Activity into text + attachment refs.
-
-    Returns None if the activity has no processable content (Teams sends many
-    control activities that we don't reply to).
-    """
+    """Returns None for a non-message activity, or a message with neither text
+    nor attachments."""
     activity_type = activity.get("type")
     if activity_type != "message":
         log_info(f"Ignoring non-message activity type: {activity_type}")
@@ -167,12 +137,8 @@ def extract_activity_content(activity: dict) -> Optional[ActivityContent]:
 
 
 def _attachment_download_url(att: dict) -> Optional[str]:
-    """Return the pre-authorised download link for an attachment.
-
-    Teams file attachments carry it in ``content.downloadUrl``; ``contentUrl``
-    points at SharePoint, which expects user credentials rather than the bot
-    token and answers an unauthenticated fetch with a login page.
-    """
+    """Prefer ``content.downloadUrl``: ``contentUrl`` points at SharePoint, which
+    wants user credentials and answers the bot token with a login page."""
     content = att.get("content")
     if isinstance(content, dict) and content.get("downloadUrl"):
         return content["downloadUrl"]
@@ -202,11 +168,7 @@ async def _download_attachment(
 
 
 async def download_attachments_async(parsed: ActivityContent, config: TeamsConfig) -> Tuple[dict, List[str]]:
-    """Download attachment bytes and package them as Agno media objects.
-
-    Returns (run_kwargs, skipped_labels). run_kwargs mirrors the WhatsApp helper —
-    keys like 'images' / 'files' are ready to splat into `entity.arun(...)`.
-    """
+    """Returns (run_kwargs, skipped_labels); run_kwargs splats into ``entity.arun``."""
     from agno.media import File, Image
 
     run_kwargs: dict = {}
@@ -247,7 +209,6 @@ _CONVERSATION_REF_KEY = "teams_conversation_ref"
 
 
 def build_conversation_ref(service_url: str, conversation_id: str, bot_identity: Optional[dict]) -> dict:
-    """Package the 3 fields needed to send a proactive message later."""
     return {
         "service_url": service_url,
         "conversation_id": conversation_id,
@@ -256,7 +217,6 @@ def build_conversation_ref(service_url: str, conversation_id: str, bot_identity:
 
 
 def extract_conversation_ref(session_data: Optional[dict]) -> Optional[dict]:
-    """Inverse of build_conversation_ref — returns None if any field is missing."""
     if not session_data:
         return None
     ref = session_data.get(_CONVERSATION_REF_KEY)
@@ -268,10 +228,7 @@ def extract_conversation_ref(session_data: Optional[dict]) -> Optional[dict]:
 
 
 def merge_conversation_ref(session_data: Optional[dict], ref: dict) -> dict:
-    """Return a new session_data dict with the conversation ref merged in.
-
-    Preserves all other keys the caller may already be storing.
-    """
+    """Merge the ref into a copy, preserving every other key already stored."""
     merged = dict(session_data) if session_data else {}
     merged[_CONVERSATION_REF_KEY] = ref
     return merged
@@ -324,7 +281,6 @@ async def typing_indicator_async(
     reply_to_activity_id: Optional[str] = None,
     bot_identity: Optional[dict] = None,
 ) -> None:
-    """Send a `type: typing` activity so Teams shows the '... is typing' UI."""
     activity: dict = {"type": "typing"}
     if reply_to_activity_id:
         activity["replyToId"] = reply_to_activity_id
@@ -345,17 +301,10 @@ async def send_teams_message_async(
     italics: bool = False,
     bot_identity: Optional[dict] = None,
 ) -> None:
-    """Post a text (markdown) message to a Teams conversation.
+    """Post a markdown message, serialising a pydantic model if given one.
 
-    ``message`` may be a string or a pydantic ``BaseModel`` — models are
-    serialised via ``model_dump_json(indent=2)``. Empty / whitespace-only
-    payloads are silently skipped (the Bot Connector rejects them).
-
-    Pass ``reply_to_activity_id`` to thread the reply under an inbound
-    activity, or leave it None for a top-level message (required for
-    proactive alerts). ``bot_identity`` is the outbound ``from`` field
-    that Bot Connector requires — usually the ``recipient`` echoed back
-    from the inbound activity.
+    Empty payloads are skipped: the Bot Connector rejects them. ``bot_identity``,
+    when given, becomes the outbound ``from``.
     """
     if message is not None and not isinstance(message, str):
         from pydantic import BaseModel

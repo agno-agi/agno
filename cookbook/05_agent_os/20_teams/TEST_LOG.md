@@ -1,9 +1,8 @@
 # Test Log: 20_teams
 
-Construction smoke plus live round-trip verification via Azure "Test in Web
-Chat" through an ngrok tunnel. Sentinel `MICROSOFT_APP_*` values suffice for
-construction; the live rounds used a real Azure Bot resource. No live Bot
-Connector traffic is required to import either example.
+Sentinel `MICROSOFT_APP_*` values suffice to construct either example; live
+rounds require a real Azure Bot resource. Importing either file needs no Bot
+Connector traffic.
 
 ### basic.py
 
@@ -16,9 +15,8 @@ Connector traffic is required to import either example.
 
 **Result:** `GET /msteams/status` returned `{"status": "available"}`. OpenAPI
 exposed `POST /msteams/messages`. Live round-trip through Azure "Test in Web
-Chat" delivered text replies end-to-end. Additionally verified inside an actual
-Microsoft Teams desktop client belonging to a user in a different tenant, via
-the tenant admin's "Manage apps" approval flow.
+Chat" delivered text replies end-to-end, and again from a Microsoft Teams
+desktop client.
 
 ---
 
