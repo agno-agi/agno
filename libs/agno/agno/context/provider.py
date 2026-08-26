@@ -217,34 +217,44 @@ class ContextProvider(ABC):
         the provider's recommended exposure."""
         return [self._query_tool()]
 
-    async def _stream_from_agent(
+    async def _arun_sub_agent(
+        self,
+        agent: "Agent",
+        message: str,
+        run_context: RunContext | None,
+    ) -> Answer:
+        """Run a sub-agent non-streaming and return the final Answer."""
+        from agno.context._utils import answer_from_run
+
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        output: RunOutput = await agent.arun(message, stream=False, **kwargs)
+        return answer_from_run(output)
+
+    async def _arun_sub_agent_stream(
         self,
         agent: "Agent",
         message: str,
         run_context: RunContext | None,
     ):
-        """Shared streaming logic for query and update tools."""
+        """Stream events from a sub-agent, yield events only.
+
+        Content is captured by models/base.py from RunContentEvent deltas.
+        Don't yield RunOutput — that would duplicate content in the tool result.
+        """
         kwargs = self._run_kwargs_for_sub_agent(run_context)
         run_id = run_context.run_id if run_context else None
-        final_output: RunOutput | None = None
 
         async for event in agent.arun(
             message,
             stream=True,
-            stream_events=self.stream_sub_agent_events,
+            stream_events=True,
             yield_run_output=True,
             **kwargs,
         ):
             if isinstance(event, RunOutput):
-                final_output = event
                 continue
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_id
             yield event
-
-        if final_output is not None:
-            from agno.context._utils import answer_from_run
-
-            yield answer_from_run(final_output)
 
     def _read_write_tools(self) -> list:
         """Helper for subclasses with both query + update tools.
@@ -282,11 +292,12 @@ class ContextProvider(ABC):
                 return
 
             try:
-                async for chunk in provider._stream_from_agent(agent, question, run_context):
-                    if isinstance(chunk, Answer):
-                        yield json.dumps(serialize_answer(chunk))
-                    else:
+                if provider.stream_sub_agent_events:
+                    async for chunk in provider._arun_sub_agent_stream(agent, question, run_context):
                         yield chunk
+                else:
+                    answer = await provider._arun_sub_agent(agent, question, run_context)
+                    yield json.dumps(serialize_answer(answer))
             except Exception as exc:
                 yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
@@ -319,11 +330,12 @@ class ContextProvider(ABC):
                 return
 
             try:
-                async for chunk in provider._stream_from_agent(agent, instruction, run_context):
-                    if isinstance(chunk, Answer):
-                        yield json.dumps(serialize_answer(chunk))
-                    else:
+                if provider.stream_sub_agent_events:
+                    async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
                         yield chunk
+                else:
+                    answer = await provider._arun_sub_agent(agent, instruction, run_context)
+                    yield json.dumps(serialize_answer(answer))
             except Exception as exc:
                 yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 

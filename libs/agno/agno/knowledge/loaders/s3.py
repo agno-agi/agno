@@ -16,7 +16,6 @@ from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import S3Content
 from agno.knowledge.remote_content.s3 import S3Config
 from agno.utils.log import log_error, log_info
-from agno.utils.string import generate_id
 
 
 class S3Loader(BaseLoader):
@@ -128,20 +127,13 @@ class S3Loader(BaseLoader):
             content_name = self._compute_content_name(object_name, file_name, content.name, root_path, is_folder_upload)
 
             # Create content entry
-            content_entry = Content(
-                name=content_name,
-                description=content.description,
-                path=virtual_path,
-                status=ContentStatus.PROCESSING,
-                metadata=merged_metadata,
-                file_type="s3",
+            content_entry = self._create_content_entry_for_folder(
+                content, content_name, virtual_path, merged_metadata, "s3"
             )
-            content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_id(content_entry.content_hash)
 
             await self._ainsert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
                 continue
@@ -228,20 +220,13 @@ class S3Loader(BaseLoader):
             content_name = self._compute_content_name(object_name, file_name, content.name, root_path, is_folder_upload)
 
             # Create content entry
-            content_entry = Content(
-                name=content_name,
-                description=content.description,
-                path=virtual_path,
-                status=ContentStatus.PROCESSING,
-                metadata=merged_metadata,
-                file_type="s3",
+            content_entry = self._create_content_entry_for_folder(
+                content, content_name, virtual_path, merged_metadata, "s3"
             )
-            content_entry.content_hash = self._build_content_hash(content_entry)
-            content_entry.id = generate_id(content_entry.content_hash)
 
             self._insert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists):
+            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
                 continue

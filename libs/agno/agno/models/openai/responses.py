@@ -9,9 +9,10 @@ from typing_extensions import Literal
 
 from agno.exceptions import ContextWindowExceededError, ModelAuthenticationError, ModelProviderError
 from agno.media import File
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
+from agno.models.openai.types import ReasoningEffort, ReasoningSummary, ServiceTier, Verbosity
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -47,15 +48,15 @@ class OpenAIResponses(Model):
     metadata: Optional[Dict[str, Any]] = None
     parallel_tool_calls: Optional[bool] = None
     reasoning: Optional[Dict[str, Any]] = None
-    verbosity: Optional[Literal["low", "medium", "high"]] = None
-    reasoning_effort: Optional[Literal["minimal", "low", "medium", "high"]] = None
-    reasoning_summary: Optional[Literal["auto", "concise", "detailed"]] = None
+    verbosity: Optional[Verbosity] = None
+    reasoning_effort: Optional[ReasoningEffort] = None
+    reasoning_summary: Optional[ReasoningSummary] = None
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     truncation: Optional[Literal["auto", "disabled"]] = None
     user: Optional[str] = None
-    service_tier: Optional[Literal["auto", "default", "flex", "priority"]] = None
+    service_tier: Optional[ServiceTier] = None
     strict_output: bool = True  # When True, guarantees schema adherence for structured outputs. When False, attempts to follow schema as a guide but may occasionally deviate
     background: Optional[bool] = (
         None  # When True, enables background mode for long-running tasks. The API returns immediately and the response is polled until completion. Not supported for streaming.
@@ -248,12 +249,21 @@ class OpenAIResponses(Model):
                 )
             await asyncio.sleep(self.background_poll_interval)
 
+    def _get_model_request_kwargs(self) -> Dict[str, Any]:
+        """The model selector sent with each request.
+
+        Providers that pick the model server-side from a candidate list override this to omit
+        `model`, which they reject alongside their own selector.
+        """
+        return {"model": self.id}
+
     def get_request_params(
         self,
         messages: Optional[List[Message]] = None,
         response_format: Optional[Union[Dict, Type[BaseModel]]] = None,
         tools: Optional[List[Dict[str, Any]]] = None,
         tool_choice: Optional[Union[str, Dict[str, Any]]] = None,
+        run_response: Optional[RunOutput] = None,
     ) -> Dict[str, Any]:
         """
         Returns keyword arguments for API requests.
@@ -772,13 +782,17 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
 
             assistant_message.metrics.start_timer()
 
             provider_response = self.get_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
@@ -877,13 +891,17 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
 
             assistant_message.metrics.start_timer()
 
             provider_response = await self.get_async_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 **request_params,
             )
@@ -982,7 +1000,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
@@ -992,7 +1014,7 @@ class OpenAIResponses(Model):
             assistant_message.metrics.start_timer()
 
             for chunk in self.get_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,
@@ -1071,7 +1093,11 @@ class OpenAIResponses(Model):
         """
         try:
             request_params = self.get_request_params(
-                messages=messages, response_format=response_format, tools=tools, tool_choice=tool_choice
+                messages=messages,
+                response_format=response_format,
+                tools=tools,
+                tool_choice=tool_choice,
+                run_response=run_response,
             )
             # Background mode is not supported for streaming. Strip the flag and warn.
             if request_params.pop("background", None):
@@ -1081,7 +1107,7 @@ class OpenAIResponses(Model):
             assistant_message.metrics.start_timer()
 
             async_stream = await self.get_async_client().responses.create(
-                model=self.id,
+                **self._get_model_request_kwargs(),
                 input=self._format_messages(messages, compress_tool_results, tools=tools),  # type: ignore
                 stream=True,
                 **request_params,

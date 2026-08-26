@@ -67,7 +67,7 @@ You are a recipe assistant with access to a Thai cookbook.
 # ---------------------------------------------------------------------------
 recipe_agent = Agent(
     name="Recipe Assistant",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.7-flash"),
     instructions=instructions,
     knowledge=knowledge,
     # Agent automatically searches knowledge when relevant

@@ -1,8 +1,9 @@
 import inspect
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Awaitable, Callable, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.registry import Registry
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunContext
@@ -19,7 +20,7 @@ from agno.run.workflow import (
 from agno.session.workflow import WorkflowSession
 from agno.utils.log import log_debug, log_error, log_warning, logger
 from agno.workflow.cel import CEL_AVAILABLE, evaluate_cel_loop_end_condition, is_cel_expression
-from agno.workflow.step import Step
+from agno.workflow.step import Step, UnresolvableCallableError
 from agno.workflow.types import HumanReview, OnReject, StepInput, StepOutput, StepRequirement, StepType
 
 WorkflowSteps = List[
@@ -62,7 +63,7 @@ class Loop:
         - 'all_success && current_iteration >= 2'
 
     HITL Mode:
-        Start confirmation (requires_confirmation=True):
+        Start confirmation:
            - Pauses before the first iteration
            - User confirms -> execute loop, User rejects -> skip loop
     """
@@ -79,16 +80,7 @@ class Loop:
     # When False (default), each iteration receives the original step input.
     forward_iteration_output: bool = False
 
-    # HITL configuration - start confirmation
-    # If True, the loop will pause before the first iteration and require user confirmation
-    requires_confirmation: bool = False
-    confirmation_message: Optional[str] = None
-    on_reject: Union[OnReject, str] = OnReject.skip
-
-    # HITL configuration - per-iteration review
-    # If True, the loop will pause after each iteration for human review
-    requires_iteration_review: bool = False
-    iteration_review_message: Optional[str] = None
+    human_review: HumanReview = field(default_factory=HumanReview)
 
     def __init__(
         self,
@@ -98,11 +90,6 @@ class Loop:
         max_iterations: int = 3,
         end_condition: Optional[Union[Callable[[List[StepOutput]], bool], str]] = None,
         forward_iteration_output: bool = False,
-        requires_confirmation: bool = False,
-        confirmation_message: Optional[str] = None,
-        on_reject: Union[OnReject, str] = OnReject.skip,
-        requires_iteration_review: bool = False,
-        iteration_review_message: Optional[str] = None,
         human_review: Optional[HumanReview] = None,
     ):
         self.steps = steps
@@ -112,29 +99,11 @@ class Loop:
         self.end_condition = end_condition
         self.forward_iteration_output = forward_iteration_output
 
-        # Build HITL config - explicit hitl= takes priority over flat params
-        if human_review is not None:
-            self.human_review = human_review
-        else:
-            self.human_review = HumanReview(
-                requires_confirmation=requires_confirmation,
-                confirmation_message=confirmation_message,
-                on_reject=on_reject,
-                requires_iteration_review=requires_iteration_review,
-                iteration_review_message=iteration_review_message,
-            )
+        self.human_review = human_review or HumanReview()
 
-        # Validate HumanReview config for Loop
         from agno.workflow.types import validate_human_review_for_loop
 
         validate_human_review_for_loop(self.human_review)
-
-        # Store HITL fields as attributes for backward compatibility
-        self.requires_confirmation = self.human_review.requires_confirmation
-        self.confirmation_message = self.human_review.confirmation_message
-        self.on_reject = self.human_review.on_reject
-        self.requires_iteration_review = self.human_review.requires_iteration_review
-        self.iteration_review_message = self.human_review.iteration_review_message
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -178,8 +147,9 @@ class Loop:
         Returns:
             StepRequirement configured for this loop's HITL needs.
         """
-        message = self.confirmation_message or f"Execute loop '{self.name or 'loop'}'?"
+        message = self.human_review.confirmation_message or f"Execute loop '{self.name or 'loop'}'?"
 
+        on_reject = self.human_review.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=self.name or f"loop_{step_index + 1}",
@@ -187,7 +157,7 @@ class Loop:
             step_type="Loop",
             requires_confirmation=True,
             confirmation_message=message,
-            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             requires_user_input=False,
             step_input=step_input,
         )
@@ -210,10 +180,11 @@ class Loop:
         Returns:
             StepRequirement configured for iteration review.
         """
-        message = self.iteration_review_message or (
+        message = self.human_review.iteration_review_message or (
             f"Loop '{self.name or 'loop'}' completed iteration {iteration + 1}/{self.max_iterations}. Continue?"
         )
 
+        on_reject = self.human_review.on_reject
         return StepRequirement(
             step_id=str(uuid4()),
             step_name=self.name or f"loop_{step_index + 1}",
@@ -223,7 +194,7 @@ class Loop:
             output_review_message=message,
             requires_confirmation=True,
             confirmation_message=message,
-            on_reject=self.on_reject.value if isinstance(self.on_reject, OnReject) else str(self.on_reject),
+            on_reject=on_reject.value if isinstance(on_reject, OnReject) else str(on_reject),
             step_input=step_input,
             step_output=iteration_output,
             is_post_execution=True,
@@ -236,26 +207,41 @@ class Loop:
         registry: Optional["Registry"] = None,
         db: Optional[Any] = None,
         links: Optional[List[Dict[str, Any]]] = None,
+        strict: bool = False,
+        branch_suffix: str = "",
     ) -> "Loop":
         from agno.workflow.condition import Condition
         from agno.workflow.parallel import Parallel
         from agno.workflow.router import Router
         from agno.workflow.steps import Steps
 
-        def deserialize_step(step_data: Dict[str, Any]) -> Any:
+        def deserialize_step(step_data: Dict[str, Any], suffix: Optional[str] = None) -> Any:
+            suffix = branch_suffix if suffix is None else suffix
             step_type = step_data.get("type", "Step")
             if step_type == "Loop":
-                return cls.from_dict(step_data, registry=registry, db=db, links=links)
+                return cls.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Parallel":
-                return Parallel.from_dict(step_data, registry=registry, db=db, links=links)
+                return Parallel.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Steps":
-                return Steps.from_dict(step_data, registry=registry, db=db, links=links)
+                return Steps.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Condition":
-                return Condition.from_dict(step_data, registry=registry, db=db, links=links)
+                return Condition.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             elif step_type == "Router":
-                return Router.from_dict(step_data, registry=registry, db=db, links=links)
+                return Router.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
-                return Step.from_dict(step_data, registry=registry, db=db, links=links)
+                return Step.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
 
         # Deserialize end_condition
         end_condition_data = data.get("end_condition")
@@ -268,25 +254,28 @@ class Loop:
             if end_condition_type == "cel" or (end_condition_type is None and is_cel_expression(end_condition_data)):
                 end_condition = end_condition_data
             else:
-                if registry:
-                    end_condition = registry.get_function(end_condition_data)
-                    if end_condition is None:
-                        raise ValueError(f"End condition function '{end_condition_data}' not found in registry")
-                else:
-                    raise ValueError(f"Registry required to deserialize end_condition function '{end_condition_data}'")
+                end_condition = registry.get_function(end_condition_data) if registry else None
+                if end_condition is None:
+                    if registry:
+                        message = f"End condition function '{end_condition_data}' not found in registry"
+                    else:
+                        message = f"Registry required to deserialize end_condition function '{end_condition_data}'"
+                    if strict:
+                        from agno.exceptions import ComponentRehydrationError
 
-        # HITL config
+                        raise ComponentRehydrationError(message)
+                    from agno.workflow.step import _unresolvable_callable_placeholder
+
+                    log_warning(message)
+                    end_condition = _unresolvable_callable_placeholder("Loop end condition", end_condition_data)
+
         if data.get("human_review"):
             human_review = HumanReview.from_dict(data["human_review"])
         else:
-            # Backward compat: build HITL from flat keys
-            human_review = HumanReview(
-                requires_confirmation=data.get("requires_confirmation", False),
-                confirmation_message=data.get("confirmation_message"),
-                on_reject=data.get("on_reject", "skip"),
-                requires_iteration_review=data.get("requires_iteration_review", False),
-                iteration_review_message=data.get("iteration_review_message"),
-            )
+            from agno.workflow.utils.hitl import drop_legacy_hitl_keys
+
+            drop_legacy_hitl_keys(data, StepType.LOOP)
+            human_review = HumanReview()
 
         return cls(
             name=data.get("name"),
@@ -318,6 +307,8 @@ class Loop:
         if callable(self.end_condition):
             try:
                 return self.end_condition(iteration_results)
+            except UnresolvableCallableError:
+                raise
             except Exception as e:
                 log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
@@ -347,6 +338,8 @@ class Loop:
                     return await self.end_condition(iteration_results)
                 else:
                     return self.end_condition(iteration_results)
+            except UnresolvableCallableError:
+                raise
             except Exception as e:
                 log_warning(f"End condition evaluation failed: {str(e)}")
                 return False
@@ -429,6 +422,7 @@ class Loop:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -475,6 +469,7 @@ class Loop:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -542,7 +537,7 @@ class Loop:
                 break
 
             # Per-iteration review: pause for human review before continuing
-            if self.requires_iteration_review and iteration < self.max_iterations:
+            if self.human_review.requires_iteration_review and iteration < self.max_iterations:
                 # Build the last iteration output for review
                 last_iter_output = iteration_results[-1] if iteration_results else None
                 if last_iter_output:
@@ -591,6 +586,7 @@ class Loop:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -673,6 +669,7 @@ class Loop:
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=loop_step_id,
@@ -768,7 +765,7 @@ class Loop:
                 break
 
             # Per-iteration review: pause for human review before continuing
-            if self.requires_iteration_review and iteration < self.max_iterations:
+            if self.human_review.requires_iteration_review and iteration < self.max_iterations:
                 last_iter_output = iteration_results[-1] if iteration_results else None
                 if last_iter_output:
                     flattened_so_far = []
@@ -830,6 +827,7 @@ class Loop:
         user_id: Optional[str] = None,
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         workflow_session: Optional[WorkflowSession] = None,
@@ -869,6 +867,7 @@ class Loop:
                     user_id=user_id,
                     workflow_run_response=workflow_run_response,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     workflow_session=workflow_session,
@@ -936,7 +935,7 @@ class Loop:
                 break
 
             # Per-iteration review: pause for human review before continuing (async)
-            if self.requires_iteration_review and iteration < self.max_iterations:
+            if self.human_review.requires_iteration_review and iteration < self.max_iterations:
                 last_iter_output = iteration_results[-1] if iteration_results else None
                 if last_iter_output:
                     flattened_so_far = []
@@ -984,6 +983,7 @@ class Loop:
         workflow_run_response: Optional[WorkflowRunOutput] = None,
         step_index: Optional[Union[int, tuple]] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         run_context: Optional[RunContext] = None,
         session_state: Optional[Dict[str, Any]] = None,
         parent_step_id: Optional[str] = None,
@@ -1066,6 +1066,7 @@ class Loop:
                     workflow_run_response=workflow_run_response,
                     step_index=composite_step_index,
                     store_executor_outputs=store_executor_outputs,
+                    workflow_media_storage=workflow_media_storage,
                     run_context=run_context,
                     session_state=session_state,
                     parent_step_id=loop_step_id,
@@ -1161,7 +1162,7 @@ class Loop:
                 break
 
             # Per-iteration review: pause for human review before continuing
-            if self.requires_iteration_review and iteration < self.max_iterations:
+            if self.human_review.requires_iteration_review and iteration < self.max_iterations:
                 last_iter_output = iteration_results[-1] if iteration_results else None
                 if last_iter_output:
                     flattened_so_far = []
