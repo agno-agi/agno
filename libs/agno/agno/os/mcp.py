@@ -112,20 +112,12 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        # Forward mcp_output_schema to FastMCP. None = no JSON wrapping (raw content).
-        output_schema = getattr(tool, "mcp_output_schema", ...)
-        mcp.add_tool(
-            Tool.from_function(
-                _inject_user_id(entrypoint), name=name, description=description, output_schema=output_schema
-            )
-        )
+        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
         return
 
     # Plain callable: name/description inferred from ``__name__``/docstring.
     if callable(tool):
-        # Check for mcp_output_schema attribute on the callable itself
-        output_schema = getattr(tool, "mcp_output_schema", ...)
-        mcp.add_tool(Tool.from_function(_inject_user_id(tool), output_schema=output_schema))
+        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
         return
 
     raise TypeError(
