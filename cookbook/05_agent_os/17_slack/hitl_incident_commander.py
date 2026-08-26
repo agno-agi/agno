@@ -6,6 +6,11 @@ Combine user feedback, external execution, confirmation, and required user
 input in one persisted incident run. tool_choice="required" keeps each turn
 auditable; conclude_incident provides the explicit terminal tool.
 
+Demonstrates @hook(run_on_continue=True) for:
+- Announcing when an approved action begins executing
+- Validating maintenance windows before destructive operations
+- Audit logging of approval-to-execution timing
+
 Prerequisites: SLACK_TOKEN, SLACK_SIGNING_SECRET, OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/17_slack/hitl_incident_commander.py
 Try in Slack: Ask "Production api-gateway returns 500s in eu-west; help me triage."
@@ -13,17 +18,70 @@ Slack scopes: app_mentions:read, assistant:write, chat:write, im:history
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from typing import Literal
 from uuid import uuid4
 
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
+from agno.exceptions import InputCheckError
+from agno.hooks import hook
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.interfaces.slack import Slack
+from agno.run.agent import RunInput
 from agno.tools import tool
 from agno.tools.user_feedback import UserFeedbackTools
 from agno.tools.websearch import WebSearchTools
+
+# ---------------------------------------------------------------------------
+# Pre-hooks for continue_run (run after HITL approval, before tool execution)
+# ---------------------------------------------------------------------------
+
+
+@hook(run_on_continue=True)
+def announce_execution_start(run_input: RunInput) -> None:
+    """
+    Announce when an approved action begins executing.
+
+    This hook runs on continue_run() after the operator clicks Approve in Slack.
+    In production, this would post to a #deployments channel or incident thread.
+    """
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"[{now}] Approved action now executing...")
+    if run_input:
+        print(
+            f"  Input: {run_input.input_content[:50] if run_input.input_content else 'N/A'}..."
+        )
+
+
+@hook(run_on_continue=True)
+def validate_maintenance_window(run_input: RunInput) -> None:
+    """
+    Block execution if outside the maintenance window.
+
+    Approval may have been granted hours or days ago. Re-validate that
+    we're still in an allowed window before executing destructive operations.
+
+    In production, this would check against a calendar API or config service.
+    For demo purposes, this always passes but logs the check.
+    """
+    current_hour = datetime.now().hour
+
+    # Demo: maintenance window is 6 AM - 10 PM local time
+    # In production: fetch from PagerDuty, Opsgenie, or config service
+    maintenance_start = 6
+    maintenance_end = 22
+
+    if not (maintenance_start <= current_hour < maintenance_end):
+        raise InputCheckError(
+            f"Outside maintenance window ({maintenance_start}:00-{maintenance_end}:00). "
+            f"Current hour: {current_hour}:00. Please re-approve during allowed hours."
+        )
+
+    print(
+        f"[Maintenance Window] Current hour {current_hour}:00 is within allowed window"
+    )
 
 
 @dataclass
@@ -125,6 +183,8 @@ incident_commander = Agent(
         conclude_incident,
         WebSearchTools(),
     ],
+    # Pre-hooks with run_on_continue=True run after HITL approval
+    pre_hooks=[announce_execution_start, validate_maintenance_window],
     instructions=[
         "Drive the incident through five phases:",
         "1. Triage: call ask_user for severity and affected systems.",
@@ -145,7 +205,7 @@ agent_os = AgentOS(
     description="AgentOS rendering all four run pause types through Slack.",
     db=db,
     agents=[incident_commander],
-    interfaces=[Slack(agent=incident_commander)],
+    interfaces=[Slack(agent=incident_commander, prefix="/slack/agent")],
 )
 app = agent_os.get_app()
 
