@@ -15,7 +15,6 @@ from agno.models.base import Model
 from agno.models.response import ModelResponse
 from agno.tools import tool
 
-
 published_reports: list[str] = []
 
 
@@ -78,10 +77,11 @@ def run_case(approve: bool) -> None:
     assert response.is_paused, "The side-effecting tool should require approval."
 
     for requirement in response.active_requirements:
-        if approve:
-            requirement.confirm()
-        else:
-            requirement.reject("The report is not ready to publish.")
+        if requirement.needs_confirmation:
+            if approve:
+                requirement.confirm()
+            else:
+                requirement.reject("The report is not ready to publish.")
 
     response = agent.continue_run(
         run_id=response.run_id,
