@@ -89,6 +89,7 @@ def attach_routes(
     app_password: Optional[str] = None,
     tenant_id: Optional[str] = None,
     request_timeout: int = 30,
+    config: Optional[TeamsConfig] = None,
 ) -> APIRouter:
     """Attach ``/status`` and ``/messages`` routes for a Teams-bound entity.
 
@@ -109,12 +110,15 @@ def attach_routes(
 
     session_config = _resolve_session_config(entity, entity_type)
 
-    config = TeamsConfig.init(
-        app_id=app_id,
-        app_password=app_password,
-        tenant_id=tenant_id,
-        request_timeout=request_timeout,
-    )
+    # The interface passes its own config so the cached bot token is shared with
+    # the proactive-alert path; built here only when the router is used directly.
+    if config is None:
+        config = TeamsConfig.init(
+            app_id=app_id,
+            app_password=app_password,
+            tenant_id=tenant_id,
+            request_timeout=request_timeout,
+        )
 
     @router.get("/status", operation_id=f"teams_status_{op_suffix}")
     async def status():
