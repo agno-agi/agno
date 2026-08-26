@@ -8,7 +8,7 @@ import pytest
 pytest.importorskip("google.genai")
 
 from agno.exceptions import ModelProviderError
-from agno.media import File
+from agno.media import File, Image
 from agno.models.google.gemini import Gemini
 from agno.models.message import Message
 
@@ -269,6 +269,37 @@ class TestFormatMessagesEmptyParts:
         assert len(formatted) == 3
         roles = [msg.role for msg in formatted]
         assert roles == ["user", "model", "user"]
+
+    def test_tool_result_media_is_split_from_function_response(self):
+        model = self._make_model()
+        messages = [
+            Message(
+                role="tool",
+                content="Document prepared",
+                tool_call_id="call_1",
+                tool_name="read_document_file",
+                files=[File(content=b"%PDF-1.4", mime_type="application/pdf")],
+            )
+        ]
+
+        formatted, _ = model._format_messages(messages)
+
+        assert len(formatted) == 2
+        assert formatted[0].role == "user"
+        assert len(formatted[0].parts) == 1
+        assert formatted[0].parts[0].function_response is not None
+        assert formatted[1].role == "user"
+        assert len(formatted[1].parts) == 1
+        assert formatted[1].parts[0].inline_data is not None
+
+    def test_regular_user_media_stays_in_one_message(self):
+        model = self._make_model()
+        messages = [Message(role="user", content="Describe this", images=[Image(content=b"img")])]
+
+        formatted, _ = model._format_messages(messages)
+
+        assert len(formatted) == 1
+        assert len(formatted[0].parts) == 2
 
 
 class TestGeminiTimeout:

@@ -781,7 +781,17 @@ class Gemini(Model):
         formatted_messages: List = []
         system_message = None
 
+        def has_function_response(parts: List[Any]) -> bool:
+            return any(getattr(part, "function_response", None) is not None for part in parts)
+
+        def has_media_part(parts: List[Any]) -> bool:
+            return any(
+                getattr(part, "inline_data", None) is not None or getattr(part, "file_data", None) is not None
+                for part in parts
+            )
+
         for message in messages:
+            message_role = message.role
             role = message.role
             if role in ["system", "developer"]:
                 system_message = message.content
@@ -835,6 +845,14 @@ class Gemini(Model):
                     message_parts = [part]
 
             if role == "user" and message.tool_calls is None:
+                if (
+                    message_role == "tool"
+                    and message_parts
+                    and (message.images or message.videos or message.audio or message.files)
+                ):
+                    formatted_messages.append(Content(role=role, parts=message_parts))
+                    message_parts = []
+
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
@@ -911,7 +929,11 @@ class Gemini(Model):
         # Merge consecutive messages with the same role (Gemini API rejects consecutive same-role messages)
         merged: List[Content] = []
         for msg in formatted_messages:
-            if merged and merged[-1].role == msg.role:
+            if (
+                merged
+                and merged[-1].role == msg.role
+                and not (has_function_response(merged[-1].parts) and has_media_part(msg.parts))
+            ):
                 merged[-1].parts.extend(msg.parts)
             else:
                 merged.append(msg)
