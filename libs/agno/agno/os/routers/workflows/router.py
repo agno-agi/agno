@@ -314,9 +314,16 @@ async def handle_workflow_via_websocket(
         # frame so the client sees accepted/waiting instead of a silent
         # socket while the job waits for a claim.
         queue_worker = getattr(websocket.app.state, "queue_worker", None)
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the continue paths can reload the
+        # SAME version later instead of whatever is current by then. Stamped
+        # BEFORE the durable branch: a queued run's kwargs are what the worker
+        # executes with, so the stamp must ride the ticket too.
+        ws_run_kwargs: Dict[str, Any] = {}
+        stamp_component_version(ws_run_kwargs, version)
         queued_ws_payload: Dict[str, Any] = {
             "input": user_message,
-            "kwargs": {},
+            "kwargs": ws_run_kwargs,
             "stream": True,
             "scope": queue_scope(scoped_user_id, version),
         }
@@ -390,12 +397,6 @@ async def handle_workflow_via_websocket(
                 "WS workflow submission bypasses the durable queue (factory/off-registry/no-db "
                 "workflows are not queueable): bounded and observable, but NOT durable."
             )
-
-        # Version-stable preview: an explicitly pinned version is recorded on
-        # the run itself (run metadata), so the continue paths can reload the
-        # SAME version later instead of whatever is current by then.
-        ws_run_kwargs: Dict[str, Any] = {}
-        stamp_component_version(ws_run_kwargs, version)
 
         # Execute workflow in background with streaming via WebSocket
         await workflow.arun(  # type: ignore

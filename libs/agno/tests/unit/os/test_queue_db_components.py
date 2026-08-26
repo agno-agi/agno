@@ -253,3 +253,51 @@ class TestResolverCompatibility:
         job = {"component_type": "agent", "component_id": "x", "payload": {"scope": queue_scope("alice", 2)}}
         assert await worker._aresolve_job_component(job) == "resolved"
         assert seen["scope"] == {"user_id": "alice", "version": 2}
+
+
+class TestWebSocketSubmissionCarriesTheVersionStamp:
+    """The HTTP seams stamp the pinned version into kwargs BEFORE the durable
+    branch. The WS seam stamped only on its non-queued path, so a queued
+    version-pinned run persisted no stamp and a later continue re-resolved
+    whatever was current instead of the pinned version."""
+
+    def test_queued_ws_kwargs_carry_the_stamp(self, db):
+        import json
+
+        from agno.os.utils import stamp_component_version
+        from agno.workflow import Step, Workflow
+
+        def noop(step_input):
+            return "ok"
+
+        workflow = Workflow(id="wf-1", name="WF", db=db, steps=[Step(name="noop", executor=noop)])
+        app = AgentOS(workflows=[workflow], db=db, telemetry=False).get_app()
+        store = InMemoryQueueStore()
+        app.state.queue_worker = SimpleNamespace(store=store, config=QueueConfig(durable=True))
+
+        with TestClient(app).websocket_connect("/workflows/ws") as ws:
+            ws.send_text(
+                json.dumps(
+                    {
+                        "action": "start-workflow",
+                        "workflow_id": "wf-1",
+                        "message": "hi",
+                        "version": 1,
+                        "session_id": "s1",
+                    }
+                )
+            )
+            for _ in range(10):
+                frame = json.loads(ws.receive_text())
+                if frame.get("event") == "queued":
+                    break
+                assert frame.get("event") != "error", frame
+            else:
+                raise AssertionError("the WS submission never reached the durable queue")
+
+        assert len(store._jobs) == 1
+        job = next(iter(store._jobs.values()))
+        expected_kwargs: dict = {}
+        stamp_component_version(expected_kwargs, 1)
+        assert job["payload"]["kwargs"] == expected_kwargs, "the queued run must carry the version stamp"
+        assert job["payload"]["scope"]["version"] == 1
