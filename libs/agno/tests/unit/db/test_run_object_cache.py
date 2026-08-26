@@ -692,6 +692,35 @@ class TestSqliteTeamRunObjectCache:
         rebuilt = TeamSession.from_dict(raw)
         assert [r.to_dict() for r in cached.runs] == [r.to_dict() for r in rebuilt.runs]
 
+    def test_double_encoded_run_rows_are_normalized(self, sqlite_db):
+        """A run_data value written as a pre-encoded JSON string is double
+        encoded in the JSON column; the fast path must parse it in two steps
+        exactly as the uncached read does."""
+        import json
+        import time
+
+        sessions_table = sqlite_db._get_table(table_type="sessions", create_table_if_not_found=True)
+        runs_table = sqlite_db._get_table(table_type="runs", create_table_if_not_found=True)
+        with sqlite_db.Session() as sess, sess.begin():
+            sess.execute(
+                sessions_table.insert().values(session_id="s-raw", session_type="team", created_at=int(time.time()))
+            )
+            sess.execute(
+                runs_table.insert().values(
+                    run_id="r-raw",
+                    session_id="s-raw",
+                    run_type="team",
+                    team_id="tm1",
+                    status="COMPLETED",
+                    run_index=0,
+                    run_data=json.dumps({"run_id": "r-raw", "team_id": "tm1", "content": "raw", "status": "COMPLETED"}),
+                    created_at=int(time.time()),
+                )
+            )
+        session = sqlite_db.get_session("s-raw", session_type=SessionType.TEAM)
+        assert [r.run_id for r in session.runs] == ["r-raw"]
+        assert session.runs[0].content == "raw"
+
 
 class TestTeamHardenedMutators:
     def test_team_regenerate_flips_status_on_a_copy(self):

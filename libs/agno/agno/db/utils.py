@@ -183,7 +183,16 @@ class SessionRunObjectCache:
             token = (hash(text), len(text))
             entry = cache.get(run_id)
             if entry is None or entry[0] != token:
-                entry = (token, deserialize_history_run(json.loads(text), session_type=session_type))
+                parsed = json.loads(text)
+                if isinstance(parsed, str):
+                    # A row written as a pre-encoded string into a JSON column
+                    # is double-encoded; the uncached read path parses it in
+                    # two steps too.
+                    parsed = json.loads(parsed)
+                run_obj = (
+                    deserialize_history_run(parsed, session_type=session_type) if isinstance(parsed, dict) else None
+                )
+                entry = (token, run_obj)
             fresh[run_id] = entry
             if entry[1] is not None:
                 objects.append(entry[1])
