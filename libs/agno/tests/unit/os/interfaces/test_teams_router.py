@@ -6,12 +6,14 @@ from fastapi import APIRouter, FastAPI
 from fastapi.testclient import TestClient
 
 from agno.db.base import BaseDb, SessionType
+from agno.db.sqlite import SqliteDb
 from agno.os.interfaces.teams.router import (
     _SESSION_DISPATCH,
     _format_reasoning,
     _resolve_session_config,
     attach_routes,
 )
+from agno.session.agent import AgentSession
 
 
 def _stub_agent_with_db():
@@ -197,6 +199,71 @@ def test_webhook_rejects_malformed_json():
         env_patch.stop()
 
 
+# === Session selection ===
+
+
+def test_new_session_survives_a_same_second_save_on_the_old_one(tmp_path):
+    """`/new` races the run that was in flight when it was typed: that run's save
+    stamps the old session with the same whole second the new one was created in."""
+    db = SqliteDb(db_file=str(tmp_path / "teams_sessions.db"))
+    old_id = "teams:agent-1:user-1"
+    new_id = "teams:agent-1:user-1:0a1b2c3d"
+    first_message, reset = 1_700_000_000, 1_700_000_060
+
+    old = AgentSession(
+        session_id=old_id,
+        user_id="user-1",
+        agent_id="agent-1",
+        created_at=first_message,
+        updated_at=first_message,
+    )
+    db.upsert_sessions([old], preserve_updated_at=True)
+    db.upsert_sessions(
+        [AgentSession(session_id=new_id, user_id="user-1", agent_id="agent-1", created_at=reset, updated_at=reset)],
+        preserve_updated_at=True,
+    )
+    # The in-flight run lands its save on the old session in that same second.
+    old.updated_at = reset
+    db.upsert_sessions([old], preserve_updated_at=True)
+
+    ran_on = {}
+
+    async def fake_arun(text, **kwargs):
+        ran_on["session_id"] = kwargs.get("session_id")
+        return SimpleNamespace(
+            status="COMPLETED", content="ok", session_id=kwargs.get("session_id"), reasoning_content=None
+        )
+
+    async def fake_aget_session(session_id=None):
+        return None
+
+    agent = SimpleNamespace(id="agent-1", name="Stub Agent", db=db, arun=fake_arun, aget_session=fake_aget_session)
+
+    client, env_patch = _build_test_client(agent=agent)
+    try:
+        with (
+            patch("agno.os.interfaces.teams.router.typing_indicator_async"),
+            patch("agno.os.interfaces.teams.router.send_teams_message_async"),
+        ):
+            resp = client.post(
+                "/messages",
+                json={
+                    "type": "message",
+                    "id": "act-1",
+                    "serviceUrl": "https://svc/",
+                    "from": {"id": "29:u", "aadObjectId": "user-1"},
+                    "conversation": {"id": "conv-1"},
+                    "recipient": {"id": "28:bot"},
+                    "text": "next message",
+                },
+            )
+        assert resp.status_code == 200
+    finally:
+        env_patch.stop()
+
+    assert ran_on["session_id"] == new_id
+
+
 # === Post-run conversation-reference write ===
 
 
@@ -220,9 +287,8 @@ def test_conversation_ref_is_written_to_the_run_session_not_the_newest():
         seen["saved"] = session
 
     fake_db = MagicMock(spec=BaseDb)
-    # 1st call: the pre-run lookup resolves the run onto OLD.
-    # 2nd call: whatever a latest-by-user re-read would have found -- NEW.
-    fake_db.get_sessions = MagicMock(side_effect=[[run_session], [newer_session]])
+    # Only OLD exists when the run starts; NEW is created while it is in flight.
+    fake_db.get_sessions = MagicMock(return_value=([{"session_id": run_session.session_id, "created_at": 1}], 1))
     agent = SimpleNamespace(
         id="agent-1",
         name="Stub Agent",
