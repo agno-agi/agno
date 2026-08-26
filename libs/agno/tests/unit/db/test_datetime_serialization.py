@@ -9,7 +9,7 @@ import json
 from datetime import date, datetime, timezone
 from uuid import uuid4
 
-from agno.db.utils import CustomJSONEncoder, json_serializer, serialize_session_json_fields
+from agno.db.utils import CustomJSONEncoder, json_serializer
 from agno.session.agent import AgentSession
 
 
@@ -102,102 +102,6 @@ class TestJsonSerializer:
         assert "date" in parsed
 
 
-class TestSerializeSessionJsonFields:
-    """Tests for serialize_session_json_fields function used by SQLite."""
-
-    def test_serialize_metadata_with_datetime(self):
-        """Test that metadata with datetime is serialized correctly."""
-        session = {
-            "session_id": "test-123",
-            "metadata": {
-                "created_at": datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
-                "environment": "test",
-            },
-        }
-        result = serialize_session_json_fields(session)
-
-        # metadata should now be a JSON string
-        assert isinstance(result["metadata"], str)
-
-        # Parse it back and verify datetime was converted
-        parsed = json.loads(result["metadata"])
-        assert parsed["created_at"] == "2025-01-15T10:00:00+00:00"
-        assert parsed["environment"] == "test"
-
-    def test_serialize_session_data_with_datetime(self):
-        """Test that session_data with datetime is serialized correctly."""
-        session = {
-            "session_id": "test-123",
-            "session_data": {
-                "last_updated": datetime.now(timezone.utc),
-            },
-        }
-        result = serialize_session_json_fields(session)
-
-        assert isinstance(result["session_data"], str)
-        parsed = json.loads(result["session_data"])
-        assert "last_updated" in parsed
-
-    def test_serialize_agent_data_with_datetime(self):
-        """Test that agent_data with datetime is serialized correctly."""
-        session = {
-            "session_id": "test-123",
-            "agent_data": {
-                "agent_id": "agent-1",
-                "initialized_at": datetime.now(timezone.utc),
-            },
-        }
-        result = serialize_session_json_fields(session)
-
-        assert isinstance(result["agent_data"], str)
-        parsed = json.loads(result["agent_data"])
-        assert parsed["agent_id"] == "agent-1"
-        assert "initialized_at" in parsed
-
-    def test_serialize_all_fields_with_datetime(self):
-        """Test that all JSON fields can contain datetime objects."""
-        now = datetime.now(timezone.utc)
-        session = {
-            "session_id": "test-123",
-            "session_data": {"ts": now},
-            "agent_data": {"ts": now},
-            "team_data": {"ts": now},
-            "workflow_data": {"ts": now},
-            "metadata": {"ts": now},
-            "chat_history": [{"ts": now}],
-            "summary": {"ts": now},
-            "runs": [{"ts": now}],
-        }
-
-        # Should not raise TypeError
-        result = serialize_session_json_fields(session)
-
-        # All fields should be JSON strings now
-        for field in [
-            "session_data",
-            "agent_data",
-            "team_data",
-            "workflow_data",
-            "metadata",
-            "chat_history",
-            "summary",
-            "runs",
-        ]:
-            assert isinstance(result[field], str), f"{field} should be a string"
-
-    def test_serialize_none_fields(self):
-        """Test that None fields are handled correctly."""
-        session = {
-            "session_id": "test-123",
-            "metadata": None,
-            "session_data": None,
-        }
-        result = serialize_session_json_fields(session)
-
-        assert result["metadata"] is None
-        assert result["session_data"] is None
-
-
 class TestAgentSessionWithDatetime:
     """Tests for AgentSession serialization with datetime objects."""
 
@@ -242,16 +146,21 @@ class TestAgentSessionWithDatetime:
 class TestDatetimeSerializationRegression:
     """Regression tests for GitHub issue #6327."""
 
-    def test_issue_6327_metadata_with_datetime(self):
+    def test_issue_6327_metadata_with_datetime(self, tmp_path):
         """
         Regression test for issue #6327.
 
         When using datetime objects in agent metadata, the session save
         should not fail with "TypeError: Object of type datetime is not JSON serializable".
+        SQLite binds the metadata dict straight to the JSON column, so the
+        engine's json_serializer (CustomJSONEncoder) is what handles datetimes.
         """
+        from agno.db.base import SessionType
+        from agno.db.sqlite import SqliteDb
+
         # This is the exact scenario from the bug report
         session_metadata = {
-            "created_at": datetime.now(timezone.utc),
+            "created_at": datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
             "environment": "test",
             "nested": {
                 "last_updated": datetime.now(timezone.utc),
@@ -265,17 +174,16 @@ class TestDatetimeSerializationRegression:
             metadata=session_metadata,
         )
 
-        session_dict = session.to_dict()
+        db = SqliteDb(db_file=str(tmp_path / "issue_6327.db"))
 
         # This should NOT raise TypeError
-        serialized = serialize_session_json_fields(session_dict.copy())
+        assert db.upsert_session(session) is not None
 
-        # Verify metadata was serialized
-        assert isinstance(serialized["metadata"], str)
-        parsed = json.loads(serialized["metadata"])
-        assert "created_at" in parsed
-        assert "nested" in parsed
-        assert "last_updated" in parsed["nested"]
+        stored = db.get_session(session_id="test-session-123", session_type=SessionType.AGENT)
+        assert stored is not None
+        assert stored.metadata["created_at"] == "2025-01-15T10:00:00+00:00"
+        assert stored.metadata["environment"] == "test"
+        assert "last_updated" in stored.metadata["nested"]
 
     def test_issue_6327_json_serializer_for_postgres(self):
         """
