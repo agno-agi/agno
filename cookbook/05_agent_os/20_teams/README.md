@@ -122,10 +122,11 @@ it and the channel-scoped `from.id` otherwise:
 3. In the server logs, look for a line of the form:
 
    ```text
-   INFO Processing Teams message from <id-prefix>: hello
+   INFO Processing Teams message from user <id-prefix>
    ```
 
-   The identifier before the colon is a prefix of the run's `user_id`.
+   The trailing identifier is a prefix of the run's `user_id`. The message text
+   is logged separately at debug level.
 
 4. Read the full identifier out of the session database:
 

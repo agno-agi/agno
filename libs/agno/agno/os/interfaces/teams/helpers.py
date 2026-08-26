@@ -48,11 +48,15 @@ class TeamsConfig:
         """Build a config using constructor args first, then env vars.
 
         Env-var fallbacks:
-          - ``MICROSOFT_APP_ID`` / ``MICROSOFT_APP_PASSWORD`` — required
+          - ``MICROSOFT_APP_ID`` / ``MICROSOFT_APP_PASSWORD`` — required, except
+            in the credential-free local-development mode below
           - ``MICROSOFT_APP_TENANT_ID`` — defaults to ``botframework.com``
 
         Raises ``ValueError`` if ``app_id`` or ``app_password`` cannot be
-        resolved from either source.
+        resolved from either source. The one exception is
+        ``MICROSOFT_APP_SKIP_JWT_VALIDATION=true`` with *neither* credential set,
+        which yields an empty config for exercising the inbound path offline;
+        one credential without the other is a misconfiguration and still raises.
         """
         from agno.os.interfaces.teams.security import dev_bypass_enabled
 
@@ -60,12 +64,14 @@ class TeamsConfig:
         secret = app_password or os.getenv("MICROSOFT_APP_PASSWORD")
         tid = tenant_id or os.getenv("MICROSOFT_APP_TENANT_ID") or "botframework.com"
 
-        # Local development runs without credentials: there is no audience to
-        # verify inbound tokens against and no client secret to fetch an
-        # outbound one with. The JWT bypass is gated on this same absence, so
-        # allowing it here is what keeps that mode reachable.
-        if dev_bypass_enabled():
-            return cls(app_id=aid or "", app_password=secret or "", tenant_id=tid, request_timeout=request_timeout)
+        # Local development runs without credentials at all: nothing to verify
+        # inbound tokens against, no client secret to fetch an outbound one with.
+        # The JWT bypass is gated on that same absence, so allowing it here keeps
+        # the mode reachable. Both must be missing -- half-configured is a
+        # misconfiguration, and letting it through would leave app_id empty,
+        # which the validator reads as "no credentials" and waves past.
+        if dev_bypass_enabled() and not aid and not secret:
+            return cls(app_id="", app_password="", tenant_id=tid, request_timeout=request_timeout)
 
         if not aid:
             raise ValueError("MICROSOFT_APP_ID is not set. Set the environment variable or pass app_id.")
