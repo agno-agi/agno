@@ -258,7 +258,7 @@ def test_close_session_with_session_id(browserbase_tools, mock_browserbase):
     assert result_data["status"] == "closed"
     # We no longer expect sessions.delete to be called
     # Instead, verify that cleanup was performed
-    assert "Browser resources cleaned up" in result_data["message"]
+    assert "Browser session closed and cloud resources released" in result_data["message"]
 
 
 def test_close_session_without_session_id(browserbase_tools, mock_browserbase):
@@ -506,7 +506,7 @@ async def test_aclose_session_basic(async_browserbase_tools, mock_browserbase):
 
     # Verify results
     assert result_data["status"] == "closed"
-    assert "Browser resources cleaned up" in result_data["message"]
+    assert "Browser session closed and cloud resources released" in result_data["message"]
 
 
 @pytest.mark.asyncio
