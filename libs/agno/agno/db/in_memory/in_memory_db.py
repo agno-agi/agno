@@ -17,10 +17,12 @@ from agno.db.schemas.memory import UserMemory
 from agno.db.utils import (
     deserialize_history_run,
     deserialize_session,
+    deserialize_session_by_type,
     deserialize_sessions,
     drop_legacy_metrics,
     filter_context_runs,
     metrics_starting_date_from_records,
+    run_cache_eligible,
 )
 from agno.session import AgentSession, Session, TeamSession, WorkflowSession
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -159,12 +161,8 @@ class InMemoryDb(BaseDb):
                 runs_window = filter_context_runs(session_data.get("runs") or [])[-runs_limit:]
                 session_data_copy = deepcopy({**session_data, "runs": runs_window})
             else:
-                if (
-                    deserialize
-                    and session_data.get("session_type") == SessionType.AGENT.value
-                    and (session_type is None or session_type == SessionType.AGENT)
-                ):
-                    session_obj = self._agent_session_with_cached_runs(session_id, session_data)
+                if deserialize and run_cache_eligible(session_data.get("session_type"), session_type):
+                    session_obj = self._session_with_cached_runs(session_id, session_data)
                     if session_obj is not None:
                         return session_obj
                 session_data_copy = deepcopy(session_data)
@@ -181,17 +179,22 @@ class InMemoryDb(BaseDb):
             log_error(f"Exception reading session: {str(e)}")
             raise e
 
-    def _agent_session_with_cached_runs(self, session_id: str, session_data: Dict[str, Any]) -> Optional[AgentSession]:
-        """An AgentSession whose history runs come from the run-object cache.
+    def _session_with_cached_runs(
+        self, session_id: str, session_data: Dict[str, Any]
+    ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
+        """A session whose history runs come from the run-object cache.
 
         The session row is deep-copied and rebuilt fresh per read, so row
         state (session_data, metadata, summary) stays isolated exactly as
         before. History run objects are built once per stored run dict and
         SHARED by every read of the session; see the cache comment in
-        __init__ for the invalidation and immutability contract.
+        __init__ for the invalidation and immutability contract. The per-run
+        dispatch follows the row's stored session type, so a workflow
+        session's step runs are skipped exactly as its from_dict would.
         """
+        row_session_type = session_data.get("session_type")
         row_copy = deepcopy({**session_data, "runs": None})
-        session = AgentSession.from_dict(row_copy)
+        session = deserialize_session_by_type(row_copy)
         if session is None:
             return None
 
@@ -210,7 +213,7 @@ class InMemoryDb(BaseDb):
             if entry is None or entry[0] is not run_dict:
                 # from_dict pops keys from its input, so it gets its own copy;
                 # the object then shares nothing with the stored dict.
-                entry = (run_dict, deserialize_history_run(deepcopy(run_dict)))
+                entry = (run_dict, deserialize_history_run(deepcopy(run_dict), session_type=row_session_type))
             if run_id is not None:
                 fresh_cache[run_id] = entry
             if entry[1] is not None:

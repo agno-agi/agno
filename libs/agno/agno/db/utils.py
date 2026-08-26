@@ -99,17 +99,40 @@ def detect_session_type(record: Dict[str, Any]) -> str:
     return "agent"
 
 
-def deserialize_history_run(run_dict: Dict[str, Any]) -> Optional[Any]:
-    """One stored run dict as a run object, mirroring AgentSession.from_dict's
-    per-run dispatch (a dict matching neither shape is skipped there too)."""
+def deserialize_history_run(run_dict: Dict[str, Any], session_type: Optional[str] = None) -> Optional[Any]:
+    """One stored run dict as a run object, mirroring the owning session
+    class's per-run dispatch (a dict matching neither shape is skipped there
+    too). Agent and team sessions key on the id the run dict carries; a
+    workflow session keeps only workflow runs — a step's agent or team run
+    shares the workflow's session id and is dropped on deserialization."""
+    from agno.db.base import SessionType
     from agno.run.agent import RunOutput
     from agno.run.team import TeamRunOutput
 
+    if session_type == SessionType.WORKFLOW.value:
+        from agno.run.workflow import WorkflowRunOutput
+
+        if get_run_type(run_dict) != "workflow":
+            return None
+        return WorkflowRunOutput.from_dict(run_dict)
     if "agent_id" in run_dict:
         return RunOutput.from_dict(run_dict)
     if "team_id" in run_dict:
         return TeamRunOutput.from_dict(run_dict)
     return None
+
+
+def run_cache_eligible(row_session_type: Optional[str], requested: Optional["SessionType"]) -> bool:
+    """True when a session row can serve its runs from the run-object cache:
+    the row's type is one the per-type run dispatch above knows, and the
+    caller either did not constrain the type or asked for the row's own.
+    A mismatched request keeps the pre-cache full-load path, which resolves
+    the conflict the same way it always has."""
+    from agno.db.base import SessionType
+
+    if row_session_type not in (SessionType.AGENT.value, SessionType.TEAM.value, SessionType.WORKFLOW.value):
+        return False
+    return requested is None or requested.value == row_session_type
 
 
 class SessionRunObjectCache:
@@ -141,8 +164,16 @@ class SessionRunObjectCache:
         self._per_session: "OrderedDict[str, Dict[str, Tuple[Tuple[int, int], Any]]]" = OrderedDict()
         self._max_sessions = max_sessions
 
-    def runs_from_rows(self, session_id: str, rows: Sequence[Tuple[str, str]]) -> List[Any]:
-        """The run objects for ``rows`` of (run_id, raw run_data text), in order."""
+    def runs_from_rows(
+        self, session_id: str, rows: Sequence[Tuple[str, str]], session_type: Optional[str] = None
+    ) -> List[Any]:
+        """The run objects for ``rows`` of (run_id, raw run_data text), in
+        order. ``session_type`` is the ROW's stored type: it picks the same
+        per-run dispatch the session class's from_dict would use, so a
+        workflow session's step runs are skipped here exactly as they are on
+        the uncached path. A row's type never changes in place (upserts leave
+        it alone, deletes drop the cache entry), so entries built under one
+        type are never served under another."""
         cache = self._per_session.pop(session_id, None) or {}
         fresh: Dict[str, Tuple[Tuple[int, int], Any]] = {}
         objects: List[Any] = []
@@ -150,7 +181,7 @@ class SessionRunObjectCache:
             token = (hash(text), len(text))
             entry = cache.get(run_id)
             if entry is None or entry[0] != token:
-                entry = (token, deserialize_history_run(json.loads(text)))
+                entry = (token, deserialize_history_run(json.loads(text), session_type=session_type))
             fresh[run_id] = entry
             if entry[1] is not None:
                 objects.append(entry[1])

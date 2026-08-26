@@ -4997,9 +4997,10 @@ def _persist_team_run_in_session(
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
-        # save_session -> _scrub_member_responses scrubs each member in place;
-        # deep-copy so it operates on the storage copy, not the live member runs.
-        # The embedded copies hold envelopes like the session's member rows.
+        # The member offload (envelope substitution) and the team-level scrub
+        # below mutate what they are given; deep-copy so they operate on the
+        # storage copy, not the live member runs. The embedded copies hold
+        # envelopes like the session's member rows.
         storage_copy.member_responses = [
             _member_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
@@ -5057,9 +5058,10 @@ async def _apersist_team_run_in_session(
     if not team.store_media:
         isolate_media_scrub_targets(storage_copy)
     if storage_copy.member_responses and team.store_member_responses:
-        # save_session -> _scrub_member_responses scrubs each member in place;
-        # deep-copy so it operates on the storage copy, not the live member runs.
-        # The embedded copies hold envelopes like the session's member rows.
+        # The member offload (envelope substitution) and the team-level scrub
+        # below mutate what they are given; deep-copy so they operate on the
+        # storage copy, not the live member runs. The embedded copies hold
+        # envelopes like the session's member rows.
         storage_copy.member_responses = [
             await _amember_run_for_storage(team, session, member_run)
             for member_run in copy.deepcopy(storage_copy.member_responses)
@@ -6328,6 +6330,8 @@ def _resolve_member_run_output_for_continue(
        requirement — the deep member's paused run lives inside it, persisted
        there by save_session's paused-run exemption.
     """
+    from copy import deepcopy
+
     from agno.team.team import Team
     from agno.utils.team import get_member_id
 
@@ -6359,18 +6363,31 @@ def _resolve_member_run_output_for_continue(
         if member_run_output is None and session is not None and session.runs:
             for session_run in session.runs:
                 if getattr(session_run, "run_id", None) == member_run_id:
-                    member_run_output = session_run  # type: ignore[assignment]
+                    # Session-held history runs are shared between session
+                    # reads, and the member's continue completes the run it is
+                    # handed in place -- so hand it a run of its own. The
+                    # routing loop upserts the completed run back into the
+                    # session, so nothing relies on the original's identity.
+                    member_run_output = deepcopy(session_run)  # type: ignore[assignment]
                     break
         if member_run_output is None and routed_to_team:
-            candidates: List[Union[TeamRunOutput, RunOutput]] = list(run_response.member_responses or [])
-            if session is not None and session.runs:
-                candidates.extend(r for r in session.runs if getattr(r, "parent_run_id", None) == run_response.run_id)
-            for candidate in candidates:
+            for candidate in run_response.member_responses or []:
                 if not isinstance(candidate, TeamRunOutput) or candidate.run_id == run_response.run_id:
                     continue
                 if _team_run_references_member_run(candidate, member_run_id):
                     member_run_output = candidate
                     break
+            if member_run_output is None and session is not None and session.runs:
+                for candidate in session.runs:
+                    if getattr(candidate, "parent_run_id", None) != run_response.run_id:
+                        continue
+                    if not isinstance(candidate, TeamRunOutput) or candidate.run_id == run_response.run_id:
+                        continue
+                    if _team_run_references_member_run(candidate, member_run_id):
+                        # Shared session object: same copy-at-acquisition as the
+                        # direct member_run_id hit above.
+                        member_run_output = deepcopy(candidate)
+                        break
 
     return member_run_output
 
@@ -7354,17 +7371,24 @@ def _mark_team_run_regenerated(
     explicit ``save_run`` here the DB row keeps its old status and history
     builders still surface the parent — producing duplicate content after
     regenerate."""
+    from copy import copy as shallow_copy
+
     from agno.team._session import save_run
 
-    for r in session.runs or []:
+    for i, r in enumerate(session.runs or []):
         if r.run_id == original_run_id:
-            r.status = RunStatus.regenerated
+            # Flip on a copy, never on the loaded run: history run objects are
+            # shared between reads of the same session, so an in-place write
+            # would surface mid-flight on another reader's session.
+            flipped = shallow_copy(r)
+            flipped.status = RunStatus.regenerated
+            session.runs[i] = flipped  # type: ignore[index]
             save_run(
                 team,
-                run=r,
+                run=flipped,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=resolve_run_index(session, flipped),
             )
             return
 
@@ -7375,17 +7399,24 @@ async def _amark_team_run_regenerated(
     original_run_id: str,
 ) -> None:
     """Async variant of :func:`_mark_team_run_regenerated`."""
+    from copy import copy as shallow_copy
+
     from agno.team._session import asave_run
 
-    for r in session.runs or []:
+    for i, r in enumerate(session.runs or []):
         if r.run_id == original_run_id:
-            r.status = RunStatus.regenerated
+            # Flip on a copy, never on the loaded run: history run objects are
+            # shared between reads of the same session, so an in-place write
+            # would surface mid-flight on another reader's session.
+            flipped = shallow_copy(r)
+            flipped.status = RunStatus.regenerated
+            session.runs[i] = flipped  # type: ignore[index]
             await asave_run(
                 team,
-                run=r,
+                run=flipped,
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=resolve_run_index(session, flipped),
             )
             return
 
@@ -7629,6 +7660,13 @@ def continue_run_dispatch(
         run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
         if run_response is None:
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
+        # The continued run is mutated through the whole continue pipeline
+        # (message truncation, member resumes, status). History run objects are
+        # shared between reads of the same session, so continue works on its
+        # own copy.
+        from copy import deepcopy as _deepcopy_run
+
+        run_response = _deepcopy_run(run_response)
 
     run_response = cast(TeamRunOutput, run_response)
 
@@ -8831,9 +8869,14 @@ async def _acontinue_run_background_stream(
     def _get_session_run(session: TeamSession) -> Optional[TeamRunOutput]:
         # Prefer the concrete run list: mocked or third-party session objects
         # do not always implement get_run with the same fidelity.
+        # The status writes below mutate what this returns, and history run
+        # objects are shared between session reads -- hand back a run of the
+        # caller's own (get_run copies on its own).
+        from copy import deepcopy as _deepcopy_run
+
         for candidate in getattr(session, "runs", None) or []:
             if getattr(candidate, "run_id", None) == _run_id:
-                return cast(TeamRunOutput, candidate)
+                return cast(TeamRunOutput, _deepcopy_run(candidate))
         return cast(Optional[TeamRunOutput], session.get_run(_run_id))
 
     stored_run = _get_session_run(team_session)
@@ -9069,6 +9112,10 @@ async def _acontinue_run_background_stream(
                                 await apersist_run_transition(team, "team", session_id, fresh_run, user_id=user_id)
                                 persist_run.status = cast(RunStatus, restore_status)
                                 if team.cache_session:
+                                    # fresh_run is the caller's own copy, so the
+                                    # flip must be written back before this
+                                    # session becomes the cached one.
+                                    fresh_session.upsert_run(run_response=fresh_run)
                                     team._set_cached_session(fresh_session)
                 except Exception:
                     log_error(
@@ -9104,6 +9151,10 @@ async def _acontinue_run_background_stream(
                                 await apersist_run_transition(team, "team", session_id, fresh_run, user_id=user_id)
                                 persist_run.status = RunStatus.error
                                 if team.cache_session:
+                                    # fresh_run is the caller's own copy, so the
+                                    # flip must be written back before this
+                                    # session becomes the cached one.
+                                    fresh_session.upsert_run(run_response=fresh_run)
                                     team._set_cached_session(fresh_session)
                 except Exception:
                     log_error(
@@ -9480,6 +9531,13 @@ async def _acontinue_run(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
+                    # The continued run is mutated through the whole continue
+                    # pipeline (message truncation, member resumes, status).
+                    # History run objects are shared between reads of the same
+                    # session, so continue works on its own copy.
+                    from copy import deepcopy as _deepcopy_run
+
+                    run_response = _deepcopy_run(run_response)
 
                 run_response = cast(TeamRunOutput, run_response)
 
@@ -9961,6 +10019,13 @@ async def _acontinue_run_stream(
                     run_response = next((r for r in runs if r.run_id == run_id), None)  # type: ignore
                     if run_response is None:
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
+                    # The continued run is mutated through the whole continue
+                    # pipeline (message truncation, member resumes, status).
+                    # History run objects are shared between reads of the same
+                    # session, so continue works on its own copy.
+                    from copy import deepcopy as _deepcopy_run
+
+                    run_response = _deepcopy_run(run_response)
 
                 run_response = cast(TeamRunOutput, run_response)
 

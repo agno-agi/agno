@@ -5548,10 +5548,9 @@ class Workflow:
             else:
                 session = self.db.get_session(session_id=_session_id, session_type=SessionType.WORKFLOW)
             if session and isinstance(session, WorkflowSession) and session.runs:
-                # Find the run by ID
-                for run in session.runs:
-                    if run.run_id == run_id:
-                        return run
+                # get_run hands back a copy of the caller's own: history run
+                # objects are shared between session reads.
+                return session.get_run(run_id)
 
         return None
 
@@ -5566,10 +5565,9 @@ class Workflow:
         if self.db is not None and _session_id is not None:
             session = self.db.get_session(session_id=_session_id, session_type=SessionType.WORKFLOW)
             if session and isinstance(session, WorkflowSession) and session.runs:
-                # Find the run by ID
-                for run in session.runs:
-                    if run.run_id == run_id:
-                        return run
+                # get_run hands back a copy of the caller's own: history run
+                # objects are shared between session reads.
+                return session.get_run(run_id)
 
         return None
 
@@ -5814,8 +5812,14 @@ class Workflow:
             reloaded_session = self.get_session(session_id=session.session_id)
 
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
+                # Get the last run (which is the one just created by the tool).
+                # The write below goes on this call's own copy: history run
+                # objects are shared between session reads. Swap the copy into
+                # the reloaded session so the persist sees a consistent list.
+                from copy import deepcopy as _deepcopy_run
+
+                last_run = _deepcopy_run(reloaded_session.runs[-1])
+                reloaded_session.runs[-1] = last_run
 
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
@@ -5936,8 +5940,14 @@ class Workflow:
             reloaded_session = self.get_session(session_id=session.session_id)
 
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
+                # Get the last run (which is the one just created by the tool).
+                # The write below goes on this call's own copy: history run
+                # objects are shared between session reads. Swap the copy into
+                # the reloaded session so the persist sees a consistent list.
+                from copy import deepcopy as _deepcopy_run
+
+                last_run = _deepcopy_run(reloaded_session.runs[-1])
+                reloaded_session.runs[-1] = last_run
 
                 # Update the last run directly with workflow_agent_run
                 last_run.workflow_agent_run = agent_response
@@ -6229,8 +6239,14 @@ class Workflow:
                 reloaded_session = self.get_session(session_id=session.session_id)
 
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
+                # Get the last run (which is the one just created by the tool).
+                # The write below goes on this call's own copy: history run
+                # objects are shared between session reads. Swap the copy into
+                # the reloaded session so the persist sees a consistent list.
+                from copy import deepcopy as _deepcopy_run
+
+                last_run = _deepcopy_run(reloaded_session.runs[-1])
+                reloaded_session.runs[-1] = last_run
 
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
@@ -6360,8 +6376,14 @@ class Workflow:
                 reloaded_session = self.get_session(session_id=session.session_id)
 
             if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
+                # Get the last run (which is the one just created by the tool).
+                # The write below goes on this call's own copy: history run
+                # objects are shared between session reads. Swap the copy into
+                # the reloaded session so the persist sees a consistent list.
+                from copy import deepcopy as _deepcopy_run
+
+                last_run = _deepcopy_run(reloaded_session.runs[-1])
+                reloaded_session.runs[-1] = last_run
                 log_debug(f"Retrieved latest workflow run: {last_run.run_id}")
                 log_debug(f"Total workflow runs in session: {len(reloaded_session.runs)}")
 

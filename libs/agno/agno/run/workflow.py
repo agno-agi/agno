@@ -100,15 +100,21 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     nested_depth: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        # Temporarily clear the DEEP fields before asdict(): it traverses
-        # every dataclass field BEFORE the post-hoc filter can drop a key,
-        # and these object graphs can reach back to this very event -
-        # run_output.events contains it, and
+        # Clear the DEEP fields before asdict(): it traverses every dataclass
+        # field BEFORE the post-hoc filter can drop a key, and these object
+        # graphs can reach back to this very event - run_output.events
+        # contains it, and
         # step_requirements[].step_input.workflow_session.runs[].events
         # contains it too (the WS HITL continue leg produces exactly that
         # shape once the event lands on the live run). asdict() has no cycle
         # detection, so traversal is fatal; each cleared field is
-        # re-serialized below through its own cycle-safe to_dict.
+        # re-serialized below through its own cycle-safe to_dict. The fields
+        # are cleared on a shallow copy, never on self: events on a stored
+        # run are shared between readers of the session, and a
+        # null-then-restore on the shared object corrupts any concurrent
+        # serialization of the same event.
+        import copy as _copy
+
         _deep_fields = (
             "run_output",
             "step_requirements",
@@ -117,17 +123,11 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
             "step_response",
             "iteration_results",
         )
-        _saved: Dict[str, Any] = {}
+        light_copy = _copy.copy(self)
         for _name in _deep_fields:
-            _value = getattr(self, _name, None)
-            if _value is not None:
-                _saved[_name] = _value
-                object.__setattr__(self, _name, None)
-        try:
-            _dict = {k: v for k, v in asdict(self).items() if v is not None and k not in ("run_output", "metrics")}
-        finally:
-            for _name, _value in _saved.items():
-                object.__setattr__(self, _name, _value)
+            if getattr(light_copy, _name, None) is not None:
+                object.__setattr__(light_copy, _name, None)
+        _dict = {k: v for k, v in asdict(light_copy).items() if v is not None and k not in ("run_output", "metrics")}
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)

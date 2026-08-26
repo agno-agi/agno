@@ -135,9 +135,20 @@ class WorkflowSession:
             self.updated_at = current_time
 
     def get_run(self, run_id: str) -> Optional[WorkflowRunOutput]:
+        """The run with this id, as the caller's own copy.
+
+        History run objects are shared between session reads, and get_run's
+        callers mutate what they fetch -- the continue pipeline truncates and
+        resumes it, the queue worker flips status -- before persisting.
+        Handing out the shared object would publish those mutations to every
+        reader of the session before (or without) a store write, so each
+        caller gets a run of its own.
+        """
+        from copy import deepcopy
+
         for run in self.runs or []:
             if run.run_id == run_id:
-                return run
+                return deepcopy(run)
         return None
 
     def upsert_run(self, run: WorkflowRunOutput) -> None:
