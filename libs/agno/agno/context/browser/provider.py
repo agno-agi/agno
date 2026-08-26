@@ -24,11 +24,32 @@ if TYPE_CHECKING:
     from agno.models.base import Model
 
 
+# Read-only tools (allowlist - fails closed)
+READ_TOOLS = [
+    "browser_navigate",
+    "browser_snapshot",
+    "browser_take_screenshot",
+    "browser_go_back",
+    "browser_go_forward",
+    "browser_wait",
+    "browser_tab_list",
+    "browser_tab_new",
+    "browser_tab_select",
+    "browser_tab_close",
+    "browser_console_messages",
+    "browser_network_requests",
+]
+
+# Write tools (click, type, etc.)
 WRITE_TOOLS = [
+    "browser_click",
     "browser_type",
     "browser_select_option",
     "browser_press_key",
     "browser_file_upload",
+    "browser_hover",
+    "browser_drag",
+    "browser_handle_dialog",
 ]
 
 
@@ -38,8 +59,9 @@ class BrowserContextProvider(ContextProvider):
     Args:
         backend: The browser backend (e.g. PlaywrightMCPBackend). If None,
             creates a PlaywrightMCPBackend with default settings.
-        write: If False (default), write tools are excluded (type, select_option,
-            press_key, file_upload). If True, all tools are available.
+        write: If False (default), only read tools are available (navigate,
+            snapshot, screenshot). If True, write tools are also available
+            (click, type, select, etc.).
         headless: Whether to run the browser in headless mode (only used if
             backend is None).
     """
@@ -57,7 +79,18 @@ class BrowserContextProvider(ContextProvider):
         headless: bool = True,
         stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events)
+        # Browser exposes only query_browser (no update_browser)
+        # Base class write=False since we don't implement aupdate()
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            read=True,
+            write=False,
+            stream_sub_agent_events=stream_sub_agent_events,
+        )
+        self._write_tools_enabled = write
         self.backend = backend if backend is not None else self._create_default_backend(write, headless)
         self.instructions_text = instructions if instructions is not None else DEFAULT_BROWSER_INSTRUCTIONS
         self._agent: Agent | None = None
@@ -65,8 +98,9 @@ class BrowserContextProvider(ContextProvider):
     def _create_default_backend(self, write: bool, headless: bool) -> ContextBackend:
         from agno.context.browser.playwright_mcp import PlaywrightMCPBackend
 
-        exclude = None if write else WRITE_TOOLS
-        return PlaywrightMCPBackend(headless=headless, exclude_tools=exclude)
+        # Allowlist pattern: only include known-safe tools by default
+        tools = READ_TOOLS + WRITE_TOOLS if write else READ_TOOLS
+        return PlaywrightMCPBackend(headless=headless, include_tools=tools)
 
     def status(self) -> Status:
         return self.backend.status()

@@ -337,16 +337,14 @@ def test_provider_creates_default_backend_when_none_provided():
     assert isinstance(provider.backend, PlaywrightMCPBackend)
 
 
-def test_provider_default_backend_excludes_write_tools():
+def test_provider_default_backend_uses_read_tools_allowlist():
+    from agno.context.browser.provider import READ_TOOLS
+
     provider = BrowserContextProvider()
     backend = provider.backend
     assert isinstance(backend, PlaywrightMCPBackend)
-    assert backend.exclude_tools == [
-        "browser_type",
-        "browser_select_option",
-        "browser_press_key",
-        "browser_file_upload",
-    ]
+    assert backend.include_tools == READ_TOOLS
+    assert backend.exclude_tools is None
 
 
 def test_provider_default_backend_is_headless():
@@ -368,29 +366,77 @@ def test_provider_default_backend_headed_when_specified():
 # ---------------------------------------------------------------------------
 
 
-def test_provider_write_false_excludes_write_tools():
+def test_provider_write_false_uses_read_tools():
+    from agno.context.browser.provider import READ_TOOLS
+
     provider = BrowserContextProvider(write=False)
     backend = provider.backend
     assert isinstance(backend, PlaywrightMCPBackend)
-    assert backend.exclude_tools == [
-        "browser_type",
-        "browser_select_option",
-        "browser_press_key",
-        "browser_file_upload",
-    ]
+    assert backend.include_tools == READ_TOOLS
 
 
-def test_provider_write_true_does_not_exclude_write_tools():
+def test_provider_write_true_includes_all_tools():
+    from agno.context.browser.provider import READ_TOOLS, WRITE_TOOLS
+
     provider = BrowserContextProvider(write=True)
     backend = provider.backend
     assert isinstance(backend, PlaywrightMCPBackend)
-    assert backend.exclude_tools is None
+    assert backend.include_tools == READ_TOOLS + WRITE_TOOLS
 
 
 def test_provider_explicit_backend_ignores_write_flag():
-    explicit_backend = PlaywrightMCPBackend(exclude_tools=["custom_excluded"])
+    explicit_backend = PlaywrightMCPBackend(include_tools=["custom_tool"])
     provider = BrowserContextProvider(backend=explicit_backend, write=False)
-    assert provider.backend.exclude_tools == ["custom_excluded"]
+    assert provider.backend.include_tools == ["custom_tool"]
+
+
+# ---------------------------------------------------------------------------
+# BrowserContextProvider — Base Class Flags
+# ---------------------------------------------------------------------------
+
+
+def test_provider_base_class_read_is_true():
+    # Browser always exposes query_browser
+    provider = BrowserContextProvider()
+    assert provider.read is True
+
+
+def test_provider_base_class_write_is_false():
+    # Browser never exposes update_browser (no dual-agent pattern)
+    provider = BrowserContextProvider()
+    assert provider.write is False
+
+
+def test_provider_base_class_write_false_even_when_write_param_true():
+    # write= param controls tool filtering, not update_browser exposure
+    provider = BrowserContextProvider(write=True)
+    assert provider.write is False  # Base class flag
+    assert provider._write_tools_enabled is True  # Tool filtering flag
+
+
+def test_provider_write_tools_enabled_tracks_write_param():
+    provider_read_only = BrowserContextProvider(write=False)
+    assert provider_read_only._write_tools_enabled is False
+
+    provider_full = BrowserContextProvider(write=True)
+    assert provider_full._write_tools_enabled is True
+
+
+def test_provider_only_exposes_query_tool_not_update():
+    # Browser is query-only (no update_browser)
+    provider = BrowserContextProvider()
+    tools = provider.get_tools()
+    tool_names = [t.name for t in tools]
+    assert "query_browser" in tool_names
+    assert "update_browser" not in tool_names
+
+
+def test_provider_read_write_tools_helper_returns_only_query():
+    # _read_write_tools() should return only query since write=False on base
+    provider = BrowserContextProvider()
+    tools = provider._read_write_tools()
+    tool_names = [t.name for t in tools]
+    assert tool_names == ["query_browser"]
 
 
 # ---------------------------------------------------------------------------
