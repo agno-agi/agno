@@ -32,7 +32,7 @@ Environment Variables:
     AZURE_CONTAINER_NAME      - Container name
 
 Run this cookbook:
-    python cookbook/07_knowledge/cloud/azure_blob.py
+    python cookbook/07_knowledge/09_archive/cloud/azure_blob.py
 """
 
 from os import getenv
