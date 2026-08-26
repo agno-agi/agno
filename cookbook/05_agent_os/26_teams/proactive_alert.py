@@ -19,6 +19,7 @@ import asyncio
 import os
 import threading
 
+import httpx
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
@@ -70,10 +71,19 @@ def _demo_alert_worker():
         print(f"[demo] scheduling proactive alert to {target_user_id} in 30s")
         await asyncio.sleep(30)
         while True:
-            sent = await teams.asend_alert(
-                user_id=target_user_id,
-                text="**Demo alert** from the Teams cookbook — this arrived without you asking.",
-            )
+            try:
+                sent = await teams.asend_alert(
+                    user_id=target_user_id,
+                    text="**Demo alert** from the Teams cookbook — this arrived without you asking.",
+                )
+            except httpx.HTTPError as e:
+                # asend_alert returns False while no reference is stored yet, but it
+                # raises when the send itself fails: a reference the Bot Connector no
+                # longer accepts (a closed Web Chat tab, an uninstalled bot), or the
+                # transport failing outright. Neither is worth another attempt every
+                # 15 seconds, so report it and stop.
+                print(f"[demo] Delivery to {target_user_id} failed, not retrying: {e}")
+                return
             if sent:
                 print(f"[demo] Proactive alert delivered to {target_user_id}")
                 return
