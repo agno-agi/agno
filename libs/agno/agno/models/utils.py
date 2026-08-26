@@ -72,6 +72,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "vercel": ("agno.models.vercel", "V0", "v0", "vercel"),
     "vertexai-claude": ("agno.models.vertexai.claude", "Claude", "Claude", "vertexai"),
     "vllm": ("agno.models.vllm", "VLLM", "VLLM", "vllm"),
+    "volcengine": ("agno.models.volcengine", "Ark", "Ark", "volcengine ark"),
     "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
     "xai-responses": ("agno.models.xai", "xAIResponses", "xAIResponses", "xai"),
     "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
