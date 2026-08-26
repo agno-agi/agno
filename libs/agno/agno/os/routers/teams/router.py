@@ -42,9 +42,11 @@ from agno.os.job_queue import (
     aprepare_accepted_or_abort,
     araise_if_ticket_owns_continue,
     aticket_poll_fallback,
+    component_is_queueable,
     ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
+    queue_scope,
     ticket_status_to_api,
     validate_seam_input,
 )
@@ -811,17 +813,18 @@ def get_team_router(
                 # RUN (complete output guaranteed via the run row); the live
                 # stream is the best-effort view.
                 queue_worker = getattr(request.app.state, "queue_worker", None)
-                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                queued_stream_payload = {
+                    "input": message,
+                    "kwargs": kwargs,
+                    "stream": True,
+                    "scope": queue_scope(scoped_user_id, version),
+                }
                 stream_queueable = (
                     queue_worker is not None
                     and getattr(team, "db", None) is not None
                     and payload_is_queueable(queued_stream_payload)
-                    and version is None
                     and not (base64_images or base64_audios or base64_videos or document_files)
-                    and any(
-                        getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
-                        for candidate in (os.teams or [])
-                    )
+                    and component_is_queueable(team, team_id, os.teams, os.db)
                 )
                 if stream_queueable:
                     # 202/stream-accept must honor input_schema like the inline path (400)
@@ -887,7 +890,7 @@ def get_team_router(
                 if queue_worker is not None:
                     log_warning(
                         "Streaming background run bypasses the durable queue (remote/factory/"
-                        "version-pinned/media submissions are not queueable): bounded and "
+                        "media submissions are not queueable): bounded and "
                         "observable, but NOT durable."
                     )
                 # background=True, stream=True: resumable SSE streaming
@@ -917,19 +920,15 @@ def get_team_router(
             # replica's worker claims the job executes it, surviving crashes
             # and deploys. Client contract identical: 202 + poll.
             queue_worker = getattr(request.app.state, "queue_worker", None)
-            # Queueable only if this is a plain registry instance: the worker
-            # resolves from the registry, so factory-backed or off-registry
-            # (db-resolved / version-pinned) components would be accepted here
-            # and then fail or run differently in the worker.
-            component_is_queueable = any(
-                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
-                for candidate in (os.teams or [])
-            )
-            queued_payload = {"input": message, "kwargs": kwargs}
+            # Queueable when the worker can re-resolve the team at claim
+            # time: a plain registry instance, or a db-backed (components API
+            # / version-pinned) team replayed from the scope on the ticket.
+            # Factory-backed teams need request context and never queue.
+            team_is_queueable = component_is_queueable(team, team_id, os.teams, os.db)
+            queued_payload = {"input": message, "kwargs": kwargs, "scope": queue_scope(scoped_user_id, version)}
             if (
                 queue_worker is not None
-                and component_is_queueable
-                and version is None  # version-pinned resolution differs from the worker's registry instance
+                and team_is_queueable
                 and payload_is_queueable(queued_payload)
                 # Media cannot ride the queue payload yet: fall back to the
                 # bounded in-process path (parity with the stream seam)
@@ -1006,15 +1005,14 @@ def get_team_router(
                         "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                     )
                 else:
-                    # Off-registry, factory-backed, or version-pinned: the
-                    # worker resolves from the registry, so these cannot ride
-                    # the queue - previously this dropped to the non-durable
-                    # path with no log line at all.
+                    # Remote or factory-backed: the worker cannot re-resolve
+                    # these at claim time (no request context), so they
+                    # cannot ride the queue - previously this dropped to the
+                    # non-durable path with no log line at all.
                     log_warning(
-                        "Background run bypasses the durable queue: the team is not a plain "
-                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
-                        "resolution differs from the worker's registry instance). Executing on the "
-                        "accepting replica instead - bounded and observable, but NOT durable."
+                        "Background run bypasses the durable queue: the team cannot be re-resolved "
+                        "by the queue worker (remote or factory-backed teams need request context). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
                     )
 
             # Same input-error contract as the inline path: schema violations
@@ -1503,10 +1501,7 @@ def get_team_router(
                 "continue_from": continue_from_value,
                 "kwargs": kwargs,
             }
-            team_is_queueable = any(
-                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
-                for candidate in (os.teams or [])
-            )
+            team_is_queueable = component_is_queueable(team, team_id, os.teams, os.db)
             if (
                 queue_worker is not None
                 # LIVE, unlike the submit gates' dead twin: the teams continue

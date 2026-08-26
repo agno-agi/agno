@@ -261,6 +261,44 @@ def payload_is_queueable(payload: Any) -> bool:
         return False
 
 
+def _is_component_factory(candidate: Any) -> bool:
+    from agno.agent.factory import AgentFactory
+    from agno.team.factory import TeamFactory
+    from agno.workflow.factory import WorkflowFactory
+
+    return isinstance(candidate, (AgentFactory, TeamFactory, WorkflowFactory))
+
+
+def component_is_queueable(component: Any, component_id: str, registry: Any, db: Any) -> bool:
+    """True when the durable worker can re-resolve ``component`` at claim time.
+
+    Two sources exist, mirroring the HTTP resolution order:
+    - a code-registered instance resolves from the registry. Factory entries
+      are never queueable: they need the request context to build the
+      component, which the worker does not have.
+    - an off-registry component (created through the components API, or a
+      version-pinned load) was rehydrated from the AgentOS db at accept
+      time. The worker replays that load from the scope stamped on the
+      ticket (owner user_id + version), so it is queueable whenever the
+      AgentOS has a db to replay it from.
+    """
+    if component is None:
+        return False
+    for candidate in registry or []:
+        if getattr(candidate, "id", None) == component_id:
+            return not _is_component_factory(candidate)
+    return db is not None
+
+
+def queue_scope(user_id: Optional[str], version: Optional[int]) -> Dict[str, Any]:
+    """The resolution scope a ticket carries so the worker resolves the SAME
+    component the accepting endpoint did: the owner scope that gated a
+    db-backed component and the explicitly pinned version. Authorization
+    (ownership, draft preview) happened at the door; the worker only replays
+    the resolution, never re-decides it."""
+    return {"user_id": user_id, "version": version}
+
+
 def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
     """Resolve the queue store for a durable QueueConfig.
 
@@ -750,6 +788,20 @@ class QueueWorker:
             await self.store.settle_swept_job(job["id"], self.worker_id, "failed", error)
             log_warning(f"Job queue: swept job {job['id']} to failed ({error})")
 
+    async def _aresolve_job_component(self, job: Dict[str, Any]) -> Any:
+        """Resolve the component a ticket names, honoring the resolution
+        scope stamped at accept time. Tickets without a scope (registry
+        components, pre-scope producers) resolve by type/id alone, so a
+        two-argument resolver keeps working; resolvers may be sync or async."""
+        scope = (job.get("payload") or {}).get("scope")
+        if scope:
+            resolved = self.resolve_component(job.get("component_type"), job.get("component_id"), scope=scope)
+        else:
+            resolved = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        if inspect.isawaitable(resolved):
+            resolved = await resolved
+        return resolved
+
     async def _areconcile_swept_job(self, job: Dict[str, Any]) -> bool:
         """Settle a swept ticket to MATCH an already-settled run row.
 
@@ -765,7 +817,7 @@ class QueueWorker:
         failure path."""
         from agno.run.base import RunStatus
 
-        component = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        component = await self._aresolve_job_component(job)
         if component is None or not callable(getattr(component, "aget_run_output", None)):
             return False
         try:
@@ -847,7 +899,7 @@ class QueueWorker:
         # refusing the tombstone would loop the ticket in sweep-retry forever
         # instead of honouring the user's cancel; keep the old loud tombstone
         # for exactly that case.
-        component_reachable = self.resolve_component(prior.get("component_type"), prior.get("component_id")) is not None
+        component_reachable = await self._aresolve_job_component(prior) is not None
         if component_reachable and not await self._persist_run_error(prior, reason, status="cancelled"):
             log_error(
                 f"Job queue: could not persist the cancelled run row for waiting job {run_id}; "
@@ -1087,7 +1139,7 @@ class QueueWorker:
     async def _persist_run_error_inner(
         self, job: Dict[str, Any], error: str, status: str
     ) -> Optional["RunPersistOutcome"]:
-        component = self.resolve_component(job["component_type"], job["component_id"])
+        component = await self._aresolve_job_component(job)
         if component is None:
             # A deploy removed the component: the run row (if any) is
             # unreachable, so the caller must keep the ticket alive for a
@@ -1495,7 +1547,7 @@ class QueueWorker:
         job_id, attempt = job["id"], job["attempt"]
         job_type = job.get("job_type", "run")
         payload = job.get("payload") or {}
-        component_for_stamp = self.resolve_component(job.get("component_type"), job.get("component_id"))
+        component_for_stamp = await self._aresolve_job_component(job)
         if (
             job_type == "run"
             and component_for_stamp is not None
@@ -1556,7 +1608,7 @@ class QueueWorker:
             # has no executor for. Fail it visibly rather than guessing.
             await self._asettle_ticket(job_id, attempt, "failed", f"No executor registered for job type {job_type!r}")
             return
-        component = self.resolve_component(job["component_type"], job["component_id"])
+        component = await self._aresolve_job_component(job)
         if component is None:
             # Same rule as every terminal path: never terminalize the ticket
             # while the run row (prepared PENDING at accept) cannot be
@@ -2398,12 +2450,13 @@ async def queue_lifespan(app: Any, agent_os: Any):
             "a shared event stream."
         )
 
-    def resolve_component(component_type: str, component_id: str) -> Any:
+    async def resolve_component(component_type: str, component_id: str, scope: Optional[Dict[str, Any]] = None) -> Any:
         registry = {
             "agent": agent_os.agents,
             "team": agent_os.teams,
             "workflow": agent_os.workflows,
         }.get(component_type)
+        resolved: Any = None
         for candidate in registry or []:
             if getattr(candidate, "id", None) == component_id:
                 # Fresh copy per execution, mirroring the HTTP path: queued
@@ -2416,15 +2469,48 @@ async def queue_lifespan(app: Any, agent_os: Any):
                         resolved = candidate.deep_copy()
                     except Exception:
                         resolved = candidate
-                if component_type == "team":
-                    # Mirror the HTTP path's per-request copy: member HITL
-                    # continue reloads member tool state from the DB and
-                    # depends on this - the registry instance carries the
-                    # class default (False)
-                    with contextlib.suppress(Exception):
-                        resolved.store_member_responses = True
-                return resolved
-        return None
+                break
+        if resolved is None and agent_os.db is not None:
+            # Off-registry: the accepting endpoint rehydrated the component
+            # from the db (components API / version pin). Replay that load
+            # under the scope stamped on the ticket so the worker executes
+            # the same owner-scoped, same-version component the door
+            # admitted. published_only keeps the run endpoints' default: an
+            # unpinned load takes the published version; a pinned version
+            # was already authorized (draft preview) at accept time.
+            from agno.os.utils import get_agent_by_id_async, get_team_by_id_async, get_workflow_by_id_async
+
+            loader = {
+                "agent": get_agent_by_id_async,
+                "team": get_team_by_id_async,
+                "workflow": get_workflow_by_id_async,
+            }.get(component_type)
+            scope = scope or {}
+            if loader is not None:
+                try:
+                    resolved = await loader(  # type: ignore[operator]
+                        component_id,
+                        None,
+                        db=agent_os.db,
+                        registry=getattr(agent_os, "registry", None),
+                        version=scope.get("version"),
+                        create_fresh=True,
+                        user_id=scope.get("user_id"),
+                    )
+                except Exception as e:
+                    log_error(
+                        f"Job queue: could not rehydrate {component_type}/{component_id} from the db "
+                        f"(scope={scope}): {e}"
+                    )
+                    resolved = None
+        if resolved is not None and component_type == "team":
+            # Mirror the HTTP path's per-request copy: member HITL
+            # continue reloads member tool state from the DB and
+            # depends on this - the registry instance carries the
+            # class default (False)
+            with contextlib.suppress(Exception):
+                resolved.store_member_responses = True
+        return resolved
 
     worker = QueueWorker(
         store=store, resolve_component=resolve_component, config=config, stop_timeout=resolve_stop_timeout(config)
