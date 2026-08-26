@@ -664,6 +664,72 @@ async def test_custom_tool_can_use_native_ctx():
     assert result.data == "ctx:Context"
 
 
+async def test_run_context_param_hidden_from_mcp_tool_schema():
+    """A custom MCP tool with RunContext param has it hidden from clients.
+
+    This prevents Pydantic schema crashes (RunContext contains FilterExpr which cannot
+    be serialized) and hides framework-injected params from external callers.
+    """
+    from agno.run import RunContext
+
+    async def fetch_user(query: str, run_context: RunContext) -> str:
+        return f"user_id={run_context.user_id}"
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp_server=MCPServerConfig(tools=[fetch_user], enable_builtin_tools=False),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        tools = {t.name: t for t in await client.list_tools()}
+        props = tools["fetch_user"].inputSchema.get("properties", {})
+        assert "run_context" not in props
+        assert "query" in props
+
+
+async def test_run_context_hidden_regardless_of_param_name():
+    """RunContext-typed param is hidden regardless of name (ctx, context, rc, etc.).
+
+    The param hiding must work by TYPE, not just by name, because users can name
+    their RunContext param anything they want.
+    """
+    from agno.run import RunContext
+
+    async def lookup(q: str, ctx: RunContext) -> str:
+        return q
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp_server=MCPServerConfig(tools=[lookup], enable_builtin_tools=False),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        props = {t.name: t for t in await client.list_tools()}["lookup"].inputSchema.get("properties", {})
+        assert "ctx" not in props
+        assert "q" in props
+
+
+async def test_agent_and_team_params_hidden_from_mcp_tool_schema():
+    """Agent and Team typed params are also hidden from the MCP schema.
+
+    These are framework-injected types that should not appear in the external tool schema.
+    """
+
+    async def get_info(query: str, agent: Agent, team: Optional[Team] = None) -> str:
+        return query
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp_server=MCPServerConfig(tools=[get_info], enable_builtin_tools=False),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        props = {t.name: t for t in await client.list_tools()}["get_info"].inputSchema.get("properties", {})
+        assert "agent" not in props
+        assert "team" not in props
+        assert "query" in props
+
+
 # ==================== Gating + middleware (HTTP layer) ====================
 
 # A minimal MCP initialize request — enough to reach (or be blocked before) the MCP machinery.
