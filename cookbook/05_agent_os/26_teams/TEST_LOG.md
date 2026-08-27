@@ -101,3 +101,37 @@ here; the bot must be messaged once under this example before an alert can be
 delivered.
 
 ---
+
+### Coverage beyond these two examples
+
+**Date:** 2026-08-28 · **Library source:** `libs/agno` at `8da76679f` · **Test mode:** LIVE
+
+Both examples mount an `Agent`, on a synchronous `SqliteDb`, with `show_reasoning`
+and `send_user_id_to_context` left off. The interface was therefore also run on the
+same Azure Bot and Web Chat channel in the five configurations the examples do not
+reach, each driven through the same four messages — two questions, `/new`, then one
+more — with the session and run rows read back afterwards.
+
+| Configuration | Verified |
+|---|---|
+| `MicrosoftTeams(team=...)` | sessions stored as `session_type = team`; both pre-`/new` messages on one session; the post-`/new` message on the new one |
+| `MicrosoftTeams(workflow=...)` | same, as `session_type = workflow`; the reply carries the final step's output, not the first step's |
+| `AsyncSqliteDb` | the same session and routing behaviour across the async code path, and `send_alert` delivering through it |
+| `show_reasoning=True` | the reasoning block and the answer arrive as two separate messages |
+| `send_user_id_to_context=True` | the entity can quote back the user id and conversation id it was given |
+
+In every configuration the conversation reference was written with `service_url`,
+`conversation_id` and `bot_identity`, on both the original and the post-`/new`
+session.
+
+Two behaviours were also confirmed in both directions rather than one. With no
+credentials set and `MICROSOFT_APP_SKIP_JWT_VALIDATION=true`, an unsigned
+`POST /msteams/messages` returns 200 and the log warns that validation is off; with
+credentials set and the same flag still true, the identical request returns 403 and
+no warning appears — the flag cannot weaken a configured deployment.
+
+Still not reachable from Web Chat, and so still unverified: the Microsoft Teams
+channel itself, `content.downloadUrl` file attachments, `@mention` stripping,
+channel and group-chat conversations, and app sideloading.
+
+---
