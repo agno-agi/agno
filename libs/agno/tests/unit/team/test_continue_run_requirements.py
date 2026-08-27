@@ -1754,6 +1754,195 @@ class TestRespondDirectlyMemberContinuation:
 
         asyncio.run(_exercise())
 
+    def test_sync_direct_resume_runs_output_model(self):
+        from agno.run import RunContext
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.output_model = MagicMock()
+        team.output_model_prompt = None
+        team.parser_model_prompt = None
+        team.parse_response = False
+        team.use_json_mode = False
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+
+        def _process_output_model(_team, model_response, _run_messages, run_response=None):
+            model_response.content = "processed by output model"
+
+        with (
+            self._sync_dispatch_patches(session, member, member_run_output, requirement, self._sync_opts()),
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._run.handle_event"),
+            patch("agno.team._run.call_model_with_fallback") as leader_model,
+            patch(
+                "agno.team._response.parse_response_with_output_model",
+                side_effect=_process_output_model,
+            ) as output_processor,
+            patch("agno.team._run._cleanup_and_store"),
+            patch("agno.team._telemetry.log_team_telemetry"),
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                stream=False,
+            )
+
+        assert result.content == "processed by output model"
+        output_processor.assert_called_once()
+        leader_model.assert_not_called()
+
+    def test_sync_stream_direct_resume_runs_output_model(self):
+        from agno.run import RunContext
+        from agno.run.agent import RunOutput
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.output_model = MagicMock()
+        team.output_model_prompt = None
+        team.parser_model_prompt = None
+        team.parse_response = False
+        team.use_json_mode = False
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content="raw member content",
+        )
+        member.continue_run = MagicMock(return_value=iter([member_final]))
+
+        def _process_output_model(*args, run_response, **kwargs):
+            run_response.content = "processed by streaming output model"
+            if False:
+                yield None
+
+        with (
+            self._sync_dispatch_patches(
+                session,
+                member,
+                member_run_output,
+                requirement,
+                self._sync_opts(stream=True),
+            ),
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._response._handle_model_response_stream") as leader_stream,
+            patch(
+                "agno.team._response.generate_response_with_output_model_stream",
+                side_effect=_process_output_model,
+            ) as output_processor,
+            patch("agno.team._response.parse_response_with_parser_model_stream", return_value=iter(())),
+            patch("agno.team._run._cleanup_and_store"),
+            patch("agno.team._telemetry.log_team_telemetry"),
+        ):
+            list(
+                continue_run_dispatch(
+                    team,
+                    run_response=run_response,
+                    run_context=run_context,
+                    stream=True,
+                )
+            )
+
+        assert run_response.content == "processed by streaming output model"
+        output_processor.assert_called_once()
+        leader_stream.assert_not_called()
+
+    def test_async_direct_resume_runs_parser_model(self):
+        from agno.run import RunContext
+        from agno.team._run import _acontinue_run
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.parser_model = MagicMock()
+        team.output_model_prompt = None
+        team.parser_model_prompt = None
+        team.parse_response = True
+        team.use_json_mode = False
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+
+        async def _process_parser_model(_team, model_response, _run_messages, **kwargs):
+            model_response.content = "processed by parser model"
+
+        async def _exercise():
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch(
+                    "agno.team._response.aparse_response_with_parser_model",
+                    new=AsyncMock(side_effect=_process_parser_model),
+                ) as parser_processor,
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+                patch("agno.team._telemetry.alog_team_telemetry", new=AsyncMock()),
+            ):
+                result = await _acontinue_run(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                )
+
+            assert result.content == "processed by parser model"
+            parser_processor.assert_awaited_once()
+
+        asyncio.run(_exercise())
+
+    def test_async_stream_direct_resume_runs_parser_model(self):
+        from agno.run import RunContext
+        from agno.run.agent import RunOutput
+        from agno.team._run import _acontinue_run_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.parser_model = MagicMock()
+        team.output_model_prompt = None
+        team.parser_model_prompt = None
+        team.parse_response = True
+        team.use_json_mode = False
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content="raw member content",
+        )
+
+        async def _member_stream(*args, **kwargs):
+            yield member_final
+
+        async def _process_parser_model(*args, run_response, **kwargs):
+            run_response.content = "processed by streaming parser model"
+            if False:
+                yield None
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+
+        async def _exercise():
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._response._ahandle_model_response_stream") as leader_stream,
+                patch(
+                    "agno.team._response.aparse_response_with_parser_model_stream",
+                    side_effect=_process_parser_model,
+                ) as parser_processor,
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+                patch("agno.team._telemetry.alog_team_telemetry", new=AsyncMock()),
+            ):
+                async for _ in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                ):
+                    pass
+
+            assert run_response.content == "processed by streaming parser model"
+            parser_processor.assert_called_once()
+            leader_stream.assert_not_called()
+
+        asyncio.run(_exercise())
+
 
 # ===========================================================================
 # 17. Forwarding team run_context state to member.continue_run

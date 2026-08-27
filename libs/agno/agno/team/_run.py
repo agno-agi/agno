@@ -7057,16 +7057,151 @@ async def _aprepare_direct_member_continuation(
     return run_messages, direct_content
 
 
-def _restore_direct_member_content(
+def _process_direct_member_content(
     team: "Team",
     run_response: TeamRunOutput,
     direct_content: Any,
+    run_messages: RunMessages,
     run_context: RunContext,
 ) -> None:
-    """Restore and normalize the final member response for a direct continuation."""
-    from agno.team._response import _convert_response_to_structured_format
+    """Apply the normal sync response processors to a direct member result."""
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        _update_run_response,
+        parse_response_with_output_model,
+        parse_response_with_parser_model,
+    )
+
+    model_response = ModelResponse(content=direct_content)
+    if team.output_model is not None:
+        parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+    if team.parser_model is not None:
+        parse_response_with_parser_model(
+            team,
+            model_response,
+            run_messages,
+            run_context=run_context,
+            run_response=run_response,
+        )
+    run_response.content = None
+    _update_run_response(
+        team,
+        model_response=model_response,
+        run_response=run_response,
+        run_messages=run_messages,
+        run_context=run_context,
+    )
+    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+
+async def _aprocess_direct_member_content(
+    team: "Team",
+    run_response: TeamRunOutput,
+    direct_content: Any,
+    run_messages: RunMessages,
+    run_context: RunContext,
+) -> None:
+    """Apply the normal async response processors to a direct member result."""
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        _update_run_response,
+        agenerate_response_with_output_model,
+        aparse_response_with_parser_model,
+    )
+
+    model_response = ModelResponse(content=direct_content)
+    if team.output_model is not None:
+        await agenerate_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+    if team.parser_model is not None:
+        await aparse_response_with_parser_model(
+            team,
+            model_response,
+            run_messages,
+            run_context=run_context,
+            run_response=run_response,
+        )
+    run_response.content = None
+    _update_run_response(
+        team,
+        model_response=model_response,
+        run_response=run_response,
+        run_messages=run_messages,
+        run_context=run_context,
+    )
+    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+
+def _process_direct_member_content_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    direct_content: Any,
+    run_messages: RunMessages,
+    run_context: RunContext,
+    session: TeamSession,
+    stream_events: bool,
+) -> Iterator[TeamRunOutputEvent]:
+    """Apply the normal sync streaming processors to a direct member result."""
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        generate_response_with_output_model_stream,
+        parse_response_with_parser_model_stream,
+    )
 
     run_response.content = direct_content
+    if team.output_model is not None:
+        yield from generate_response_with_output_model_stream(
+            team,
+            session=session,
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=stream_events,
+        )
+    if team.parser_model is not None:
+        yield from parse_response_with_parser_model_stream(
+            team,
+            session=session,
+            run_response=run_response,
+            stream_events=stream_events,
+            run_context=run_context,
+        )
+    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+
+async def _aprocess_direct_member_content_stream(
+    team: "Team",
+    run_response: TeamRunOutput,
+    direct_content: Any,
+    run_messages: RunMessages,
+    run_context: RunContext,
+    session: TeamSession,
+    stream_events: bool,
+) -> AsyncIterator[TeamRunOutputEvent]:
+    """Apply the normal async streaming processors to a direct member result."""
+    from agno.team._response import (
+        _convert_response_to_structured_format,
+        agenerate_response_with_output_model_stream,
+        aparse_response_with_parser_model_stream,
+    )
+
+    run_response.content = direct_content
+    if team.output_model is not None:
+        async for event in agenerate_response_with_output_model_stream(
+            team,
+            session=session,
+            run_response=run_response,
+            run_messages=run_messages,
+            stream_events=stream_events,
+        ):
+            yield event
+    if team.parser_model is not None:
+        async for event in aparse_response_with_parser_model_stream(
+            team,
+            session=session,
+            run_response=run_response,
+            stream_events=stream_events,
+            run_context=run_context,
+        ):
+            yield event
     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
 
@@ -8522,21 +8657,26 @@ def _continue_run(
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # The member already applied route-mode output handling.
-                if model_response_override is None:
+                if model_response_override is not None:
+                    _process_direct_member_content(
+                        team,
+                        run_response,
+                        model_response_override.content,
+                        run_messages,
+                        run_context,
+                    )
+                else:
                     parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
                     parse_response_with_parser_model(
                         team, model_response, run_messages, run_context=run_context, run_response=run_response
                     )
-
-                # Update run response
-                _update_run_response(
-                    team,
-                    model_response=model_response,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                )
+                    _update_run_response(
+                        team,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
 
                 # Check for new pauses (team-level tools or member propagation)
                 if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
@@ -8546,8 +8686,8 @@ def _continue_run(
                         team, run_response=run_response, session=session, run_context=run_context
                     )
 
-                # Convert to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                if model_response_override is None:
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
                 # Always add media to run_response for caller availability
                 store_media_util(run_response, model_response)
@@ -8695,11 +8835,14 @@ def _continue_run_stream(
                 # Route-mode member continuations already have their final
                 # response, so only run the shared completion lifecycle.
                 if model_response_override is not None:
-                    _restore_direct_member_content(
+                    yield from _process_direct_member_content_stream(
                         team,
                         run_response,
                         model_response_override.content,
+                        run_messages,
                         run_context,
+                        session,
+                        stream_events,
                     )
                 else:
                     # Handle the updated tools (execute confirmed tools, etc.) with streaming
@@ -9943,7 +10086,13 @@ async def _acontinue_run(
                         run_context,
                         member_results,
                     )
-                    _restore_direct_member_content(team, run_response, direct_member_content, run_context)
+                    await _aprocess_direct_member_content(
+                        team,
+                        run_response,
+                        direct_member_content,
+                        run_messages,
+                        run_context,
+                    )
 
                 elif member_results:
                     # Member-only: continue the same run with results
@@ -10538,7 +10687,16 @@ async def _acontinue_run_stream(
                         run_context,
                         member_results,
                     )
-                    _restore_direct_member_content(team, run_response, direct_member_content, run_context)
+                    async for event in _aprocess_direct_member_content_stream(
+                        team,
+                        run_response,
+                        direct_member_content,
+                        run_messages,
+                        run_context,
+                        team_session,
+                        stream_events,
+                    ):
+                        yield event
 
                     if stream_events:
                         yield handle_event(
