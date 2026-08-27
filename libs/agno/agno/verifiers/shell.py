@@ -277,14 +277,24 @@ class ShellVerifier:
             # Runs on cancellation and KeyboardInterrupt too: kill the group and reap it
             # before the exception propagates, so no child and no transport is left behind.
             self._kill_group(proc.pid)
+            # A cancel delivered while parked in either grace wait below must still cancel
+            # the task: swallowing it would return a Verdict from a cancelled task. The
+            # teardown completes first (kill, reap, drain, transport close all still run),
+            # then the cancellation is re-raised after the transport is closed. The grace
+            # waits' own expiry raises TimeoutError, which stays quiet as before.
+            cancelled_in_teardown = False
             try:
                 await asyncio.wait_for(asyncio.shield(proc.wait()), timeout=_REAP_GRACE_S)
+            except asyncio.CancelledError:
+                cancelled_in_teardown = True
             except BaseException:  # noqa: BLE001 - teardown must not mask the original exit
                 pass
             if not pump_task.done():
                 pump_task.cancel()
             try:
                 await asyncio.wait_for(asyncio.shield(pump_task), timeout=_DRAIN_GRACE_S)
+            except asyncio.CancelledError:
+                cancelled_in_teardown = True
             except BaseException:  # noqa: BLE001 - the drain is best effort
                 pass
             # Close the transport while the loop is still running. A descendant that escaped
@@ -297,6 +307,8 @@ class ShellVerifier:
                     transport.close()
                 except Exception:
                     pass
+            if cancelled_in_teardown:
+                raise asyncio.CancelledError()
         return self._report(proc.returncode, buffer.text(), timed_out)
 
 

@@ -7,8 +7,10 @@ inside team delegation, and a tasks-mode exhaustion case.
 """
 
 import asyncio
+import copy
 import json
 from typing import Any, AsyncIterator, Iterator, List
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -399,3 +401,316 @@ def test_tasks_mode_exhausted_ends_unverified(mode):
     assert out.verification.stop_reason == "exhausted"
     assert len(out.verification.attempts) == 3
     assert model.calls == 6
+
+
+# ---------------------------------------------------------------------------
+# Stream re-entry content isolation
+# ---------------------------------------------------------------------------
+
+
+def _silent() -> ModelResponse:
+    """An assistant turn with no content and no tool calls."""
+    response = ModelResponse(role="assistant")
+    response.event = ModelResponseEvent.assistant_response.value
+    response.response_usage = MessageMetrics(input_tokens=10, output_tokens=5, total_tokens=15)
+    return response
+
+
+def recording_pass_from(n):
+    """Fails every check before the n-th, passes from n on; records the content
+    each check was shown."""
+    seen: List[Any] = []
+
+    def check(run_output):
+        seen.append(copy.copy(run_output.content))
+        return True if len(seen) >= n else "not good enough"
+
+    return seen, check
+
+
+def _delegating_reentry_script(rejected_answers: List[str]) -> List[ModelResponse]:
+    """Rejected text answer(s), then a re-entered attempt that answers by
+    delegating and adds no leader text of its own."""
+    script = [_text(answer) for answer in rejected_answers]
+    script.append(_tool("delegate_task_to_member", {"member_id": "member", "task": "redo it"}, "tc-redo"))
+    script.append(_silent())
+    return script
+
+
+@pytest.mark.parametrize("mode", ["run_stream", "arun_stream"])
+def test_team_stream_reentry_with_delegation_keeps_only_the_new_answer(mode):
+    """Member deltas append onto whatever content the streamed team run already
+    carries. The re-entry must clear the rejected answer first, or both the verifier
+    receipt and the final content read 'WRONGmember ok'."""
+    seen, check = recording_pass_from(2)
+    leader = ScriptedModel(_delegating_reentry_script(["WRONG"]))
+    team = _team(leader, verifiers=[check])
+    out = _run_variant(team, mode)
+    assert leader.calls == 3
+    assert out.status == RunStatus.completed
+    assert out.verification.status == "verified"
+    assert len(out.verification.attempts) == 2
+    assert seen == ["WRONG", "member ok"]
+    assert out.content == "member ok"
+
+
+def test_team_continue_stream_reentry_with_delegation_keeps_only_the_new_answer():
+    """The same isolation inside _continue_run_stream's gate loop: the continuation's
+    rejected answer must not leak into its re-entered delegating attempt."""
+    seen, check = recording_pass_from(4)
+    leader = ScriptedModel(_delegating_reentry_script(["bad 1", "bad 2", "bad continuation"]))
+    team = _team(leader, verifiers=[check], verification=VerificationConfig(max_attempts=2))
+    out = team.run("go")
+    assert out.status == RunStatus.unverified
+    assert seen == ["bad 1", "bad 2"]
+
+    events = list(
+        team.continue_run(run_response=out, input="fix it", stream=True, stream_events=True, yield_run_output=True)
+    )
+    continued = [e for e in events if isinstance(e, TeamRunOutput)][-1]
+    assert continued.status == RunStatus.completed
+    assert seen[2:] == ["bad continuation", "member ok"]
+    assert continued.content == "member ok"
+
+
+def test_team_acontinue_stream_reentry_with_delegation_keeps_only_the_new_answer():
+    """Async twin: the team-level gate loop in _acontinue_run_stream."""
+    seen, check = recording_pass_from(4)
+    leader = ScriptedModel(_delegating_reentry_script(["bad 1", "bad 2", "bad continuation"]))
+    team = _team(leader, verifiers=[check], verification=VerificationConfig(max_attempts=2))
+    out = asyncio.run(team.arun("go"))
+    assert out.status == RunStatus.unverified
+    assert seen == ["bad 1", "bad 2"]
+
+    async def collect():
+        collected = []
+        async for e in team.acontinue_run(
+            run_response=out,
+            input="fix it",
+            session_id=out.session_id,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+        ):
+            collected.append(e)
+        return collected
+
+    events = asyncio.run(collect())
+    continued = [e for e in events if isinstance(e, TeamRunOutput)][-1]
+    assert continued.status == RunStatus.completed
+    assert seen[2:] == ["bad continuation", "member ok"]
+    assert continued.content == "member ok"
+
+
+def test_every_team_reenter_block_resets_stream_content():
+    """Every verification re-entry in team._run must clear run_response.content before
+    looping: member deltas append onto existing content, so a kept rejected answer
+    resurfaces as 'rejectedmember ok'. The two tasks-mode stream loops and the
+    member-HITL async continue loop are not cheaply drivable to a member-delta leak
+    end to end, so the invariant is pinned at the source for every block at once."""
+    import inspect
+
+    import agno.team._run as team_run_module
+
+    source = inspect.getsource(team_run_module)
+    blocks = source.split("if decision.reenter:")[1:]
+    assert len(blocks) >= 14
+    for block in blocks:
+        head = "\n".join(block.splitlines()[:6])
+        assert "run_response.content = None" in head, head
+
+
+# ---------------------------------------------------------------------------
+# Background continue: UNVERIFIED must survive the terminal whitelists
+# ---------------------------------------------------------------------------
+
+
+def _mock_event_stream() -> MagicMock:
+    stream = MagicMock()
+    stream.register_run = AsyncMock()
+    stream.set_run_status = AsyncMock()
+    stream.add_event = AsyncMock(return_value=0)
+    stream.complete_run = AsyncMock()
+    return stream
+
+
+@pytest.mark.asyncio
+async def test_background_continue_publishes_unverified_not_completed():
+    """A run-id-only background continue whose leg re-exhausts the budget parks the
+    run row UNVERIFIED; the terminal event-stream write must not coerce that to
+    COMPLETED - a false COMPLETED tells every tail the answer was verified."""
+    from agno.run.team import TeamRunOutputEvent
+    from agno.team._run import _acontinue_run_background_stream
+
+    team = MagicMock()
+    team.db = None
+    run_context = MagicMock()
+
+    session_run = MagicMock()
+    session_run.status = RunStatus.paused
+    team_session = MagicMock()
+    team_session.get_run.return_value = session_run
+
+    async def unverified_stream(*args, **kwargs):
+        yield MagicMock(spec=TeamRunOutputEvent)
+        session_run.status = RunStatus.unverified
+
+    mock_stream = _mock_event_stream()
+    with (
+        patch("agno.team._run._acontinue_run_stream", side_effect=unverified_stream),
+        patch(
+            "agno.team._storage._aread_or_create_session",
+            new_callable=AsyncMock,
+            return_value=team_session,
+        ),
+        patch("agno.team._storage._update_metadata"),
+        patch("agno.team._session.asave_session", new_callable=AsyncMock),
+        patch("agno.os.event_streams.get_event_stream", return_value=mock_stream),
+        patch("agno.os.utils.format_sse_event_with_index", return_value="data: x\n\n"),
+    ):
+        async for _chunk in _acontinue_run_background_stream(
+            team,
+            run_context=run_context,
+            session_id="s-1",
+            run_id="r-1",
+        ):
+            pass
+
+    assert mock_stream.complete_run.call_args is not None
+    assert mock_stream.complete_run.call_args.args[1] == RunStatus.unverified
+
+
+@pytest.mark.asyncio
+async def test_background_fork_of_unverified_source_publishes_unverified():
+    """Fork branch: the source key keeps the source run's stored status. An
+    UNVERIFIED source must be advertised as such, never coerced to COMPLETED."""
+    from agno.team._run import _acontinue_run_background_stream
+
+    team = MagicMock()
+    team.db = None
+    run_context = MagicMock()
+
+    session_run = MagicMock()
+    session_run.status = RunStatus.unverified
+    team_session = MagicMock()
+    team_session.get_run.return_value = session_run
+
+    async def empty_stream(*args, **kwargs):
+        return
+        yield  # pragma: no cover  (make it an async generator)
+
+    mock_stream = _mock_event_stream()
+    with (
+        patch("agno.team._run._acontinue_run_stream", side_effect=empty_stream),
+        patch(
+            "agno.team._storage._aread_or_create_session",
+            new_callable=AsyncMock,
+            return_value=team_session,
+        ),
+        patch("agno.team._storage._update_metadata"),
+        patch("agno.team._session.asave_session", new_callable=AsyncMock),
+        patch("agno.os.event_streams.get_event_stream", return_value=mock_stream),
+    ):
+        async for _chunk in _acontinue_run_background_stream(
+            team,
+            run_context=run_context,
+            session_id="s-1",
+            run_id="r-1",
+            fork=True,
+        ):
+            pass
+
+    assert mock_stream.complete_run.call_args is not None
+    assert mock_stream.complete_run.call_args.args[1] == RunStatus.unverified
+
+
+# ---------------------------------------------------------------------------
+# Time-travel truncation drops the team verification record
+# ---------------------------------------------------------------------------
+
+
+def _unverified_team_first_run(max_attempts: int = 2):
+    model = ScriptedModel([_text("nope")])
+    state, check = releasable_verifier()
+    team = _team(model, verifiers=[check], verification=VerificationConfig(max_attempts=max_attempts))
+    out = team.run("go")
+    assert out.status == RunStatus.unverified
+    assert len(out.verification.attempts) == max_attempts
+    return team, model, state, out
+
+
+def test_team_time_travel_continue_builds_a_fresh_record():
+    """continue_from=<mid index> truncates the team transcript, so the parent record
+    (whose attempts index the pre-cut transcript) is dropped and the continuation's
+    gate builds a fresh one: only its own attempts, budget restarted at zero."""
+    team, model, state, out = _unverified_team_first_run(max_attempts=2)
+    parent_record = out.verification
+
+    model.script = [_text("fresh answer")]
+    model.calls = 0
+    state["pass"] = True
+    continued = team.continue_run(run_response=out, continue_from=2, input="start over")
+
+    assert continued.run_id == out.run_id
+    assert continued.status == RunStatus.completed
+    record = continued.verification
+    assert record is not parent_record
+    assert record.status == "verified"
+    assert record.stop_reason == "passed"
+    assert record.budget_baseline == 0
+    assert len(record.attempts) == 1
+    assert all(a.message_index <= len(continued.messages) for a in record.attempts)
+
+
+def test_team_continue_from_end_keeps_the_record():
+    """continue_from='end' performs no truncation: the record survives with its
+    attempt history and the budget window restarts at the continuation boundary."""
+    team, model, state, out = _unverified_team_first_run(max_attempts=2)
+    parent_record = out.verification
+
+    state["pass"] = True
+    continued = team.continue_run(run_response=out, continue_from="end", input="try harder")
+
+    assert continued.status == RunStatus.completed
+    record = continued.verification
+    assert record is parent_record
+    assert record.status == "verified"
+    assert record.budget_baseline == 2
+    assert len(record.attempts) == 3
+
+
+def test_team_truncate_helper_clears_the_record_only_on_a_real_cut():
+    """Unit contract of _truncate_team_run_to_checkpoint: a real truncation drops the
+    verification record; both no-op guards (index past the end, negative index) leave
+    it untouched."""
+    from agno.models.message import Message
+    from agno.team._run import _truncate_team_run_to_checkpoint
+    from agno.verifiers.types import Verification
+
+    def _team_run_with_record() -> TeamRunOutput:
+        return TeamRunOutput(
+            run_id="r-cut",
+            messages=[
+                Message(role="system", content="sys"),
+                Message(role="user", content="go"),
+                Message(role="assistant", content="answer"),
+            ],
+            verification=Verification(status="unverified"),
+        )
+
+    cut = _team_run_with_record()
+    _truncate_team_run_to_checkpoint(cut, 1)
+    assert len(cut.messages) == 1
+    assert cut.verification is None
+
+    past_end = _team_run_with_record()
+    record = past_end.verification
+    _truncate_team_run_to_checkpoint(past_end, 3)
+    assert len(past_end.messages) == 3
+    assert past_end.verification is record
+
+    negative = _team_run_with_record()
+    record = negative.verification
+    _truncate_team_run_to_checkpoint(negative, -1)
+    assert len(negative.messages) == 3
+    assert negative.verification is record

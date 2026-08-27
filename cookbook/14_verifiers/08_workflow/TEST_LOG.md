@@ -11,3 +11,12 @@
 **Result:** Success. Note: the absorbed segment step ("write") nests under the Verify StepOutput.steps rather than appearing at the top level of step_results.
 
 ---
+
+## 2026-08-27 — review follow-up (not a live run)
+
+`verify_step.py` gained `stop_when_unverified=True` on its Verify step after review: when the
+gate ends unverified, the workflow now stops instead of publishing anyway. Pinned by the unit
+suite (`test_verify_step.py`); the example itself has not been re-run against a live model since
+the change.
+
+---

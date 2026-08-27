@@ -15,6 +15,7 @@ composite step — the same shape as ``Loop`` — and all four workflow executio
 other composite implements.
 """
 
+import copy
 from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Union
 from uuid import uuid4
 
@@ -31,7 +32,7 @@ from agno.verifiers.base import coerce_verifier
 from agno.verifiers.fingerprints import asafe_capture, coerce_fingerprint, noop_between, safe_capture
 from agno.verifiers.report import build_report
 from agno.verifiers.types import Verification, VerificationAttempt
-from agno.workflow.types import StepInput, StepOutput, StepType
+from agno.workflow.types import HumanReview, StepInput, StepOutput, StepType
 
 if TYPE_CHECKING:
     from agno.registry import Registry
@@ -69,6 +70,10 @@ class Verify:
         stop_on_noop: With a fingerprint, a failed round that changed nothing ends the
             loop as unverified instead of spending further rounds.
         fingerprint: Optional world-state fingerprint captured around each round.
+        stop_when_unverified: When True and the step ends unverified, the StepOutput
+            carries ``stop=True`` so the workflow skips every downstream step. Default
+            False: the workflow's ordinary routing decides what an unverified result
+            means.
         name: Step name; defaults to "verify".
     """
 
@@ -79,6 +84,7 @@ class Verify:
         max_rounds: int = 2,
         stop_on_noop: bool = False,
         fingerprint: Optional[Any] = None,
+        stop_when_unverified: bool = False,
         name: Optional[str] = None,
     ):
         if not isinstance(checks, (list, tuple)):
@@ -95,6 +101,7 @@ class Verify:
         self.max_rounds = max_rounds
         self.stop_on_noop = stop_on_noop
         self.fingerprint = coerce_fingerprint(fingerprint) if fingerprint is not None else None
+        self.stop_when_unverified = bool(stop_when_unverified)
         self.name: str = name or "verify"
         self.description: Optional[str] = None
         self.on_fail = on_fail
@@ -109,6 +116,21 @@ class Verify:
     def _is_index(value: Any) -> bool:
         return isinstance(value, int) and not isinstance(value, bool)
 
+    def __deepcopy__(self, memo: Dict[int, Any]) -> "Verify":
+        # A deep copy is a fresh mount: the owning workflow re-binds it at its next
+        # prepare. Carrying the old binding over would either hand the checks a stale
+        # workflow as their owner or trip the cross-workflow reuse guard on the copy's
+        # first run — and deep-copying the entire bound workflow graph besides.
+        cls = self.__class__
+        new = cls.__new__(cls)
+        memo[id(self)] = new
+        for key, value in self.__dict__.items():
+            if key == "_workflow":
+                new._workflow = None
+            else:
+                setattr(new, key, copy.deepcopy(value, memo))
+        return new
+
     # ------------------------------------------------------------------
     # Serialization
     # ------------------------------------------------------------------
@@ -122,10 +144,22 @@ class Verify:
             "type": "Verify",
             "name": self.name,
             "description": self.description,
-            "verifiers": [getattr(v, "name", "") or "verifier" for v in self._verifiers],
+            # Per-check policy rides along with the name so an advisory or flaky-tolerant
+            # check does not come back as a plain required one. run_when is a callable and
+            # never serializes.
+            "verifiers": [
+                {
+                    "name": getattr(v, "name", "") or "verifier",
+                    "required": bool(getattr(v, "required", True)),
+                    "rerun": int(getattr(v, "rerun", 0) or 0),
+                    "fatal": bool(getattr(v, "fatal", False)),
+                }
+                for v in self._verifiers
+            ],
             "on_fail": on_fail_data,
             "max_rounds": self.max_rounds,
             "stop_on_noop": self.stop_on_noop,
+            "stop_when_unverified": self.stop_when_unverified,
             "resolved": self._resolved,
             "steps": [step.to_dict() for step in self.steps if hasattr(step, "to_dict")],
         }
@@ -140,6 +174,15 @@ class Verify:
         strict: bool = False,
         branch_suffix: str = "",
     ) -> "Verify":
+        """Rebuild a Verify from its serialized form.
+
+        Check callables come back through the registry by name; the serialized per-check
+        policy (required/rerun/fatal) is re-applied to each rehydrated wrapper. A
+        ``run_when`` predicate is a callable and does not round-trip: a restored check
+        runs on every attempt. ``stop_on_noop`` degrades to False with a warning when the
+        fingerprint cannot be restored, because noop detection without a fingerprint
+        would silently never fire.
+        """
         from agno.workflow.condition import Condition
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
@@ -182,7 +225,15 @@ class Verify:
         # miss degrades to a placeholder whose failure keeps the gate closed rather than
         # silently ungating the workflow.
         entries: List[Any] = []
-        for verifier_name in data.get("verifiers") or []:
+        policies: List[Optional[Dict[str, Any]]] = []
+        for verifier_data in data.get("verifiers") or []:
+            # Older payloads stored a bare name per check; current ones a policy dict.
+            if isinstance(verifier_data, dict):
+                verifier_name = verifier_data.get("name") or "verifier"
+                policies.append(verifier_data)
+            else:
+                verifier_name = verifier_data
+                policies.append(None)
             fn = registry.get_function(verifier_name) if registry else None
             if fn is None:
                 if registry:
@@ -207,8 +258,30 @@ class Verify:
             max_rounds=data.get("max_rounds", 2),
             stop_on_noop=False,
             fingerprint=None,
+            stop_when_unverified=bool(data.get("stop_when_unverified", False)),
             name=data.get("name"),
         )
+        # Coercion read policy off the raw callables, which carry none; the serialized
+        # policy is re-applied to the coerced wrappers, where the run loop reads it.
+        from agno.verifiers.base import _reject_contradictory
+
+        for wrapper, policy in zip(verify._verifiers, policies):
+            if policy is None:
+                continue
+            wrapper.required = bool(policy.get("required", True))
+            wrapper.rerun = int(policy.get("rerun", 0) or 0)
+            wrapper.fatal = bool(policy.get("fatal", False))
+            _reject_contradictory(wrapper.required, wrapper.fatal, label=f"Verify check {wrapper.name!r}")
+        if data.get("stop_on_noop"):
+            if verify.fingerprint is None:
+                log_warning(
+                    f"Verify {verify.name!r} was saved with stop_on_noop=True but its fingerprint cannot be "
+                    "restored from serialized form; stop_on_noop degrades to False for this instance"
+                )
+            else:
+                # The constructor requires the fingerprint alongside stop_on_noop; both
+                # halves are restored by now, so the attribute is set directly.
+                verify.stop_on_noop = True
         verify.description = data.get("description")
         if data.get("resolved"):
             verify.steps = [deserialize_step(step_data) for step_data in data.get("steps") or []]
@@ -443,8 +516,17 @@ class Verify:
         else:
             steps = None
             # A pure gate produced no output of its own; passing the checked content
-            # through keeps the gate transparent to the next step.
-            content = step_input.previous_step_content if passed else self._summary(record)
+            # through keeps the gate transparent to the next step. After a composite
+            # (Loop, Parallel, ...) the top-level previous_step_content is that
+            # composite's summary line, so the deepest nested content is forwarded
+            # instead, exactly as a plain Step resolves its own input.
+            if passed:
+                if step_input.previous_step_outputs:
+                    content = step_input.get_last_step_content()
+                else:
+                    content = step_input.previous_step_content
+            else:
+                content = self._summary(record)
         return StepOutput(
             step_name=self.name,
             step_id=step_id,
@@ -452,6 +534,9 @@ class Verify:
             content=content,
             success=passed,
             steps=steps,
+            # An unverified end can halt the pipeline outright when the gate was told to;
+            # the workflow's ordinary stop propagation skips every downstream step.
+            stop=bool(self.stop_when_unverified and not passed),
             verification=record,
         )
 
@@ -545,13 +630,14 @@ class Verify:
             )
             attempt.verdicts = check_run.verdicts
             record.attempts.append(attempt)
-            if self.fingerprint is not None:
-                # Settle after the checks: a check's own artefacts must not be charged to
-                # the next round as the segment's work.
-                settled = safe_capture(self.fingerprint)
 
             if not self._settle_round(record, attempt, check_run, rounds_used):
                 break
+            if self.fingerprint is not None:
+                # Settle after the checks, and only when the segment re-runs: a check's
+                # own artefacts must not be charged to the next round as the segment's
+                # work, and a terminal round needs no further baseline.
+                settled = safe_capture(self.fingerprint)
             rounds_used += 1
             report = self._build_round_report(record, attempt)
             current_input = self._reentry_input(step_input, round_results, report)
@@ -666,11 +752,12 @@ class Verify:
             )
             attempt.verdicts = check_run.verdicts
             record.attempts.append(attempt)
-            if self.fingerprint is not None:
-                settled = safe_capture(self.fingerprint)
 
             if not self._settle_round(record, attempt, check_run, rounds_used):
                 break
+            if self.fingerprint is not None:
+                # Settled only on re-entry: a terminal round needs no further baseline.
+                settled = safe_capture(self.fingerprint)
             rounds_used += 1
             report = self._build_round_report(record, attempt)
             current_input = self._reentry_input(step_input, round_results, report)
@@ -763,11 +850,12 @@ class Verify:
             )
             attempt.verdicts = check_run.verdicts
             record.attempts.append(attempt)
-            if self.fingerprint is not None:
-                settled = await asafe_capture(self.fingerprint)
 
             if not self._settle_round(record, attempt, check_run, rounds_used):
                 break
+            if self.fingerprint is not None:
+                # Settled only on re-entry: a terminal round needs no further baseline.
+                settled = await asafe_capture(self.fingerprint)
             rounds_used += 1
             report = self._build_round_report(record, attempt)
             current_input = self._reentry_input(step_input, round_results, report)
@@ -881,11 +969,12 @@ class Verify:
             )
             attempt.verdicts = check_run.verdicts
             record.attempts.append(attempt)
-            if self.fingerprint is not None:
-                settled = await asafe_capture(self.fingerprint)
 
             if not self._settle_round(record, attempt, check_run, rounds_used):
                 break
+            if self.fingerprint is not None:
+                # Settled only on re-entry: a terminal round needs no further baseline.
+                settled = await asafe_capture(self.fingerprint)
             rounds_used += 1
             report = self._build_round_report(record, attempt)
             current_input = self._reentry_input(step_input, round_results, report)
@@ -909,14 +998,44 @@ def resolve_verify_steps(steps: List[Any], owner: Any = None) -> List[Any]:
         if not isinstance(entry, Verify):
             resolved.append(entry)
             continue
+        # A resolved Verify already carries another workflow's segment and owner; reusing
+        # it would run that segment (and hand that owner to the checks) in this workflow.
+        if entry._resolved and owner is not None and entry._workflow is not None and entry._workflow is not owner:
+            raise ValueError(
+                f"Verify {entry.name!r} is already bound to another workflow; "
+                "create a separate Verify per workflow"
+            )
         if owner is not None and entry._workflow is None:
             entry._workflow = owner
         if entry._resolved:
             resolved.append(entry)
             continue
         target_index = entry._resolve_target_index(resolved)
-        entry.steps = resolved[target_index:]
+        segment = resolved[target_index:]
+        for absorbed in segment:
+            _reject_unenforceable_step_policies(entry, absorbed)
+        entry.steps = segment
         del resolved[target_index:]
         entry._resolved = True
         resolved.append(entry)
     return resolved
+
+
+def _reject_unenforceable_step_policies(entry: "Verify", absorbed: Any) -> None:
+    """Refuse to absorb a segment step whose step-level policies the Verify cannot honour.
+
+    The workflow's own step loop is what enforces step-level ``human_review`` (pre-run
+    confirmation, output review, ``on_error`` handling). An absorbed step runs inside the
+    Verify composite and never passes through that loop again, so a confirmation or
+    review gate on it would be silently stripped — fail-open. Raising here keeps the
+    failure at build time. Tool-level ``requires_confirmation`` lives on the executor,
+    pauses propagate through the composite, and stays allowed.
+    """
+    hr = getattr(absorbed, "human_review", None)
+    if isinstance(hr, HumanReview) and hr != HumanReview():
+        raise ValueError(
+            f"Verify {entry.name!r} cannot absorb step {getattr(absorbed, 'name', None)!r} into its loop-back "
+            "segment: the step declares human_review/on_error policies that only the workflow's own step loop "
+            "enforces, and absorbing it would silently strip them. Move the reviewed step outside the segment, "
+            "or use tool-level requires_confirmation, which pauses through Verify"
+        )

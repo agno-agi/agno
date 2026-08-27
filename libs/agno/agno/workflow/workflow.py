@@ -229,6 +229,36 @@ def _step_on_error(step: Union[Step, Condition]) -> Union[OnError, str]:
     return hr.on_error
 
 
+def _adopt_nested_verify_owners(steps: Any, workflow: Any) -> None:
+    """Pin the owning workflow on every Verify nested inside container steps.
+
+    Containers prepare their own inner steps at execute time with no workflow reference,
+    so a nested Verify's checks would receive workflow=None. Walked here, from the one
+    place that knows the owner; a Verify already bound keeps its binding (the resolver
+    guards on `_workflow is None`).
+    """
+    from agno.workflow.verify import Verify as _Verify
+
+    stack = list(steps or [])
+    while stack:
+        node = stack.pop()
+        if isinstance(node, _Verify) and node._workflow is None:
+            node._workflow = workflow
+        for attr in ("steps", "else_steps"):
+            children = getattr(node, attr, None)
+            if isinstance(children, list):
+                stack.extend(children)
+        choices = getattr(node, "choices", None)
+        if isinstance(choices, list):
+            stack.extend(choices)
+        elif isinstance(choices, dict):
+            for child in choices.values():
+                if isinstance(child, list):
+                    stack.extend(child)
+                else:
+                    stack.append(child)
+
+
 def _find_inner_step_by_executor(
     step: WorkflowStep,
     executor_id: Optional[str] = None,
@@ -6955,6 +6985,23 @@ class Workflow:
 
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    if not is_executor_pause(step_output) and hasattr(step, "continue_from_paused"):
+                        step_output = step.continue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            background_tasks=background_tasks,
+                        )
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -7811,6 +7858,23 @@ class Workflow:
 
                     if step_output is None:
                         step_output = StepOutput(content="")
+
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    if not is_executor_pause(step_output) and hasattr(step, "continue_from_paused"):
+                        step_output = step.continue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            background_tasks=background_tasks,
+                        )
 
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
@@ -9000,6 +9064,23 @@ class Workflow:
 
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    if not is_executor_pause(step_output) and hasattr(step, "acontinue_from_paused"):
+                        step_output = await step.acontinue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            background_tasks=background_tasks,
+                        )
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -9551,6 +9632,23 @@ class Workflow:
 
                     if step_output is None:
                         step_output = StepOutput(content="")
+
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    if not is_executor_pause(step_output) and hasattr(step, "acontinue_from_paused"):
+                        step_output = await step.acontinue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            background_tasks=background_tasks,
+                        )
 
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
@@ -10898,6 +10996,7 @@ class Workflow:
             # Absorb each Verify's loop-back segment so the gate can re-run it with the
             # evidence report; raises here — before any step runs — on a bad target.
             self.steps = resolve_verify_steps(prepared_steps, owner=self)  # type: ignore
+            _adopt_nested_verify_owners(self.steps, self)
             log_debug("Step preparation completed")
 
     def print_response(

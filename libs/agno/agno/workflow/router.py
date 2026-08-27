@@ -104,6 +104,28 @@ class Router:
         from agno.workflow.types import validate_human_review_for_router
 
         validate_human_review_for_router(self.human_review)
+        self._reject_unresolvable_verify_choices(self.choices)
+
+    def _reject_unresolvable_verify_choices(self, choices: Any) -> None:
+        """Refuse a direct-choice Verify that still expects a loop-back segment.
+
+        A Router routes to one choice in isolation: a directly-chosen Verify has no
+        preceding steps list to absorb its ``on_fail`` target from, so it could never
+        re-run anything and would only fail at execution time — where a per-step error
+        handler records the failure and the run still completes. Raising here keeps the
+        failure at build time. A pure gate (``on_fail=None``) and a Verify inside a list
+        route (wrapped in Steps, which absorbs the segment) both stay valid.
+        """
+        from agno.workflow.verify import Verify
+
+        for choice in choices or []:
+            if isinstance(choice, Verify) and not choice._resolved:
+                raise ValueError(
+                    f"Router {self.name!r} choice {choice.name!r} is a Verify with a loop-back target (on_fail); "
+                    "a direct route gives it no preceding steps to absorb, so it can never re-run anything. "
+                    "Use on_fail=None for a pure gate, or put the Verify in a list route after the steps it "
+                    "loops back to"
+                )
 
     def to_dict(self) -> Dict[str, Any]:
         result: Dict[str, Any] = {
@@ -365,6 +387,10 @@ class Router:
     def _prepare_steps(self):
         """Prepare the steps for execution - mirrors workflow logic"""
         from agno.workflow.steps import Steps
+
+        # Choices can be replaced after construction; re-check for a direct-choice
+        # Verify that still expects a loop-back segment before any step runs.
+        self._reject_unresolvable_verify_choices(self.choices)
 
         prepared_steps: WorkflowSteps = []
         for step in self.choices:

@@ -94,6 +94,33 @@ def _verification_summary(run_output: AnyRunOutput) -> Optional[Dict[str, Any]]:
     }
 
 
+def _verification_history_summary(verification: Any) -> Optional[Dict[str, Any]]:
+    """History-read view of one persisted run's verification record.
+
+    The raw record carries every attempt's verdicts and reports - measured at
+    11-76KB per run - which would dominate a conversation-history payload whose
+    reader only needs the outcome. Ships status, stop_reason and the attempt
+    COUNT; the full record stays reachable via ``get_session_runs(run_id=...)``.
+    Accepts the record as a dataclass (fresh run) or a dict (DB round-trip).
+    """
+    if verification is None:
+        return None
+    if isinstance(verification, dict):
+        attempts = verification.get("attempts")
+        summary: Dict[str, Any] = {
+            "status": verification.get("status"),
+            "stop_reason": verification.get("stop_reason"),
+        }
+    else:
+        attempts = getattr(verification, "attempts", None)
+        summary = {
+            "status": getattr(verification, "status", None),
+            "stop_reason": getattr(verification, "stop_reason", None),
+        }
+    summary["attempts"] = len(attempts) if isinstance(attempts, (list, tuple)) else 0
+    return summary
+
+
 def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
     structured: Dict[str, Any] = {
         "run_id": run_output.run_id,
@@ -159,4 +186,9 @@ SESSION_RUN_HISTORY_FIELDS = (
 def trim_session_run(run: Any) -> Dict[str, Any]:
     """Compact view of one persisted run for conversation-history reads."""
     data = run.model_dump() if hasattr(run, "model_dump") else dict(run)
-    return {key: data[key] for key in SESSION_RUN_HISTORY_FIELDS if data.get(key) is not None}
+    trimmed = {key: data[key] for key in SESSION_RUN_HISTORY_FIELDS if data.get(key) is not None}
+    if "verification" in trimmed:
+        # The raw record is per-attempt verdicts and reports; the history view
+        # carries only the outcome summary (see _verification_history_summary).
+        trimmed["verification"] = _verification_history_summary(trimmed["verification"])
+    return trimmed

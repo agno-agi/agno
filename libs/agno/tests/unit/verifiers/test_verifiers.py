@@ -491,6 +491,28 @@ async def test_shell_async_cwd_and_env(tmp_path, monkeypatch):
     assert v.passed is True, v.report
 
 
+@pytest.mark.asyncio
+@pytest.mark.skipif(sys.platform == "win32", reason="process groups are POSIX here")
+async def test_shell_async_cancel_during_teardown_grace_still_cancels():
+    """A cancel delivered while averify is parked in its teardown reap-grace wait must
+    cancel the task, not be swallowed into a returned Verdict.
+
+    The command's descendant escapes the process group via os.setsid and holds stdout, so
+    after the timeout-triggered group kill the reap wait parks for its full grace window -
+    exactly the window where a bare BaseException handler used to eat the CancelledError.
+    """
+    py = sys.executable.replace('"', "")
+    cmd = f'"{py}" -c "import os,time; os.setsid(); time.sleep(4)" & sleep 30'
+    v = ShellVerifier(cmd, timeout_s=0.5, name="teardown-window")
+    task = asyncio.ensure_future(v.averify(None))
+    # At t=0.5 the poll loop times out and teardown starts; the reap wait parks.
+    await asyncio.sleep(1.2)
+    assert task.cancel() is True
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert task.cancelled() is True
+
+
 # ---------------------------------------------------------------------------
 # ScorerVerifier and the bridge
 # ---------------------------------------------------------------------------

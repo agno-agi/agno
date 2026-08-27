@@ -383,10 +383,12 @@ class RedisEventStream(BaseEventStream):
         # and PENDING is pre-execution, where the flip is idempotent. The
         # expired-state path depends on it: register_run re-creates PENDING
         # before the reopen, and declining there would drop the counter seed.
+        # UNVERIFIED reopens like PAUSED: terminal-for-the-stream but
+        # continuable, and the continuation appends to the same stream.
         reopenable = (
-            (RunStatus.paused.value, RunStatus.error.value, RunStatus.pending.value)
+            (RunStatus.paused.value, RunStatus.error.value, RunStatus.pending.value, RunStatus.unverified.value)
             if include_error
-            else (RunStatus.paused.value, RunStatus.pending.value)
+            else (RunStatus.paused.value, RunStatus.pending.value, RunStatus.unverified.value)
         )
         status_key = self._status_key(run_id)
         stream_key = self._stream_key(run_id)

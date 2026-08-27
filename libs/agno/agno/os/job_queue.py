@@ -777,10 +777,21 @@ class QueueWorker:
             return False
         raw_status = getattr(run_output, "status", None)
         status_value = str(getattr(raw_status, "value", raw_status) or "").upper()
-        if status_value in ("COMPLETED", "CANCELLED"):
-            ticket_status = status_value.lower()
+        if status_value in ("COMPLETED", "CANCELLED", "UNVERIFIED"):
+            # UNVERIFIED settles the ticket as completed, mirroring the live
+            # worker's decision: the run executed to settlement with a real
+            # answer - only its verification budget was spent. The ticket
+            # records executed-to-settlement; the run row and the stream
+            # sentinel keep the true terminal status. Without this arm the
+            # sweep ran the honest-failure path and DEFACED a settled
+            # UNVERIFIED row to ERROR.
+            ticket_status = "completed" if status_value == "UNVERIFIED" else status_value.lower()
             if (job.get("payload") or {}).get("stream"):
-                terminal = RunStatus.completed if status_value == "COMPLETED" else RunStatus.cancelled
+                terminal = {
+                    "COMPLETED": RunStatus.completed,
+                    "CANCELLED": RunStatus.cancelled,
+                    "UNVERIFIED": RunStatus.unverified,
+                }[status_value]
                 with contextlib.suppress(Exception):
                     from agno.os.event_streams import get_event_stream
 
@@ -1796,10 +1807,15 @@ async def asettle_paused_ticket(queue_worker: Any, run_id: str, final_status: An
     from agno.run.base import RunStatus
 
     value = final_status.value if isinstance(final_status, RunStatus) else final_status
+    # An inline continue that ended UNVERIFIED executed to settlement (only the
+    # verification budget was spent), so its ticket settles as completed - same
+    # decision the queue worker makes for its own executions, and "unverified"
+    # is not a ticket status any store's retention would ever reap.
     ticket_status = {
         RunStatus.completed.value: "completed",
         RunStatus.cancelled.value: "cancelled",
         RunStatus.error.value: "failed",
+        RunStatus.unverified.value: "completed",
     }.get(value)
     if ticket_status is None:
         return

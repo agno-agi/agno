@@ -1577,8 +1577,8 @@ async def _arun(
     8. Reason about the task if reasoning is enabled
     9. Generate a response from the Model (includes running function calls)
     10. Update the RunOutput with the model response
-    11. Convert response to structured format
-    12. Store media if enabled
+    11. Store media if enabled
+    12. Convert response to structured format
     13. Execute post-hooks
     14. Wait for background memory creation
     15. Create session summary
@@ -1819,10 +1819,15 @@ async def _arun(
                             user_id=user_id,
                         )
 
-                    # 11. Convert the response to the structured format if needed
+                    # 11. Store media in run output for the caller. Generated media appends per
+                    # attempt and accumulates across gate attempts exactly like the transcript
+                    # does, so a verifier judges the media of the attempt it is judging.
+                    store_media_util(run_response, model_response)
+
+                    # 12. Convert the response to the structured format if needed
                     convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                    # 11v. Verify: the checks run on the parsed output, before followups
+                    # 12v. Verify: the checks run on the parsed output, before followups
                     if verification_gate is None:
                         break
                     started = verification_gate.open_attempt()
@@ -1846,11 +1851,8 @@ async def _arun(
                         continue
                     break
 
-                # 11b. Generate follow-up suggestions if enabled
+                # 12b. Generate follow-up suggestions if enabled
                 await agenerate_followups(agent, run_response=run_response)
-
-                # 12. Store media in run output for the caller
-                store_media_util(run_response, model_response)
 
                 # 13. Execute post-hooks (after output is generated but before response is returned)
                 if agent.post_hooks is not None:
@@ -3194,7 +3196,9 @@ def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> 
     - a remaining assistant message's ``tool_calls`` list.
 
     A requirement is kept iff its underlying tool execution survives. The
-    checkpoint marker is updated to ``message_index``.
+    checkpoint marker is updated to ``message_index``. The verification record
+    is dropped — its attempts' ``message_index`` values indexed the pre-cut
+    transcript, so a kept record would point at the wrong messages.
 
     No-op when ``message_index >= len(messages)`` or ``message_index < 0``.
     """
@@ -3217,6 +3221,11 @@ def _truncate_run_to_checkpoint(run_response: RunOutput, message_index: int) -> 
 
     # Truncate messages
     run_response.messages = run_response.messages[:message_index]
+
+    # The verification record's attempts index into the transcript this cut just rewrote;
+    # a kept record would point at the wrong messages, so it does not survive a real
+    # truncation. The next gate (if any) builds a fresh record, mirroring _fork_run.
+    run_response.verification = None
 
     # Collect tool_call_ids referenced by the surviving messages
     valid_tool_call_ids: set = set()
@@ -3911,8 +3920,8 @@ def _continue_run(
     1. Handle any updated tools
     2. Generate a response from the Model
     3. Update the RunOutput with the model response
-    4. Convert response to structured format
-    5. Store media if enabled
+    4. Store media if enabled
+    5. Convert response to structured format
     6. Execute post-hooks
     7. Create session summary
     8. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
@@ -4007,10 +4016,15 @@ def _continue_run(
                             agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                         )
 
-                    # 4. Convert the response to the structured format if needed
+                    # 4. Store media in run output for the caller. Generated media appends per
+                    # attempt and accumulates across gate attempts exactly like the transcript
+                    # does, so a verifier judges the media of the attempt it is judging.
+                    store_media_util(run_response, model_response)
+
+                    # 5. Convert the response to the structured format if needed
                     convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                    # 4v. Verify: the checks run on the parsed output, before followups
+                    # 5v. Verify: the checks run on the parsed output, before followups
                     if verification_gate is None:
                         break
                     started = verification_gate.open_attempt()
@@ -4034,11 +4048,8 @@ def _continue_run(
                         continue
                     break
 
-                # 4b. Generate follow-up suggestions if enabled
+                # 5b. Generate follow-up suggestions if enabled
                 generate_followups(agent, run_response=run_response)
-
-                # 5. Store media in run output for the caller
-                store_media_util(run_response, model_response)
 
                 # 6. Execute post-hooks
                 if agent.post_hooks is not None:
@@ -5004,8 +5015,8 @@ async def _acontinue_run(
     7. Handle the updated tools
     8. Get model response
     9. Update the RunOutput with the model response
-    10. Convert response to structured format
-    11. Store media if enabled
+    10. Store media if enabled
+    11. Convert response to structured format
     12. Execute post-hooks
     13. Create session summary
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
@@ -5320,10 +5331,15 @@ async def _acontinue_run(
                             user_id=user_id,
                         )
 
-                    # 10. Convert the response to the structured format if needed
+                    # 10. Store media in run output for the caller. Generated media appends per
+                    # attempt and accumulates across gate attempts exactly like the transcript
+                    # does, so a verifier judges the media of the attempt it is judging.
+                    store_media_util(run_response, model_response)
+
+                    # 11. Convert the response to the structured format if needed
                     convert_response_to_structured_format(agent, run_response, run_context=run_context)
 
-                    # 10v. Verify: the checks run on the parsed output, before followups
+                    # 11v. Verify: the checks run on the parsed output, before followups
                     if verification_gate is None:
                         break
                     started = verification_gate.open_attempt()
@@ -5347,11 +5363,8 @@ async def _acontinue_run(
                         continue
                     break
 
-                # 10b. Generate follow-up suggestions if enabled
+                # 11b. Generate follow-up suggestions if enabled
                 await agenerate_followups(agent, run_response=run_response)
-
-                # 11. Store media in run output for the caller
-                store_media_util(run_response, model_response)
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 

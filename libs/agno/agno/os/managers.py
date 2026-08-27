@@ -376,10 +376,13 @@ class EventsBuffer:
         # This matters for the expired-state path: register_run re-creates
         # PENDING before the reopen, and declining there would drop the
         # counter seed (Redis parity - its missing-key case reopens too).
+        # UNVERIFIED reopens too: terminal-for-the-stream but continuable
+        # (a continue restarts the verification budget on the same stream),
+        # so its sentinel is invalidated exactly like a pause's.
         reopenable = (
-            (RunStatus.paused, RunStatus.error, RunStatus.pending)
+            (RunStatus.paused, RunStatus.error, RunStatus.pending, RunStatus.unverified)
             if include_error
-            else (RunStatus.paused, RunStatus.pending)
+            else (RunStatus.paused, RunStatus.pending, RunStatus.unverified)
         )
         metadata = self.run_metadata.get(run_id)
         if metadata is None:

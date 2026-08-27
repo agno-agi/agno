@@ -377,6 +377,7 @@ def _run_tasks(
             run_context=run_context,
             session=session,
             team_mode=True,
+            resume=False,
         )
         if verification_gate is not None:
             verification_gate.begin()
@@ -787,6 +788,7 @@ def _run_tasks_stream(
             run_context=run_context,
             session=session,
             team_mode=True,
+            resume=False,
         )
         if verification_gate is not None:
             verification_gate.begin()
@@ -999,6 +1001,9 @@ def _run_tasks_stream(
                 yield completed_event
             if decision.reenter:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Team content accumulates across model passes; the re-entered
+                # attempt replaces the rejected answer, not concatenates onto it.
+                run_response.content = None
                 continue
             break
 
@@ -1354,6 +1359,7 @@ def _run(
                     run_context=run_context,
                     session=session,
                     team_mode=True,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -1774,6 +1780,7 @@ def _run_stream(
                     run_context=run_context,
                     session=session,
                     team_mode=True,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -1878,6 +1885,9 @@ def _run_stream(
                         yield completed_event
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content accumulates across model passes; the re-entered
+                        # attempt replaces the rejected answer, not concatenates onto it.
+                        run_response.content = None
                         continue
                     break
 
@@ -2448,6 +2458,7 @@ async def _arun_tasks(
             run_context=run_context,
             session=team_session,
             team_mode=True,
+            resume=False,
         )
         if verification_gate is not None:
             await verification_gate.abegin()
@@ -2893,6 +2904,7 @@ async def _arun_tasks_stream(
             run_context=run_context,
             session=team_session,
             team_mode=True,
+            resume=False,
         )
         if verification_gate is not None:
             await verification_gate.abegin()
@@ -3104,6 +3116,9 @@ async def _arun_tasks_stream(
                 yield completed_event
             if decision.reenter:
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
+                # Team content accumulates across model passes; the re-entered
+                # attempt replaces the rejected answer, not concatenates onto it.
+                run_response.content = None
                 continue
             break
 
@@ -3516,6 +3531,7 @@ async def _arun(
                     run_context=run_context,
                     session=team_session,
                     team_mode=True,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     await verification_gate.abegin()
@@ -4286,6 +4302,7 @@ async def _arun_stream(
                     run_context=run_context,
                     session=team_session,
                     team_mode=True,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     await verification_gate.abegin()
@@ -4392,6 +4409,9 @@ async def _arun_stream(
                         yield completed_event
                     if decision.reenter:
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content accumulates across model passes; the re-entered
+                        # attempt replaces the rejected answer, not concatenates onto it.
+                        run_response.content = None
                         continue
                     break
 
@@ -7412,6 +7432,11 @@ def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", message_inde
 
     run_response.messages = run_response.messages[:message_index]
 
+    # The verification record's attempts index into the transcript this cut just rewrote;
+    # a kept record would point at the wrong messages, so it does not survive a real
+    # truncation. The next gate (if any) builds a fresh record, mirroring _fork_team_run.
+    run_response.verification = None
+
     valid_tool_call_ids: set = set()
     for msg in run_response.messages:
         tool_call_id = getattr(msg, "tool_call_id", None)
@@ -8728,6 +8753,7 @@ def _continue_run(
                     run_context=run_context,
                     session=session,
                     team_mode=True,
+                    resume=True,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -8967,6 +8993,7 @@ def _continue_run_stream(
                     run_context=run_context,
                     session=session,
                     team_mode=True,
+                    resume=True,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -9070,6 +9097,9 @@ def _continue_run_stream(
                         yield completed_event
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content accumulates across model passes; the re-entered
+                        # attempt replaces the rejected answer, not concatenates onto it.
+                        run_response.content = None
                         continue
                     break
 
@@ -9650,6 +9680,7 @@ async def _acontinue_run_background_stream(
                         RunStatus.paused,
                         RunStatus.cancelled,
                         RunStatus.error,
+                        RunStatus.unverified,
                     ):
                         final_status = source_status
                     else:
@@ -9680,6 +9711,7 @@ async def _acontinue_run_background_stream(
                         RunStatus.paused,
                         RunStatus.cancelled,
                         RunStatus.error,
+                        RunStatus.unverified,
                     ):
                         final_status = produced_status
                     else:
@@ -10200,6 +10232,7 @@ async def _acontinue_run(
                         run_context=run_context,
                         session=team_session,
                         team_mode=True,
+                        resume=True,
                     )
                     if verification_gate is not None:
                         await verification_gate.abegin()
@@ -10287,6 +10320,7 @@ async def _acontinue_run(
                         run_context=run_context,
                         session=team_session,
                         team_mode=True,
+                        resume=True,
                     )
                     if verification_gate is not None:
                         await verification_gate.abegin()
@@ -10785,6 +10819,7 @@ async def _acontinue_run_stream(
                         run_context=run_context,
                         session=team_session,
                         team_mode=True,
+                        resume=True,
                     )
                     if verification_gate is not None:
                         await verification_gate.abegin()
@@ -10892,6 +10927,9 @@ async def _acontinue_run_stream(
                             yield completed_event
                         if decision.reenter:
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            # Team content accumulates across model passes; the re-entered
+                            # attempt replaces the rejected answer, not concatenates onto it.
+                            run_response.content = None
                             continue
                         break
 
@@ -10948,6 +10986,7 @@ async def _acontinue_run_stream(
                         run_context=run_context,
                         session=team_session,
                         team_mode=True,
+                        resume=True,
                     )
                     if verification_gate is not None:
                         await verification_gate.abegin()
@@ -11053,6 +11092,9 @@ async def _acontinue_run_stream(
                             yield completed_event
                         if decision.reenter:
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            # Team content accumulates across model passes; the re-entered
+                            # attempt replaces the rejected answer, not concatenates onto it.
+                            run_response.content = None
                             continue
                         break
 
