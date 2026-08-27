@@ -35,9 +35,9 @@ from agno.os.utils import (
 )
 from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
+from agno.run.base import RunContext
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
-from agno.run.base import RunContext
 from agno.utils.schema import (
     annotation_binds,
     is_framework_typed,
@@ -97,10 +97,22 @@ def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPServerConfig]"):
 
 
 def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPServerConfig]") -> None:
-    """Register any user-provided custom tools on the MCP server."""
+    """Register any user-provided custom tools on the MCP server.
+
+    Toolkits are flattened: each method becomes its own MCP tool. Plain callables
+    and Agno tools/Functions are registered directly.
+    """
+    from agno.tools.toolkit import Toolkit
+
     if config is None or not config.tools:
         return
+
     for tool in config.tools:
+        # Toolkit: flatten into individual functions
+        if isinstance(tool, Toolkit):
+            for func in tool.get_async_functions().values():
+                _register_custom_tool(mcp, func)
+            continue
         _register_custom_tool(mcp, tool)
 
 
@@ -113,12 +125,14 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(_wrap_custom_tool(entrypoint), name=name, description=description))
+        wrapped = _hide_framework_params(_inject_user_id(entrypoint))
+        mcp.add_tool(Tool.from_function(wrapped, name=name, description=description))
         return
 
     # Plain callable: name/description inferred from ``__name__``/docstring.
     if callable(tool):
-        mcp.add_tool(Tool.from_function(_wrap_custom_tool(tool)))
+        wrapped = _hide_framework_params(_inject_user_id(tool))
+        mcp.add_tool(Tool.from_function(wrapped))
         return
 
     raise TypeError(
@@ -126,42 +140,58 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     )
 
 
-def _build_mcp_run_context() -> RunContext:
-    """Construct a minimal RunContext for MCP custom tool calls.
+def _inject_user_id(fn: Callable) -> Callable:
+    """Inject the authenticated caller's user_id into a custom tool, hidden from clients.
 
-    MCP tools run outside agent context, so we build a fresh RunContext
-    with just the caller's identity from JWT. This allows tools that need
-    RunContext (e.g., for user_id access) to work over MCP.
+    If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
+    resolved JWT subject at call time and drops it from the wrapper's signature -- so it
+    does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
+    Tools that do not declare ``user_id`` are returned unchanged.
     """
-    from uuid import uuid4
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        return fn
+    if "user_id" not in sig.parameters:
+        return fn
 
-    return RunContext(
-        run_id=str(uuid4()),
-        session_id=str(uuid4()),
-        user_id=_resolve_user_id(None),
-    )
+    visible_params = [p for name, p in sig.parameters.items() if name != "user_id"]
+    new_sig = sig.replace(parameters=visible_params)
+
+    if inspect.iscoroutinefunction(fn):
+
+        @functools.wraps(fn)
+        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            kwargs["user_id"] = _resolve_user_id(None)
+            return await fn(*args, **kwargs)
+
+        async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+        return async_wrapper
+
+    @functools.wraps(fn)
+    def wrapper(*args: Any, **kwargs: Any) -> Any:
+        kwargs["user_id"] = _resolve_user_id(None)
+        return fn(*args, **kwargs)
+
+    wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+    return wrapper
 
 
-def _wrap_custom_tool(fn: Callable) -> Callable:
-    """Wrap a custom MCP tool to handle framework params and user_id.
+def _hide_framework_params(fn: Callable) -> Callable:
+    """Hide framework-typed params (RunContext, Agent, Team) and inject at call time.
 
-    What this wrapper does:
-    1. Hides framework-typed params BY TYPE (RunContext, Agent, Team) from the schema
-    2. Hides user_id BY NAME (MCP-specific JWT injection)
-    3. Injects values at call time:
-       - user_id: from JWT subject
-       - RunContext: a minimal context with the caller's identity
+    Detects params BY TYPE (not by name) and:
+    1. Removes them from the signature (so they don't appear in MCP schema)
+    2. Injects values at call time:
+       - RunContext: a fresh context with the caller's identity from JWT
        - Agent/Team: None (MCP tools run outside agent/team context)
 
-    This mirrors the toolkit path (FunctionCall._build_entrypoint_args) but uses
-    TYPE-based detection only — params named "agent"/"team" with non-framework
-    types (e.g., agent: str) are left visible for the MCP client to fill.
+    A param named "agent" with type str stays visible — only framework TYPES trigger hiding.
     """
     from inspect import Parameter
     from typing import get_type_hints
 
     from agno.agent.agent import Agent
-    from agno.run.base import RunContext
     from agno.team.team import Team
 
     try:
@@ -169,26 +199,20 @@ def _wrap_custom_tool(fn: Callable) -> Callable:
     except (ValueError, TypeError):
         return fn
 
-    # 1. Find params to hide and inject
-    has_user_id = "user_id" in sig.parameters
+    # Detect framework-typed params BY TYPE
     framework_params: Dict[str, Any] = {}
-
-    # Detect framework-typed params BY TYPE, not by name — a param named "agent"
-    # with type str stays visible for the client to fill
     try:
         hints = get_type_hints(fn)
         for param_name, hint in hints.items():
             if param_name == "return" or param_name not in sig.parameters:
                 continue
             param = sig.parameters[param_name]
-            # Variadic and positional-only can't be injected by name
             if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD, Parameter.POSITIONAL_ONLY):
                 continue
             try:
                 if is_framework_typed(hint):
                     framework_params[param_name] = hint
             except Exception:
-                # Fail closed for security
                 framework_params[param_name] = hint
     except Exception:
         for param_name, param in sig.parameters.items():
@@ -202,46 +226,36 @@ def _wrap_custom_tool(fn: Callable) -> Callable:
             except Exception:
                 pass
 
-    # Nothing to hide → return unchanged
-    if not has_user_id and not framework_params:
+    if not framework_params:
         return fn
 
-    # 2. Build new signature without hidden params
-    hidden = set(framework_params.keys())
-    if has_user_id:
-        hidden.add("user_id")
-    visible_params = [p for name, p in sig.parameters.items() if name not in hidden]
+    # Build signature without framework params
+    visible_params = [p for name, p in sig.parameters.items() if name not in framework_params]
     new_sig = sig.replace(parameters=visible_params)
 
-    # 3. Create wrapper that injects values at call time
+    # Helper to build fresh RunContext
+    def build_run_context() -> RunContext:
+        return RunContext(
+            run_id=str(uuid4()),
+            session_id=str(uuid4()),
+            user_id=_resolve_user_id(None),
+        )
+
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            # Inject user_id from JWT subject
-            if has_user_id:
-                kwargs["user_id"] = _resolve_user_id(None)
-
-            # Inject framework-typed params
             for param_name, hint in framework_params.items():
                 hint = unwrap_annotation(hint)
                 param = sig.parameters[param_name]
-                # Collect all matching types, pick first non-None (handles Union[Agent, Team])
-                matches = [
-                    injected
-                    for wanted, injected in (
-                        ((Agent,), None),
-                        ((Team,), None),
-                        ((RunContext,), _build_mcp_run_context()),
-                    )
-                    if annotation_binds(hint, wanted)
-                ]
-                if not matches:
+                if annotation_binds(hint, (RunContext,)):
+                    injected = build_run_context()
+                elif annotation_binds(hint, (Agent,)) or annotation_binds(hint, (Team,)):
+                    injected = None
+                else:
                     continue
-                injected = next((m for m in matches if m is not None), None)
                 if injected is not None or param.default is Parameter.empty:
                     kwargs[param_name] = injected
-
             return await fn(*args, **kwargs)
 
         async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
@@ -249,30 +263,17 @@ def _wrap_custom_tool(fn: Callable) -> Callable:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        # Inject user_id from JWT subject
-        if has_user_id:
-            kwargs["user_id"] = _resolve_user_id(None)
-
-        # Inject framework-typed params
         for param_name, hint in framework_params.items():
             hint = unwrap_annotation(hint)
             param = sig.parameters[param_name]
-            # Collect all matching types, pick first non-None (handles Union[Agent, Team])
-            matches = [
-                injected
-                for wanted, injected in (
-                    ((Agent,), None),
-                    ((Team,), None),
-                    ((RunContext,), _build_mcp_run_context()),
-                )
-                if annotation_binds(hint, wanted)
-            ]
-            if not matches:
+            if annotation_binds(hint, (RunContext,)):
+                injected = build_run_context()
+            elif annotation_binds(hint, (Agent,)) or annotation_binds(hint, (Team,)):
+                injected = None
+            else:
                 continue
-            injected = next((m for m in matches if m is not None), None)
             if injected is not None or param.default is Parameter.empty:
                 kwargs[param_name] = injected
-
         return fn(*args, **kwargs)
 
     wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
