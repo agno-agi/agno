@@ -1754,7 +1754,8 @@ class TestRespondDirectlyMemberContinuation:
 
         asyncio.run(_exercise())
 
-    def test_sync_direct_resume_runs_output_model(self):
+    def test_sync_direct_output_model_receives_scrubbed_member_result(self):
+        from agno.models.response import ModelResponse
         from agno.run import RunContext
         from agno.team._run import continue_run_dispatch
 
@@ -1765,9 +1766,13 @@ class TestRespondDirectlyMemberContinuation:
         team.parse_response = False
         team.use_json_mode = False
         run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        output_model_messages = []
 
-        def _process_output_model(_team, model_response, _run_messages, run_response=None):
-            model_response.content = "processed by output model"
+        def _output_model_response(*, messages):
+            output_model_messages.extend(messages)
+            return ModelResponse(content="processed by output model")
+
+        team.output_model.response = MagicMock(side_effect=_output_model_response)
 
         with (
             self._sync_dispatch_patches(session, member, member_run_output, requirement, self._sync_opts()),
@@ -1776,10 +1781,6 @@ class TestRespondDirectlyMemberContinuation:
             patch("agno.team._init._disconnect_connectable_tools"),
             patch("agno.team._run.handle_event"),
             patch("agno.team._run.call_model_with_fallback") as leader_model,
-            patch(
-                "agno.team._response.parse_response_with_output_model",
-                side_effect=_process_output_model,
-            ) as output_processor,
             patch("agno.team._run._cleanup_and_store"),
             patch("agno.team._telemetry.log_team_telemetry"),
         ):
@@ -1791,7 +1792,9 @@ class TestRespondDirectlyMemberContinuation:
             )
 
         assert result.content == "processed by output model"
-        output_processor.assert_called_once()
+        assert any(self.cancellation in str(message.content) for message in output_model_messages)
+        assert not any(self.cancellation in str(message.content) for message in result.messages or [])
+        team.output_model.response.assert_called_once()
         leader_model.assert_not_called()
 
     @pytest.mark.parametrize("processor_kind", ["output_model", "parser_model"])
@@ -1841,9 +1844,11 @@ class TestRespondDirectlyMemberContinuation:
         leader_model.assert_not_called()
         post_hooks.assert_not_called()
 
-    def test_sync_stream_direct_resume_runs_output_model(self):
+    @pytest.mark.parametrize("stream_events", [False, True])
+    def test_sync_stream_direct_resume_runs_output_model(self, stream_events):
+        from agno.models.response import ModelResponse
         from agno.run import RunContext
-        from agno.run.agent import RunOutput
+        from agno.run.agent import RunContentEvent, RunOutput
         from agno.team._run import continue_run_dispatch
 
         team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
@@ -1859,12 +1864,19 @@ class TestRespondDirectlyMemberContinuation:
             status=RunStatus.completed,
             content="raw member content",
         )
-        member.continue_run = MagicMock(return_value=iter([member_final]))
+        raw_member_event = RunContentEvent(
+            run_id="member-run-1",
+            session_id="session-1",
+            content="raw member content",
+        )
+        output_model_messages = []
+        member.continue_run = MagicMock(return_value=iter([raw_member_event, member_final]))
 
-        def _process_output_model(*args, run_response, **kwargs):
-            run_response.content = "processed by streaming output model"
-            if False:
-                yield None
+        def _output_model_stream(*, messages, run_response):
+            output_model_messages.extend(messages)
+            yield ModelResponse(content="processed by streaming output model")
+
+        team.output_model.response_stream = MagicMock(side_effect=_output_model_stream)
 
         with (
             self._sync_dispatch_patches(
@@ -1872,31 +1884,32 @@ class TestRespondDirectlyMemberContinuation:
                 member,
                 member_run_output,
                 requirement,
-                self._sync_opts(stream=True),
+                self._sync_opts(stream=True, stream_events=stream_events),
             ),
             patch("agno.team._run.register_run"),
             patch("agno.team._run.cleanup_run"),
             patch("agno.team._init._disconnect_connectable_tools"),
             patch("agno.team._response._handle_model_response_stream") as leader_stream,
-            patch(
-                "agno.team._response.generate_response_with_output_model_stream",
-                side_effect=_process_output_model,
-            ) as output_processor,
             patch("agno.team._response.parse_response_with_parser_model_stream", return_value=iter(())),
             patch("agno.team._run._cleanup_and_store"),
             patch("agno.team._telemetry.log_team_telemetry"),
         ):
-            list(
+            events = list(
                 continue_run_dispatch(
                     team,
                     run_response=run_response,
                     run_context=run_context,
                     stream=True,
+                    stream_events=stream_events,
                 )
             )
 
         assert run_response.content == "processed by streaming output model"
-        output_processor.assert_called_once()
+        assert raw_member_event not in events
+        assert any(getattr(event, "content", None) == "processed by streaming output model" for event in events)
+        assert any("raw member content" in str(message.content) for message in output_model_messages)
+        assert not any("raw member content" in str(message.content) for message in run_response.messages or [])
+        team.output_model.response_stream.assert_called_once()
         leader_stream.assert_not_called()
 
     @pytest.mark.parametrize("processor_kind", ["output_model", "parser_model"])
@@ -2006,6 +2019,116 @@ class TestRespondDirectlyMemberContinuation:
 
             assert result.content == "processed by parser model"
             parser_processor.assert_awaited_once()
+
+        asyncio.run(_exercise())
+
+    def test_async_direct_output_model_receives_scrubbed_member_result(self):
+        from agno.models.response import ModelResponse
+        from agno.run import RunContext
+        from agno.team._run import _acontinue_run
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.output_model = MagicMock()
+        team.output_model_prompt = None
+        team.parser_model_prompt = None
+        team.parse_response = False
+        team.use_json_mode = False
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        output_model_messages = []
+
+        async def _output_model_response(*, messages):
+            output_model_messages.extend(messages)
+            return ModelResponse(content="processed by async output model")
+
+        team.output_model.aresponse = AsyncMock(side_effect=_output_model_response)
+
+        async def _exercise():
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch(
+                    "agno.team._run._ahandle_model_response_for_continue",
+                    new=AsyncMock(return_value=None),
+                ) as leader_continue,
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+                patch("agno.team._telemetry.alog_team_telemetry", new=AsyncMock()),
+            ):
+                result = await _acontinue_run(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                )
+
+            assert result.content == "processed by async output model"
+            assert any(self.cancellation in str(message.content) for message in output_model_messages)
+            assert not any(self.cancellation in str(message.content) for message in result.messages or [])
+            team.output_model.aresponse.assert_awaited_once()
+            leader_continue.assert_not_awaited()
+
+        asyncio.run(_exercise())
+
+    @pytest.mark.parametrize("stream_events", [False, True])
+    def test_async_stream_direct_output_model_suppresses_raw_member_content(self, stream_events):
+        from agno.models.response import ModelResponse
+        from agno.run import RunContext
+        from agno.run.agent import RunContentEvent, RunOutput
+        from agno.team._run import _acontinue_run_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.output_model = MagicMock()
+        team.output_model_prompt = None
+        team.parser_model_prompt = None
+        team.parse_response = False
+        team.use_json_mode = False
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        raw_member_event = RunContentEvent(
+            run_id="member-run-1",
+            session_id="session-1",
+            content="raw member content",
+        )
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content="raw member content",
+        )
+        output_model_messages = []
+
+        async def _member_stream(*args, **kwargs):
+            yield raw_member_event
+            yield member_final
+
+        async def _output_model_stream(*, messages, run_response):
+            output_model_messages.extend(messages)
+            yield ModelResponse(content="processed by streaming output model")
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+        team.output_model.aresponse_stream = MagicMock(side_effect=_output_model_stream)
+
+        async def _exercise():
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._response._ahandle_model_response_stream") as leader_stream,
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+                patch("agno.team._telemetry.alog_team_telemetry", new=AsyncMock()),
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                    stream_events=stream_events,
+                ):
+                    events.append(event)
+
+            assert run_response.content == "processed by streaming output model"
+            assert raw_member_event not in events
+            assert any(getattr(event, "content", None) == "processed by streaming output model" for event in events)
+            assert any("raw member content" in str(message.content) for message in output_model_messages)
+            assert not any("raw member content" in str(message.content) for message in run_response.messages or [])
+            team.output_model.aresponse_stream.assert_called_once()
+            leader_stream.assert_not_called()
 
         asyncio.run(_exercise())
 

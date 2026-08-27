@@ -50,6 +50,9 @@ from agno.run.agent import (
     RunCompletedEvent as AgentRunCompletedEvent,
 )
 from agno.run.agent import (
+    RunContentEvent as AgentRunContentEvent,
+)
+from agno.run.agent import (
     RunOutput,
     RunOutputEvent,
 )
@@ -82,6 +85,9 @@ from agno.run.team import (
 )
 from agno.run.team import (
     RunCompletedEvent as TeamRunCompletedEvent,
+)
+from agno.run.team import (
+    RunContentEvent as TeamRunContentEvent,
 )
 from agno.run.team import (
     TaskData,
@@ -141,6 +147,7 @@ _MEMBER_CANCEL_BYPASS_EVENT_TYPES = (
     TeamRunCancelledEvent,
     TeamRunCompletedEvent,
 )
+_MEMBER_CONTENT_EVENT_TYPES = (AgentRunContentEvent, TeamRunContentEvent)
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -6660,7 +6667,12 @@ def _route_requirements_to_members_stream(
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
             # Forward member terminals regardless of stream_events so the wire always sees a terminal.
-            if (
+            suppress_raw_direct_content = (
+                team.respond_directly
+                and team.output_model is not None
+                and isinstance(event, _MEMBER_CONTENT_EVENT_TYPES)
+            )
+            if not suppress_raw_direct_content and (
                 isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES)
                 or team.respond_directly
                 or stream_events
@@ -6866,7 +6878,12 @@ async def _aroute_requirements_to_members_stream(
             event.parent_run_id = getattr(event, "parent_run_id", None) or run_response.run_id
 
             # Forward member terminals regardless of stream_events so the wire always sees a terminal.
-            if (
+            suppress_raw_direct_content = (
+                team.respond_directly
+                and team.output_model is not None
+                and isinstance(event, _MEMBER_CONTENT_EVENT_TYPES)
+            )
+            if not suppress_raw_direct_content and (
                 isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES)
                 or team.respond_directly
                 or stream_events
@@ -7017,6 +7034,29 @@ def _prepare_member_hitl_continuation(
     run_response.content = None
 
 
+def _ensure_direct_result_in_output_model_messages(
+    team: "Team",
+    run_messages: RunMessages,
+    member_results: List[str],
+) -> None:
+    """Keep a scrubbed direct member result available to the output model."""
+    if team.output_model is None:
+        return
+
+    continuation_message = _build_continuation_message(member_results)
+    if any(message.content == continuation_message for message in run_messages.messages):
+        return
+
+    run_messages.messages.append(
+        Message(
+            role="user",
+            content=continuation_message,
+            add_to_agent_memory=False,
+            temporary=True,
+        )
+    )
+
+
 def _prepare_direct_member_continuation(
     team: "Team",
     run_response: TeamRunOutput,
@@ -7034,6 +7074,7 @@ def _prepare_direct_member_continuation(
         run_context=run_context,
     )
     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+    _ensure_direct_result_in_output_model_messages(team, run_messages, member_results)
     return run_messages, direct_content
 
 
@@ -7054,6 +7095,7 @@ async def _aprepare_direct_member_continuation(
         run_context=run_context,
     )
     _prepare_member_hitl_continuation(run_response, run_messages, member_results)
+    _ensure_direct_result_in_output_model_messages(team, run_messages, member_results)
     return run_messages, direct_content
 
 
