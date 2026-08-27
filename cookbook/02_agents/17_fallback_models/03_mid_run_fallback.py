@@ -5,7 +5,7 @@ Fallback Models — Mid-Run Failure
 Tests what happens when the primary model fails AFTER a tool call (and or within a run).
 
 Flow:
-  1. gpt-4o receives the request and makes a tool call
+  1. gpt-5.6-luna receives the request and makes a tool call
   2. The tool mutates the model instance's id to something invalid
   3. The next API call inside Model.response()'s while-loop fails
   4. The error bubbles up to call_model_with_fallback
@@ -27,7 +27,7 @@ def break_model(agent: Agent) -> str:
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[break_model],
     fallback_models=[Claude(id="claude-sonnet-4-20250514")],
 )

@@ -30,14 +30,14 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 quick_analyzer = Agent(
     name="Quick Analyzer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide a brief, concise analysis of the topic.",
     markdown=True,
 )
 
 detailed_analyzer = Agent(
     name="Detailed Analyzer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide a comprehensive, in-depth analysis of the topic.",
     markdown=True,
 )

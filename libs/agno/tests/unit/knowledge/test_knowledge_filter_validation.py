@@ -1,87 +1,9 @@
-from typing import List, Set
+from typing import Set
 
 import pytest
 
 from agno.filters import AND, EQ, GT, IN, LT, OR
-from agno.knowledge.document import Document
-from agno.knowledge.knowledge import Knowledge
-from agno.vectordb.base import VectorDb
-
-
-class MockVectorDb(VectorDb):
-    def create(self) -> None:
-        pass
-
-    async def async_create(self) -> None:
-        pass
-
-    def name_exists(self, name: str) -> bool:
-        return False
-
-    async def async_name_exists(self, name: str) -> bool:
-        return False
-
-    def id_exists(self, id: str) -> bool:
-        return False
-
-    def content_hash_exists(self, content_hash: str) -> bool:
-        return False
-
-    def insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        pass
-
-    async def async_insert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        pass
-
-    def upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        pass
-
-    async def async_upsert(self, content_hash: str, documents: List[Document], filters=None) -> None:
-        pass
-
-    def search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        return []
-
-    async def async_search(self, query: str, limit: int = 5, filters=None) -> List[Document]:
-        return []
-
-    def drop(self) -> None:
-        pass
-
-    async def async_drop(self) -> None:
-        pass
-
-    def exists(self) -> bool:
-        return True
-
-    async def async_exists(self) -> bool:
-        return True
-
-    def delete(self) -> bool:
-        return True
-
-    def delete_by_id(self, id: str) -> bool:
-        return True
-
-    def delete_by_name(self, name: str) -> bool:
-        return True
-
-    def delete_by_metadata(self, metadata) -> bool:
-        return True
-
-    def update_metadata(self, content_id: str, metadata) -> None:
-        pass
-
-    def delete_by_content_id(self, content_id: str) -> bool:
-        return True
-
-    def get_supported_search_types(self) -> List[str]:
-        return ["vector"]
-
-
-@pytest.fixture
-def knowledge():
-    return Knowledge(vector_db=MockVectorDb())
+from agno.utils.knowledge import get_agentic_or_user_search_filters
 
 
 def test_validate_filters_removes_invalid_dict_keys(knowledge):
@@ -196,6 +118,7 @@ def test_validate_filters_without_contents_db_keeps_list_filters(knowledge):
     assert invalid == []
 
 
+@pytest.mark.asyncio
 async def test_avalidate_filters_without_contents_db_keeps_dict_filters(knowledge):
     knowledge.contents_db = None
     filters = {"region": "us"}
@@ -206,6 +129,7 @@ async def test_avalidate_filters_without_contents_db_keeps_dict_filters(knowledg
     assert invalid == []
 
 
+@pytest.mark.asyncio
 async def test_avalidate_filters_without_contents_db_keeps_list_filters(knowledge):
     knowledge.contents_db = None
     filters = [EQ("region", "us"), GT("year", 2024)]
@@ -217,7 +141,5 @@ async def test_avalidate_filters_without_contents_db_keeps_list_filters(knowledg
 
 
 def test_filter_merge_raises_on_type_mismatch():
-    from agno.utils.knowledge import get_agentic_or_user_search_filters
-
     with pytest.raises(ValueError):
         get_agentic_or_user_search_filters({"region": "us"}, [EQ("year", 2024)])
