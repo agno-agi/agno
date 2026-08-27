@@ -30,7 +30,7 @@ from agno.tools.unsplash import UnsplashTools
 # Example 1: Basic usage with default tools
 # By default, search_photos, get_photo, and get_random_photo are enabled
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[UnsplashTools()],
     instructions=[
         "You are a helpful assistant that can search for high-quality images.",
@@ -43,7 +43,7 @@ agent = Agent(
 # Example 2: Enable all tools including download tracking
 # Use this when you need to comply with Unsplash's download tracking requirement
 agent_with_download = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[UnsplashTools(enable_download_photo=True)],
     instructions=[
         "You are a helpful assistant that can search for high-quality images.",
@@ -54,7 +54,7 @@ agent_with_download = Agent(
 
 # Example 3: Enable only specific tools
 agent_search_only = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         UnsplashTools(
             enable_search_photos=True,

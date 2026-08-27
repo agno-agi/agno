@@ -13,7 +13,7 @@ import asyncio
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=OpenAIChat(id="gpt-4o", temperature=0.5), markdown=True)
+agent = Agent(model=OpenAIChat(id="gpt-5.6-luna", temperature=0.5), markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")
