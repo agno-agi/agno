@@ -45,7 +45,7 @@ from agno.os.job_queue import (
     ensure_duplicate_matches_component,
     normalize_idempotency_key,
     payload_is_queueable,
-    queue_scope,
+    resolve_queue_scope,
     ticket_status_to_api,
     validate_seam_input,
 )
@@ -325,7 +325,7 @@ async def handle_workflow_via_websocket(
             "input": user_message,
             "kwargs": ws_run_kwargs,
             "stream": True,
-            "scope": queue_scope(scoped_user_id, version),
+            "scope": resolve_queue_scope(workflow_id, os.workflows, os.db, scoped_user_id, version),
         }
         ws_submit_queueable = (
             queue_worker is not None
@@ -1768,7 +1768,7 @@ def get_workflow_router(
                     "input": message,
                     "kwargs": kwargs,
                     "stream": True,
-                    "scope": queue_scope(scoped_user_id, version),
+                    "scope": resolve_queue_scope(workflow_id, os.workflows, os.db, scoped_user_id, version),
                 }
                 stream_queueable = (
                     queue_worker is not None
@@ -1807,7 +1807,9 @@ def get_workflow_router(
                                 status_code=409,
                                 detail="Idempotency-Key was already used but the original run could not be retrieved",
                             )
-                        ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
+                        ensure_duplicate_matches_component(
+                            existing, "workflow", job["component_id"], version=job["payload"]["scope"]["version"]
+                        )
                         if not (existing.get("payload") or {}).get("stream"):
                             # The key was used by a NON-stream submission: its
                             # run never registers in the event stream, so a
@@ -1875,7 +1877,11 @@ def get_workflow_router(
             # / version-pinned) workflow replayed from the scope on the ticket.
             # Factory-backed workflows need request context and never queue.
             workflow_is_queueable = component_is_queueable(workflow, workflow_id, os.workflows, os.db)
-            queued_payload = {"input": message, "kwargs": kwargs, "scope": queue_scope(scoped_user_id, version)}
+            queued_payload = {
+                "input": message,
+                "kwargs": kwargs,
+                "scope": resolve_queue_scope(workflow_id, os.workflows, os.db, scoped_user_id, version),
+            }
             if queue_worker is not None and workflow_is_queueable and payload_is_queueable(queued_payload):
                 # 202 must honor input_schema exactly like the inline path (400)
                 validate_seam_input(workflow, message)
@@ -1903,7 +1909,9 @@ def get_workflow_router(
                     raise HTTPException(status_code=429, detail="Job queue is full")
                 if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
                     existing = enqueue_result["job"]
-                    ensure_duplicate_matches_component(existing, "workflow", job["component_id"])
+                    ensure_duplicate_matches_component(
+                        existing, "workflow", job["component_id"], version=job["payload"]["scope"]["version"]
+                    )
                     return JSONResponse(
                         status_code=202,
                         content={

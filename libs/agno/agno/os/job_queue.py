@@ -228,12 +228,14 @@ def ticket_status_to_api(ticket_status: str) -> Optional[str]:
     return _TICKET_STATUS_TO_API.get(ticket_status)
 
 
-def ensure_duplicate_matches_component(existing: Dict[str, Any], component_type: str, component_id: Any) -> None:
+def ensure_duplicate_matches_component(
+    existing: Dict[str, Any], component_type: str, component_id: Any, version: Optional[int] = None
+) -> None:
     """Refuse an Idempotency-Key duplicate that belongs to a different component.
 
     The dedup namespace is (idempotency_key, user_id) only, so a key reused on
-    another component's submit route would otherwise be answered with the
-    ORIGINAL component's run - a 202 (or live stream attach) whose ids then 404
+    another component's submit route - or on another VERSION of the same
+    component - would otherwise be answered with the ORIGINAL run - a 202 (or live stream attach) whose ids then 404
     through this route's poll endpoint, because the ticket poll fallback does
     enforce component identity. Idempotency keys retry the same submission;
     they never alias a different one.
@@ -242,14 +244,19 @@ def ensure_duplicate_matches_component(existing: Dict[str, Any], component_type:
     unauthenticated deployments the key namespace is shared across clients,
     and the mismatch detail belongs in server logs, not on the wire.
     """
-    if existing.get("component_type") == component_type and existing.get("component_id") == component_id:
+    existing_version = ((existing.get("payload") or {}).get("scope") or {}).get("version")
+    if (
+        existing.get("component_type") == component_type
+        and existing.get("component_id") == component_id
+        and existing_version == version
+    ):
         return
     from fastapi import HTTPException
 
     log_warning(
         f"Idempotency-Key reuse across components: key on ticket "
-        f"{existing.get('component_type')}/{existing.get('component_id')} was replayed against "
-        f"{component_type}/{component_id}; refusing with 409"
+        f"{existing.get('component_type')}/{existing.get('component_id')} (version {existing_version}) was replayed "
+        f"against {component_type}/{component_id} (version {version}); refusing with 409"
     )
     raise HTTPException(
         status_code=409,
@@ -322,6 +329,37 @@ def queue_scope(user_id: Optional[str], version: Optional[int]) -> Dict[str, Any
     (ownership, draft preview) happened at the door; the worker only replays
     the resolution, never re-decides it."""
     return {"user_id": user_id, "version": version}
+
+
+def resolve_queue_scope(
+    component_id: str,
+    registry: Optional[Sequence["RegisteredComponent"]],
+    db: Optional[Union["BaseDb", "AsyncBaseDb"]],
+    user_id: Optional[str],
+    version: Optional[int],
+) -> Dict[str, Any]:
+    """Build the ticket scope with a CONCRETE version for db-backed components.
+
+    An unpinned submission resolves the component's current version at the
+    door and validates the input against it. Stamping ``version: None`` would
+    let the worker resolve current_version AGAIN at claim time, so a version
+    published while the ticket waited would execute a config the door never
+    validated. Registry components ignore versions and keep ``None``; a db
+    read failure also leaves ``None`` (the worker then resolves current, the
+    pre-existing behaviour) rather than refusing the submission.
+    """
+    if version is None and db is not None and not any(getattr(c, "id", None) == component_id for c in registry or []):
+        from agno.db.base import BaseDb
+
+        if isinstance(db, BaseDb):
+            try:
+                row = db.get_component(component_id=component_id)
+                current = row.get("current_version") if isinstance(row, dict) else None
+                if isinstance(current, int):
+                    version = current
+            except Exception as e:
+                log_debug(f"Could not pin the current version of {component_id} on the queue ticket: {e}")
+    return queue_scope(user_id, version)
 
 
 def resolve_queue_store(config: QueueConfig, default_db: Any) -> Any:
@@ -2456,6 +2494,12 @@ def warn_unfenced_session_stores(agent_os: Any) -> None:
             component_db = getattr(component, "db", None)
             if component_db is not None and not callable(getattr(component_db, "update_run_in_session", None)):
                 unfenced.add(type(component_db).__name__)
+    # Db-backed (components API) components are rehydrated with the AgentOS
+    # db as their session store, so it is a queue session store too even
+    # when no code-registered component uses it
+    os_db = getattr(agent_os, "db", None)
+    if os_db is not None and not callable(getattr(os_db, "update_run_in_session", None)):
+        unfenced.add(type(os_db).__name__)
     if unfenced:
         log_warning(
             f"Durable queue over session store(s) without atomic run persistence: {', '.join(sorted(unfenced))}. "
@@ -2503,8 +2547,11 @@ async def queue_lifespan(app: Any, agent_os: Any):
                 continue
             if isinstance(candidate, (AgentFactory, TeamFactory, WorkflowFactory)):
                 # Factory-backed components are rejected at submit time (they
-                # need request context), so no ticket names one; nothing to do
-                break
+                # need request context). Return, never fall through: the db
+                # block below would otherwise execute a db component that
+                # merely shares the factory's id (the HTTP loader has the
+                # same shape and never reaches its db block on a factory hit)
+                return None
             if isinstance(candidate, (Agent, Team, Workflow)):
                 # Fresh copy per execution, mirroring the HTTP path: queued
                 # runs must not share mutable state with concurrent runs on

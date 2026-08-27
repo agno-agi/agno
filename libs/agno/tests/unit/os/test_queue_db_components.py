@@ -22,9 +22,12 @@ from agno.os import AgentOS
 from agno.os.job_queue import (
     QueueWorker,
     component_is_queueable,
+    ensure_duplicate_matches_component,
     get_active_queue_worker,
     queue_lifespan,
     queue_scope,
+    resolve_queue_scope,
+    warn_unfenced_session_stores,
 )
 
 BYPASS = "bypasses the durable queue"
@@ -85,7 +88,10 @@ class TestDbComponentSubmissionsRideTheQueue:
         job = next(iter(harness.store._jobs.values()))
         assert job["component_type"] == "agent"
         assert job["component_id"] == "db-agent"
-        assert job["payload"]["scope"] == {"user_id": None, "version": None}
+        # Unpinned: the door resolved current_version (1) and validated the
+        # input against it, so the ticket names THAT version - a version
+        # published while the ticket waits must not change what executes
+        assert job["payload"]["scope"] == {"user_id": None, "version": 1}
         assert not any(BYPASS in str(r.getMessage()) for r in records), "no bypass warning for a queued run"
 
     def test_version_pinned_submission_carries_the_version(self, harness):
@@ -301,3 +307,89 @@ class TestWebSocketSubmissionCarriesTheVersionStamp:
         stamp_component_version(expected_kwargs, 1)
         assert job["payload"]["kwargs"] == expected_kwargs, "the queued run must carry the version stamp"
         assert job["payload"]["scope"]["version"] == 1
+
+
+class TestTicketNamesAConcreteVersion:
+    def test_unpinned_db_component_pins_current_version(self, db):
+        _create_db_agent(db, "db-agent")
+        scope = resolve_queue_scope("db-agent", [], db, None, None)
+        assert scope == {"user_id": None, "version": 1}
+
+    def test_explicit_pin_wins(self, db):
+        _create_db_agent(db, "db-agent")
+        db.upsert_config("db-agent", config={"name": "db-agent", "instructions": "v2"})
+        assert resolve_queue_scope("db-agent", [], db, "alice", 2) == {"user_id": "alice", "version": 2}
+
+    def test_registry_component_stays_unversioned(self, db):
+        from agno.agent import Agent
+
+        registered = Agent(id="reg-agent", name="Registered", db=db)
+        assert resolve_queue_scope("reg-agent", [registered], db, None, None) == {"user_id": None, "version": None}
+
+    def test_no_db_stays_unversioned(self):
+        assert resolve_queue_scope("db-agent", [], None, None, None) == {"user_id": None, "version": None}
+
+    def test_idempotency_duplicate_must_match_version(self):
+        from fastapi import HTTPException
+
+        existing = {
+            "component_type": "agent",
+            "component_id": "db-agent",
+            "payload": {"scope": {"user_id": None, "version": 1}},
+        }
+        ensure_duplicate_matches_component(existing, "agent", "db-agent", version=1)
+        with pytest.raises(HTTPException) as exc:
+            ensure_duplicate_matches_component(existing, "agent", "db-agent", version=2)
+        assert exc.value.status_code == 409
+
+    def test_idempotency_duplicate_without_scope_matches_unversioned(self):
+        # Tickets from a pre-scope producer carry no scope: they match an
+        # unversioned replay and nothing else
+        existing = {"component_type": "agent", "component_id": "a1", "payload": {"input": "hi"}}
+        ensure_duplicate_matches_component(existing, "agent", "a1", version=None)
+
+
+class TestFactoryIdNeverFallsThroughToTheDb:
+    @pytest.mark.asyncio
+    async def test_factory_match_returns_none_even_with_a_db_twin(self, db):
+        from agno.agent import Agent
+        from agno.agent.factory import AgentFactory
+
+        # A db component that shares the factory's id: the worker must NOT
+        # execute it in the factory's place
+        _create_db_agent(db, "fx-agent")
+        produced = Agent(id="fx-agent", name="Produced", db=db)
+        factory = AgentFactory(id="fx-agent", db=db, factory=lambda ctx: produced)
+        agent_os = SimpleNamespace(
+            queue=QueueConfig(durable=True, db=InMemoryQueueStore()),
+            db=db,
+            registry=None,
+            agents=[factory],
+            teams=[],
+            workflows=[],
+        )
+        app = SimpleNamespace(state=SimpleNamespace())
+        async with queue_lifespan(app, agent_os):
+            worker = get_active_queue_worker()
+            assert worker is not None
+            resolved = await worker._aresolve_job_component(
+                {"component_type": "agent", "component_id": "fx-agent", "payload": {"scope": queue_scope(None, 1)}}
+            )
+            assert resolved is None
+
+
+class TestUnfencedWarningCoversTheAgentOsDb:
+    def test_os_db_without_the_primitive_warns(self, db, caplog):
+        # No code-registered component at all: the only session store in play
+        # is the AgentOS db that db-backed components inherit
+        agent_os = SimpleNamespace(agents=[], teams=[], workflows=[], db=db)
+        with caplog.at_level("WARNING"):
+            warn_unfenced_session_stores(agent_os)
+        assert any("SqliteDb" in r.getMessage() and "UNFENCED" in r.getMessage() for r in caplog.records)
+
+    def test_fenced_os_db_stays_silent(self, caplog):
+        fenced_db = SimpleNamespace(update_run_in_session=lambda *a, **k: None)
+        agent_os = SimpleNamespace(agents=[], teams=[], workflows=[], db=fenced_db)
+        with caplog.at_level("WARNING"):
+            warn_unfenced_session_stores(agent_os)
+        assert not any("UNFENCED" in r.getMessage() for r in caplog.records)
