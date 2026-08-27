@@ -33,7 +33,7 @@ Environment Variables:
     SHAREPOINT_SITE_ID      - Full site ID (hostname,guid,guid format)
 
 Run this cookbook:
-    python cookbook/07_knowledge/cloud/sharepoint.py
+    python cookbook/07_knowledge/09_archive/cloud/sharepoint.py
 """
 
 from os import getenv

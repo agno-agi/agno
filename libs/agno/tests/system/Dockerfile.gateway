@@ -34,7 +34,7 @@ RUN pip install --no-cache-dir \
     opentelemetry-sdk \
     openinference-instrumentation-agno \
     PyJWT \
-    mcp \
+    "mcp<2" \
     fastmcp \
     "a2a-sdk>=0.3.0,<1.0" \
     agui \

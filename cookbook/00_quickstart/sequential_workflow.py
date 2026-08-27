@@ -19,23 +19,23 @@ Example prompts to try:
 """
 
 from agno.agent import Agent
-from agno.db.sqlite import SqliteDb
 from agno.models.google import Gemini
 from agno.tools.yfinance import YFinanceTools
 from agno.workflow import Step, Workflow
-
-# ---------------------------------------------------------------------------
-# Storage Configuration
-# ---------------------------------------------------------------------------
-workflow_db = SqliteDb(db_file="tmp/agents.db")
 
 # ---------------------------------------------------------------------------
 # Step 1: Data Gatherer — Fetches raw market data
 # ---------------------------------------------------------------------------
 data_agent = Agent(
     name="Data Gatherer",
-    model=Gemini(id="gemini-3.5-flash"),
-    tools=[YFinanceTools(all=True)],
+    model=Gemini(id="gemini-3.6-flash"),
+    tools=[
+        YFinanceTools(
+            enable_stock_fundamentals=True,
+            enable_key_financial_ratios=True,
+            enable_historical_prices=True,
+        )
+    ],
     instructions="""\
 You are a data gathering agent. Your job is to fetch comprehensive market data.
 
@@ -48,10 +48,7 @@ For the requested stock, gather:
 
 Present the raw data clearly. Don't analyze — just gather and organize.\
 """,
-    db=workflow_db,
     add_datetime_to_context=True,
-    add_history_to_context=True,
-    num_history_runs=5,
 )
 
 data_step = Step(
@@ -65,22 +62,19 @@ data_step = Step(
 # ---------------------------------------------------------------------------
 analyst_agent = Agent(
     name="Analyst",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     instructions="""\
 You are a financial analyst. You receive raw market data from the data team.
 
 Your job is to:
-- Interpret the key metrics (is the P/E high or low for this sector?)
+- Interpret the key metrics provided by the data step
 - Identify strengths and weaknesses
 - Note any red flags or positive signals
-- Compare to typical industry benchmarks
+- Call out any comparison that would require data you were not given
 
-Provide analysis, not recommendations. Be objective and data-driven.\
+Provide analysis, not recommendations. Be objective and explicit about limits.\
 """,
-    db=workflow_db,
     add_datetime_to_context=True,
-    add_history_to_context=True,
-    num_history_runs=5,
 )
 
 analysis_step = Step(
@@ -94,23 +88,20 @@ analysis_step = Step(
 # ---------------------------------------------------------------------------
 report_agent = Agent(
     name="Report Writer",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.6-flash"),
     instructions="""\
 You are a report writer. You receive analysis from the research team.
 
 Your job is to:
 - Synthesize the analysis into a clear investment brief
 - Lead with a one-line summary
-- Include a recommendation (Buy/Hold/Sell) with rationale
+- Include a research outlook (bullish/neutral/bearish) with rationale
 - Keep it concise — max 200 words
 - End with key metrics in a small table
 
 Write for a busy investor who wants the bottom line fast.\
 """,
-    db=workflow_db,
     add_datetime_to_context=True,
-    add_history_to_context=True,
-    num_history_runs=5,
     markdown=True,
 )
 

@@ -14,18 +14,18 @@ from agno.team import Team
 researcher = Agent(
     name="Researcher",
     role="You research topics and provide detailed findings.",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 
 writer = Agent(
     name="Writer",
     role="You write clear, concise summaries from research findings.",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
 )
 
 team = Team(
     name="Research Team",
-    model=OpenAIChat(id="gpt-4o", base_url="http://localhost:1/v1", retries=0),
+    model=OpenAIChat(id="gpt-5.6-luna", base_url="http://localhost:1/v1", retries=0),
     fallback_models=[Claude(id="claude-sonnet-4-20250514")],
     members=[researcher, writer],
     instructions=[
