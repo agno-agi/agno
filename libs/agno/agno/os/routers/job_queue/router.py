@@ -54,33 +54,6 @@ async def _require_queue_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Job queue operations require an admin scope")
 
 
-def _queue_list_user_id(request: Request, session_ids: Optional[List[str]]) -> Optional[str]:
-    """Return the mandatory owner filter for a contextual non-admin list.
-
-    Open/security-key deployments and admin JWT callers retain the operator
-    view. Every other JWT caller must name at least one session and is pinned
-    to its authenticated user_id, regardless of whether global user isolation
-    is enabled. Session IDs are selectors, never authorization boundaries.
-    """
-    from agno.os.middleware.user_scope import _has_admin_scope
-
-    scopes = getattr(request.state, "scopes", None)
-    user_id = getattr(request.state, "user_id", None)
-    jwt_identity_present = isinstance(scopes, list) or user_id is not None
-    if not jwt_identity_present:
-        return None
-
-    admin_scope_raw = getattr(request.state, "admin_scope", None)
-    admin_scope = admin_scope_raw if isinstance(admin_scope_raw, str) else None
-    if _has_admin_scope(scopes or [], admin_scope=admin_scope):
-        return None
-    if not session_ids:
-        raise HTTPException(status_code=403, detail="Non-admin queue reads require at least one session_id")
-    if not isinstance(user_id, str) or not user_id:
-        raise HTTPException(status_code=403, detail="Contextual queue reads require an authenticated user_id")
-    return user_id
-
-
 def _get_store(request: Request):
     worker = getattr(request.app.state, "queue_worker", None)
     if worker is None:
@@ -95,7 +68,7 @@ def _get_store(request: Request):
 
 def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings()) -> APIRouter:
     router = APIRouter(
-        dependencies=[Depends(get_authentication_dependency(settings))],
+        dependencies=[Depends(get_authentication_dependency(settings)), Depends(_require_queue_admin)],
         prefix="/queue",
         tags=["Queue"],
         responses={
@@ -113,11 +86,12 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         summary="List Queue Jobs",
         response_model=PaginatedResponse[QueueJobSchema],
         description=(
-            "List job queue jobs, optionally filtered by status and session. Repeat either param to "
-            "match any of several (e.g. status=failed&status=cancelled for the requeueable "
-            "set, or session_id=s1&session_id=s2 for a contextual chat tray). Non-admin JWT "
-            "callers must provide session_id and only receive jobs owned by their authenticated "
-            "user. Useful sort_by fields: "
+            "List job queue jobs, optionally filtered by status, session and submitting user. "
+            "Repeat status or session_id to match any of several (e.g. "
+            "status=failed&status=cancelled for the requeueable set; status=failed alone is "
+            "the dead-letter list; session_id=s1&session_id=s2 for one conversation's jobs). "
+            "An operator surface: the filters are conveniences, never authorization - the "
+            "admin gate covers the whole router. Useful sort_by fields: "
             "created_at (default), updated_at, completed_at, status, attempt, component_type, "
             "component_id, user_id. Unknown sort fields are ignored."
         ),
@@ -130,6 +104,7 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         session_id: Optional[List[str]] = Query(
             default=None, description="Session filter; repeatable to match any of several sessions"
         ),
+        user_id: Optional[str] = Query(default=None, description="Owner filter: only jobs submitted by this user"),
         limit: int = Query(default=20, description="Number of jobs to return per page", ge=1, le=1000),
         page: int = Query(default=1, description="Page number for pagination", ge=1),
         sort_by: str = Query(default="created_at", description="Field to sort jobs by"),
@@ -138,12 +113,11 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         for s in status or []:
             if s not in JOB_STATUSES:
                 raise HTTPException(status_code=400, detail=f"Invalid status {s!r}; expected one of {JOB_STATUSES}")
-        scoped_user_id = _queue_list_user_id(request, session_id)
         store = _get_store(request)
         jobs, total_count = await store.list_jobs(
             status=status or None,
             session_id=session_id or None,
-            user_id=scoped_user_id,
+            user_id=user_id,
             limit=limit,
             page=page,
             sort_by=sort_by,
@@ -164,7 +138,6 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         operation_id="get_queue_job",
         summary="Get Queue Job",
         response_model=QueueJobSchema,
-        dependencies=[Depends(_require_queue_admin)],
     )
     async def get_job(request: Request, job_id: str):
         store = _get_store(request)
@@ -178,7 +151,6 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         operation_id="requeue_queue_job",
         summary="Requeue Failed Queue Job",
         response_model=QueueJobSchema,
-        dependencies=[Depends(_require_queue_admin)],
         description=(
             "Requeue a terminally failed or cancelled job for one more execution "
             "(raises its attempt budget by one). The operator remedy for crashed runs "
@@ -275,7 +247,6 @@ def get_queue_router(os: "AgentOS", settings: AgnoAPISettings = AgnoAPISettings(
         "/stats",
         operation_id="get_queue_stats",
         summary="Queue Stats",
-        dependencies=[Depends(_require_queue_admin)],
         description="Job counts by status and the oldest queued job's age - the queue-health signals to alert on.",
     )
     async def stats(request: Request):
