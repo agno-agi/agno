@@ -10186,6 +10186,7 @@ async def _acontinue_run(
                         run_context,
                         member_results,
                     )
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     await _aprocess_direct_member_content(
                         team,
                         run_response,
@@ -10787,6 +10788,7 @@ async def _acontinue_run_stream(
                         run_context,
                         member_results,
                     )
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
                     if stream_events:
                         yield handle_event(
                             create_team_run_continued_event(run_response),

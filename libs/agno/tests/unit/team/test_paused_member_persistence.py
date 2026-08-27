@@ -5131,6 +5131,92 @@ def test_a_sync_stream_cancel_keeps_team_level_requirements(tmp_path):
     assert "publish" in stored_names, f"the stored run lost the team-level requirement: {stored_names}"
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_async_direct_cancel_during_media_refresh_stays_cancelled(tmp_path, stream):
+    from agno.media.reference import MediaReference
+    from agno.media.storage.base import AsyncMediaStorage
+
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "async_direct_media_refresh_cancel.db")
+    session_id = "s-async-direct-media-refresh-cancel"
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False, respond_directly=True)
+    run1 = await team1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    run1.messages = list(run1.messages or []) + [
+        Message(
+            role="user",
+            content="stored image",
+            images=[
+                Image(
+                    id="stored-image",
+                    media_reference=MediaReference(
+                        media_id="stored-image",
+                        storage_key="image-key",
+                        session_id=session_id,
+                        storage_backend="blocking-test",
+                        media_type="image",
+                    ),
+                )
+            ],
+        )
+    ]
+
+    refresh_started = asyncio.Event()
+    release_refresh = asyncio.Event()
+
+    async def _blocking_url_refresh(storage_key: str, **kwargs):
+        assert storage_key == "image-key"
+        refresh_started.set()
+        await release_refresh.wait()
+        return "https://example.com/refreshed.png"
+
+    storage = MagicMock(spec=AsyncMediaStorage)
+    storage.backend_name = "blocking-test"
+    storage.bucket = None
+    storage.region = None
+    storage.get_url = AsyncMock(side_effect=_blocking_url_refresh)
+
+    post_hook_calls = []
+
+    async def _post_hook(run_output):
+        post_hook_calls.append(run_output.status)
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True, respond_directly=True)
+    team2.media_storage = storage
+    team2.post_hooks = [_post_hook]
+    continued = team2.acontinue_run(
+        run_response=run1,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=stream,
+        stream_events=stream,
+        yield_run_output=stream,
+    )
+
+    async def _consume_stream():
+        return [event async for event in continued]  # type: ignore[union-attr]
+
+    continuation = asyncio.create_task(_consume_stream() if stream else continued)  # type: ignore[arg-type]
+
+    await asyncio.wait_for(refresh_started.wait(), timeout=1)
+    assert await Team.acancel_run(run1.run_id)
+    release_refresh.set()
+    outcome = await continuation
+    if stream:
+        result = next(event for event in reversed(outcome) if isinstance(event, TeamRunOutput))
+    else:
+        result = outcome
+
+    storage.get_url.assert_awaited_once()
+    assert result.status == RunStatus.cancelled
+    assert post_hook_calls == []
+    stored = SqliteDb(db_file=db_file).get_run(run1.run_id)
+    assert isinstance(stored, TeamRunOutput)
+    assert stored.status == RunStatus.cancelled
+
+
 _NOTES: List[Any] = []
 
 
