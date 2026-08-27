@@ -5,6 +5,8 @@ from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
+    CompactionCompletedEvent,
+    CompactionStartedEvent,
     CompressionCompletedEvent,
     CompressionStartedEvent,
     FollowupsCompletedEvent,
@@ -44,6 +46,8 @@ from agno.run.agent import (
     ToolCallStartedEvent,
 )
 from agno.run.requirement import RunRequirement
+from agno.run.team import CompactionCompletedEvent as TeamCompactionCompletedEvent
+from agno.run.team import CompactionStartedEvent as TeamCompactionStartedEvent
 from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
 from agno.run.team import CompressionStartedEvent as TeamCompressionStartedEvent
 from agno.run.team import FollowupsCompletedEvent as TeamFollowupsCompletedEvent
@@ -971,6 +975,40 @@ def create_compression_completed_event(
     )
 
 
+def create_compaction_started_event(
+    from_run_response: RunOutput,
+    messages_before: int = 0,
+    messages_to_compact: int = 0,
+) -> CompactionStartedEvent:
+    return CompactionStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        messages_before=messages_before,
+        messages_to_compact=messages_to_compact,
+    )
+
+
+def create_compaction_completed_event(
+    from_run_response: RunOutput,
+    messages_after: int = 0,
+    messages_compacted: int = 0,
+    tokens_saved: int = 0,
+    summary_preview: Optional[str] = None,
+) -> CompactionCompletedEvent:
+    return CompactionCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        messages_after=messages_after,
+        messages_compacted=messages_compacted,
+        tokens_saved=tokens_saved,
+        summary_preview=summary_preview,
+    )
+
+
 def create_team_compression_started_event(
     from_run_response: TeamRunOutput,
 ) -> TeamCompressionStartedEvent:
@@ -996,6 +1034,40 @@ def create_team_compression_completed_event(
         tool_results_compressed=tool_results_compressed,
         original_size=original_size,
         compressed_size=compressed_size,
+    )
+
+
+def create_team_compaction_started_event(
+    from_run_response: TeamRunOutput,
+    messages_before: int = 0,
+    messages_to_compact: int = 0,
+) -> TeamCompactionStartedEvent:
+    return TeamCompactionStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        messages_before=messages_before,
+        messages_to_compact=messages_to_compact,
+    )
+
+
+def create_team_compaction_completed_event(
+    from_run_response: TeamRunOutput,
+    messages_after: int = 0,
+    messages_compacted: int = 0,
+    tokens_saved: int = 0,
+    summary_preview: Optional[str] = None,
+) -> TeamCompactionCompletedEvent:
+    return TeamCompactionCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        messages_after=messages_after,
+        messages_compacted=messages_compacted,
+        tokens_saved=tokens_saved,
+        summary_preview=summary_preview,
     )
 
 
