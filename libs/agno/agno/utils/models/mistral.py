@@ -3,14 +3,18 @@ from typing import Any, List, Optional, Union
 from agno.media import Image
 from agno.models.message import Message
 from agno.utils.log import log_error, log_warning
-from agno.utils.models._mistral_compat import (
-    AssistantMessage,
-    ImageURLChunk,
-    SystemMessage,
-    TextChunk,
-    ToolMessage,
-    UserMessage,
-)
+
+try:
+    from mistralai.client.models import (
+        AssistantMessage,
+        ImageURLChunk,
+        SystemMessage,
+        TextChunk,
+        ToolMessage,
+        UserMessage,
+    )
+except ImportError:
+    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
 
 MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
