@@ -14,7 +14,7 @@ agent to use.
 
 ```shell
 export TUNING_ENGINES_API_KEY=sk-te-your-inference-key
-export TUNING_ENGINES_MODEL=gpt-4o
+export TUNING_ENGINES_MODEL=gpt-5.6-luna
 ```
 
 If you run Tuning Engines behind a custom host, also set:
@@ -41,5 +41,5 @@ The example uses the dedicated `TuningEngines` model provider:
 from agno.agent import Agent
 from agno.models.tuning_engines import TuningEngines
 
-agent = Agent(model=TuningEngines(id="gpt-4o"))
+agent = Agent(model=TuningEngines(id="gpt-5.6-luna"))
 ```

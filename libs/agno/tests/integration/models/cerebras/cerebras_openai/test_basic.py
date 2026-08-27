@@ -6,6 +6,10 @@ from agno.db.sqlite import SqliteDb
 from agno.models.cerebras import CerebrasOpenAI
 
 
+def test_default_model_id():
+    assert CerebrasOpenAI().id == "gpt-oss-120b"
+
+
 def _assert_metrics(response: RunOutput):
     assert response.metrics is not None
     input_tokens = response.metrics.input_tokens

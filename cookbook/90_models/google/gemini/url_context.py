@@ -8,7 +8,7 @@ from agno.models.google import Gemini
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Gemini(id="gemini-2.5-flash", url_context=True),
+    model=Gemini(id="gemini-3.7-flash", url_context=True),
     markdown=True,
 )
 

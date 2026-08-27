@@ -775,8 +775,8 @@ def test_suite_disables_eval_spinners(monkeypatch):
 
 
 def test_suite_disables_eval_telemetry(monkeypatch):
-    # The evals await their telemetry POST before returning; on a blackholed
-    # network that burns case-timeout budget after the verdict is computed.
+    # Preserve the suite's existing behavior: internally-created evals do not
+    # emit hidden telemetry when the suite exposes no telemetry option.
     judge_instances, reliability_instances = _install_fake_evals(monkeypatch)
 
     run_cases([_make_case(expected_tool_calls=("search_web",))])
