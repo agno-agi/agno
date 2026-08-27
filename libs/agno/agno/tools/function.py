@@ -2203,6 +2203,16 @@ class FunctionCall(BaseModel):
         if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
 
+        # Check if the entrypoint has an agent argument (by name)
+        if "agent" in sig.parameters:
+            entrypoint_args["agent"] = self.function._agent
+        # Check if the entrypoint has a team argument (by name)
+        if "team" in sig.parameters:
+            entrypoint_args["team"] = self.function._team
+        # Check if the entrypoint has a run_context argument
+        if "run_context" in sig.parameters:
+            entrypoint_args["run_context"] = self.function._run_context
+
         # `_agno_`-prefixed variants are used by internal wrappers so framework
         # objects can be injected without colliding with user-facing tool
         # arguments that happen to be named "agent", "team" and "run_context".
