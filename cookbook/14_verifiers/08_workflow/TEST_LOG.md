@@ -20,3 +20,13 @@ suite (`test_verify_step.py`); the example itself has not been re-run against a 
 the change.
 
 ---
+
+### verify_step.py (re-run after review round 1)
+
+**Status:** PASS (2026-08-27, gpt-5.5, demo venv)
+
+**Description:** Re-run with stop_when_unverified=True after the review fixes. Write -> Verify (verified/passed, 1 attempt) -> publish; the gate now halts the pipeline when unverified instead of continuing past a failed check.
+
+**Result:** Success.
+
+---

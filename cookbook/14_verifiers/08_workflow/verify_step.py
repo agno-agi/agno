@@ -58,7 +58,9 @@ workflow = Workflow(
     steps=[
         Step(name="write", agent=writer),
         # stop_when_unverified halts the pipeline when the gate ends unverified: publish never runs.
-        Verify([notes_complete], on_fail="write", max_rounds=2, stop_when_unverified=True),
+        Verify(
+            [notes_complete], on_fail="write", max_rounds=2, stop_when_unverified=True
+        ),
         Step(name="publish", agent=publisher),
     ],
 )
