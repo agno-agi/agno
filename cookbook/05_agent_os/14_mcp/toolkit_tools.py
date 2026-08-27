@@ -5,8 +5,18 @@ Expose a Toolkit as MCP tools
 Pass a Toolkit directly to MCPServerConfig.tools — it auto-flattens into
 individual MCP tools, same as Agent.parse_tools() does internally.
 
-This example exposes Workspace's read-only tools (read_file, list_files,
-search_content, grep_content) as MCP tools that any MCP client can call.
+Two equivalent patterns:
+
+    # Pattern 1: Direct Toolkit
+    workspace = Workspace("./src", allowed=["read", "list", "search", "grep"])
+    MCPServerConfig(tools=[workspace])
+
+    # Pattern 2: Via ContextProvider.get_tools()
+    provider = WorkspaceContextProvider("./src", mode=ContextMode.tools)
+    MCPServerConfig(tools=provider.get_tools())
+
+Both auto-flatten into individual MCP tools: read_file, list_files,
+search_content, grep_content.
 
 Prerequisites: none (no API key needed for file operations)
 Run: .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/toolkit_tools.py
@@ -16,6 +26,8 @@ Try: connect an MCP client to http://localhost:7777/mcp and call read_file
 import tempfile
 from pathlib import Path
 
+from agno.context.mode import ContextMode
+from agno.context.workspace import WorkspaceContextProvider
 from agno.os import AgentOS, MCPServerConfig
 from agno.tools.workspace import Workspace
 
@@ -35,13 +47,27 @@ sample_dir = Path(tmp_dir)
 print(f"Created sample workspace at: {tmp_dir}")
 
 # ---------------------------------------------------------------------------
-# Create Workspace toolkit with read-only tools
+# Pattern 1: Direct Toolkit
 # ---------------------------------------------------------------------------
 
 workspace = Workspace(
     root=tmp_dir,
     allowed=["read", "list", "search", "grep"],
 )
+
+# ---------------------------------------------------------------------------
+# Pattern 2: Via ContextProvider (same result)
+# ---------------------------------------------------------------------------
+
+provider = WorkspaceContextProvider(
+    root=tmp_dir,
+    mode=ContextMode.tools,  # Returns [Workspace] instead of [query_tool]
+)
+
+# All patterns work:
+# tools = [workspace]                          # Direct Toolkit
+# tools = provider.get_tools()                 # Via ContextProvider
+# tools = [*provider1.get_tools(), *provider2.get_tools()]  # Multiple providers
 
 # ---------------------------------------------------------------------------
 # Expose the toolkit as MCP tools
@@ -51,7 +77,7 @@ agent_os = AgentOS(
     id="toolkit-mcp-os",
     description="AgentOS exposing Workspace toolkit as MCP tools.",
     mcp_server=MCPServerConfig(
-        tools=[workspace],  # Toolkit auto-flattens into individual tools
+        tools=[workspace],  # Or: tools=provider.get_tools()
         enable_builtin_tools=False,
     ),
 )
