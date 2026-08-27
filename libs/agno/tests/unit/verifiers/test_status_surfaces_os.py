@@ -567,9 +567,7 @@ def test_a2a_stream_forwards_verification_events_as_working_updates():
     ]
     parsed = _collect_a2a_stream(events)
     working = [
-        p["result"]
-        for p in parsed
-        if p["result"].get("kind") == "status-update" and p["result"].get("final") is False
+        p["result"] for p in parsed if p["result"].get("kind") == "status-update" and p["result"].get("final") is False
     ]
     event_types = [(w.get("metadata") or {}).get("agno_event_type") for w in working]
     assert "verification_started" in event_types
@@ -686,9 +684,7 @@ def test_mcp_tool_walk_reaches_verify_absorbed_segment():
     from agno.workflow.workflow import Workflow
 
     tool = MCPTools()
-    agent = Agent(
-        id="mcp-agent", name="MCP Agent", model=OpenAIResponses(id="gpt-5.5", api_key="test"), tools=[tool]
-    )
+    agent = Agent(id="mcp-agent", name="MCP Agent", model=OpenAIResponses(id="gpt-5.5", api_key="test"), tools=[tool])
     workflow = Workflow(
         id="wf-mcp",
         name="WF MCP",

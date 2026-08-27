@@ -421,7 +421,9 @@ def test_deep_copied_workflow_rebinds_verify_owner():
     def writer(step_input: StepInput) -> StepOutput:
         return StepOutput(content="draft")
 
-    original = Workflow(name="wf", steps=[Step(name="writer", executor=writer), Verify([owner_check], on_fail="writer")])
+    original = Workflow(
+        name="wf", steps=[Step(name="writer", executor=writer), Verify([owner_check], on_fail="writer")]
+    )
     assert original.run(input="go").status == RunStatus.completed
     copied = original.deep_copy()
     assert copied.run(input="go").status == RunStatus.completed
@@ -585,7 +587,9 @@ def test_serialization_round_trip_preserves_per_check_policy():
     # The restored advisory check must not re-gate: a failing advisory next to a passing
     # required check still verifies.
     writer_model = ScriptedModel([_text("draft")])
-    workflow = Workflow(name="wf", steps=[Step(name="writer", agent=Agent(name="writer", model=writer_model)), restored])
+    workflow = Workflow(
+        name="wf", steps=[Step(name="writer", agent=Agent(name="writer", model=writer_model)), restored]
+    )
     out = workflow.run(input="go")
     verify_output = _verify_output(out)
     assert verify_output.success is True

@@ -268,10 +268,14 @@ class Verify:
         for wrapper, policy in zip(verify._verifiers, policies):
             if policy is None:
                 continue
-            wrapper.required = bool(policy.get("required", True))
-            wrapper.rerun = int(policy.get("rerun", 0) or 0)
-            wrapper.fatal = bool(policy.get("fatal", False))
-            _reject_contradictory(wrapper.required, wrapper.fatal, label=f"Verify check {wrapper.name!r}")
+            wrapper.required = bool(policy.get("required", True))  # type: ignore[attr-defined]
+            wrapper.rerun = int(policy.get("rerun", 0) or 0)  # type: ignore[attr-defined]
+            wrapper.fatal = bool(policy.get("fatal", False))  # type: ignore[attr-defined]
+            _reject_contradictory(
+                bool(policy.get("required", True)),
+                bool(policy.get("fatal", False)),
+                label=f"Verify check {getattr(wrapper, 'name', 'check')!r}",
+            )
         if data.get("stop_on_noop"):
             if verify.fingerprint is None:
                 log_warning(
@@ -476,7 +480,11 @@ class Verify:
         reason = record.stop_reason or "failed"
         return f"Verify {self.name}: unverified ({reason}) after {attempts} attempts: {names}"
 
-    def _paused_output(self, step_id: str, all_results: List[StepOutput]) -> StepOutput:
+    def _paused_output(
+        self, step_id: str, all_results: List[StepOutput], record: Optional[Verification] = None
+    ) -> StepOutput:
+        # The record rides the paused output so a resume can restore the budget window and
+        # the attempts already concluded; without it a resumed gate would start blind.
         return StepOutput(
             step_name=self.name,
             step_id=step_id,
@@ -484,6 +492,7 @@ class Verify:
             content=f"Verify {self.name} paused at inner step",
             steps=list(all_results),
             is_paused=True,
+            verification=record,
         )
 
     def _stopped_output(self, step_id: str, record: Verification, all_results: List[StepOutput]) -> StepOutput:
@@ -560,18 +569,26 @@ class Verify:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        _resume_record: Optional[Verification] = None,
+        _resume_rounds: int = 0,
+        _resume_results: Optional[List[StepOutput]] = None,
     ) -> StepOutput:
         """Execute the verification loop: run the segment (if any), run the checks, and
-        either finish or re-enter the segment with the evidence report."""
+        either finish or re-enter the segment with the evidence report.
+
+        The underscore parameters seed a loop resumed after a HITL pause: the record with
+        its concluded attempts, the rounds already spent, and the outputs already produced.
+        """
         log_debug(f"Verify Start: {self.name}", center=True, symbol="=")
         self._require_resolved()
 
         step_id = str(uuid4())
-        record = Verification()
+        record = _resume_record if _resume_record is not None else Verification()
         settled = safe_capture(self.fingerprint) if self.fingerprint is not None else None
-        record.baseline_fingerprint = settled
-        rounds_used = 0
-        all_results: List[StepOutput] = []
+        if _resume_record is None:
+            record.baseline_fingerprint = settled
+        rounds_used = _resume_rounds
+        all_results: List[StepOutput] = list(_resume_results or [])
         current_input = step_input
 
         while True:
@@ -603,7 +620,7 @@ class Verify:
                 round_results.extend(outputs)
                 if outputs and getattr(outputs[-1], "is_paused", False):
                     all_results.extend(round_results)
-                    return self._paused_output(step_id, all_results)
+                    return self._paused_output(step_id, all_results, record=record)
                 if outputs:
                     step_name = getattr(step, "name", None) or f"step_{i + 1}"
                     segment_outputs[step_name] = outputs[-1]
@@ -722,7 +739,7 @@ class Verify:
 
                 if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
                     all_results.extend(round_results)
-                    yield self._paused_output(step_id, all_results)
+                    yield self._paused_output(step_id, all_results, record=record)
                     return
                 if step_outputs_for_step:
                     step_name = getattr(step, "name", None) or f"step_{i + 1}"
@@ -781,17 +798,21 @@ class Verify:
         background_tasks: Optional[Any] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
+        _resume_record: Optional[Verification] = None,
+        _resume_rounds: int = 0,
+        _resume_results: Optional[List[StepOutput]] = None,
     ) -> StepOutput:
         """Async twin of `execute`."""
         log_debug(f"Verify Start: {self.name}", center=True, symbol="=")
         self._require_resolved()
 
         step_id = str(uuid4())
-        record = Verification()
+        record = _resume_record if _resume_record is not None else Verification()
         settled = await asafe_capture(self.fingerprint) if self.fingerprint is not None else None
-        record.baseline_fingerprint = settled
-        rounds_used = 0
-        all_results: List[StepOutput] = []
+        if _resume_record is None:
+            record.baseline_fingerprint = settled
+        rounds_used = _resume_rounds
+        all_results: List[StepOutput] = list(_resume_results or [])
         current_input = step_input
 
         while True:
@@ -823,7 +844,7 @@ class Verify:
                 round_results.extend(outputs)
                 if outputs and getattr(outputs[-1], "is_paused", False):
                     all_results.extend(round_results)
-                    return self._paused_output(step_id, all_results)
+                    return self._paused_output(step_id, all_results, record=record)
                 if outputs:
                     step_name = getattr(step, "name", None) or f"step_{i + 1}"
                     segment_outputs[step_name] = outputs[-1]
@@ -939,7 +960,7 @@ class Verify:
 
                 if step_outputs_for_step and getattr(step_outputs_for_step[-1], "is_paused", False):
                     all_results.extend(round_results)
-                    yield self._paused_output(step_id, all_results)
+                    yield self._paused_output(step_id, all_results, record=record)
                     return
                 if step_outputs_for_step:
                     step_name = getattr(step, "name", None) or f"step_{i + 1}"
@@ -982,6 +1003,253 @@ class Verify:
         log_debug(f"Verify End: {self.name} ({len(record.attempts)} attempts)", center=True, symbol="=")
         yield self._final_output(step_id, record, all_results, step_input)
 
+    # ------------------------------------------------------------------
+    # HITL resume - called by the workflow's composite-resume seam
+    # ------------------------------------------------------------------
+
+    def _find_paused_self(self, workflow_run_response: Optional[WorkflowRunOutput]) -> Optional[StepOutput]:
+        """The paused composite output this gate produced, from the persisted run. Absent
+        (older rows, exotic resume orders) the resume degrades to a fresh record - the
+        checks still run, which is the fail-closed direction."""
+        results = getattr(workflow_run_response, "step_results", None) or []
+        for output in reversed(list(results)):
+            if (
+                getattr(output, "step_name", None) == self.name
+                and getattr(output, "is_paused", False)
+                and getattr(output, "step_type", None)
+                in (StepType.VERIFY, "Verify", getattr(StepType.VERIFY, "value", None))
+            ):
+                return output
+        return None
+
+    def _segment_index_for(self, step_req: Any, continued_output: StepOutput) -> int:
+        """Which absorbed segment step the resumed executor belongs to."""
+        if step_req is not None:
+            from agno.workflow.workflow import _find_inner_step_by_executor
+
+            inner = _find_inner_step_by_executor(
+                self,
+                executor_id=getattr(step_req, "executor_id", None),
+                executor_name=getattr(step_req, "executor_name", None),
+            )
+            if inner is not None:
+                for index, step in enumerate(self.steps):
+                    if step is inner:
+                        return index
+        name = getattr(continued_output, "step_name", None)
+        if name:
+            for index, step in enumerate(self.steps):
+                if getattr(step, "name", None) == name:
+                    return index
+        return len(self.steps) - 1 if self.steps else 0
+
+    def _resume_context(
+        self, workflow_run_response: Optional[WorkflowRunOutput], run_context: Optional[RunContext]
+    ) -> Dict[str, Any]:
+        return {
+            "session_id": getattr(workflow_run_response, "session_id", None),
+            "user_id": getattr(run_context, "user_id", None),
+            "session_state": getattr(run_context, "session_state", None),
+        }
+
+    def continue_from_paused(
+        self,
+        continued_output: StepOutput,
+        step_req: Any = None,
+        step_input: Optional[StepInput] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        run_context: Optional[RunContext] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Finish this gate's job after an inner executor resumed from a HITL pause.
+
+        The workflow's resume seam continues only the paused executor; handed its output,
+        this runs the REST of the absorbed segment, then the checks, and loops rounds as
+        normal - so a pause can never carry a run past the gate unverified. The record
+        resumes from the paused composite output (budget window intact); the settled
+        fingerprint baseline does not survive a pause, so the first post-resume comparison
+        is against unknown, which never reads as a no-op.
+        """
+        self._require_resolved()
+        step_input = step_input if step_input is not None else StepInput(input=None)
+        paused = self._find_paused_self(workflow_run_response)
+        paused_record = getattr(paused, "verification", None) if paused is not None else None
+        record: Verification = paused_record if isinstance(paused_record, Verification) else Verification()
+        prior_results: List[StepOutput] = list(getattr(paused, "steps", None) or [])
+        rounds_used = len(record.attempts)
+        resume_index = self._segment_index_for(step_req, continued_output)
+        context = self._resume_context(workflow_run_response, run_context)
+        step_id = str(uuid4())
+
+        segment_outputs: Dict[str, StepOutput] = {o.step_name: o for o in prior_results if o.step_name}
+        resumed_name = (
+            continued_output.step_name
+            or (getattr(self.steps[resume_index], "name", None) if self.steps else None)
+            or f"step_{resume_index + 1}"
+        )
+        segment_outputs[resumed_name] = continued_output
+        seg_input = self._update_step_input_from_outputs(step_input, continued_output, segment_outputs)
+
+        round_results: List[StepOutput] = [continued_output]
+        all_results: List[StepOutput] = prior_results + [continued_output]
+        for index in range(resume_index + 1, len(self.steps)):
+            step = self.steps[index]
+            step_output = step.execute(
+                seg_input,
+                session_id=context["session_id"],
+                user_id=context["user_id"],
+                workflow_run_response=workflow_run_response,
+                store_executor_outputs=store_executor_outputs,
+                run_context=run_context,
+                session_state=context["session_state"],
+                workflow_session=workflow_session,
+                background_tasks=background_tasks,
+            )
+            outputs = step_output if isinstance(step_output, list) else [step_output]
+            round_results.extend(outputs)
+            all_results.extend(outputs)
+            if outputs and getattr(outputs[-1], "is_paused", False):
+                return self._paused_output(step_id, all_results, record=record)
+            if outputs:
+                step_name = getattr(step, "name", None) or f"step_{index + 1}"
+                segment_outputs[step_name] = outputs[-1]
+                if any(output.stop for output in outputs):
+                    return self._stopped_output(step_id, record, all_results)
+                seg_input = self._update_step_input_from_outputs(seg_input, step_output, segment_outputs)
+
+        attempt = VerificationAttempt(index=len(record.attempts))
+        if self.fingerprint is not None:
+            attempt.fingerprint = safe_capture(self.fingerprint)
+            attempt.compared_against = None
+        target = self._target_run_output(round_results, step_input, workflow_run_response)
+        check_run = run_checks(
+            self._verifiers,
+            run_output=target,
+            run_context=run_context,
+            owner=self._workflow,
+            session=workflow_session,
+        )
+        attempt.verdicts = check_run.verdicts
+        record.attempts.append(attempt)
+
+        if not self._settle_round(record, attempt, check_run, rounds_used):
+            log_debug(f"Verify End (resumed): {self.name} ({len(record.attempts)} attempts)", center=True, symbol="=")
+            return self._final_output(step_id, record, all_results, step_input)
+
+        report = self._build_round_report(record, attempt)
+        reentry = self._reentry_input(step_input, round_results, report)
+        return self.execute(
+            reentry,
+            session_id=context["session_id"],
+            user_id=context["user_id"],
+            workflow_run_response=workflow_run_response,
+            store_executor_outputs=store_executor_outputs,
+            run_context=run_context,
+            session_state=context["session_state"],
+            workflow_session=workflow_session,
+            background_tasks=background_tasks,
+            _resume_record=record,
+            _resume_rounds=rounds_used + 1,
+            _resume_results=all_results,
+        )
+
+    async def acontinue_from_paused(
+        self,
+        continued_output: StepOutput,
+        step_req: Any = None,
+        step_input: Optional[StepInput] = None,
+        workflow_run_response: Optional[WorkflowRunOutput] = None,
+        workflow_session: Optional[WorkflowSession] = None,
+        run_context: Optional[RunContext] = None,
+        store_executor_outputs: bool = True,
+        background_tasks: Optional[Any] = None,
+    ) -> StepOutput:
+        """Async twin of `continue_from_paused`."""
+        self._require_resolved()
+        step_input = step_input if step_input is not None else StepInput(input=None)
+        paused = self._find_paused_self(workflow_run_response)
+        paused_record = getattr(paused, "verification", None) if paused is not None else None
+        record: Verification = paused_record if isinstance(paused_record, Verification) else Verification()
+        prior_results: List[StepOutput] = list(getattr(paused, "steps", None) or [])
+        rounds_used = len(record.attempts)
+        resume_index = self._segment_index_for(step_req, continued_output)
+        context = self._resume_context(workflow_run_response, run_context)
+        step_id = str(uuid4())
+
+        segment_outputs: Dict[str, StepOutput] = {o.step_name: o for o in prior_results if o.step_name}
+        resumed_name = (
+            continued_output.step_name
+            or (getattr(self.steps[resume_index], "name", None) if self.steps else None)
+            or f"step_{resume_index + 1}"
+        )
+        segment_outputs[resumed_name] = continued_output
+        seg_input = self._update_step_input_from_outputs(step_input, continued_output, segment_outputs)
+
+        round_results: List[StepOutput] = [continued_output]
+        all_results: List[StepOutput] = prior_results + [continued_output]
+        for index in range(resume_index + 1, len(self.steps)):
+            step = self.steps[index]
+            step_output = await step.aexecute(
+                seg_input,
+                session_id=context["session_id"],
+                user_id=context["user_id"],
+                workflow_run_response=workflow_run_response,
+                store_executor_outputs=store_executor_outputs,
+                run_context=run_context,
+                session_state=context["session_state"],
+                workflow_session=workflow_session,
+                background_tasks=background_tasks,
+            )
+            outputs = step_output if isinstance(step_output, list) else [step_output]
+            round_results.extend(outputs)
+            all_results.extend(outputs)
+            if outputs and getattr(outputs[-1], "is_paused", False):
+                return self._paused_output(step_id, all_results, record=record)
+            if outputs:
+                step_name = getattr(step, "name", None) or f"step_{index + 1}"
+                segment_outputs[step_name] = outputs[-1]
+                if any(output.stop for output in outputs):
+                    return self._stopped_output(step_id, record, all_results)
+                seg_input = self._update_step_input_from_outputs(seg_input, step_output, segment_outputs)
+
+        attempt = VerificationAttempt(index=len(record.attempts))
+        if self.fingerprint is not None:
+            attempt.fingerprint = await asafe_capture(self.fingerprint)
+            attempt.compared_against = None
+        target = self._target_run_output(round_results, step_input, workflow_run_response)
+        check_run = await arun_checks(
+            self._verifiers,
+            run_output=target,
+            run_context=run_context,
+            owner=self._workflow,
+            session=workflow_session,
+        )
+        attempt.verdicts = check_run.verdicts
+        record.attempts.append(attempt)
+
+        if not self._settle_round(record, attempt, check_run, rounds_used):
+            log_debug(f"Verify End (resumed): {self.name} ({len(record.attempts)} attempts)", center=True, symbol="=")
+            return self._final_output(step_id, record, all_results, step_input)
+
+        report = self._build_round_report(record, attempt)
+        reentry = self._reentry_input(step_input, round_results, report)
+        return await self.aexecute(
+            reentry,
+            session_id=context["session_id"],
+            user_id=context["user_id"],
+            workflow_run_response=workflow_run_response,
+            store_executor_outputs=store_executor_outputs,
+            run_context=run_context,
+            session_state=context["session_state"],
+            workflow_session=workflow_session,
+            background_tasks=background_tasks,
+            _resume_record=record,
+            _resume_rounds=rounds_used + 1,
+            _resume_results=all_results,
+        )
+
 
 def resolve_verify_steps(steps: List[Any], owner: Any = None) -> List[Any]:
     """Absorb each Verify's loop-back segment out of a prepared steps list.
@@ -1002,8 +1270,7 @@ def resolve_verify_steps(steps: List[Any], owner: Any = None) -> List[Any]:
         # it would run that segment (and hand that owner to the checks) in this workflow.
         if entry._resolved and owner is not None and entry._workflow is not None and entry._workflow is not owner:
             raise ValueError(
-                f"Verify {entry.name!r} is already bound to another workflow; "
-                "create a separate Verify per workflow"
+                f"Verify {entry.name!r} is already bound to another workflow; create a separate Verify per workflow"
             )
         if owner is not None and entry._workflow is None:
             entry._workflow = owner
