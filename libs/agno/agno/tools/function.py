@@ -2199,15 +2199,6 @@ class FunctionCall(BaseModel):
         sig = signature(self.function.entrypoint)  # type: ignore
         entrypoint_args = {}
 
-        # Check if the entrypoint has an agent argument (by name)
-        if "agent" in sig.parameters:
-            entrypoint_args["agent"] = self.function._agent
-        # Check if the entrypoint has a team argument (by name)
-        if "team" in sig.parameters:
-            entrypoint_args["team"] = self.function._team
-        # Check if the entrypoint has a run_context argument
-        if "run_context" in sig.parameters:
-            entrypoint_args["run_context"] = self.function._run_context
         # Check if the entrypoint has an fc argument
         if "fc" in sig.parameters:
             entrypoint_args["fc"] = self
