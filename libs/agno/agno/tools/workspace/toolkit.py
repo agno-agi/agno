@@ -393,6 +393,7 @@ class Workspace(Toolkit):
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
         max_grep_matches: int = 500,
+        max_search_file_size: Optional[int] = None,
         exclude_patterns: Optional[List[str]] = None,
         allow_paths: Optional[List[str]] = None,
         **kwargs,
@@ -406,6 +407,8 @@ class Workspace(Toolkit):
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
         self.max_grep_matches = max_grep_matches
+        # 500KB default for backward compat
+        self.max_search_file_size = max_search_file_size if max_search_file_size is not None else 500 * 1024
         self.require_read_before_write = require_read_before_write
         self.exclude_patterns: List[str] = _validate_exclude_patterns(exclude_patterns)
         _resolve_allow_paths(self.root, allow_paths)
@@ -818,7 +821,7 @@ class Workspace(Toolkit):
 
             lower_query = query.lower()
             matches: List[dict] = []
-            max_file_size = 500 * 1024
+            max_file_size = self.max_search_file_size
             walk_done = False
 
             for dirpath, dirnames, filenames in os.walk(search_dir):
@@ -900,7 +903,7 @@ class Workspace(Toolkit):
             if not search_dir.is_dir():
                 return f"Error: not a directory: {directory}"
 
-            max_file_size = 500 * 1024
+            max_file_size = self.max_search_file_size
             out_lines: List[str] = []
             files_with_matches: List[str] = []
             total_matches = 0

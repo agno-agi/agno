@@ -14,13 +14,14 @@ ALL_METHODS = [
     "list_files",
     "search_content",
     "grep_content",
+    "get_outline",
     "write_file",
     "edit_file",
     "move_file",
     "delete_file",
     "run_command",
 ]
-READ_METHODS = ["read_file", "list_files", "search_content", "grep_content"]
+READ_METHODS = ["read_file", "list_files", "search_content", "grep_content", "get_outline"]
 WRITE_METHODS = ["write_file", "edit_file", "move_file", "delete_file", "run_command"]
 
 
@@ -1247,7 +1248,7 @@ def test_case_folding_when_root_is_detected_case_insensitive(monkeypatch):
         (base / "BUILD").write_text("bazel")
         (base / "infra").mkdir()
         (base / "infra" / ".env").write_text("INFRA=1")
-        monkeypatch.setattr("agno.tools.workspace._is_case_insensitive_fs", lambda root: True)
+        monkeypatch.setattr("agno.tools.workspace.toolkit._is_case_insensitive_fs", lambda root: True)
         ws = Workspace(tmp_dir, allowed=Workspace.ALL_TOOLS, allow_paths=["infra/.env"])
         assert ws.read_file(".ENV") == "Error: path is excluded from this workspace: .ENV"
         assert ws.write_file(".ENV", "PWNED=1") == "Error: path is excluded from this workspace: .ENV"
@@ -1266,7 +1267,7 @@ def test_case_folding_off_when_root_is_detected_case_sensitive(monkeypatch):
     with tempfile.TemporaryDirectory() as tmp_dir:
         base = _secrets_repo(tmp_dir)
         (base / "BUILD").write_text("bazel")
-        monkeypatch.setattr("agno.tools.workspace._is_case_insensitive_fs", lambda root: False)
+        monkeypatch.setattr("agno.tools.workspace.toolkit._is_case_insensitive_fs", lambda root: False)
         ws = Workspace(tmp_dir)
         assert "bazel" in ws.read_file("BUILD")
         assert ws.read_file(".env") == "Error: path is excluded from this workspace: .env"
