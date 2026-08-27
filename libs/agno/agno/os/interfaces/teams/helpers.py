@@ -325,7 +325,10 @@ async def send_teams_message_async(
         return
 
     if italics:
-        message = "\n".join([f"_{line}_" for line in message.split("\n")])
+        # Two trailing spaces before each newline. The activity is sent as
+        # markdown, which renders a lone newline as a space, so joining on "\n"
+        # collapses the reasoning steps into one run-on paragraph.
+        message = "  \n".join([f"_{line}_" for line in message.split("\n")])
 
     activity: dict = {
         "type": "message",
