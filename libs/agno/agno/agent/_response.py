@@ -1055,19 +1055,7 @@ def handle_model_response_stream(
 
     from agno.agent._run import build_after_tool_results_callback, build_compaction_callback
 
-    # Pre-loop compaction: compress history BEFORE first model call
-    if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
-        log_debug(f"[STREAM-SYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-        compaction_result = agent.compaction_manager.compact(
-            run_messages.messages,
-            run_response=run_response,
-            run_metrics=run_response.metrics,
-        )
-        if compaction_result.summary:
-            run_messages.compacted_messages = compaction_result.compacted_messages
-            log_debug(
-                f"[STREAM-SYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
-            )
+    # Pre-loop compaction now handled in _run.py (emits events there)
 
     for model_response_event in call_model_stream_with_fallback(
         agent.model,
@@ -1232,19 +1220,7 @@ async def ahandle_model_response_stream(
 
     from agno.agent._run import abuild_after_tool_results_callback, abuild_compaction_callback
 
-    # Pre-loop compaction: compress history BEFORE first model call
-    if agent.compaction_manager is not None and agent.compaction_manager.compact_context:
-        log_debug(f"[STREAM-ASYNC] Pre-loop compaction check: {len(run_messages.messages)} messages")
-        compaction_result = await agent.compaction_manager.acompact(
-            run_messages.messages,
-            run_response=run_response,
-            run_metrics=run_response.metrics,
-        )
-        if compaction_result.summary:
-            run_messages.compacted_messages = compaction_result.compacted_messages
-            log_debug(
-                f"[STREAM-ASYNC] Pre-loop compaction: {len(run_messages.messages)} -> {len(run_messages.compacted_messages)}"
-            )
+    # Pre-loop compaction now handled in _run.py (emits events there)
 
     model_response_stream = acall_model_stream_with_fallback(
         agent.model,
