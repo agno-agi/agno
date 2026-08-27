@@ -299,6 +299,52 @@ class ComponentPinError(ComponentRehydrationError):
     """
 
 
+class SchemaMismatchError(AgnoError):
+    """Raised when an existing database table does not match the schema this version of Agno expects.
+
+    Base class for schema validation failures. ``MigrationRequiredError`` is raised for
+    table types that ``MigrationManager`` can migrate; this class is raised for the rest,
+    where the table was likely created or modified outside Agno and needs repair rather
+    than a migration. Build instances with ``agno.db.utils.table_schema_mismatch_error``
+    so the message names the right remedy.
+
+    Surfaces over HTTP as a 500 whose body carries ``error_id``, so clients can tell it
+    apart from other server errors without parsing the message.
+    """
+
+    def __init__(self, table_name: str, message: Optional[str] = None):
+        if message is None:
+            message = f"Table {table_name} has an invalid schema: it does not match what this version of Agno expects."
+        super().__init__(message, status_code=500)
+        self.table_name = table_name
+        self.type = "schema_mismatch_error"
+        self.error_id = "schema_mismatch_error"
+
+
+class MigrationRequiredError(SchemaMismatchError):
+    """Raised when a table's schema is stale and a pending Agno migration can fix it.
+
+    The usual cause is a database created by an older version of Agno whose migrations
+    have not been applied yet. Run them from code with
+    ``asyncio.run(MigrationManager(db).up())`` (``agno.db.migrations.manager``) or over
+    HTTP with ``POST /databases/all/migrate`` on AgentOS.
+
+    Carries ``error_id="migration_required_error"`` so a client can offer the migration.
+    """
+
+    def __init__(self, table_name: str, message: Optional[str] = None):
+        if message is None:
+            message = (
+                f"Table {table_name} has an invalid schema: it does not match what this version of Agno "
+                "expects. If this database was created by an older version of Agno, apply the pending "
+                "migrations with `asyncio.run(MigrationManager(db).up())` (import it from "
+                "`agno.db.migrations.manager`) or via the AgentOS endpoint `POST /databases/all/migrate`."
+            )
+        super().__init__(table_name, message)
+        self.type = "migration_required_error"
+        self.error_id = "migration_required_error"
+
+
 class RunNotFoundError(RuntimeError):
     """Raised when a run_id cannot be found in the session.
 

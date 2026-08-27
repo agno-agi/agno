@@ -1523,7 +1523,3 @@ class UserMemoryStore(LearningStore):
             raw_data=memories_data,
             raw=raw,
         )
-
-
-# Backwards compatibility alias
-MemoriesStore = UserMemoryStore
