@@ -34,6 +34,7 @@ chief = Agent(
     db=db,
     description="Answers executive questions and delegates follow-ups.",
     instructions="Answer briefly and decisively.",
+    add_history_to_context=True,
 )
 
 researcher = Agent(
@@ -43,6 +44,7 @@ researcher = Agent(
     db=db,
     description="Digs into a topic and returns sourced findings.",
     instructions="Be thorough and cite what you rely on.",
+    add_history_to_context=True,
 )
 
 # ---------------------------------------------------------------------------

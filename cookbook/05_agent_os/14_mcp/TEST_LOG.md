@@ -2,6 +2,31 @@
 
 Tested on 2026-07-24 against Agno source commit
 `a463d3be3563d30d11d32d4f0f9dc23ccefdb4d2`.
+`agents_as_tools.py` tested on 2026-08-27 on the `feat/mcp-agents-as-tools`
+branch, alongside the folder-wide move to the `mcp=` / `MCPConfig` /
+`default_tools` spellings (behavior unchanged; the old spellings remain
+accepted aliases).
+
+### agents_as_tools.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the checked-in server (two gpt-5.6-luna agents,
+`default_tools=False`, both agents exposed via `MCPConfig(agents=[...])`) and
+drove it with a FastMCP streamable-HTTP client: listed tools, checked the
+generated schema and description, ran `chief` twice -- once sessionless, once
+continuing the returned session.
+
+**Result:** `tools/list` returned exactly `chief` and `researcher`. The
+`chief` tool carried the agent's own description plus the session sentence,
+and its client-facing schema was `message` (required), `session_id`,
+`user_id`. The sessionless call minted a session and completed with content
+"Earth"; the follow-up call on the returned session_id recalled "Earth",
+proving live session continuity through the exposed tool.
+
+---
 
 ### basic.py
 
