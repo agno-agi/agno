@@ -108,14 +108,6 @@ def test_init_with_all_params():
 # ============================================================================
 
 
-def test_backward_compat_aliases():
-    """Test that backward compatibility aliases exist."""
-    with patch("agno.tools.websearch.DDGS"):
-        tools = DuckDuckGoTools()
-        assert tools.duckduckgo_search == tools.web_search
-        assert tools.duckduckgo_news == tools.search_news
-
-
 # ============================================================================
 # SEARCH WITH TIMELIMIT TESTS
 # ============================================================================

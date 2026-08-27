@@ -26,20 +26,12 @@ uv pip install -U agno portkey-ai
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/portkey/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/portkey/basic.py
+python cookbook/90_models/portkey/basic.py
 ```
 
 ### 5. Run Agent with Tools
 
 ```shell
-python cookbook/92_models/portkey/tool_use.py
+python cookbook/90_models/portkey/tool_use.py
 ```

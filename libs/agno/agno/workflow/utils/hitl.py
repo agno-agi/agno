@@ -8,14 +8,53 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.run.base import RunStatus
-from agno.utils.log import log_debug
-from agno.workflow.types import PauseKind, StepOutput
+from agno.utils.log import log_debug, log_warning
+from agno.workflow.types import PauseKind, StepOutput, StepType
 
 if TYPE_CHECKING:
     from agno.media import Audio, File, Image, Video
     from agno.run.workflow import WorkflowRunOutput
     from agno.session.workflow import WorkflowSession
     from agno.workflow.types import StepInput, StepRequirement, WorkflowExecutionInput
+
+
+# Flat HITL keys that may appear in serialized configs from older versions, before
+# HITL config was unified into the HumanReview dataclass. Each primitive's from_dict()
+# uses drop_legacy_hitl_keys() to discard any of these found at the top level.
+LEGACY_HITL_KEYS = (
+    "requires_confirmation",
+    "confirmation_message",
+    "on_reject",
+    "requires_user_input",
+    "user_input_message",
+    "user_input_schema",
+    "requires_output_review",
+    "output_review_message",
+    "requires_iteration_review",
+    "iteration_review_message",
+    "on_error",
+    "hitl_max_retries",
+    "hitl_timeout",
+    "on_timeout",
+)
+
+
+def drop_legacy_hitl_keys(config: Dict[str, Any], component: StepType) -> None:
+    """Drop legacy flat HITL keys from a serialized component config in place.
+
+    Logs a debug message naming the dropped keys so users can spot stale saves.
+    Use in from_dict() when no nested ``human_review`` is present — legacy configs
+    fall back to default HumanReview() with no HITL behavior.
+    """
+    legacy = [k for k in LEGACY_HITL_KEYS if k in config]
+    if not legacy:
+        return
+    name = config.get("name") or component.value
+    log_warning(
+        f"{component.value} '{name}': dropping deprecated flat HITL keys {legacy}, use human_review to preserve config"
+    )
+    for k in legacy:
+        config.pop(k, None)
 
 
 @dataclass
@@ -56,14 +95,15 @@ def step_pause_status(
         StepPauseResult indicating whether to pause and the requirement.
     """
     # Determine if pause is required
+    hr = getattr(step, "human_review", None)
     if for_route_selection:
-        requires_pause = getattr(step, "requires_user_input", False)
+        requires_pause = bool(hr and hr.requires_user_input)
         pause_type = "user selection"
     elif step_type == "Step":
-        requires_pause = getattr(step, "requires_confirmation", False) or getattr(step, "requires_user_input", False)
-        pause_type = "confirmation" if getattr(step, "requires_confirmation", False) else "user input"
+        requires_pause = bool(hr and (hr.requires_confirmation or hr.requires_user_input))
+        pause_type = "confirmation" if hr and hr.requires_confirmation else "user input"
     else:
-        requires_pause = getattr(step, "requires_confirmation", False)
+        requires_pause = bool(hr and hr.requires_confirmation)
         pause_type = "confirmation"
 
     if not requires_pause:
@@ -197,7 +237,10 @@ def save_paused_session(
     session: "WorkflowSession",
     workflow_run_response: "WorkflowRunOutput",
 ) -> None:
-    """Save the session with paused state.
+    """Save the session and the paused run.
+
+    Under v3 storage, the session row and the run row are persisted
+    independently; this helper writes both (O(1) each).
 
     Args:
         workflow: The workflow instance.
@@ -206,7 +249,7 @@ def save_paused_session(
     """
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
     session.upsert_run(run=workflow_run_response)
-    workflow.save_session(session=session)
+    workflow._persist_session_and_run(session=session, run=workflow_run_response)
 
 
 async def asave_paused_session(
@@ -214,7 +257,10 @@ async def asave_paused_session(
     session: "WorkflowSession",
     workflow_run_response: "WorkflowRunOutput",
 ) -> None:
-    """Save the session with paused state (async version).
+    """Save the session and the paused run (async version).
+
+    Under v3 storage, the session row and the run row are persisted
+    independently; this helper writes both (O(1) each).
 
     Args:
         workflow: The workflow instance.
@@ -223,10 +269,8 @@ async def asave_paused_session(
     """
     workflow._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
     session.upsert_run(run=workflow_run_response)
-    if workflow._has_async_db():
-        await workflow.asave_session(session=session)
-    else:
-        workflow.save_session(session=session)
+    # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
+    await workflow._apersist_session_and_run(session=session, run=workflow_run_response)
 
 
 def check_output_review_status(
@@ -250,7 +294,8 @@ def check_output_review_status(
     Returns:
         StepPauseResult indicating whether to pause for review.
     """
-    requires_review = getattr(step, "requires_output_review", False)
+    hr = getattr(step, "human_review", None)
+    requires_review = hr.requires_output_review if hr else False
 
     # Handle callable predicate (conditional HITL)
     if callable(requires_review):
