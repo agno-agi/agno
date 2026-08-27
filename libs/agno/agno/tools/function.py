@@ -2800,6 +2800,18 @@ class FunctionCall(BaseModel):
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
 
+        # Hooks can defeat an @verified_tool comparison, so refuse before the pre-hook gets
+        # a chance to run: a pre-hook can rewrite the prediction and then erase itself, and a
+        # check placed after it would find nothing to refuse. Wrapped in its own handler so a
+        # refusal surfaces as a failed tool result, not an unhandled raise - and no hook
+        # (post_hook included) runs on a refused call.
+        try:
+            _refuse_hooks_on_a_verified_tool(self.function)
+        except Exception as e:
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
+            self.error = str(e)
+            return FunctionExecutionResult(status="failure", error=str(e))
+
         # Execute pre-hook if it exists
         self._handle_pre_hook()
 
@@ -2831,12 +2843,6 @@ class FunctionCall(BaseModel):
 
         raw_results: List[Any] = []
         try:
-            # Hooks can defeat an @verified_tool comparison, so refuse before running anything.
-            # This sits here, not in the chain builder below, because that builder is only
-            # reached when tool_hooks are set - a pre_hook or post_hook alone would never
-            # reach it. Inside the try so it surfaces as a tool failure, not a raised run.
-            _refuse_hooks_on_a_verified_tool(self.function)
-
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = self._build_nested_execution_chain(
@@ -3059,6 +3065,18 @@ class FunctionCall(BaseModel):
         # read an identity the call will not actually execute with.
         self._drop_injected_overrides(entrypoint_args)
 
+        # Hooks can defeat an @verified_tool comparison, so refuse before the pre-hook gets
+        # a chance to run: a pre-hook can rewrite the prediction and then erase itself, and a
+        # check placed after it would find nothing to refuse. Wrapped in its own handler so a
+        # refusal surfaces as a failed tool result, not an unhandled raise - and no hook
+        # (post_hook included) runs on a refused call.
+        try:
+            _refuse_hooks_on_a_verified_tool(self.function)
+        except Exception as e:
+            log_warning(f"Could not run function {self.get_call_str()}: {str(e)}")
+            self.error = str(e)
+            return FunctionExecutionResult(status="failure", error=str(e))
+
         # Execute pre-hook if it exists
         if iscoroutinefunction(self.function.pre_hook):
             await self._handle_pre_hook_async()
@@ -3095,12 +3113,6 @@ class FunctionCall(BaseModel):
 
         raw_results: List[Any] = []
         try:
-            # Hooks can defeat an @verified_tool comparison, so refuse before running anything.
-            # This sits here, not in the chain builder below, because that builder is only
-            # reached when tool_hooks are set - a pre_hook or post_hook alone would never
-            # reach it. Inside the try so it surfaces as a tool failure, not a raised run.
-            _refuse_hooks_on_a_verified_tool(self.function)
-
             # Build and execute the nested chain of hooks
             if self.function.tool_hooks is not None:
                 execution_chain = await self._build_nested_execution_chain_async(

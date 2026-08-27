@@ -209,3 +209,140 @@ def test_resume_runs_the_checks_async(tmp_path):
     verify_outputs = [s for s in (resumed.step_results or []) if getattr(s, "verification", None) is not None]
     assert verify_outputs and verify_outputs[-1].verification.status == "verified"
     assert published["n"] == 1
+
+
+def test_nested_verify_resume_still_runs_the_checks(tmp_path):
+    """A Verify nested inside a container must regain control on resume: the seam finds
+    the deepest resumable composite, not just a top-level one."""
+    from agno.workflow.steps import Steps
+
+    gate_runs = {"n": 0}
+    tool_calls = {"n": 0}
+
+    def gate(run_output):
+        gate_runs["n"] += 1
+        return True
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy the change."""
+        tool_calls["n"] += 1
+        return "deployed"
+
+    model = ScriptedModel([_tool_call("deploy", "c1"), _text("done after tool")])
+    agent = Agent(model=model, tools=[deploy])
+    published = {"n": 0}
+
+    def publish(step_input: StepInput) -> StepOutput:
+        published["n"] += 1
+        return StepOutput(content="PUBLISHED")
+
+    workflow = Workflow(
+        name="nested-resume",
+        steps=[
+            Steps(
+                name="gated-segment",
+                steps=[Step(name="deployer", agent=agent), Verify(gate, on_fail="deployer", max_rounds=1)],
+            ),
+            Step(name="publish", executor=publish),
+        ],
+        db=SqliteDb(db_file=str(tmp_path / "nested.db")),
+    )
+    run = workflow.run("go", session_id="nested-resume-session")
+    assert run.is_paused and gate_runs["n"] == 0
+
+    _confirm_all(run)
+    resumed = workflow.continue_run(run)
+
+    assert resumed.status == RunStatus.completed
+    assert gate_runs["n"] == 1, "the nested gate must run on resume"
+    assert tool_calls["n"] == 1
+    assert published["n"] == 1
+
+
+def test_budget_window_survives_the_pause(tmp_path):
+    """A verification attempt concluded BEFORE the pause must survive resume: the record
+    rides the paused output, so max_rounds holds across pause cycles."""
+    gate_runs = {"n": 0}
+    tool_calls = {"n": 0}
+
+    def gate(run_output):
+        gate_runs["n"] += 1
+        return True if gate_runs["n"] >= 2 else "first attempt rejected"
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy the change."""
+        tool_calls["n"] += 1
+        return "deployed"
+
+    model = ScriptedModel(
+        [
+            _text("claimed done"),  # round 1: no tool, gate rejects
+            _tool_call("deploy", "c1"),  # round 2 (loop-back): pauses on confirmation
+            _text("done after tool"),
+        ]
+    )
+    agent = Agent(model=model, tools=[deploy])
+    workflow = Workflow(
+        name="budget-pause",
+        steps=[Step(name="deployer", agent=agent), Verify(gate, on_fail="deployer", max_rounds=1)],
+        db=SqliteDb(db_file=str(tmp_path / "budget.db")),
+    )
+    run = workflow.run("go", session_id="budget-session")
+    assert run.is_paused, "round 2 must pause on the tool confirmation"
+    assert gate_runs["n"] == 1, "one attempt concluded before the pause"
+
+    _confirm_all(run)
+    resumed = workflow.continue_run(run)
+
+    assert resumed.status == RunStatus.completed
+    assert gate_runs["n"] == 2, "exactly one further check pass on resume"
+    verify_outputs = [s for s in (resumed.step_results or []) if getattr(s, "verification", None) is not None]
+    record = verify_outputs[-1].verification
+    assert record.status == "verified"
+    assert len(record.attempts) == 2, "the pre-pause attempt must survive the pause"
+    assert not any(getattr(s, "is_paused", False) for s in (resumed.step_results or [])), (
+        "the stale paused placeholder must not survive in step_results"
+    )
+
+
+def test_budget_exhaustion_holds_across_the_pause(tmp_path):
+    """GPT's repro: with max_rounds=1 and a failing gate, a pause mid-round-2 must not
+    grant extra rounds on resume — two check passes total, then exhausted."""
+    gate_runs = {"n": 0}
+
+    def gate(run_output):
+        gate_runs["n"] += 1
+        return "never good"
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy the change."""
+        return "deployed"
+
+    model = ScriptedModel(
+        [
+            _text("claimed done"),
+            _tool_call("deploy", "c1"),
+            _text("done after tool"),
+        ]
+    )
+    agent = Agent(model=model, tools=[deploy])
+    workflow = Workflow(
+        name="budget-exhaust-pause",
+        steps=[Step(name="deployer", agent=agent), Verify(gate, on_fail="deployer", max_rounds=1)],
+        db=SqliteDb(db_file=str(tmp_path / "budget2.db")),
+    )
+    run = workflow.run("go", session_id="budget2-session")
+    assert run.is_paused and gate_runs["n"] == 1
+
+    _confirm_all(run)
+    resumed = workflow.continue_run(run)
+
+    assert gate_runs["n"] == 2, "the resumed round is the LAST round of the window"
+    verify_outputs = [s for s in (resumed.step_results or []) if getattr(s, "verification", None) is not None]
+    record = verify_outputs[-1].verification
+    assert record.status == "unverified"
+    assert record.stop_reason == "exhausted"
+    assert len(record.attempts) == 2

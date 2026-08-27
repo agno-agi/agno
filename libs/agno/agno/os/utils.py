@@ -2467,7 +2467,14 @@ def _collect_components_from_step(step: Any, registry: Registry, visited: Set[in
             sub_steps = getattr(step, attr, None)
             if isinstance(sub_steps, list):
                 for sub_step in sub_steps:
-                    _collect_components_from_step(sub_step, registry, visited)
+                    if isinstance(sub_step, list):
+                        # A Router list route stays a raw list inside `choices`;
+                        # its elements (including any Verify's checks) must still
+                        # register, or rehydration degrades them to placeholders.
+                        for inner_step in sub_step:
+                            _collect_components_from_step(inner_step, registry, visited)
+                    else:
+                        _collect_components_from_step(sub_step, registry, visited)
 
     elif callable(step):
         # A bare callable used directly as a step serializes as an executor ref.

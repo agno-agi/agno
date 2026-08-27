@@ -2,11 +2,12 @@
 
 Two behaviors are pinned here:
 
-- Verifiers judge the media of the attempt they are judging: every non-stream loop stores
-  generated media INSIDE the attempt loop (before the gate opens), so media appends per
-  attempt and accumulates across gate attempts exactly like the transcript does. The async
-  and continue loops used to store once after the loop — verifiers saw zero images and
-  earlier attempts' media was dropped from the final run.
+- Media is per-attempt on the run's OUTPUT surface, mirroring content: every non-stream
+  loop stores generated media INSIDE the attempt loop (before the gate opens), and a
+  gate re-entry resets the surface. A verifier therefore judges only the media of the
+  attempt in front of it, and the final run carries only the accepted attempt's media —
+  a rejected image no longer stays visible forever. The transcript's messages keep
+  whatever they carried; only the output surface resets.
 - Time-travel truncation drops the verification record: attempts index into the transcript,
   so a record kept across a cut points at the wrong messages. `continue_from="end"` performs
   no truncation and keeps the record (and its budget_baseline semantics).
@@ -91,9 +92,9 @@ def _image_urls(out: RunOutput) -> List[str]:
 
 
 def test_arun_verifier_sees_each_attempts_media():
-    """Fail-then-pass on arun with one image per attempt: the verifier must see the
-    first attempt's image on attempt 1 and both on attempt 2 (media accumulates like
-    the transcript), and the final run carries both images."""
+    """Fail-then-pass on arun with one image per attempt: the verifier must see exactly
+    one image on each attempt (a re-entry resets the output surface), and the final run
+    carries only the accepted attempt's image."""
     model = ScriptedModel(
         [
             _image_response("attempt 1", "http://x/img1.png"),
@@ -108,12 +109,13 @@ def test_arun_verifier_sees_each_attempts_media():
     assert model.calls == 2
     assert out.status == RunStatus.completed
     assert out.verification.status == "verified"
-    assert seen == [1, 2]
-    assert _image_urls(out) == ["http://x/img1.png", "http://x/img2.png"]
+    assert seen == [1, 1]
+    assert _image_urls(out) == ["http://x/img2.png"]
 
 
 def test_run_verifier_sees_each_attempts_media():
-    """Sync parity: the sync run loop already stored media per attempt — pin it."""
+    """Sync parity: per-attempt counts on the sync run loop, and the rejected first
+    image does not survive into the final run."""
     model = ScriptedModel(
         [
             _image_response("attempt 1", "http://x/img1.png"),
@@ -128,8 +130,8 @@ def test_run_verifier_sees_each_attempts_media():
     assert model.calls == 2
     assert out.status == RunStatus.completed
     assert out.verification.status == "verified"
-    assert seen == [1, 2]
-    assert _image_urls(out) == ["http://x/img1.png", "http://x/img2.png"]
+    assert seen == [1, 1]
+    assert _image_urls(out) == ["http://x/img2.png"]
 
 
 def _unverified_run_then_image_continuation():

@@ -165,6 +165,31 @@ def test_team_pass_first_attempt(mode):
     assert len(out.verification.attempts) == 1
 
 
+def _reasoned(content: str, reasoning: str) -> ModelResponse:
+    response = _text(content)
+    response.reasoning_content = reasoning
+    return response
+
+
+@pytest.mark.parametrize("mode", MODES)
+def test_team_reenter_replaces_reasoning_content(mode):
+    # Team reasoning content accumulates across model passes within one attempt, so a
+    # re-entry must reset it: the verifier judges only the second attempt's reasoning
+    # and the persisted output carries only it, not the rejected attempt's leak.
+    model = ScriptedModel([_reasoned("claimed done", "first thoughts"), _reasoned("actually done", "second thoughts")])
+    seen: List[Any] = []
+
+    def report_exists(run_output):
+        seen.append(run_output.reasoning_content)
+        return True if len(seen) > 1 else "report.md is missing"
+
+    team = _team(model, verifiers=[report_exists])
+    out = _run_variant(team, mode)
+    assert out.verification.status == "verified"
+    assert seen == ["first thoughts", "second thoughts"]
+    assert out.reasoning_content == "second thoughts"
+
+
 def test_team_construction_errors():
     with pytest.raises(ValueError):
         _team(ScriptedModel([_text("x")]), verifiers=[object()])

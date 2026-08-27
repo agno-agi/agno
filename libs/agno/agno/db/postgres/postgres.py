@@ -7245,6 +7245,15 @@ class PostgresDb(BaseDb):
                 incoming_status = str(fields.get("status") or "").lower()
                 if stored_status in ("completed", "cancelled") and incoming_status and incoming_status != stored_status:
                     return RunPersistOutcome.TERMINAL_REFUSED  # terminal row wins
+                if stored_status == "unverified" and incoming_status == "error":
+                    # An UNVERIFIED row is settled: the run finished with a
+                    # real answer, only its verification budget was spent. A
+                    # late ERROR write (shutdown drain, a stale error persist)
+                    # would deface that settled answer, so this ONE transition
+                    # is refused. Every other write over unverified stays
+                    # legal: continue-in-place re-stamps RUNNING and later
+                    # lands COMPLETED/CANCELLED on the same row.
+                    return RunPersistOutcome.TERMINAL_REFUSED
                 run.update(fields)
                 if content_if_absent is not None and not run.get("content"):
                     run["content"] = content_if_absent

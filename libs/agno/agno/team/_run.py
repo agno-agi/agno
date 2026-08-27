@@ -504,9 +504,11 @@ def _run_tasks(
             )
             if decision.reenter:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content accumulates across model passes; the re-entered
-                # attempt replaces the rejected answer, not concatenates onto it.
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
                 run_response.content = None
+                run_response.reasoning_content = None
                 continue
             break
 
@@ -1001,9 +1003,11 @@ def _run_tasks_stream(
                 yield completed_event
             if decision.reenter:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content accumulates across model passes; the re-entered
-                # attempt replaces the rejected answer, not concatenates onto it.
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
                 run_response.content = None
+                run_response.reasoning_content = None
                 continue
             break
 
@@ -1439,9 +1443,11 @@ def _run(
                     )
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content accumulates across model passes; the re-entered
-                        # attempt replaces the rejected answer, not concatenates onto it.
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
                         run_response.content = None
+                        run_response.reasoning_content = None
                         continue
                     break
 
@@ -1885,9 +1891,11 @@ def _run_stream(
                         yield completed_event
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content accumulates across model passes; the re-entered
-                        # attempt replaces the rejected answer, not concatenates onto it.
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
                         run_response.content = None
+                        run_response.reasoning_content = None
                         continue
                     break
 
@@ -2583,9 +2591,11 @@ async def _arun_tasks(
             )
             if decision.reenter:
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content accumulates across model passes; the re-entered
-                # attempt replaces the rejected answer, not concatenates onto it.
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
                 run_response.content = None
+                run_response.reasoning_content = None
                 continue
             break
 
@@ -3116,9 +3126,11 @@ async def _arun_tasks_stream(
                 yield completed_event
             if decision.reenter:
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                # Team content accumulates across model passes; the re-entered
-                # attempt replaces the rejected answer, not concatenates onto it.
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
                 run_response.content = None
+                run_response.reasoning_content = None
                 continue
             break
 
@@ -3616,9 +3628,11 @@ async def _arun(
                     )
                     if decision.reenter:
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content accumulates across model passes; the re-entered
-                        # attempt replaces the rejected answer, not concatenates onto it.
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
                         run_response.content = None
+                        run_response.reasoning_content = None
                         continue
                     break
 
@@ -4409,9 +4423,11 @@ async def _arun_stream(
                         yield completed_event
                     if decision.reenter:
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content accumulates across model passes; the re-entered
-                        # attempt replaces the rejected answer, not concatenates onto it.
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
                         run_response.content = None
+                        run_response.reasoning_content = None
                         continue
                     break
 
@@ -8829,9 +8845,11 @@ def _continue_run(
                     )
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content accumulates across model passes; the re-entered
-                        # attempt replaces the rejected answer, not concatenates onto it.
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
                         run_response.content = None
+                        run_response.reasoning_content = None
                         continue
                     break
 
@@ -9097,9 +9115,11 @@ def _continue_run_stream(
                         yield completed_event
                     if decision.reenter:
                         raise_if_cancelled(run_response.run_id)  # type: ignore
-                        # Team content accumulates across model passes; the re-entered
-                        # attempt replaces the rejected answer, not concatenates onto it.
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
                         run_response.content = None
+                        run_response.reasoning_content = None
                         continue
                     break
 
@@ -10272,9 +10292,11 @@ async def _acontinue_run(
                         )
                         if decision.reenter:
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content accumulates across model passes; the re-entered
-                            # attempt replaces the rejected answer, not concatenates onto it.
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
                             run_response.content = None
+                            run_response.reasoning_content = None
                             continue
                         break
 
@@ -10360,9 +10382,11 @@ async def _acontinue_run(
                         )
                         if decision.reenter:
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content accumulates across model passes; the re-entered
-                            # attempt replaces the rejected answer, not concatenates onto it.
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
                             run_response.content = None
+                            run_response.reasoning_content = None
                             continue
                         break
 
@@ -10927,9 +10951,11 @@ async def _acontinue_run_stream(
                             yield completed_event
                         if decision.reenter:
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content accumulates across model passes; the re-entered
-                            # attempt replaces the rejected answer, not concatenates onto it.
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
                             run_response.content = None
+                            run_response.reasoning_content = None
                             continue
                         break
 
@@ -11092,9 +11118,11 @@ async def _acontinue_run_stream(
                             yield completed_event
                         if decision.reenter:
                             await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            # Team content accumulates across model passes; the re-entered
-                            # attempt replaces the rejected answer, not concatenates onto it.
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
                             run_response.content = None
+                            run_response.reasoning_content = None
                             continue
                         break
 

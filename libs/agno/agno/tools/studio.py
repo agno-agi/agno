@@ -5039,6 +5039,7 @@ class StudioTools(Toolkit):
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
         from agno.workflow.workflow import Workflow
 
         target_db = db if db is not None else self.db
@@ -5125,7 +5126,9 @@ class StudioTools(Toolkit):
                         if key_suffix:
                             link["link_key"] = f"{link.get('link_key')}{key_suffix}"
                         links.append(link)
-                elif isinstance(step, (Parallel, Loop, Steps, Condition)):
+                elif isinstance(step, (Parallel, Loop, Steps, Condition, Verify)):
+                    # A resolved Verify carries its absorbed loop-back segment on .steps;
+                    # skipping it would leave the segment's children unpinned.
                     for nested_position, nested in enumerate(getattr(step, "steps", None) or []):
                         walk(nested, nested_position, key_suffix)
                     for nested_position, nested in enumerate(getattr(step, "else_steps", None) or []):

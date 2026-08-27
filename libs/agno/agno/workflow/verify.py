@@ -1023,7 +1023,8 @@ class Verify:
         return None
 
     def _segment_index_for(self, step_req: Any, continued_output: StepOutput) -> int:
-        """Which absorbed segment step the resumed executor belongs to."""
+        """Which absorbed segment step the resumed executor belongs to. Exact step identity
+        outranks executor identity: one agent may be reused across several segment steps."""
         if step_req is not None:
             from agno.workflow.workflow import _find_inner_step_by_executor
 
@@ -1031,6 +1032,7 @@ class Verify:
                 self,
                 executor_id=getattr(step_req, "executor_id", None),
                 executor_name=getattr(step_req, "executor_name", None),
+                step_id=getattr(step_req, "step_id", None),
             )
             if inner is not None:
                 for index, step in enumerate(self.steps):
@@ -1061,6 +1063,9 @@ class Verify:
         workflow_session: Optional[WorkflowSession] = None,
         run_context: Optional[RunContext] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Finish this gate's job after an inner executor resumed from a HITL pause.
@@ -1102,6 +1107,9 @@ class Verify:
                 user_id=context["user_id"],
                 workflow_run_response=workflow_run_response,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
+                add_workflow_history_to_steps=add_workflow_history_to_steps,
+                num_history_runs=num_history_runs,
                 run_context=run_context,
                 session_state=context["session_state"],
                 workflow_session=workflow_session,
@@ -1146,6 +1154,9 @@ class Verify:
             user_id=context["user_id"],
             workflow_run_response=workflow_run_response,
             store_executor_outputs=store_executor_outputs,
+            workflow_media_storage=workflow_media_storage,
+            add_workflow_history_to_steps=add_workflow_history_to_steps,
+            num_history_runs=num_history_runs,
             run_context=run_context,
             session_state=context["session_state"],
             workflow_session=workflow_session,
@@ -1164,6 +1175,9 @@ class Verify:
         workflow_session: Optional[WorkflowSession] = None,
         run_context: Optional[RunContext] = None,
         store_executor_outputs: bool = True,
+        workflow_media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
+        add_workflow_history_to_steps: Optional[bool] = False,
+        num_history_runs: int = 3,
         background_tasks: Optional[Any] = None,
     ) -> StepOutput:
         """Async twin of `continue_from_paused`."""
@@ -1197,6 +1211,9 @@ class Verify:
                 user_id=context["user_id"],
                 workflow_run_response=workflow_run_response,
                 store_executor_outputs=store_executor_outputs,
+                workflow_media_storage=workflow_media_storage,
+                add_workflow_history_to_steps=add_workflow_history_to_steps,
+                num_history_runs=num_history_runs,
                 run_context=run_context,
                 session_state=context["session_state"],
                 workflow_session=workflow_session,
@@ -1241,6 +1258,9 @@ class Verify:
             user_id=context["user_id"],
             workflow_run_response=workflow_run_response,
             store_executor_outputs=store_executor_outputs,
+            workflow_media_storage=workflow_media_storage,
+            add_workflow_history_to_steps=add_workflow_history_to_steps,
+            num_history_runs=num_history_runs,
             run_context=run_context,
             session_state=context["session_state"],
             workflow_session=workflow_session,
@@ -1275,6 +1295,12 @@ def resolve_verify_steps(steps: List[Any], owner: Any = None) -> List[Any]:
         if owner is not None and entry._workflow is None:
             entry._workflow = owner
         if entry._resolved:
+            # A container rebuilt from raw definitions (a Router list route rebuilds its
+            # Steps wrapper from `choices` every run) re-resolves with the already-absorbed
+            # segment steps still present at the container level. Keeping them would run
+            # the segment twice per round: once as ordinary steps, once inside the Verify.
+            absorbed_ids = {id(absorbed) for absorbed in entry.steps}
+            resolved = [item for item in resolved if id(item) not in absorbed_ids]
             resolved.append(entry)
             continue
         target_index = entry._resolve_target_index(resolved)

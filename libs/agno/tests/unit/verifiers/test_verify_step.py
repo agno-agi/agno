@@ -7,7 +7,7 @@ construction-time errors.
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, Iterator, List
+from typing import Any, AsyncIterator, Iterator, List, Optional
 
 import pytest
 
@@ -20,7 +20,7 @@ from agno.run.base import RunStatus
 from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutput
 from agno.tools import tool
 from agno.verifiers import check
-from agno.workflow import Loop, Router, Step, Verify, Workflow
+from agno.workflow import Loop, Parallel, Router, Step, Verify, Workflow
 from agno.workflow.types import HumanReview, StepInput, StepOutput
 
 
@@ -524,6 +524,42 @@ def test_router_direct_pure_gate_choice_passes():
     assert writer_model.calls == 1
 
 
+def test_router_list_route_verify_second_run_does_not_double_execute():
+    # Router rebuilds its list-route Steps wrapper from raw choices every run, so from
+    # the second run the resolver sees an already-resolved Verify next to the segment
+    # step it absorbed on run one; the segment must not survive at the container level.
+    ran = {"fix": 0}
+
+    def fix(step_input: StepInput) -> StepOutput:
+        ran["fix"] += 1
+        return StepOutput(content="fixed")
+
+    workflow = Workflow(
+        name="wf",
+        steps=[
+            Router(
+                name="router",
+                selector=lambda step_input: "steps_group_0",
+                choices=[
+                    [
+                        Step(name="fix", executor=fix),
+                        Verify([always_fail], on_fail="fix", max_rounds=1, name="checked"),
+                    ]
+                ],
+            ),
+        ],
+    )
+    out_first = workflow.run(input="go")
+    assert out_first.status == RunStatus.completed
+    # Initial attempt plus one loop-back round: the segment ran exactly twice.
+    first_run_executions = ran["fix"]
+    assert first_run_executions == 2
+    out_second = workflow.run(input="go")
+    assert out_second.status == RunStatus.completed
+    # The second run executes the segment once per round, exactly like the first.
+    assert ran["fix"] - first_run_executions == first_run_executions
+
+
 def test_router_list_route_with_verify_loop_back_stays_valid():
     ran = {"fix": 0}
 
@@ -545,6 +581,123 @@ def test_router_list_route_with_verify_loop_back_stays_valid():
     out = workflow.run(input="go")
     assert out.status == RunStatus.completed
     assert ran["fix"] == 1
+
+
+# ---------------------------------------------------------------------------
+# Parallel branches
+# ---------------------------------------------------------------------------
+
+
+def test_parallel_direct_verify_with_on_fail_raises_at_build():
+    # A branch raise at execution time is absorbed by the parallel aggregation and the
+    # run completes with zero checks executed, so the refusal must land at build time.
+    with pytest.raises(ValueError, match="pure gate"):
+        Parallel(
+            Step(name="side", executor=lambda step_input: StepOutput(content="side")),
+            Verify([always_pass], name="checked"),
+            name="par",
+        )
+
+
+def test_parallel_steps_swapped_to_bad_verify_raises_loudly_at_prepare():
+    # Steps replaced after construction dodge the constructor guard; the parallel's own
+    # step preparation must still refuse them with a raise that fails the run.
+    writer_model = ScriptedModel([_text("draft")])
+    parallel = Parallel(Step(name="other", executor=lambda step_input: StepOutput(content="other")), name="par")
+    parallel.steps = [Verify([always_pass], name="checked")]
+    workflow = Workflow(
+        name="wf",
+        steps=[Step(name="writer", agent=Agent(name="writer", model=writer_model)), parallel],
+    )
+    with pytest.raises(ValueError, match="pure gate"):
+        workflow.run(input="go")
+
+
+def test_parallel_pure_gate_still_valid():
+    writer_model = ScriptedModel([_text("draft")])
+    workflow = Workflow(
+        name="wf",
+        steps=[
+            Step(name="writer", agent=Agent(name="writer", model=writer_model)),
+            Parallel(
+                Step(name="side", executor=lambda step_input: StepOutput(content="side")),
+                Verify([always_pass], on_fail=None, name="gate"),
+                name="par",
+            ),
+        ],
+    )
+    out = workflow.run(input="go")
+    assert out.status == RunStatus.completed
+    assert writer_model.calls == 1
+
+
+# ---------------------------------------------------------------------------
+# Structural walks over a resolved Verify
+# ---------------------------------------------------------------------------
+
+
+def _resolved_segment_workflow(agent: Agent, workflow_id: Optional[str] = None) -> Workflow:
+    """A workflow whose Verify has already absorbed its segment, as after one prepare."""
+    from agno.workflow.verify import resolve_verify_steps
+
+    workflow = Workflow(
+        id=workflow_id,
+        name="wf",
+        steps=[Step(name="writer", agent=agent), Verify([always_pass], on_fail="writer")],
+    )
+    workflow.steps = resolve_verify_steps(workflow.steps, owner=workflow)
+    assert [type(s).__name__ for s in workflow.steps] == ["Verify"]
+    return workflow
+
+
+def test_studio_version_pin_walk_sees_absorbed_segment_agent(tmp_path):
+    from agno.db.sqlite import SqliteDb
+    from agno.tools.studio import StudioTools
+
+    db = SqliteDb(db_file=str(tmp_path / "pins.db"))
+    Agent(id="seg-agent", name="Seg").save(db=db)
+    workflow = _resolved_segment_workflow(Agent(id="seg-agent", name="Seg"), workflow_id="wf-pins")
+
+    studio = StudioTools(registry=Registry(dbs=[db]), db=db)
+    links = studio._links_for_component(workflow) or []
+    assert any(
+        link.get("link_kind") == "step_agent" and link.get("child_component_id") == "seg-agent" for link in links
+    )
+
+
+def test_step_occurrences_walk_sees_absorbed_segment_agent():
+    from agno.tools.studio_runner import StudioRunnerTools
+
+    workflow = _resolved_segment_workflow(Agent(id="seg-agent", name="Seg"))
+    occurrences = StudioRunnerTools._step_occurrences(workflow)
+    assert any(kind == "step_agent" and ref_id == "seg-agent" for kind, _key, _ref_type, ref_id, _obj in occurrences)
+
+
+def gate_check(run_output):
+    return True
+
+
+def test_component_collection_registers_check_inside_router_list_route():
+    from agno.os.utils import collect_components_from_workflow
+
+    def fix(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="fixed")
+
+    workflow = Workflow(
+        name="wf",
+        steps=[
+            Router(
+                name="router",
+                selector=lambda step_input: "steps_group_0",
+                choices=[[Step(name="fix", executor=fix), Verify([gate_check], on_fail="fix", name="checked")]],
+            ),
+        ],
+    )
+    registry = Registry()
+    collect_components_from_workflow(workflow, registry, set())
+    # The check inside the list route registers by name; without it, rehydration
+    # degrades the gate to a fail-closed placeholder.
+    assert registry.get_function("gate_check") is gate_check
 
 
 # ---------------------------------------------------------------------------

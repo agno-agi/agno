@@ -1819,9 +1819,10 @@ async def _arun(
                             user_id=user_id,
                         )
 
-                    # 11. Store media in run output for the caller. Generated media appends per
-                    # attempt and accumulates across gate attempts exactly like the transcript
-                    # does, so a verifier judges the media of the attempt it is judging.
+                    # 11. Store media in run output for the caller. Media is per-attempt on the
+                    # output surface: a gate re-entry clears the rejected attempt's media (the
+                    # gate owns that reset), so verifiers and the caller see only the attempt
+                    # in front of them; the transcript's messages keep their own history.
                     store_media_util(run_response, model_response)
 
                     # 12. Convert the response to the structured format if needed
@@ -4016,9 +4017,10 @@ def _continue_run(
                             agent, run_response=run_response, session=session, run_context=run_context, user_id=user_id
                         )
 
-                    # 4. Store media in run output for the caller. Generated media appends per
-                    # attempt and accumulates across gate attempts exactly like the transcript
-                    # does, so a verifier judges the media of the attempt it is judging.
+                    # 4. Store media in run output for the caller. Media is per-attempt on the
+                    # output surface: a gate re-entry clears the rejected attempt's media (the
+                    # gate owns that reset), so verifiers and the caller see only the attempt
+                    # in front of them; the transcript's messages keep their own history.
                     store_media_util(run_response, model_response)
 
                     # 5. Convert the response to the structured format if needed
@@ -5331,9 +5333,10 @@ async def _acontinue_run(
                             user_id=user_id,
                         )
 
-                    # 10. Store media in run output for the caller. Generated media appends per
-                    # attempt and accumulates across gate attempts exactly like the transcript
-                    # does, so a verifier judges the media of the attempt it is judging.
+                    # 10. Store media in run output for the caller. Media is per-attempt on the
+                    # output surface: a gate re-entry clears the rejected attempt's media (the
+                    # gate owns that reset), so verifiers and the caller see only the attempt
+                    # in front of them; the transcript's messages keep their own history.
                     store_media_util(run_response, model_response)
 
                     # 11. Convert the response to the structured format if needed

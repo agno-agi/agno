@@ -435,6 +435,16 @@ class VerificationGate:
             record.stop_reason = "exhausted"
         else:
             reenter = True
+            # Media is per-attempt on the run's OUTPUT surface, mirroring content: the run
+            # loop stores each attempt's generated media before the gate opens, the verifier
+            # judges the attempt in front of it, and a re-entry resets the surface so the
+            # caller receives only the accepted attempt's media. Without this reset a
+            # rejected image would stay visible forever, making correction impossible. The
+            # transcript's messages keep whatever they carried; only the output resets.
+            self.run_response.images = None
+            self.run_response.videos = None
+            self.run_response.audio = None
+            self.run_response.response_audio = None
             report = build_report(
                 attempt,
                 attempt_number=attempts_used,

@@ -196,6 +196,25 @@ def test_events_buffer_cleanup_reaps_unverified():
     assert "run-unverified" not in buffer.events
 
 
+def test_events_buffer_cleanup_preserves_unverified_index():
+    # UNVERIFIED is continuable on the same stream: after the buffer reaps a
+    # settled unverified run, a continuation's events must keep ascending
+    # past every index a resuming client has already seen. A counter reset
+    # to 0 makes the client's last_event_index dedup discard the whole
+    # continuation - the same guarantee paused runs already have.
+    from agno.os.managers import EventsBuffer
+
+    buffer = EventsBuffer()
+    buffer.register_run("run-unv", RunStatus.running)
+    for _ in range(3):
+        buffer.add_event("run-unv", object())  # type: ignore[arg-type]
+    buffer.set_run_completed("run-unv", RunStatus.unverified)
+    buffer.cleanup_run("run-unv")
+    assert "run-unv" not in buffer.run_metadata
+    # Continue-in-place reopens under the same id: monotonic, no restart at 0.
+    assert buffer.add_event("run-unv", object()) == 3  # type: ignore[arg-type]
+
+
 def test_events_buffer_cleanup_keeps_running_runs():
     from agno.os.managers import EventsBuffer
 
@@ -273,22 +292,155 @@ def _worker_with(store, component):
     )
 
 
+class _SweepQueueStore:
+    """Job store fake for a FULL _sweep_exhausted pass over one stale job."""
+
+    def __init__(self, job, settle_result=True, settle_raises=False):
+        self.job = job
+        self.settle_result = settle_result
+        self.settle_raises = settle_raises
+        self.swept = []
+
+    async def sweep_exhausted_jobs(self, lock_grace_seconds):
+        return [dict(self.job)]
+
+    async def acquire_sweep(self, job_id, worker_id, lock_grace_seconds):
+        return True
+
+    async def settle_swept_job(self, job_id, worker_id, status, error=None):
+        if self.settle_raises:
+            raise RuntimeError("ticket store write failed")
+        self.swept.append((job_id, status, error))
+        return self.settle_result
+
+
+class _RowComponent:
+    """Component whose run row is ONE mutable dict, exposing the fenceless
+    update primitive an older third-party store would: no unverified-vs-error
+    guard, so the queue layer alone must protect the row."""
+
+    def __init__(self, row):
+        self.row = row
+        self.db = _RowComponent._Db(row)
+
+    async def aget_run_output(self, run_id, session_id, user_id=None):
+        from agno.run.agent import RunOutput
+
+        return RunOutput(run_id=run_id, session_id=session_id, status=RunStatus(self.row["status"]))
+
+    class _Db:
+        def __init__(self, row):
+            self.row = row
+
+        async def update_run_in_session(
+            self, session_id, run_id, fields, expected_attempt=None, user_id=None, content_if_absent=None
+        ):
+            from agno.run.status_persist import RunPersistOutcome
+
+            self.row.update({k: v for k, v in fields.items() if v is not None})
+            return RunPersistOutcome.UPDATED
+
+
+def _swept_job():
+    return {
+        "id": "run-unv",
+        "session_id": "s1",
+        "user_id": None,
+        "component_type": "agent",
+        "component_id": "a1",
+        "payload": {"stream": True},
+        "attempt": 1,
+        "max_attempts": 1,
+    }
+
+
 def test_sweep_reconciles_unverified_run_instead_of_defacing_it(monkeypatch):
     # A crash after the run row committed UNVERIFIED but before the ticket
     # write must reconcile like COMPLETED does: ticket settles completed and
-    # the stream carries the UNVERIFIED terminal. Without the arm, the sweep
-    # fell through to the honest-failure path and rewrote a settled
-    # UNVERIFIED row to ERROR.
-    from agno.run.agent import RunOutput
-
-    class _Component:
-        async def aget_run_output(self, run_id, session_id, user_id=None):
-            return RunOutput(run_id=run_id, session_id=session_id, status=RunStatus.unverified)
-
+    # the stream carries the UNVERIFIED terminal. Driven through the WHOLE
+    # sweep pass: without the arm, the sweep fell through to the honest-
+    # failure path and rewrote the settled UNVERIFIED row to ERROR - the
+    # row's final status is the assertion, not just the reconcile's return.
     import agno.os.event_streams as es_mod
 
-    store = _RecordingQueueStore()
-    worker = _worker_with(store, _Component())
+    row = {"status": "UNVERIFIED"}
+    store = _SweepQueueStore(_swept_job())
+    worker = _worker_with(store, _RowComponent(row))
+    stream = _fresh_in_memory_stream()
+
+    async def scenario():
+        await stream.register_run("run-unv", RunStatus.running)
+        monkeypatch.setattr(es_mod, "get_event_stream", lambda: stream)
+        await worker._sweep_exhausted()
+        return await stream.get_run_status("run-unv")
+
+    stream_status = asyncio.run(scenario())
+    assert store.swept == [("run-unv", "completed", None)]
+    assert row["status"] == "UNVERIFIED"
+    # The stream sentinel keeps the true terminal status, never COMPLETED.
+    assert stream_status == RunStatus.unverified
+
+
+@pytest.mark.parametrize("settle_kwargs", [{"settle_result": False}, {"settle_raises": True}])
+def test_sweep_ticket_settle_failure_never_defaces_reconciled_row(monkeypatch, settle_kwargs):
+    # A transient ticket-store failure AFTER the stream sentinel landed used
+    # to make the reconcile report False, sending the caller down the honest-
+    # failure path against a row that is settled. The ticket may stay open
+    # for the next sweep; the row must survive as UNVERIFIED.
+    import agno.os.event_streams as es_mod
+
+    row = {"status": "UNVERIFIED"}
+    store = _SweepQueueStore(_swept_job(), **settle_kwargs)
+    worker = _worker_with(store, _RowComponent(row))
+    stream = _fresh_in_memory_stream()
+
+    async def scenario():
+        await stream.register_run("run-unv", RunStatus.running)
+        monkeypatch.setattr(es_mod, "get_event_stream", lambda: stream)
+        await worker._sweep_exhausted()
+        return await stream.get_run_status("run-unv")
+
+    stream_status = asyncio.run(scenario())
+    assert row["status"] == "UNVERIFIED"
+    assert stream_status == RunStatus.unverified
+
+
+class _TicketStore:
+    def __init__(self):
+        self.completed = []
+
+    async def complete_job(self, job_id, worker_id, attempt, status, error=None):
+        self.completed.append((job_id, attempt, status, error))
+        return True
+
+
+class _SettledUnverifiedComponent:
+    """No .db on purpose: the reclaim guard must not depend on the prepare or
+    stamp writes landing - only on the row read."""
+
+    def __init__(self):
+        self.arun_calls = 0
+
+    async def aget_run_output(self, run_id, session_id, user_id=None):
+        from agno.run.agent import RunOutput
+
+        return RunOutput(run_id=run_id, session_id=session_id, status=RunStatus.unverified)
+
+    def arun(self, **kwargs):
+        self.arun_calls += 1
+        raise AssertionError("a settled UNVERIFIED row must never re-execute")
+
+
+def test_reclaimed_job_over_settled_unverified_row_does_not_reexecute(monkeypatch):
+    # Crash window: the run row committed UNVERIFIED but the worker died
+    # before the ticket write, so the stale claim is reclaimed (attempt 2).
+    # Re-executing repeats the run's side effects; the claim seam must honor
+    # the settled row instead - ticket completed, stream sentinel UNVERIFIED.
+    import agno.os.event_streams as es_mod
+
+    store = _TicketStore()
+    component = _SettledUnverifiedComponent()
+    worker = _worker_with(store, component)
     stream = _fresh_in_memory_stream()
     job = {
         "id": "run-unv",
@@ -297,20 +449,57 @@ def test_sweep_reconciles_unverified_run_instead_of_defacing_it(monkeypatch):
         "component_type": "agent",
         "component_id": "a1",
         "payload": {"stream": True},
-        "attempt": 1,
+        "attempt": 2,
+        "max_attempts": 3,
     }
 
     async def scenario():
         await stream.register_run("run-unv", RunStatus.running)
         monkeypatch.setattr(es_mod, "get_event_stream", lambda: stream)
-        reconciled = await worker._areconcile_swept_job(job)
-        return reconciled, await stream.get_run_status("run-unv")
+        await worker._execute_claimed_inner(job)
+        return await stream.get_run_status("run-unv")
 
-    reconciled, stream_status = asyncio.run(scenario())
-    assert reconciled is True
-    assert store.swept == [("run-unv", "completed", None)]
-    # The stream sentinel keeps the true terminal status, never COMPLETED.
+    stream_status = asyncio.run(scenario())
+    assert component.arun_calls == 0
+    assert store.completed == [("run-unv", 2, "completed", None)]
     assert stream_status == RunStatus.unverified
+
+
+def test_reclaimed_continuation_of_unverified_run_still_executes():
+    # A queued CONTINUE of an unverified run is the product's
+    # continue-in-place: the reclaim guard must not short-circuit it.
+    from agno.run.agent import RunOutput
+
+    class _ContinuableComponent:
+        def __init__(self):
+            self.continue_calls = 0
+
+        async def aget_run_output(self, run_id, session_id, user_id=None):
+            return RunOutput(run_id=run_id, session_id=session_id, status=RunStatus.unverified)
+
+        async def acontinue_run(self, **kwargs):
+            self.continue_calls += 1
+            return RunOutput(
+                run_id=kwargs.get("run_id"), session_id=kwargs.get("session_id"), status=RunStatus.completed
+            )
+
+    store = _TicketStore()
+    component = _ContinuableComponent()
+    worker = _worker_with(store, component)
+    job = {
+        "id": "run-unv",
+        "session_id": "s1",
+        "user_id": None,
+        "component_type": "agent",
+        "component_id": "a1",
+        "payload": {"stream": False, "continue": {"stream_events": False}},
+        "attempt": 2,
+        "max_attempts": 3,
+    }
+
+    asyncio.run(worker._execute_claimed_inner(job))
+    assert component.continue_calls == 1
+    assert store.completed == [("run-unv", 2, "completed", None)]
 
 
 def test_asettle_paused_ticket_maps_unverified_to_completed():
@@ -600,6 +789,73 @@ def test_a2a_stream_team_unverified_run_ends_failed():
     ]
     assert finals[0]["status"]["state"] == "failed"
     assert finals[0]["metadata"]["stop_reason"] == "noop"
+
+
+def _team_with_failed_member_events():
+    from agno.run.agent import RunStartedEvent, VerificationCompletedEvent
+    from agno.run.team import RunCompletedEvent as TeamRunCompletedEvent
+    from agno.run.team import RunStartedEvent as TeamRunStartedEvent
+
+    return [
+        TeamRunStartedEvent(run_id="team-1", session_id="sess-1"),
+        RunStartedEvent(run_id="member-1", parent_run_id="team-1", session_id="sess-1"),
+        VerificationCompletedEvent(
+            run_id="member-1",
+            parent_run_id="team-1",
+            session_id="sess-1",
+            attempt=2,
+            max_attempts=2,
+            passed=False,
+            stop_reason="exhausted",
+        ),
+        TeamRunCompletedEvent(run_id="team-1", session_id="sess-1", content="team answer"),
+    ]
+
+
+def _task_id_of(result):
+    # The a2a models serialize with field names by default but may carry
+    # camelCase aliases; accept either so the assertion pins the value.
+    return result.get("taskId", result.get("task_id"))
+
+
+def test_a2a_stream_failed_member_does_not_fail_completed_team_run():
+    # The task's lifecycle is scoped to the ROOT run: a member's failed
+    # verification must not mark the completed TEAM run failed, and the
+    # member's RunStarted must not replace the task identity.
+    pytest.importorskip("a2a")
+    parsed = _collect_a2a_stream(_team_with_failed_member_events())
+
+    finals = [
+        p["result"] for p in parsed if p["result"].get("kind") == "status-update" and p["result"].get("final") is True
+    ]
+    assert len(finals) == 1
+    assert finals[0]["status"]["state"] == "completed"
+    assert _task_id_of(finals[0]) == "team-1"
+
+    tasks = [p["result"] for p in parsed if p["result"].get("kind") == "task"]
+    assert len(tasks) == 1
+    assert tasks[0]["status"]["state"] == "completed"
+    assert tasks[0]["id"] == "team-1"
+
+    # Every status-update stays on the team's task: the member's RunStarted
+    # never re-pointed the stream at the nested run.
+    updates = [p["result"] for p in parsed if p["result"].get("kind") == "status-update"]
+    assert all(_task_id_of(u) == "team-1" for u in updates)
+
+
+def test_a2a_stream_nested_verification_still_flows_as_working_update():
+    # Member verification outcomes keep flowing as NON-final working updates,
+    # marked with their origin run so consumers can attribute them.
+    pytest.importorskip("a2a")
+    parsed = _collect_a2a_stream(_team_with_failed_member_events())
+
+    working = [
+        p["result"] for p in parsed if p["result"].get("kind") == "status-update" and p["result"].get("final") is False
+    ]
+    nested = [w for w in working if (w.get("metadata") or {}).get("agno_event_type") == "verification_completed"]
+    assert len(nested) == 1
+    assert nested[0]["metadata"]["passed"] is False
+    assert nested[0]["metadata"]["origin_run_id"] == "member-1"
 
 
 # --- os/utils: the component walk reaches inside a Verify step --------------

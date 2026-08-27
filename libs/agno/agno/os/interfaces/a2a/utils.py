@@ -335,15 +335,36 @@ async def stream_a2a_response(
     completion_event = None
     cancelled_event = None
     last_verification_event = None
+    root_run_id: Optional[str] = None
+
+    def _is_root_event(candidate: Any) -> bool:
+        # The task's lifecycle is scoped to the ROOT run: a Team's member legs
+        # and a workflow's nested steps emit their own started/completed/
+        # verification events on the same stream, and letting those decide the
+        # task identity or terminal state marked a completed team run failed
+        # off a member's outcome. Before the root is known (or when an event
+        # carries no run_id), the nesting marker decides: nested events always
+        # carry parent_run_id.
+        candidate_run_id = getattr(candidate, "run_id", None)
+        if root_run_id is not None and candidate_run_id is not None:
+            return candidate_run_id == root_run_id
+        return not getattr(candidate, "parent_run_id", None)
 
     # Stream events
     async for event in event_stream:
         # 1. Send initial event
         if isinstance(event, (RunStartedEvent, TeamRunStartedEvent, WorkflowStartedEvent)):
-            if hasattr(event, "run_id") and event.run_id:
-                task_id = event.run_id
-            if hasattr(event, "session_id") and event.session_id:
-                context_id = event.session_id
+            # Only the FIRST top-level started event names the task; nested
+            # started events still flow as working updates below but must not
+            # replace the requested task identity.
+            if root_run_id is None and _is_root_event(event):
+                event_run_id = getattr(event, "run_id", None)
+                if event_run_id:
+                    root_run_id = event_run_id
+                    task_id = event_run_id
+                event_session_id = getattr(event, "session_id", None)
+                if event_session_id:
+                    context_id = event_session_id
 
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,
@@ -762,6 +783,8 @@ async def stream_a2a_response(
                 "attempt": event.attempt,
                 "max_attempts": event.max_attempts,
             }
+            if not _is_root_event(event) and getattr(event, "run_id", None):
+                metadata["origin_run_id"] = event.run_id
             status_event = TaskStatusUpdateEvent(
                 task_id=task_id,
                 context_id=context_id,
@@ -773,15 +796,22 @@ async def stream_a2a_response(
             yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
         elif isinstance(event, (VerificationCompletedEvent, TeamVerificationCompletedEvent)):
-            # The LAST completed pass carries the run's verification outcome:
-            # its stop_reason decides the terminal task state below.
-            last_verification_event = event
+            # The ROOT run's LAST completed pass carries the run's verification
+            # outcome: its stop_reason decides the terminal task state below.
+            # A member/nested pass still flows as a working update (marked with
+            # its origin run_id) but never decides the task terminal - a failed
+            # member must not mark a completed team run failed.
+            is_root_verification = _is_root_event(event)
+            if is_root_verification:
+                last_verification_event = event
             metadata = {
                 "agno_event_type": "verification_completed",
                 "attempt": event.attempt,
                 "max_attempts": event.max_attempts,
                 "passed": event.passed,
             }
+            if not is_root_verification and getattr(event, "run_id", None):
+                metadata["origin_run_id"] = event.run_id
             if event.stop_reason:
                 metadata["stop_reason"] = event.stop_reason
             if event.verdicts:
@@ -796,13 +826,16 @@ async def stream_a2a_response(
             response = SendStreamingMessageSuccessResponse(id=request_id, result=status_event)
             yield f"event: TaskStatusUpdateEvent\ndata: {json.dumps(response.model_dump(exclude_none=True))}\n\n"
 
-        # Capture completion event for final task construction
+        # Capture completion event for final task construction - root only: a
+        # member/nested completion must not supply the task's final payload
         elif isinstance(event, (RunCompletedEvent, TeamRunCompletedEvent, WorkflowCompletedEvent)):
-            completion_event = event
+            if _is_root_event(event):
+                completion_event = event
 
-        # Capture cancelled event for final task construction
+        # Capture cancelled event for final task construction - root only
         elif isinstance(event, (RunCancelledEvent, TeamRunCancelledEvent, WorkflowCancelledEvent)):
-            cancelled_event = event
+            if _is_root_event(event):
+                cancelled_event = event
 
     # Caller-stamped metadata rides the terminal status-update for out-of-band
     # delivery. Metrics are excluded - they already flow via .metrics / the history

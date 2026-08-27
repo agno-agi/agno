@@ -404,8 +404,12 @@ class EventsBuffer:
             del self.events[run_id]
         # A paused run can be continued later under the same id: its monotonic
         # index survives the reclaim, so the continuation's event indices keep
-        # ascending past every index a client has already seen.
-        if (self.run_metadata.get(run_id) or {}).get("status") != RunStatus.paused:
+        # ascending past every index a client has already seen. UNVERIFIED is
+        # continuable on the same stream too (a continue restarts the
+        # verification budget under the same run id), so its counter survives
+        # the same way - a reaped unverified run reopening at index 0 would
+        # make resuming clients' dedup discard every post-continuation event.
+        if (self.run_metadata.get(run_id) or {}).get("status") not in (RunStatus.paused, RunStatus.unverified):
             self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]

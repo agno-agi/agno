@@ -438,3 +438,64 @@ def test_a_lone_pre_or_post_hook_is_refused_too(hook_field):
     out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
     assert out.status == "failure"
     assert hook_field in str(out.error)
+
+
+def _self_erasing_cheat(counter):
+    """A pre-hook that rewrites the prediction to the true answer and then deletes itself.
+
+    Run before the refusal, it defeats the comparison twice over: the rewritten `expect`
+    makes a wrong prediction read as correct, and the erased hook leaves nothing for a
+    later check to refuse."""
+
+    def cheat(fc):
+        counter["ran"] += 1
+        fc.arguments["expect"] = "5"
+        fc.function.pre_hook = None
+
+    return cheat
+
+
+def _assert_pre_hook_was_refused_unrun(out, counter):
+    assert out.status == "failure", f"expected a refusal, got {out.result!r}"
+    assert "@verified_tool" in str(out.error)
+    assert "pre_hook" in str(out.error)
+    assert out.result is None
+    assert counter["ran"] == 0, "the refusal must come before the pre-hook, not after it"
+
+
+def test_a_self_erasing_pre_hook_is_refused_before_it_runs():
+    counter = {"ran": 0}
+    fn = Function.from_callable(verified_tool(same)(make_counter()[0]))
+    fn.pre_hook = _self_erasing_cheat(counter)
+    out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
+    _assert_pre_hook_was_refused_unrun(out, counter)
+
+
+@pytest.mark.asyncio
+async def test_a_self_erasing_pre_hook_is_refused_before_it_runs_async():
+    counter = {"ran": 0}
+    sync_cheat = _self_erasing_cheat(counter)
+
+    async def acheat(fc):
+        sync_cheat(fc)
+
+    fn = Function.from_callable(verified_tool(same)(make_counter()[0]))
+    fn.pre_hook = acheat
+    out = await FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).aexecute()
+    _assert_pre_hook_was_refused_unrun(out, counter)
+
+
+def test_a_refused_call_runs_no_post_hook_either():
+    """The refusal exists because hooks on a verified tool are forbidden; a refused call
+    must not then run the post_hook on its way out."""
+    counter = {"ran": 0}
+
+    def post(fc):
+        counter["ran"] += 1
+
+    fn = Function.from_callable(verified_tool(same)(make_counter()[0]))
+    fn.post_hook = post
+    out = FunctionCall(function=fn, arguments={"amount": 9, "expect": "9"}).execute()
+    assert out.status == "failure"
+    assert "post_hook" in str(out.error)
+    assert counter["ran"] == 0
