@@ -1,14 +1,14 @@
 # Test Log: 07_security
 
-Last updated: 2026-07-24
+Last updated: 2026-08-07
 
 Server verification used `.venvs/demo` with the pinned worktree library on
-`PYTHONPATH`. The eight local server examples (`basic_scopes.py`,
+`PYTHONPATH`. The nine local server examples (`basic_scopes.py`,
 `asymmetric_keys.py`, `per_resource_scopes.py`, `custom_scope_mappings.py`,
-`cookie_auth.py`, `jwt_claims.py`, `user_isolation.py`, and
-`service_accounts.py`) were started through `AgentOS.serve()`: all returned
-200 from `/health` and 401 from an unauthenticated `/config` request before
-clean termination.
+`cookie_auth.py`, `jwt_claims.py`, `user_isolation.py`,
+`user_isolation_knowledge.py`, and `service_accounts.py`) were started through
+`AgentOS.serve()`: all returned 200 from `/health` and 401 from an
+unauthenticated `/config` request before clean termination.
 
 ### basic_scopes.py
 
@@ -110,6 +110,24 @@ exactly its own session, while the admin response included both.
 
 ---
 
+### user_isolation_knowledge.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Seeded two shared content rows and one row per JWT subject
+while `user_isolation=True`, then drove the knowledge routes as a non-admin and
+as an admin.
+
+**Result:** The non-admin listing held its own row plus both shared rows.
+`PATCH` and `DELETE` on a shared row returned 403, `DELETE` on the other
+subject's row returned 404, and the bulk delete cleared only the caller's own
+row. The admin deleted a shared row and the other subject's row with 200 each,
+leaving the same two rows behind across three consecutive runs.
+
+---
+
 ### service_accounts.py
 
 **Status:** PASS
@@ -138,7 +156,7 @@ it with a 204 response.
 WorkOS configuration with `permissions` scopes and explicit audience
 verification, and inspected the mounted OpenAPI paths.
 
-**Result:** The app constructed successfully with 70 routes; `/health`,
+**Result:** The app constructed successfully with 69 routes; `/health`,
 `/config`, and `/agents` were mounted. A live provider run still requires
 `WORKOS_CLIENT_ID`, `WORKOS_API_KEY`, and the `workos` package.
 

@@ -1,7 +1,7 @@
 """Integration tests for the Metrics related methods of the AsyncPostgresDb class"""
 
 import time
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 
 import pytest
 import pytest_asyncio
@@ -37,6 +37,17 @@ async def cleanup_metrics_and_sessions(async_postgres_db_real: AsyncPostgresDb):
             pass  # Ignore cleanup errors for sessions table
     except Exception:
         pass  # Ignore cleanup errors
+
+
+async def _persist(db: AsyncPostgresDb, session) -> None:
+    """Store a session the way v3 does: the row, then each run in the runs table.
+
+    ``upsert_session`` stopped writing the runs column when runs were normalised out, so a
+    metrics test that only called it would count no runs at all.
+    """
+    await db.upsert_session(session)
+    for run_index, run in enumerate(session.runs or []):
+        await db.upsert_run(run, session_id=session.session_id, user_id=session.user_id, run_index=run_index)
 
 
 @pytest.mark.asyncio
@@ -95,7 +106,7 @@ async def test_calculate_metrics_with_sessions(async_postgres_db_real: AsyncPost
         updated_at=current_time,
     )
 
-    await async_postgres_db_real.upsert_session(session)
+    await _persist(async_postgres_db_real, session)
 
     # Calculate metrics
     result = await async_postgres_db_real.calculate_metrics()
@@ -141,8 +152,11 @@ async def test_get_metrics_with_date_filter(async_postgres_db_real: AsyncPostgre
     # Calculate metrics
     await async_postgres_db_real.calculate_metrics()
 
-    # Get metrics for yesterday
-    yesterday = date.fromordinal(date.today().toordinal() - 1)
+    # Get metrics for yesterday. The session above is placed 24 hours back and
+    # the metrics are bucketed by UTC date, so the day asked for has to be a UTC
+    # day too: date.today() is the local date and names the wrong day whenever
+    # the machine is not on UTC.
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
     metrics, latest_updated_at = await async_postgres_db_real.get_metrics(
         starting_date=yesterday, ending_date=yesterday
     )
@@ -249,7 +263,7 @@ async def test_get_all_sessions_for_metrics_calculation(async_postgres_db_real: 
             created_at=current_time - (3600 * i),  # Spread over time
         )
 
-        await async_postgres_db_real.upsert_session(session)
+        await _persist(async_postgres_db_real, session)
 
     # Get all sessions for metrics
     sessions = await async_postgres_db_real._get_all_sessions_for_metrics_calculation()

@@ -34,19 +34,19 @@ from agno.tools.coding import CodingTools
 
 # Core tools only (default)
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[CodingTools(base_dir="./workspace")],
 )
 
 # All 7 tools
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[CodingTools(base_dir="./workspace", all=True)],
 )
 
 # Selective
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[CodingTools(base_dir="./workspace", enable_grep=True, enable_find=True)],
 )
 ```
