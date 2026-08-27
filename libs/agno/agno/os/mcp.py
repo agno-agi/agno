@@ -105,8 +105,16 @@ def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPServerConfig]") ->
 
 
 def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
-    """Register a single custom tool, supporting plain callables and Agno tools/Functions."""
+    """Register a single custom tool, supporting plain callables, Agno tools/Functions, and Toolkits."""
     from fastmcp.tools import Tool
+
+    from agno.tools import Toolkit
+
+    # Toolkit: flatten into individual Functions and register each.
+    if isinstance(tool, Toolkit):
+        for func in tool.get_async_functions().values():
+            _register_custom_tool(mcp, func)
+        return
 
     # Agno tool / Function: a callable ``entrypoint`` plus name/description metadata.
     entrypoint = getattr(tool, "entrypoint", None)
@@ -122,7 +130,7 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
         return
 
     raise TypeError(
-        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
+        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable, Agno tool/Function, or Toolkit."
     )
 
 
