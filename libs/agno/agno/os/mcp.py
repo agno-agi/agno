@@ -126,9 +126,15 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
 
 
 def _get_excluded_params(fn: Callable) -> tuple:
-    """Compute params to hide from MCP schema.
+    """Compute which params to hide from the MCP-facing schema.
 
-    Returns (excluded_params, signature). Same logic as toolkit's process_entrypoint.
+    Returns (excluded_param_names, signature).
+
+    Why hide params? Two reasons:
+    1. Security: prevent identity spoofing (model choosing whose data a tool reads)
+    2. Pydantic: RunContext contains FilterExpr which cannot be serialized to JSON schema
+
+    See agno.utils.schema for the full exclusion rules.
     """
     from typing import get_type_hints
 
@@ -137,14 +143,18 @@ def _get_excluded_params(fn: Callable) -> tuple:
     except (ValueError, TypeError):
         return [], None
 
-    # 1. Exclude by name
+    # Exclude by name: framework-injected params (agent, team, run_context, images, etc.)
+    # plus user_id which is injected from JWT at runtime
     excluded = [*FRAMEWORK_INJECTED_PARAMS, "user_id"]
+    # Also exclude _agno_* prefixed params if present
     excluded.extend(name for name in sig.parameters if name in AGNO_INJECTED_PARAMS)
 
-    # 2. Exclude by type
+    # Exclude by type: any param annotated with RunContext, Agent, Team, or media types
+    # regardless of what name the user gave it (e.g., ctx: RunContext, helper: Agent)
     try:
         type_hints = get_type_hints(fn)
         for param_name, hint in list(type_hints.items()):
+            # get_type_hints includes "return" key for return annotation — skip it
             if param_name == "return":
                 continue
             if is_schema_excluded(hint):
@@ -156,20 +166,32 @@ def _get_excluded_params(fn: Callable) -> tuple:
 
 
 def _wrap_custom_tool(fn: Callable) -> Callable:
-    """Wrap custom tool to hide framework params and inject user_id at runtime."""
+    """Wrap a custom tool to hide framework params from MCP clients.
+
+    What this wrapper does:
+    1. Hides excluded params from the function signature (MCP clients won't see them)
+    2. Injects user_id from JWT at call time (if the tool accepts it)
+
+    The wrapper's __signature__ is what FastMCP uses to build the tool's JSON schema,
+    so by replacing it we control what params MCP clients can fill in.
+    """
     excluded, sig = _get_excluded_params(fn)
 
+    # No params to hide → return original function unchanged
     if sig is None or not any(name in excluded for name in sig.parameters):
         return fn
 
+    # Build new signature with only visible params
     visible_params = [p for name, p in sig.parameters.items() if name not in excluded]
     new_sig = sig.replace(parameters=visible_params)
     has_user_id = "user_id" in sig.parameters
 
+    # Async wrapper
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            # Inject user_id from JWT subject at call time
             if has_user_id:
                 kwargs["user_id"] = _resolve_user_id(None)
             return await fn(*args, **kwargs)
@@ -177,8 +199,10 @@ def _wrap_custom_tool(fn: Callable) -> Callable:
         async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
         return async_wrapper
 
+    # Sync wrapper
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        # Inject user_id from JWT subject at call time
         if has_user_id:
             kwargs["user_id"] = _resolve_user_id(None)
         return fn(*args, **kwargs)
