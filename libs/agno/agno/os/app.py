@@ -496,7 +496,9 @@ class AgentOS:
         # limiter and last_used_at throttle are shared across the REST and MCP apps.
         self._service_account_verifier: Optional[Any] = None
 
-        # List of all MCP tools used inside the AgentOS
+        # Client-side MCP: the MCPTools connections that agents/teams/workflows in this
+        # AgentOS consume (collected so their lifecycles are managed in the app lifespan).
+        # Unrelated to ``mcp=``, which SERVES this AgentOS as an MCP server at /mcp.
         self.mcp_tools: List[Any] = []
         self._mcp_app: Optional[Any] = None
         # Guards get_app() idempotency when a base_app is supplied (that path mutates

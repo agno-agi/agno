@@ -187,6 +187,22 @@ async def test_exposed_tool_schema_shows_only_client_facing_params():
         (tool,) = await client.list_tools()
     assert set(tool.inputSchema.get("properties", {})) == {"message", "user_id", "session_id"}
     assert tool.inputSchema.get("required") == ["message"]
+    assert tool.annotations is not None
+    assert tool.annotations.readOnlyHint is False
+    assert tool.annotations.openWorldHint is True
+
+
+async def test_exposed_tool_description_fallback_without_component_description():
+    """A component without a description gets the documented fallback plus the fixed sentence."""
+    agent = _agent()  # name "Chief", no description
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+
+    async with Client(build_mcp_server(os)) as client:
+        (tool,) = await client.list_tools()
+    assert tool.description == (
+        "Run the Chief agent with a message. "
+        "Pass the returned session_id back to continue the conversation; omit it to start a new one."
+    )
 
 
 async def test_exposed_tool_name_is_sanitized():
@@ -251,15 +267,120 @@ async def test_exposed_agent_allows_matching_scope(monkeypatch):
 
 
 async def test_exposed_agent_surfaces_paused_runs():
-    """A PAUSED (HITL) run comes back with its status visible, not swallowed."""
+    """A PAUSED (HITL) run comes back with its status and requirements visible, not swallowed."""
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+
     agent = _agent()
-    _stub_arun(agent, RunOutput(run_id="r-1", session_id="s-1", content=None, status=RunStatus.paused))
+    _stub_arun(
+        agent,
+        RunOutput(
+            run_id="r-1",
+            session_id="s-1",
+            content=None,
+            status=RunStatus.paused,
+            requirements=[
+                RunRequirement(tool_execution=ToolExecution(tool_name="send_email", requires_confirmation=True))
+            ],
+        ),
+    )
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
 
     result = await _call_tool(os, "chief", {"message": "hi"})
     structured = result.structured_content or {}
     structured = structured.get("result", structured) or {}
     assert structured.get("status") == RunStatus.paused.value
+    assert len(structured.get("requirements") or []) == 1
+
+
+async def test_exposed_tool_resolves_at_call_time(monkeypatch):
+    """The tool must run the component the resolver returns, not a build-time capture.
+
+    Per-run copies, registry lookup, and versioning all live in _resolve_run_component;
+    if the factory closed over the roster instance instead, this substitute would never
+    run and the roster stub would."""
+    roster_agent = _agent()
+    roster_calls = _stub_arun(roster_agent, RunOutput(content="roster"))
+    substitute = Agent(id="chief", name="Chief Substitute")
+    substitute_calls = _stub_arun(substitute, RunOutput(content="substitute"))
+    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, agents=[roster_agent]))
+
+    async def _resolve(os_, kind, component_id, **kwargs):
+        assert kind == "agents" and component_id == "chief"
+        return substitute
+
+    monkeypatch.setattr(mcp_mod, "_resolve_run_component", _resolve)
+    await _call_tool(os, "chief", {"message": "hi"})
+
+    assert substitute_calls and substitute_calls[0]["message"] == "hi"
+    assert not roster_calls
+
+
+async def test_exposed_tools_apply_the_session_ownership_gate(monkeypatch):
+    """All three exposed kinds run the ownership gate with their own SessionType and the
+    minted session -- deleting the gate call or crossing the SessionType fails here."""
+    from agno.db.base import SessionType
+
+    recorded: list = []
+
+    async def _record_gate(os_app, component, session_id, user_id, session_type):
+        recorded.append({"session_id": session_id, "session_type": session_type})
+
+    monkeypatch.setattr(mcp_mod, "_assert_session_writable_mcp", _record_gate)
+
+    agent, team, workflow = _agent(), _team(), _workflow()
+    _stub_arun(agent, RunOutput(content="ok"))
+    _stub_arun(team, TeamRunOutput(content="ok"))
+    _stub_arun(workflow, WorkflowRunOutput(content="ok"))
+    os = AgentOS(
+        agents=[agent],
+        teams=[team],
+        workflows=[workflow],
+        mcp=MCPConfig(default_tools=False, agents=[agent], teams=[team], workflows=[workflow]),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        await client.call_tool("chief", {"message": "a"})
+        await client.call_tool("support-team", {"message": "b"})
+        await client.call_tool("daily-brief", {"message": "c"})
+
+    assert [r["session_type"] for r in recorded] == [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]
+    assert all(r["session_id"] for r in recorded)
+
+
+async def test_exposed_workflow_enforces_scopes_and_mints_sessions(monkeypatch):
+    """The workflow factory is its own code path: pin its scope gate and session minting."""
+    _patch_request(monkeypatch, _pat_request(["agents:run"]))
+    workflow = _workflow()
+    wf_calls = _stub_arun(workflow, WorkflowRunOutput(content="ok"))
+    os = AgentOS(workflows=[workflow], mcp=MCPConfig(default_tools=False, workflows=[workflow]))
+
+    denied = await _call_tool(os, "daily-brief", {"message": "go"}, raise_on_error=False)
+    assert denied.is_error
+    assert "workflows:run" in str(denied.content)
+
+    _patch_request(monkeypatch, _pat_request(["workflows:run"]))
+    async with Client(build_mcp_server(os)) as client:
+        await client.call_tool("daily-brief", {"message": "one"})
+        await client.call_tool("daily-brief", {"message": "two"})
+    minted = [c["session_id"] for c in wf_calls]
+    assert all(minted) and minted[0] != minted[1]
+
+
+async def test_exposed_agent_honours_per_resource_scopes(monkeypatch):
+    """agents:<id>:run grants exactly that agent's tool -- the fail-open regression guard."""
+    agent = _agent()
+    _stub_arun(agent, RunOutput(content="ok"))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+
+    _patch_request(monkeypatch, _pat_request(["agents:chief:run"]))
+    allowed = await _call_tool(os, "chief", {"message": "hi"}, raise_on_error=False)
+    assert not allowed.is_error
+
+    _patch_request(monkeypatch, _pat_request(["agents:other-agent:run"]))
+    blocked = await _call_tool(os, "chief", {"message": "hi"}, raise_on_error=False)
+    assert blocked.is_error
+    assert "Insufficient permissions" in str(blocked.content)
 
 
 # ==================== Build-time validation ====================
@@ -313,6 +434,53 @@ def test_exposing_unknown_id_string_raises():
         build_mcp_server(os)
 
 
+def test_exposed_id_colliding_with_named_agno_function_raises():
+    """The Agno @tool branch of custom-name resolution feeds collision detection too."""
+    from agno.tools import tool
+
+    @tool(name="chief", description="Custom chief function")
+    def chief_fn() -> str:
+        """Custom chief."""
+        return "custom"
+
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent], tools=[chief_fn]))
+    with pytest.raises(ValueError, match='custom tool "chief"'):
+        build_mcp_server(os)
+
+
+async def test_exposure_composes_with_include_tags():
+    """Tag scoping keeps applying to the default tools while exposure adds its own names."""
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(include_tags={"core"}, agents=[agent]))
+
+    names = await _tool_names(os)
+    core = {name for name, tag in mcp_mod._BUILTIN_TOOL_NAMES.items() if tag == "core"}
+    session = {name for name, tag in mcp_mod._BUILTIN_TOOL_NAMES.items() if tag == "session"}
+    assert names == core | {"chief"}
+    assert not (names & session)
+
+
+async def test_named_component_without_id_gets_its_deterministic_id():
+    """A named, id-less component works: AgentOS mints its name-derived id at
+    construction (stable across boots), and the exposed tool follows it."""
+    agent = Agent(name="Solo Named")
+    _stub_arun(agent, RunOutput(content="ok"))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+
+    assert await _tool_names(os) == {"solo-named"}
+    assert agent.id == "solo-named"
+
+
+def test_over_long_tool_name_raises():
+    """MCP tool names are capped at 64 characters -- a longer id is a hard build error,
+    never silent truncation."""
+    agent = _agent(id="a" * 65)
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    with pytest.raises(ValueError, match="limited to 64"):
+        build_mcp_server(os)
+
+
 def test_zero_tools_validator_accepts_exposure_and_still_rejects_empty():
     MCPConfig(default_tools=False, agents=[_agent()])
     with pytest.raises(ValueError, match="zero tools"):
@@ -342,6 +510,14 @@ def test_enable_builtin_tools_maps_to_default_tools():
 def test_conflicting_default_tools_spellings_raise():
     with pytest.raises(ValueError, match="deprecated alias"):
         MCPConfig(default_tools=True, enable_builtin_tools=False)
+
+
+def test_enable_builtin_tools_assignment_still_works():
+    """Pre-rename this was a plain field write; the alias keeps assignment working."""
+    config = MCPConfig(tools=[lambda: "x"])
+    config.enable_builtin_tools = False
+    assert config.default_tools is False
+    assert config.enable_builtin_tools is False
 
 
 def test_enable_builtin_tools_alias_does_not_mutate_caller_dict():

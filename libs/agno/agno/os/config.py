@@ -147,8 +147,14 @@ class MCPConfig(BaseModel):
 
     @property
     def enable_builtin_tools(self) -> bool:
-        """Deprecated read alias for ``default_tools``."""
+        """Deprecated alias for ``default_tools``."""
         return self.default_tools
+
+    @enable_builtin_tools.setter
+    def enable_builtin_tools(self, value: bool) -> None:
+        # Pre-rename this was a plain field, so post-construction assignment worked;
+        # the alias keeps that path working too.
+        self.default_tools = bool(value)
 
     def _has_exposed_components(self) -> bool:
         return bool(self.agents) or bool(self.teams) or bool(self.workflows)

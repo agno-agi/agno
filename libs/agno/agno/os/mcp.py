@@ -764,8 +764,11 @@ def _make_run_ownership_verifier(os: "AgentOS"):
 
 # ==================== Exposed components (agents/teams/workflows as tools) ====================
 
-# MCP tool names are restricted to this charset; component ids that already conform are
-# used verbatim so the tool name matches what get_agentos_config and REST show.
+# MCP tool names are restricted to this charset and to 64 characters; component ids that
+# already conform are used verbatim so the tool name matches what get_agentos_config and
+# REST show. Over-long names are a hard error (never silent truncation) -- clients that
+# enforce the limit would otherwise reject the tool, or the whole tool list, at runtime.
+_TOOL_NAME_MAX_LENGTH = 64
 _TOOL_NAME_VALID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
 _TOOL_NAME_INVALID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
 
@@ -835,14 +838,13 @@ def _make_exposed_run_tool(
     os: "AgentOS",
     kind: "Literal['agents', 'teams']",
     component_id: str,
-    display_name: str,
     result_mode: str,
 ) -> Callable:
     """A run tool bound to one agent or team: the ``run_agent``/``run_team`` body with
     the component id fixed. Resolution happens at call time so per-run copies, registry
     lookup, versioning, and factories behave identically to the generic tools."""
     session_type = SessionType.AGENT if kind == "agents" else SessionType.TEAM
-    label = f"{'Agent' if kind == 'agents' else 'Team'} {display_name}"
+    label_prefix = "Agent" if kind == "agents" else "Team"
 
     async def run_exposed(
         message: str,
@@ -858,8 +860,15 @@ def _make_exposed_run_tool(
         # Mint a fresh session per call when omitted (matches REST), never the sticky default.
         new_session_id = _session_id_or_new(session_id)
         await _assert_session_writable_mcp(os, component, new_session_id, resolved_user_id, session_type)
+        # Label from the resolved component, matching run_agent/run_team -- a registry or
+        # published version may carry a different name than the roster instance.
         run_output = await _run_agentic_component(
-            ctx, component, message, resolved_user_id, new_session_id, label=label
+            ctx,
+            component,
+            message,
+            resolved_user_id,
+            new_session_id,
+            label=f"{label_prefix} {component.name or component_id}",
         )
         return build_run_tool_result(run_output, result_mode)
 
@@ -943,11 +952,10 @@ def _register_exposed_components(
         roster = list(getattr(os, kind, None) or [])
         for entry in entries:
             component = _resolve_exposed_entry(entry, kind, roster)
+            # AgentOS mints ids for roster components at construction (name-derived when
+            # named, generated otherwise), so the id is normally always set here; the
+            # error is defense for exotic components that dodge that path.
             component_id = getattr(component, "id", None)
-            if not component_id and hasattr(component, "set_id"):
-                # Ids are otherwise minted lazily at first run; the tool needs one now.
-                component.set_id()
-                component_id = getattr(component, "id", None)
             if not component_id:
                 label = getattr(component, "name", None) or repr(component)
                 raise ValueError(
@@ -959,6 +967,12 @@ def _register_exposed_components(
                 raise ValueError(
                     f"MCPConfig.{kind} entry {component_id!r} produces an empty MCP tool name; "
                     "use an id with letters, digits, hyphens, or underscores."
+                )
+            if len(tool_name) > _TOOL_NAME_MAX_LENGTH:
+                raise ValueError(
+                    f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") is '
+                    f"{len(tool_name)} characters; MCP tool names are limited to "
+                    f"{_TOOL_NAME_MAX_LENGTH}. Set a shorter id on the component."
                 )
             if tool_name in taken:
                 raise ValueError(
@@ -980,7 +994,7 @@ def _register_exposed_components(
             if kind == "workflows":
                 fn = _make_exposed_workflow_tool(os, component_id, result_mode)
             else:
-                fn = _make_exposed_run_tool(os, kind, component_id, display_name, result_mode)  # type: ignore[arg-type]
+                fn = _make_exposed_run_tool(os, kind, component_id, result_mode)  # type: ignore[arg-type]
             mcp.tool(
                 name=tool_name,
                 description=description,
