@@ -6,6 +6,7 @@ agent can never retrieve. Each embedder is driven with a client that fails, and 
 one that returns a well-formed but empty response.
 """
 
+import importlib
 from unittest.mock import MagicMock
 
 import pytest
@@ -34,7 +35,11 @@ EMBEDDERS = [
 
 def load(module_path: str, class_name: str, kwargs: dict):
     """Build the embedder, skipping when its optional dependency is absent."""
-    module = pytest.importorskip(module_path)
+    try:
+        module = importlib.import_module(module_path)
+    except ImportError as e:
+        pytest.skip(f"{module_path} unavailable: {e}")
+
     cls = getattr(module, class_name, None)
     if cls is None:
         pytest.skip(f"{class_name} not exported by {module_path}")
