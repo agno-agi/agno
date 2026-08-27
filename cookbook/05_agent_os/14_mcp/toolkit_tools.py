@@ -26,6 +26,7 @@ Try: connect an MCP client to http://localhost:7777/mcp and call read_file
 import tempfile
 from pathlib import Path
 
+from agno.agent import Agent
 from agno.context.mode import ContextMode
 from agno.context.workspace import WorkspaceContextProvider
 from agno.os import AgentOS, MCPServerConfig
@@ -73,9 +74,19 @@ provider = WorkspaceContextProvider(
 # Expose the toolkit as MCP tools
 # ---------------------------------------------------------------------------
 
+# Agent that uses the same workspace tools (accessible via run_agent MCP tool)
+workspace_agent = Agent(
+    id="workspace-agent",
+    name="Workspace Agent",
+    tools=[workspace],
+    instructions="You help users explore and understand the workspace files.",
+    markdown=True,
+)
+
 agent_os = AgentOS(
     id="toolkit-mcp-os",
     description="AgentOS exposing Workspace toolkit as MCP tools.",
+    agents=[workspace_agent],
     mcp_server=MCPServerConfig(
         tools=[workspace],  # Or: tools=provider.get_tools()
         enable_builtin_tools=False,
