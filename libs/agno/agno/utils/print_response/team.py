@@ -278,14 +278,7 @@ def print_response(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Compression stats are now on run_response.metrics (not available during streaming)
-
-                    # Add compaction stats
-                    if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
-                        stats = team.context_compaction_manager.stats
-                        if stats.get("messages_compacted", 0) > 0:
-                            tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
-                        team.context_compaction_manager.stats.clear()
+                    # Compression and compaction stats are on run_response.metrics (not available during streaming)
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -658,13 +651,7 @@ def print_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Compression stats are now on run_response.metrics (not available during streaming)
-
-                    # Add compaction stats
-                    if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
-                        stats = team.context_compaction_manager.stats
-                        if stats.get("messages_compacted", 0) > 0:
-                            tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
+                    # Compression and compaction stats are on run_response.metrics (not available during streaming)
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -894,7 +881,7 @@ def print_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats (read from run_response.metrics)
+                # Add compression and compaction stats (read from run_response.metrics)
                 stats: Dict[str, Any] = (
                     get_compaction_stats(run_response.metrics) if isinstance(run_response, TeamRunOutput) else {}
                 )
@@ -903,10 +890,6 @@ def print_response_stream(
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-
-                # Add compaction stats
-                if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
-                    stats = team.context_compaction_manager.stats
                     if stats.get("messages_compacted", 0) > 0:
                         tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
 
@@ -1589,13 +1572,7 @@ async def aprint_response_stream(
                     # Join with blank lines between items
                     tool_calls_text = "\n\n".join(lines)
 
-                    # Compression stats are now on run_response.metrics (not available during streaming)
-
-                    # Add compaction stats
-                    if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
-                        stats = team.context_compaction_manager.stats
-                        if stats.get("messages_compacted", 0) > 0:
-                            tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
+                    # Compression and compaction stats are on run_response.metrics (not available during streaming)
 
                     team_tool_calls_panel = create_panel(
                         content=tool_calls_text,
@@ -1843,7 +1820,7 @@ async def aprint_response_stream(
 
                 tool_calls_text = "\n\n".join(lines)
 
-                # Add compression stats (read from run_response.metrics)
+                # Add compression and compaction stats (read from run_response.metrics)
                 stats: Dict[str, Any] = (
                     get_compaction_stats(run_response.metrics) if isinstance(run_response, TeamRunOutput) else {}
                 )
@@ -1852,10 +1829,6 @@ async def aprint_response_stream(
                     orig = stats.get("original_size", 1)
                     if stats.get("tool_results_compressed", 0) > 0:
                         tool_calls_text += f"\n\ncompressed: {stats.get('tool_results_compressed', 0)} | Saved: {saved:,} chars ({saved / orig * 100:.0f}%)"
-
-                # Add compaction stats
-                if team.context_compaction_manager is not None and team.context_compaction_manager.stats:
-                    stats = team.context_compaction_manager.stats
                     if stats.get("messages_compacted", 0) > 0:
                         tool_calls_text += f"\n\ncompacted: {stats.get('messages_compacted', 0)} msgs | Saved: {stats.get('tokens_saved', 0):,} tokens"
 
