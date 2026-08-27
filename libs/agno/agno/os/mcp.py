@@ -822,6 +822,10 @@ def _resolve_exposed_entry(entry: Any, kind: str, os: "AgentOS") -> Any:
     part of the roster. Instances match by identity first, then by id (so an equal copy
     of a roster component still resolves); id strings match by id.
     """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+    from agno.workflow.workflow import Workflow
+
     roster = list(getattr(os, kind, None) or [])
     if isinstance(entry, str):
         for component in roster:
@@ -834,24 +838,46 @@ def _resolve_exposed_entry(entry: Any, kind: str, os: "AgentOS") -> Any:
     for component in roster:
         if component is entry:
             return component
+
     entry_id = getattr(entry, "id", None)
-    if entry_id is not None:
-        for component in roster:
-            if getattr(component, "id", None) == entry_id:
-                return component
     label = getattr(entry, "name", None) or entry_id or repr(entry)
-    # A wrong-kind entry (e.g. a Team in MCPConfig.agents) must not be advised into
-    # AgentOS(agents=[...]) -- AgentOS would accept it silently and the tool would then
-    # be gated on the wrong scope family. Name the actual kind instead.
+
+    def _wrong_kind_error(other_kind: str) -> ValueError:
+        # A wrong-kind entry (e.g. a Team in MCPConfig.agents) must not be advised into
+        # AgentOS(agents=[...]) -- AgentOS would accept it silently and the tool would
+        # then be gated on the wrong scope family.
+        return ValueError(
+            f"MCPConfig.{kind} contains {label!r}, which is one of this AgentOS's "
+            f"{other_kind}; move it to MCPConfig.{other_kind}."
+        )
+
+    # Wrong-kind checks run BEFORE the id fallback: AgentOS permits an Agent and a Team
+    # to share an id, so a Team entry in MCPConfig.agents would otherwise id-match the
+    # same-id Agent and silently publish a different component of a different kind.
+    # First by identity against the other rosters, then by concrete class (which also
+    # catches copies of wrong-kind components that are in no roster).
     for other_kind in ("agents", "teams", "workflows"):
         if other_kind == kind:
             continue
         for component in getattr(os, other_kind, None) or []:
-            if component is entry or (entry_id is not None and getattr(component, "id", None) == entry_id):
-                raise ValueError(
-                    f"MCPConfig.{kind} contains {label!r}, which is one of this AgentOS's "
-                    f"{other_kind}; move it to MCPConfig.{other_kind}."
-                )
+            if component is entry:
+                raise _wrong_kind_error(other_kind)
+    concrete_kind = {Agent: "agents", Team: "teams", Workflow: "workflows"}
+    for cls, cls_kind in concrete_kind.items():
+        if cls_kind != kind and isinstance(entry, cls):
+            raise _wrong_kind_error(cls_kind)
+
+    # Id fallback, so an equal copy of a roster component still resolves.
+    if entry_id is not None:
+        for component in roster:
+            if getattr(component, "id", None) == entry_id:
+                return component
+        for other_kind in ("agents", "teams", "workflows"):
+            if other_kind == kind:
+                continue
+            for component in getattr(os, other_kind, None) or []:
+                if getattr(component, "id", None) == entry_id:
+                    raise _wrong_kind_error(other_kind)
     raise ValueError(
         f"MCPConfig.{kind} contains {label!r} which is not part of the AgentOS roster; "
         f"add it to AgentOS({kind}=[...]) or remove it from MCPConfig.{kind}."

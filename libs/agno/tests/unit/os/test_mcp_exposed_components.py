@@ -450,6 +450,26 @@ def test_wrong_kind_exposure_names_the_actual_kind():
         build_mcp_server(os)
 
 
+def test_wrong_kind_entry_never_id_matches_a_same_id_component():
+    """AgentOS permits an Agent and a Team to share an id; a Team entry in
+    MCPConfig.agents must error, not id-match and silently publish the Agent."""
+    agent = _agent(id="shared", name="The Agent")
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, agents=[team]))
+    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
+        build_mcp_server(os)
+
+
+def test_wrong_kind_copy_outside_all_rosters_is_still_rejected():
+    """Even a copy of a wrong-kind component (in no roster, so identity checks miss it)
+    is caught by its concrete class before the id fallback can run."""
+    agent = _agent(id="shared", name="The Agent")
+    stray_team = Team(id="shared", name="Stray Team", members=[_agent(id="m2")])
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[stray_team]))
+    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
+        build_mcp_server(os)
+
+
 def test_exposing_non_roster_instance_raises():
     roster_agent = _agent()
     outsider = _agent(id="outsider", name="Outsider")
@@ -461,6 +481,22 @@ def test_exposing_non_roster_instance_raises():
 def test_exposing_unknown_id_string_raises():
     os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, agents=["ghost"]))
     with pytest.raises(ValueError, match="'ghost'"):
+        build_mcp_server(os)
+
+
+def test_exposed_id_colliding_with_fastmcp_derived_name_raises():
+    """The collision registry must hold the names FastMCP actually registered, not a
+    re-derivation: a functools.partial has no __name__ and registers as 'partial'."""
+    import functools
+
+    def base_tool(x: str, y: str) -> str:
+        """Combine two strings."""
+        return x + y
+
+    partial_tool = functools.partial(base_tool, y="fixed")
+    agent = _agent(id="partial", name="Partial Agent")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent], tools=[partial_tool]))
+    with pytest.raises(ValueError, match='custom tool "partial"'):
         build_mcp_server(os)
 
 
@@ -633,10 +669,14 @@ def test_enable_builtin_tools_alias_covers_non_dict_mappings():
 
 def test_unknown_config_key_is_rejected():
     """extra='forbid': a typo like agent= (for agents=) must fail loudly, not silently
-    serve a different tool surface."""
+    serve a different tool surface. Pinned to the extra_forbidden error at the typo'd
+    key -- a broad match would also pass via the unrelated zero-tools error."""
+    from pydantic import ValidationError
+
     agent = _agent()
-    with pytest.raises(Exception, match="agent"):
-        MCPConfig(default_tools=False, agent=[agent])
+    with pytest.raises(ValidationError) as exc_info:
+        MCPConfig(default_tools=False, agents=[agent], agent=[agent])
+    assert [(e["type"], e["loc"]) for e in exc_info.value.errors()] == [("extra_forbidden", ("agent",))]
 
 
 def test_agentos_mcp_server_kwarg_still_works():
