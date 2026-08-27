@@ -15,7 +15,7 @@ from agno.models.cerebras import Cerebras
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Cerebras(id="llama-3.3-70b"),
+    model=Cerebras(id="gpt-oss-120b"),
     markdown=True,
 )
 

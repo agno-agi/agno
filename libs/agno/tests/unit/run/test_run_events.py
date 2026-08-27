@@ -88,7 +88,7 @@ def test_workflow_run_events():
 
 
 def test_workflow_completed_event_serializes_token_metrics():
-    from agno.models.metrics import RunMetrics
+    from agno.metrics import RunMetrics
     from agno.run.workflow import WorkflowCompletedEvent
     from agno.workflow.types import StepMetrics, WorkflowMetrics
 

@@ -345,8 +345,8 @@ async def _run_case_body(
                 # The final run output arrives in-stream (yield_run_output=True). It is
                 # captured, not forwarded to on_run_event - on_case_end delivers it.
                 # Response AND evidence fields are committed immediately: the stream can
-                # stall after the final output (e.g. a hung telemetry call in transport
-                # cleanup) and a timeout then must not discard what the run produced.
+                # stall after the final output (e.g. a hung persistence or user cleanup
+                # call) and a timeout then must not discard what the run produced.
                 response = event
                 result.response = event
                 _extract_evidence(result, event)
@@ -410,8 +410,8 @@ async def _run_case_body(
                 model=case.judge_model or judge_model,
                 db=db,
                 show_spinner=False,
-                # The eval awaits its telemetry POST before returning; on a blackholed
-                # network that burns case-timeout budget after the verdict is computed.
+                # Preserve EvalSuite's existing policy: its internally-created evals
+                # do not emit hidden telemetry, and the suite has no telemetry option.
                 telemetry=False,
             ).arun(input=case.input, output=result.output or "")
         except Exception as exc:

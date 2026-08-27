@@ -1178,3 +1178,254 @@ class TestAdminApprovalFlow:
         mock_client.chat_update.assert_awaited_once()
         call = mock_client.chat_update.call_args
         assert call.kwargs["text"] == "Status: pending"
+
+
+class TestDeliveryFlags:
+    def test_slack_interface_flags_reach_event_handler(self):
+        from agno.os.interfaces.slack.slack import Slack
+
+        agent_mock = make_agent_mock()
+        with (
+            patch("agno.os.interfaces.slack.router.SlackTools"),
+            patch("agno.os.interfaces.slack.router.SlackEventHandler") as handler_cls,
+        ):
+            Slack(agent=agent_mock, markdown=False, unfurl_links=False, unfurl_media=False).get_router()
+        kwargs = handler_cls.call_args.kwargs
+        assert kwargs["markdown"] is False
+        assert kwargs["unfurl_links"] is False
+        assert kwargs["unfurl_media"] is False
+
+    def test_slack_interface_flags_default_true(self):
+        from agno.os.interfaces.slack.slack import Slack
+
+        agent_mock = make_agent_mock()
+        with (
+            patch("agno.os.interfaces.slack.router.SlackTools"),
+            patch("agno.os.interfaces.slack.router.SlackEventHandler") as handler_cls,
+        ):
+            Slack(agent=agent_mock).get_router()
+        kwargs = handler_cls.call_args.kwargs
+        assert kwargs["markdown"] is True
+        assert kwargs["unfurl_links"] is True
+        assert kwargs["unfurl_media"] is True
+
+    @pytest.mark.asyncio
+    async def test_send_error_forwards_delivery_flags(self):
+        handler = _make_event_handler(markdown=False, unfurl_links=False, unfurl_media=False)
+        mock_client = make_async_client_mock()
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            await handler.send_error(_make_event_context(), "boom")
+        kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert kwargs["unfurl_links"] is False
+        assert kwargs["unfurl_media"] is False
+        assert kwargs["mrkdwn"] is False
+        assert kwargs["parse"] == "none"
+        assert kwargs["link_names"] is False
+
+    @pytest.mark.asyncio
+    async def test_send_error_defaults_keep_markdown_delivery(self):
+        handler = _make_event_handler()
+        mock_client = make_async_client_mock()
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            await handler.send_error(_make_event_context(), "boom")
+        kwargs = mock_client.chat_postMessage.call_args.kwargs
+        assert kwargs["unfurl_links"] is True
+        assert kwargs["unfurl_media"] is True
+        assert kwargs["mrkdwn"] is True
+        assert "parse" not in kwargs
+        assert "link_names" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_non_streaming_reply_and_reasoning_honor_flags(self):
+        agent_mock = make_agent_mock()
+        agent_mock.arun = AsyncMock(
+            return_value=Mock(
+                status="OK",
+                content="done",
+                reasoning_content="thinking",
+                images=None,
+                files=None,
+                videos=None,
+                audio=None,
+            )
+        )
+        mock_slack = make_slack_mock(token="xoxb-test")
+        mock_client = make_async_client_mock()
+
+        with (
+            patch("agno.os.interfaces.slack.router.verify_slack_signature", return_value=True),
+            patch("agno.os.interfaces.slack.router.SlackTools", return_value=mock_slack),
+            patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client),
+        ):
+            app = build_app(
+                agent_mock, reply_to_mentions_only=False, markdown=False, unfurl_links=False, unfurl_media=False
+            )
+            from fastapi.testclient import TestClient
+
+            client = TestClient(app)
+            body = {
+                "type": "event_callback",
+                "event": {
+                    "type": "message",
+                    "channel_type": "im",
+                    "text": "hello",
+                    "user": "U123",
+                    "channel": "C123",
+                    "ts": str(time.time()),
+                },
+            }
+            resp = make_signed_request(client, body)
+
+        assert resp.status_code == 200
+        await wait_for_call(mock_client.chat_postMessage)
+        # Reasoning post and content post both carry the flags
+        assert mock_client.chat_postMessage.call_count == 2
+        for call in mock_client.chat_postMessage.call_args_list:
+            assert call.kwargs["unfurl_links"] is False
+            assert call.kwargs["unfurl_media"] is False
+            assert call.kwargs["mrkdwn"] is False
+            assert call.kwargs["parse"] == "none"
+            assert call.kwargs["link_names"] is False
+
+    @pytest.mark.asyncio
+    async def test_paused_non_streaming_honors_flags(self):
+        handler = _make_event_handler(markdown=False, unfurl_links=False, unfurl_media=False)
+        mock_client = make_async_client_mock()
+        mock_client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
+        response = Mock(content="pausing", active_requirements=[_make_requirement()], run_id="run-1")
+
+        with patch("agno.os.interfaces.slack.event_handler.AsyncWebClient", return_value=mock_client):
+            handled = await handler._handle_paused_non_streaming(_make_event_context(), response)
+
+        assert handled is True
+        # Content, awaiting labels, and pause card: three posts, all carrying the flags
+        assert mock_client.chat_postMessage.call_count == 3
+        for call in mock_client.chat_postMessage.call_args_list:
+            assert call.kwargs["unfurl_links"] is False
+            assert call.kwargs["unfurl_media"] is False
+            assert call.kwargs["mrkdwn"] is False
+
+    @pytest.mark.asyncio
+    async def test_finalize_pause_forwards_flags(self):
+        from agno.os.interfaces.slack.pause import finalize_pause
+
+        client = make_async_client_mock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
+        state = Mock()
+        state.has_content = Mock(return_value=False)
+        state.task_cards = {}
+
+        awaiting_ts = await finalize_pause(
+            client=client,
+            stream=make_stream_mock(),
+            state=state,
+            run_id="run-1",
+            channel="C123",
+            thread_ts="111.222",
+            requirements=[_make_requirement()],
+            unfurl_links=False,
+            unfurl_media=False,
+            mrkdwn=False,
+        )
+
+        assert awaiting_ts == "123.456"
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert kwargs["unfurl_links"] is False
+        assert kwargs["unfurl_media"] is False
+        assert kwargs["mrkdwn"] is False
+        assert kwargs["parse"] == "none"
+        assert kwargs["link_names"] is False
+
+    @pytest.mark.asyncio
+    async def test_post_pause_card_forwards_flags(self):
+        from agno.os.interfaces.slack.pause import post_pause_card
+
+        client = make_async_client_mock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
+        paused = Mock(run_id="run-1", active_requirements=[_make_requirement()])
+
+        ts = await post_pause_card(client, paused, "C123", "111.222", unfurl_links=False, unfurl_media=False)
+
+        assert ts == "123.456"
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert kwargs["unfurl_links"] is False
+        assert kwargs["unfurl_media"] is False
+        assert "blocks" in kwargs
+
+    @pytest.mark.asyncio
+    async def test_post_pause_card_defaults_keep_current_behavior(self):
+        from agno.os.interfaces.slack.pause import post_pause_card
+
+        client = make_async_client_mock()
+        client.chat_postMessage = AsyncMock(return_value={"ts": "123.456"})
+        paused = Mock(run_id="run-1", active_requirements=[_make_requirement()])
+
+        await post_pause_card(client, paused, "C123", "111.222")
+
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert kwargs["unfurl_links"] is True
+        assert kwargs["unfurl_media"] is True
+        assert kwargs["mrkdwn"] is True
+        assert "parse" not in kwargs
+        assert "link_names" not in kwargs
+
+    def test_slack_interface_flags_reach_hitl_handler(self):
+        from agno.os.interfaces.slack.slack import Slack
+
+        agent_mock = make_agent_mock()
+        with (
+            patch("agno.os.interfaces.slack.router.SlackTools"),
+            patch("agno.os.interfaces.slack.router.HITLHandler") as hitl_cls,
+        ):
+            Slack(agent=agent_mock, markdown=False, unfurl_links=False, unfurl_media=False).get_router()
+        kwargs = hitl_cls.call_args.kwargs
+        assert kwargs["markdown"] is False
+        assert kwargs["unfurl_links"] is False
+        assert kwargs["unfurl_media"] is False
+
+    @pytest.mark.asyncio
+    async def test_repause_honors_delivery_flags(self):
+        # A run that pauses AGAIN after approval posts the awaiting indicator and
+        # the second pause card through complete_or_repause; both must carry the
+        # operator's disabled markdown/unfurl flags (chat_postMessage sites, not
+        # the scope-outed chat_stream continuation).
+        from agno.os.interfaces.slack.state import StreamState
+        from agno.os.interfaces.slack.types import SubmitContext
+
+        handler = HITLHandler(
+            slack_tools=make_slack_mock(token="xoxb-test"),
+            ssl=None,
+            entity=AsyncMock(),
+            entity_id="agent-1",
+            entity_name="Test Agent",
+            entity_type="agent",
+            task_display_mode="plan",
+            buffer_size=100,
+            markdown=False,
+            unfurl_links=False,
+            unfurl_media=False,
+        )
+        mock_client = make_async_client_mock()
+        mock_client.chat_postMessage = AsyncMock(return_value={"ts": "await-2"})
+        state = StreamState()
+        state.paused_event = Mock(run_id="run-1", active_requirements=[_make_requirement()])
+        ctx = SubmitContext(
+            run_id="run-1",
+            channel="C123",
+            msg_ts="1.0",
+            thread_ts="111.222",
+            awaiting_ts=None,
+            user_id="U1",
+            team_id="T1",
+            state_values={},
+        )
+
+        with patch("agno.os.interfaces.slack.hitl.AsyncWebClient", return_value=mock_client):
+            await handler.complete_or_repause(ctx, make_stream_mock(), state)
+
+        # Awaiting indicator + pause card, both carrying the disabled flags.
+        assert mock_client.chat_postMessage.call_count == 2
+        for call in mock_client.chat_postMessage.call_args_list:
+            assert call.kwargs["unfurl_links"] is False
+            assert call.kwargs["unfurl_media"] is False
+            assert call.kwargs["mrkdwn"] is False

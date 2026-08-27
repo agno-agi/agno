@@ -1,4 +1,5 @@
 import asyncio
+from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
 try:
@@ -19,6 +20,41 @@ from agno.vectordb.base import VectorDb
 DEFAULT_NAMESPACE = ""
 
 
+def _always_false(key: str) -> str:
+    """A predicate that can never match, so an unrepresentable value fails closed."""
+    return f"(HAS FIELD {key} AND HAS NOT FIELD {key})"
+
+
+def _quote_value(value: str) -> Optional[str]:
+    """Render a string as an Upstash filter literal, or None if it has no literal form.
+
+    Upstash does not process backslash escapes, so the value is wrapped in whichever quote char it
+    does not itself contain; a value with both is unrepresentable.
+    """
+    if '"' not in value:
+        return f'"{value}"'
+    if "'" not in value:
+        return f"'{value}'"
+    return None
+
+
+def _reject_unrepresentable_user_id(user_id: Optional[str]) -> None:
+    """Reject a user_id with no filter literal form: its chunks would be unreadable by the owner."""
+    if user_id is not None and _quote_value(user_id) is None:
+        raise ValueError(
+            f"user_id {user_id!r} contains both quote characters and cannot be expressed "
+            "as an Upstash filter literal; its chunks would be unreadable by the owner."
+        )
+
+
+def _equals_predicate(key: str, value: str) -> str:
+    """key = <literal>, or an always-false predicate when the value has no literal form."""
+    quoted = _quote_value(value)
+    if quoted is None:
+        return _always_false(key)
+    return f"{key} = {quoted}"
+
+
 class UpstashVectorDb(VectorDb):
     """
     This class provides an interface to Upstash Vector database with support for both
@@ -37,6 +73,9 @@ class UpstashVectorDb(VectorDb):
         description (Optional[str], optional): The description of the vector database. Defaults to None.
         **kwargs: Additional keyword arguments.
     """
+
+    # The owner is stamped into a top-level metadata key; None omits it (the shared bucket)
+    USER_ID_KEY: str = "user_id"
 
     def __init__(
         self,
@@ -162,11 +201,13 @@ class UpstashVectorDb(VectorDb):
         """
         return self.index.list_namespaces()
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Check if documents with the given content hash exist in the index.
 
         Args:
             content_hash (str): The content hash to check.
+            user_id (Optional[str]): Restrict the check to the owner's chunks. None checks the shared
+                bucket alone, the same bucket _delete_by_content_hash clears for None.
 
         Returns:
             bool: True if documents with the content hash exist, False otherwise.
@@ -174,14 +215,18 @@ class UpstashVectorDb(VectorDb):
         try:
             # Use query with a filter to check if any documents exist with this content_hash
             # We only need to check existence, so limit to 1 result
-            filter_str = f'content_hash = "{content_hash}"'
+            filter_str = _equals_predicate("content_hash", content_hash)
+            if user_id is not None:
+                filter_str = f"{filter_str} AND {_equals_predicate(self.USER_ID_KEY, user_id)}"
+            else:
+                filter_str = f"{filter_str} AND HAS NOT FIELD {self.USER_ID_KEY}"
 
             if not self.use_upstash_embeddings and self.embedder is not None:
                 # For custom embeddings, we need a dummy vector for the query
-                # Use a zero vector as we only care about the filter match
+                # It must be non-zero: a zero vector matches no row, so the check would always be False
                 info = self.index.info()
                 dimension = info.dimension
-                dummy_vector = [0.0] * dimension
+                dummy_vector = [1.0] * dimension
 
                 response = self.index.query(
                     vector=dummy_vector,
@@ -232,12 +277,29 @@ class UpstashVectorDb(VectorDb):
         namespaces = self.index.list_namespaces()
         return namespace in namespaces
 
+    def _user_scope_filter_str(self, user_id: Optional[str]) -> str:
+        """Owner-scope predicate: the caller's own chunks plus the shared bucket, empty when unscoped."""
+        if user_id is None:
+            return ""
+        return f"({_equals_predicate(self.USER_ID_KEY, user_id)} OR HAS NOT FIELD {self.USER_ID_KEY})"
+
+    def _record_id(self, base_id: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the id so two users uploading the same content get distinct keys.
+
+        user_id None keeps the base id. The base id is digested first so that ('doc_1', 'alice') and
+        ('doc', '1_alice') cannot fold to the same record id.
+        """
+        if user_id is None:
+            return base_id
+        return md5(f"{md5(base_id.encode()).hexdigest()}_{user_id}".encode()).hexdigest()
+
     def upsert(
         self,
         content_hash: str,
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents into the index.
 
@@ -245,14 +307,22 @@ class UpstashVectorDb(VectorDb):
             documents (List[Document]): The documents to upsert.
             filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
             namespace (Optional[str], optional): The namespace for the documents. Defaults to None, which uses the instance namespace.
+            user_id (Optional[str], optional): Owner of these chunks. Defaults to None, the shared bucket.
         """
+        _reject_unrepresentable_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
+
+        # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         vectors = []
 
         for i, document in enumerate(documents):
-            if document.id is None:
-                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
-                continue
+            # A Document carries no id unless the caller set one, and dropping it here loses
+            # the chunk silently. Digest the content instead, as PineconeDb does, so the id is
+            # stable across runs and _record_id always has something to fold the owner into.
+            base_id = document.id or md5(document.content.encode()).hexdigest()
 
             logger.debug(
                 f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
@@ -276,11 +346,19 @@ class UpstashVectorDb(VectorDb):
 
             meta_data["content_hash"] = content_hash
 
+            # Stamp the owner after caller filters so it can't be overwritten (None omits the key)
+            if user_id is None:
+                meta_data.pop(self.USER_ID_KEY, None)
+            else:
+                meta_data[self.USER_ID_KEY] = user_id
+
             # Add name to metadata if it exists
             if document.name:
                 meta_data["name"] = document.name
             else:
                 logger.warning(f"Document {document.id} has no name")
+
+            vector_id = self._record_id(base_id, user_id)
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
@@ -292,9 +370,9 @@ class UpstashVectorDb(VectorDb):
                     log_error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
-                vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
+                vector = Vector(id=vector_id, vector=document.embedding, metadata=meta_data, data=document.content)
             else:
-                vector = Vector(id=document.id, data=document.content, metadata=meta_data)
+                vector = Vector(id=vector_id, data=document.content, metadata=meta_data)
             vectors.append(vector)
 
         if not vectors:
@@ -311,15 +389,22 @@ class UpstashVectorDb(VectorDb):
         """
         return True
 
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         """Insert documents into the index.
         This method is not supported by Upstash. Use `upsert` instead.
         Args:
             documents (List[Document]): The documents to insert.
             filters (Optional[Dict[str, Any]], optional): The filters for the insert. Defaults to None.
+            user_id (Optional[str], optional): Owner of these chunks. Defaults to None, the shared bucket.
         """
         logger.warning("Upstash does not support insert operations. Using upsert instead.")
-        self.upsert(content_hash=content_hash, documents=documents, filters=filters)
+        self.upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     def search(
         self,
@@ -327,6 +412,7 @@ class UpstashVectorDb(VectorDb):
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search for documents in the index.
         Args:
@@ -334,6 +420,8 @@ class UpstashVectorDb(VectorDb):
             limit (int, optional): Maximum number of results to return. Defaults to 5.
             filters (Optional[Dict[str, Any]], optional): Metadata filters for the search.
             namespace (Optional[str], optional): The namespace to search in. Defaults to None, which uses the instance namespace.
+            user_id (Optional[str], optional): Restrict results to the caller's chunks plus the shared
+                bucket. Defaults to None, which applies no scope.
         Returns:
             List[Document]: List of matching documents.
         """
@@ -342,6 +430,9 @@ class UpstashVectorDb(VectorDb):
             log_warning("Filters Expressions are not supported in UpstashDB. No filters will be applied.")
             filters = None
         filter_str = "" if filters is None else str(filters)
+        scope_str = self._user_scope_filter_str(user_id)
+        if scope_str:
+            filter_str = f"{filter_str} AND {scope_str}" if filter_str else scope_str
 
         if not self.use_upstash_embeddings and self.embedder is not None:
             dense_embedding = self.embedder.get_embedding(query)
@@ -468,7 +559,7 @@ class UpstashVectorDb(VectorDb):
             filter_parts = []
             for key, value in metadata.items():
                 if isinstance(value, str):
-                    filter_parts.append(f'{key} = "{value}"')
+                    filter_parts.append(_equals_predicate(key, value))
                 else:
                     filter_parts.append(f"{key} = {value}")
 
@@ -482,22 +573,30 @@ class UpstashVectorDb(VectorDb):
             logger.exception(f"Error deleting documents by metadata {metadata}")
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by content_id.
 
         Args:
             content_id (str): The content ID to delete
+            user_id (Optional[str]): Restrict the delete to the owner's chunks. None deletes all chunks.
 
         Returns:
             bool: True if deletion was successful, False otherwise
         """
-        return self.delete_by_metadata({"content_id": content_id})
+        metadata: Dict[str, Any] = {"content_id": content_id}
+        if user_id is not None:
+            metadata[self.USER_ID_KEY] = user_id
+        return self.delete_by_metadata(metadata)
 
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         logger.warning("Upstash does not support async insert operations. Using upsert instead.")
-        await self.async_upsert(content_hash=content_hash, documents=documents, filters=filters)
+        await self.async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
 
     async def async_exists(self) -> bool:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
@@ -517,6 +616,7 @@ class UpstashVectorDb(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         """Async Upsert documents into the index.
 
@@ -524,8 +624,15 @@ class UpstashVectorDb(VectorDb):
             documents (List[Document]): The documents to upsert.
             filters (Optional[Dict[str, Any]], optional): The filters for the upsert. Defaults to None.
             namespace (Optional[str], optional): The namespace for the documents. Defaults to None, which uses the instance namespace.
+            user_id (Optional[str], optional): Owner of these chunks. Defaults to None, the shared bucket.
         """
+        _reject_unrepresentable_user_id(user_id)
         _namespace = self.namespace if namespace is None else namespace
+
+        # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
+        if self.content_hash_exists(content_hash, user_id=user_id):
+            self._delete_by_content_hash(content_hash, user_id=user_id)
+
         vectors = []
 
         if (
@@ -572,9 +679,10 @@ class UpstashVectorDb(VectorDb):
             await asyncio.gather(*embed_tasks, return_exceptions=True)
 
         for i, document in enumerate(documents):
-            if document.id is None:
-                log_error(f"Document ID must not be None. Skipping document: {document.content[:100]}...")
-                continue
+            # A Document carries no id unless the caller set one, and dropping it here loses
+            # the chunk silently. Digest the content instead, as PineconeDb does, so the id is
+            # stable across runs and _record_id always has something to fold the owner into.
+            base_id = document.id or md5(document.content.encode()).hexdigest()
 
             logger.debug(
                 f"Processing document {i + 1}: ID={document.id}, name={document.name}, "
@@ -598,11 +706,19 @@ class UpstashVectorDb(VectorDb):
 
             meta_data["content_hash"] = content_hash
 
+            # Stamp the owner after caller filters so it can't be overwritten (None omits the key)
+            if user_id is None:
+                meta_data.pop(self.USER_ID_KEY, None)
+            else:
+                meta_data[self.USER_ID_KEY] = user_id
+
             # Add name to metadata if it exists
             if document.name:
                 meta_data["name"] = document.name
             else:
                 logger.warning(f"Document {document.id} has no name")
+
+            vector_id = self._record_id(base_id, user_id)
 
             if not self.use_upstash_embeddings:
                 if self.embedder is None:
@@ -613,9 +729,9 @@ class UpstashVectorDb(VectorDb):
                     log_error(f"Failed to generate embedding for document: {document.id}")
                     continue
 
-                vector = Vector(id=document.id, vector=document.embedding, metadata=meta_data, data=document.content)
+                vector = Vector(id=vector_id, vector=document.embedding, metadata=meta_data, data=document.content)
             else:
-                vector = Vector(id=document.id, data=document.content, metadata=meta_data)
+                vector = Vector(id=vector_id, data=document.content, metadata=meta_data)
             vectors.append(vector)
 
         if not vectors:
@@ -626,7 +742,12 @@ class UpstashVectorDb(VectorDb):
         self.index.upsert(vectors, namespace=_namespace)
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        namespace: Optional[str] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         raise NotImplementedError(f"Async not supported on {self.__class__.__name__}.")
 
@@ -646,17 +767,23 @@ class UpstashVectorDb(VectorDb):
             logger.exception(f"Error checking if ID {id} exists")
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """Delete documents by content hash using metadata filter.
 
         Args:
             content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Restrict the delete to the owner's chunks; None to the shared bucket.
 
         Returns:
             bool: True if deletion was successful, False otherwise.
         """
         try:
-            response = self.index.delete(filter=f'content_hash = "{content_hash}"', namespace=self.namespace)
+            filter_str = _equals_predicate("content_hash", content_hash)
+            if user_id is not None:
+                filter_str = f"{filter_str} AND {_equals_predicate(self.USER_ID_KEY, user_id)}"
+            else:
+                filter_str = f"{filter_str} AND HAS NOT FIELD {self.USER_ID_KEY}"
+            response = self.index.delete(filter=filter_str, namespace=self.namespace)
             deleted_count = getattr(response, "deleted", 0)
             logger.info(f"Deleted {deleted_count} document(s) with content_hash: {content_hash}")
             return True
@@ -672,6 +799,8 @@ class UpstashVectorDb(VectorDb):
             content_id (str): The content ID to update
             metadata (Dict[str, Any]): The metadata to update
         """
+        # Ownership is set at write time; a caller must not reassign it via metadata.
+        metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
         try:
             # Query for vectors with the given content_id
             query_response = self.index.query(
