@@ -269,7 +269,9 @@ def attach_routes(
             }
 
             if skipped_media:
-                notice = "[Some attachments could not be downloaded: " + ", ".join(skipped_media) + "]\n\n"
+                # "read", not "downloaded": an attachment is skipped either because the
+                # download failed or because its type is one the model cannot accept.
+                notice = "[Some attachments could not be read: " + ", ".join(skipped_media) + "]\n\n"
                 parsed.text = notice + parsed.text
 
             if send_user_id_to_context:
