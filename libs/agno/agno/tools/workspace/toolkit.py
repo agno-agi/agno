@@ -395,7 +395,6 @@ class Workspace(Toolkit):
         max_grep_matches: int = 500,
         exclude_patterns: Optional[List[str]] = None,
         allow_paths: Optional[List[str]] = None,
-        name: str = "workspace",
         **kwargs,
     ):
         # Resolve root to an absolute path once — never re-read cwd later (reload-safe).
@@ -444,7 +443,7 @@ class Workspace(Toolkit):
             toolkit_kwargs["add_instructions"] = True
 
         super().__init__(
-            name=name,
+            name="workspace",
             tools=sync_tools,
             async_tools=async_tools,
             requires_confirmation_tools=resolved_confirm_methods,
