@@ -117,6 +117,7 @@ from agno.utils.events import (
     create_team_run_completed_event,
     create_team_run_content_completed_event,
     create_team_run_error_event,
+    create_team_run_output_content_event,
     create_team_run_started_event,
     create_team_session_summary_completed_event,
     create_team_session_summary_started_event,
@@ -6715,7 +6716,9 @@ def _route_requirements_to_members_stream(
             # Forward member terminals regardless of stream_events so the wire always sees a terminal.
             suppress_raw_direct_content = (
                 team.respond_directly
-                and team.output_model is not None
+                and (
+                    team.output_model is not None or (run_context is not None and run_context.output_schema is not None)
+                )
                 and isinstance(event, _MEMBER_CONTENT_EVENT_TYPES)
             )
             if not suppress_raw_direct_content and (
@@ -6926,7 +6929,9 @@ async def _aroute_requirements_to_members_stream(
             # Forward member terminals regardless of stream_events so the wire always sees a terminal.
             suppress_raw_direct_content = (
                 team.respond_directly
-                and team.output_model is not None
+                and (
+                    team.output_model is not None or (run_context is not None and run_context.output_schema is not None)
+                )
                 and isinstance(event, _MEMBER_CONTENT_EVENT_TYPES)
             )
             if not suppress_raw_direct_content and (
@@ -7262,6 +7267,17 @@ def _process_direct_member_content_stream(
             yield event
     raise_if_cancelled(run_response.run_id)  # type: ignore
     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+    if team.output_model is None and team.parser_model is None and run_context.output_schema is not None:
+        yield handle_event(  # type: ignore
+            create_team_run_output_content_event(
+                from_run_response=run_response,
+                content=run_response.content,
+                content_type=run_response.content_type,
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
 
 
 async def _aprocess_direct_member_content_stream(
@@ -7303,6 +7319,17 @@ async def _aprocess_direct_member_content_stream(
             yield event
     await araise_if_cancelled(run_response.run_id)  # type: ignore
     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+    if team.output_model is None and team.parser_model is None and run_context.output_schema is not None:
+        yield handle_event(  # type: ignore
+            create_team_run_output_content_event(
+                from_run_response=run_response,
+                content=run_response.content,
+                content_type=run_response.content_type,
+            ),
+            run_response,
+            events_to_skip=team.events_to_skip,
+            store_events=team.store_events,
+        )
 
 
 async def _ahandle_model_response_for_continue(

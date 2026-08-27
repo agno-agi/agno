@@ -5217,6 +5217,98 @@ async def test_async_direct_cancel_during_media_refresh_stays_cancelled(tmp_path
     assert stored.status == RunStatus.cancelled
 
 
+def test_sync_direct_structured_resume_streams_only_structured_content(tmp_path):
+    from agno.run import RunContext
+    from agno.run.agent import RunContentEvent as AgentRunContentEvent
+    from agno.run.team import RunContentEvent as TeamRunContentEvent
+
+    db_file = str(tmp_path / "sync_direct_structured_resume.db")
+    session_id = "s-sync-direct-structured-resume"
+    expected = {"result": "approved"}
+    schema = {"type": "object", "properties": {"result": {"type": "string"}}}
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False, respond_directly=True)
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_flat_team(
+        SqliteDb(db_file=db_file),
+        resuming=True,
+        respond_directly=True,
+        output_schema=schema,
+    )
+    member = team2.members[0]
+    assert member.output_schema is None
+    member.model = _ScriptedModel("m-emailer-structured", [("content", json.dumps(expected))])
+    run_context = RunContext(run_id=run1.run_id, session_id=session_id, output_schema=schema)
+
+    events = list(
+        team2.continue_run(
+            run_id=run1.run_id,
+            session_id=session_id,
+            requirements=_wire_requirements(run1.requirements),
+            run_context=run_context,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+        )
+    )
+    content_events = [event for event in events if isinstance(event, (AgentRunContentEvent, TeamRunContentEvent))]
+    final = events[-1]
+
+    assert [event.content for event in content_events] == [expected]
+    assert isinstance(final, TeamRunOutput)
+    assert final.content == expected
+    assert final.content_type == "dict"
+
+
+@pytest.mark.asyncio
+async def test_async_direct_structured_resume_streams_only_structured_content(tmp_path):
+    from agno.run import RunContext
+    from agno.run.agent import RunContentEvent as AgentRunContentEvent
+    from agno.run.team import RunContentEvent as TeamRunContentEvent
+
+    db_file = str(tmp_path / "async_direct_structured_resume.db")
+    session_id = "s-async-direct-structured-resume"
+    expected = {"result": "approved"}
+    schema = {"type": "object", "properties": {"result": {"type": "string"}}}
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False, respond_directly=True)
+    run1 = await team1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+
+    team2 = _build_flat_team(
+        SqliteDb(db_file=db_file),
+        resuming=True,
+        respond_directly=True,
+        output_schema=schema,
+    )
+    member = team2.members[0]
+    assert member.output_schema is None
+    member.model = _ScriptedModel("m-emailer-structured", [("content", json.dumps(expected))])
+    run_context = RunContext(run_id=run1.run_id, session_id=session_id, output_schema=schema)
+
+    events = [
+        event
+        async for event in team2.acontinue_run(
+            run_id=run1.run_id,
+            session_id=session_id,
+            requirements=_wire_requirements(run1.requirements),
+            run_context=run_context,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+        )
+    ]
+    content_events = [event for event in events if isinstance(event, (AgentRunContentEvent, TeamRunContentEvent))]
+    final = events[-1]
+
+    assert [event.content for event in content_events] == [expected]
+    assert isinstance(final, TeamRunOutput)
+    assert final.content == expected
+    assert final.content_type == "dict"
+
+
 _NOTES: List[Any] = []
 
 
