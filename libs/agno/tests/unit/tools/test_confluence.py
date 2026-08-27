@@ -4,7 +4,10 @@ import json
 from unittest.mock import MagicMock, patch
 
 import pytest
-from atlassian import Confluence
+
+# Imported for its side effect: collection should error where the optional
+# dependency is absent, matching the toolkit's own import-time requirement.
+from atlassian import Confluence  # noqa: F401
 
 from agno.tools.confluence import ConfluenceTools
 
@@ -13,7 +16,7 @@ from agno.tools.confluence import ConfluenceTools
 def mock_confluence():
     """Create a mock Confluence client."""
     with patch("agno.tools.confluence.Confluence") as mock_confluence_class:
-        mock_client = MagicMock(spec=Confluence)
+        mock_client = MagicMock()
         mock_client.get_all_spaces.return_value = {"results": []}
         mock_confluence_class.return_value = mock_client
         yield mock_client
@@ -51,7 +54,7 @@ def test_init_with_environment_variables():
         ),
         patch("agno.tools.confluence.Confluence") as mock_confluence_class,
     ):
-        mock_client = MagicMock(spec=Confluence)
+        mock_client = MagicMock()
         mock_client.get_all_spaces.return_value = {"results": []}
         mock_confluence_class.return_value = mock_client
 

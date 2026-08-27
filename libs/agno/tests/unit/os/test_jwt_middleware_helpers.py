@@ -41,6 +41,7 @@ def test_returns_expected_default_routes():
 
     assert "/" in excluded
     assert "/health" in excluded
+    assert "/info" in excluded
     assert "/docs" in excluded
     assert "/redoc" in excluded
     assert "/openapi.json" in excluded
@@ -138,11 +139,12 @@ def test_excludes_default_routes():
         algorithm="HS256",
     )
 
+    assert middleware._is_route_excluded("/") is True
     assert middleware._is_route_excluded("/health") is True
+    assert middleware._is_route_excluded("/info") is True
     assert middleware._is_route_excluded("/docs") is True
     assert middleware._is_route_excluded("/redoc") is True
     assert middleware._is_route_excluded("/openapi.json") is True
-    assert middleware._is_route_excluded("/") is True
 
 
 def test_does_not_exclude_protected_routes():
