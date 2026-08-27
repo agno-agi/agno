@@ -115,7 +115,6 @@ class VLLMEmbedder(Embedder):
             return outputs[0] if outputs else None
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="vLLM")
-            raise
 
     def _create_embedding_remote(self, text: str) -> "CreateEmbeddingResponse":
         """Create embedding using remote vLLM server."""
@@ -144,7 +143,6 @@ class VLLMEmbedder(Embedder):
                 return []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="vLLM")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         if self.is_remote:
@@ -157,7 +155,6 @@ class VLLMEmbedder(Embedder):
                 return embedding, None
             except Exception as e:
                 raise_embedding_error(e, model_id=self.id, provider="vLLM")
-                raise
         else:
             embedding = self.get_embedding(text=text)
             # Local VLLM doesn't provide usage information
@@ -178,7 +175,6 @@ class VLLMEmbedder(Embedder):
                 return response.data[0].embedding
             except Exception as e:
                 raise_embedding_error(e, model_id=self.id, provider="vLLM")
-                raise
         else:
             # Local mode: use thread executor for CPU-bound operations
             loop = asyncio.get_running_loop()
@@ -200,7 +196,6 @@ class VLLMEmbedder(Embedder):
                 return embedding, usage.model_dump() if usage else None
             except Exception as e:
                 raise_embedding_error(e, model_id=self.id, provider="vLLM")
-                raise
         else:
             # Local mode: use thread executor for CPU-bound operations
             try:
@@ -208,7 +203,6 @@ class VLLMEmbedder(Embedder):
                 return await loop.run_in_executor(None, self.get_embedding_and_usage, text)
             except Exception as e:
                 raise_embedding_error(e, model_id=self.id, provider="vLLM")
-                raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]

@@ -1,10 +1,12 @@
 from dataclasses import dataclass
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, NoReturn, Optional, Tuple
 
 from agno.exceptions import EmbeddingError
 
 
-def raise_embedding_error(error: Exception, model_id: Optional[str] = None, provider: Optional[str] = None) -> "None":
+def raise_embedding_error(
+    error: Exception, model_id: Optional[str] = None, provider: Optional[str] = None
+) -> NoReturn:
     """Re-raise a provider exception as an ``EmbeddingError``, preserving its status code."""
     if isinstance(error, EmbeddingError):
         raise error

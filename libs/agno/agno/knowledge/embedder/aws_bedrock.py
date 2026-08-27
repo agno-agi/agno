@@ -322,7 +322,6 @@ class AwsBedrockEmbedder(Embedder):
             raise ValueError("No embeddings found in response")
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AWSBedrock")
-            raise
 
     def response(self, text: str) -> Dict[str, Any]:
         """
@@ -365,7 +364,6 @@ class AwsBedrockEmbedder(Embedder):
             response = self.response(text=text)
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AWSBedrock")
-            raise
         return self._extract_embeddings(response)
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:

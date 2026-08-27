@@ -41,7 +41,6 @@ class SentenceTransformerEmbedder(Embedder):
             return embedding  # type: ignore
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="SentenceTransformer")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         return self.get_embedding(text=text), None

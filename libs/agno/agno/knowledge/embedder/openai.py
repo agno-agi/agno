@@ -84,7 +84,6 @@ class OpenAIEmbedder(Embedder):
             return response.data[0].embedding
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         try:
@@ -97,7 +96,6 @@ class OpenAIEmbedder(Embedder):
             return embedding, None
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
-            raise
 
     async def async_get_embedding(self, text: str) -> List[float]:
         req: Dict[str, Any] = {
@@ -118,7 +116,6 @@ class OpenAIEmbedder(Embedder):
             return response.data[0].embedding
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str):
         req: Dict[str, Any] = {
@@ -141,7 +138,6 @@ class OpenAIEmbedder(Embedder):
             return embedding, usage.model_dump() if usage else None
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
-            raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]

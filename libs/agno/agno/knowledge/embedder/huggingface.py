@@ -67,7 +67,6 @@ class HuggingfaceCustomEmbedder(Embedder):
                 return list(response)
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="HuggingFace")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         return self.get_embedding(text=text), None
@@ -86,7 +85,6 @@ class HuggingfaceCustomEmbedder(Embedder):
                 return list(response)
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="HuggingFace")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""

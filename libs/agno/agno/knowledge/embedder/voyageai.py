@@ -75,7 +75,6 @@ class VoyageAIEmbedder(Embedder):
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         try:
@@ -86,7 +85,6 @@ class VoyageAIEmbedder(Embedder):
             return [float(x) for x in embedding], usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
-            raise
 
     async def _async_response(self, text: str) -> EmbeddingsObject:
         """Async version of _response using AsyncVoyageClient."""
@@ -106,7 +104,6 @@ class VoyageAIEmbedder(Embedder):
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""
@@ -117,7 +114,6 @@ class VoyageAIEmbedder(Embedder):
             return [float(x) for x in embedding], usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
-            raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]

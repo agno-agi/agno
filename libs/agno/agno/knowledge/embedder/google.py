@@ -92,10 +92,8 @@ class GeminiEmbedder(Embedder):
                 if values is not None:
                     return values
             raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Google")
-            raise
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response = self._response(text=text)
@@ -112,7 +110,6 @@ class GeminiEmbedder(Embedder):
             return [], usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
-            raise
 
     async def async_get_embedding(self, text: str) -> List[float]:
         """Async version of get_embedding using client.aio."""
@@ -144,7 +141,6 @@ class GeminiEmbedder(Embedder):
             return []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         """Async version of get_embedding_and_usage using client.aio."""
@@ -180,7 +176,6 @@ class GeminiEmbedder(Embedder):
             return [], usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
-            raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]

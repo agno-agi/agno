@@ -108,7 +108,6 @@ class OllamaEmbedder(Embedder):
             return embedding
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Ollama")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         embedding = self.get_embedding(text=text)
@@ -145,7 +144,6 @@ class OllamaEmbedder(Embedder):
             return embedding
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Ollama")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""

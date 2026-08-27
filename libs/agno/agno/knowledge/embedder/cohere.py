@@ -178,10 +178,8 @@ class CohereEmbedder(Embedder):
                 if response.embeddings.float_:
                     return response.embeddings.float_[0]
             raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Cohere")
-            raise
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Cohere")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
@@ -222,7 +220,6 @@ class CohereEmbedder(Embedder):
                 return []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Cohere")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         request_params: Dict[str, Any] = {}
@@ -304,11 +301,9 @@ class CohereEmbedder(Embedder):
                             except Exception as e3:
                                 log_error(f"Failed even with reduced batch size: {e3}")
                                 raise_embedding_error(e3, model_id=self.id, provider="Cohere")
-                                raise
                     else:
                         # Single item already failed, surface the error instead of a silent empty vector
                         raise_embedding_error(e, model_id=self.id, provider="Cohere")
-                        raise
                 else:
                     # For non-rate-limit errors, fall back to individual calls
                     log_debug("Non-rate-limit error, falling back to individual calls")

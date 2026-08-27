@@ -65,10 +65,8 @@ class MistralEmbedder(Embedder):
             if response.data and response.data[0].embedding:
                 return response.data[0].embedding
             raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
-            raise
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         try:
@@ -80,7 +78,6 @@ class MistralEmbedder(Embedder):
             return embedding, usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
-            raise
 
     async def async_get_embedding(self, text: str) -> List[float]:
         """Async version of get_embedding."""
@@ -105,10 +102,8 @@ class MistralEmbedder(Embedder):
             if response.data and response.data[0].embedding:
                 return response.data[0].embedding
             raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
-            raise
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         """Async version of get_embedding_and_usage."""
@@ -137,7 +132,6 @@ class MistralEmbedder(Embedder):
             return embedding, usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
-            raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]

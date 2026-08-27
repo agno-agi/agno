@@ -116,7 +116,6 @@ class AzureOpenAIEmbedder(Embedder):
             return response.data[0].embedding
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         try:
@@ -127,7 +126,6 @@ class AzureOpenAIEmbedder(Embedder):
             return embedding, usage.model_dump()
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
-            raise
 
     async def _aresponse(self, text: str) -> CreateEmbeddingResponse:
         """Async version of _response method."""
@@ -152,7 +150,6 @@ class AzureOpenAIEmbedder(Embedder):
             return response.data[0].embedding
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage using the native Azure OpenAI async client."""
@@ -164,7 +161,6 @@ class AzureOpenAIEmbedder(Embedder):
             return embedding, usage.model_dump()
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
-            raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]

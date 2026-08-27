@@ -65,7 +65,6 @@ class JinaEmbedder(Embedder):
             return result["data"][0]["embedding"]
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Jina")
-            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         try:
@@ -75,7 +74,6 @@ class JinaEmbedder(Embedder):
             return embedding, usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Jina")
-            raise
 
     async def _async_response(self, text: str) -> Dict[str, Any]:
         """Async version of _response using aiohttp."""
@@ -105,7 +103,6 @@ class JinaEmbedder(Embedder):
             return result["data"][0]["embedding"]
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Jina")
-            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""
@@ -116,7 +113,6 @@ class JinaEmbedder(Embedder):
             return embedding, usage
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Jina")
-            raise
 
     async def _async_batch_response(self, texts: List[str]) -> Dict[str, Any]:
         """Async batch version of _response using aiohttp."""
