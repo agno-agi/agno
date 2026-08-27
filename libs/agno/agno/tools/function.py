@@ -31,18 +31,15 @@ from agno.run import RunContext
 from agno.utils.log import log_debug, log_exception, log_warning
 from agno.utils.schema import (
     AGNO_INJECTED_PARAMS,
-    ANNOTATION_DEPTH_CAP,
     FRAMEWORK_INJECTED_PARAMS,
     IDENTITY_INJECTED_PARAMS,
     MEDIA_INJECTED_PARAMS,
     annotation_binds,
     annotation_reaches,
-    identity_injected_types,
     is_bare_media_typed,
     is_framework_typed,
     is_schema_excluded,
     is_union,
-    reaches_identity,
     unwrap_annotation,
 )
 
