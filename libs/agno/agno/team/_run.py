@@ -189,11 +189,13 @@ async def _asetup_session(
     session_id: str,
     user_id: Optional[str],
     run_id: Optional[str],
+    resolve_dependencies: bool = True,
 ) -> TeamSession:
-    """Read/create session, load state from DB, and resolve callable dependencies.
+    """Read/create session, load state from DB, and optionally resolve callable dependencies.
 
-    Shared setup for _arun() and _arun_stream(). Mirrors what the sync
-    run_dispatch() does inline before calling _run()/_run_stream().
+    Shared setup for _arun() / _arun_stream() and the async continue paths.
+    Continue callers pass ``resolve_dependencies=False`` and resolve after
+    ``_apply_continue_modifiers_team`` so factories see the forked run id.
     """
     # Read or create session
     from agno.team._init import _has_async_db, _initialize_session_state
@@ -225,8 +227,9 @@ async def _asetup_session(
             team, session=team_session, session_state=run_context.session_state
         )
 
-    # Resolve callable dependencies AFTER state is loaded
-    if run_context.dependencies is not None:
+    # Resolve callable dependencies AFTER state is loaded. Continue paths skip
+    # this and resolve after `_apply_continue_modifiers_team` instead.
+    if resolve_dependencies and run_context.dependencies is not None:
         await _aresolve_run_dependencies(team, run_context=run_context)
 
     return team_session
@@ -9483,13 +9486,16 @@ async def _acontinue_run(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
-                # Setup session
+                # Setup session. Resolve dependencies after continue modifiers
+                # (below), not here — `_asetup_session` would consume factories
+                # against the parent run id.
                 team_session = await _asetup_session(
                     team=team,
                     run_context=run_context,
                     session_id=session_id,
                     user_id=user_id,
                     run_id=run_id,
+                    resolve_dependencies=False,
                 )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
@@ -9547,6 +9553,14 @@ async def _acontinue_run(
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
                         await _amark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
+
+                # Resolve dependencies AFTER the fork. A callable dependency may
+                # derive run-scoped values from run_context, and continuing a
+                # completed run forks a sibling with a new run_id; resolving
+                # first would hand every factory the PARENT's id. Mirrors the
+                # agent async continue bodies and the team sync dispatch.
+                if run_context.dependencies is not None:
+                    await _aresolve_run_dependencies(team, run_context=run_context)
 
                 # Append input/additional_instructions as a user message.
                 if input:
@@ -9964,13 +9978,16 @@ async def _acontinue_run_stream(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
-                # Setup session
+                # Setup session. Resolve dependencies after continue modifiers
+                # (below), not here — `_asetup_session` would consume factories
+                # against the parent run id.
                 team_session = await _asetup_session(
                     team=team,
                     run_context=run_context,
                     session_id=session_id,
                     user_id=user_id,
                     run_id=run_id,
+                    resolve_dependencies=False,
                 )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
@@ -10028,6 +10045,14 @@ async def _acontinue_run_stream(
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
                         await _amark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
+
+                # Resolve dependencies AFTER the fork. A callable dependency may
+                # derive run-scoped values from run_context, and continuing a
+                # completed run forks a sibling with a new run_id; resolving
+                # first would hand every factory the PARENT's id. Mirrors the
+                # agent async continue bodies and the team sync dispatch.
+                if run_context.dependencies is not None:
+                    await _aresolve_run_dependencies(team, run_context=run_context)
 
                 # Append input/additional_instructions as a user message.
                 if input:
