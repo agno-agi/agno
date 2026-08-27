@@ -182,6 +182,64 @@ def test_disabling_builtins_with_no_custom_tools_is_rejected_at_construction():
         MCPServerConfig(enable_builtin_tools=False)
 
 
+def _noop_tool() -> str:
+    """Return ok."""
+    return "ok"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"include_tags": set()}, id="empty-include-tags"),
+        pytest.param({"exclude_tags": {"core", "session"}}, id="exclude-every-tag"),
+        pytest.param({"include_tags": {"core"}, "exclude_tags": {"core"}}, id="exclude-cancels-include"),
+    ],
+)
+def test_tag_scoping_to_zero_builtins_without_custom_tools_warns(monkeypatch, kwargs):
+    """The tags reach the same zero-tool server the check above rejects.
+
+    ``enable_builtin_tools`` is still True in each of these, so the ``zero tools`` branch
+    never fires and the config is accepted -- then ``/mcp`` lists nothing. Warned rather
+    than raised because, unlike ``enable_builtin_tools=False``, this shape is accepted
+    today and callers may be relying on it.
+    """
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPServerConfig(**kwargs)
+
+    assert len(warnings) == 1
+    assert "resolves to zero tools" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="defaults"),
+        pytest.param({"include_tags": {"core"}}, id="scoped-to-core"),
+        pytest.param({"exclude_tags": {"session"}}, id="drops-session"),
+        pytest.param({"include_tags": set(), "tools": [_noop_tool]}, id="no-builtins-but-custom-tools"),
+        pytest.param({"tools": [_noop_tool], "enable_builtin_tools": False}, id="custom-tools-only"),
+    ],
+)
+def test_configs_that_still_register_a_tool_do_not_warn(monkeypatch, kwargs):
+    """Anything that ends up with at least one tool stays silent -- no behavior change."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPServerConfig(**kwargs)
+
+    assert warnings == []
+
+
+async def test_zero_tool_tag_scoping_still_builds_an_empty_server(monkeypatch):
+    """The warning is advisory: the resolved surface is unchanged (still empty)."""
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: None)
+
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session"}))
+    assert await _tool_names(os) == set()
+
+
 async def test_include_tags_scopes_builtins_to_core():
     os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(include_tags={"core"}))
     assert await _tool_names(os) == CORE_TOOLS

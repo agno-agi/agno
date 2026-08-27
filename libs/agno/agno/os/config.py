@@ -108,6 +108,11 @@ class MCPServerConfig(BaseModel):
         user disabled the built-ins intending to ship their own and forgot to register them,
         and ends up with a working ``/mcp`` endpoint that lists nothing. Fail fast at
         construction with an actionable message instead of booting a useless server.
+
+        The tags reach the same dead end without tripping that check: an explicitly empty
+        ``include_tags``, or an ``exclude_tags`` covering every remaining tag, scopes out
+        all the built-ins while ``enable_builtin_tools`` is still True. That case only
+        warns -- see below.
         """
         if not self.enable_builtin_tools and not self.tools:
             raise ValueError(
@@ -115,6 +120,27 @@ class MCPServerConfig(BaseModel):
                 "tools is empty. Pass tools=[...] to register custom tools, or leave "
                 "enable_builtin_tools=True (the default) to ship the built-in tools."
             )
+
+        # Warn rather than raise: unlike the branch above, this configuration is accepted
+        # today and callers may be relying on it, so the surface stays exactly as it is.
+        # Resolution mirrors ``_enabled_builtin_tags`` in ``agno/os/mcp.py``; it is inlined
+        # here so this module keeps its typing+pydantic-only imports (``mcp.py`` pulls in
+        # FastMCP, an optional extra).
+        if self.enable_builtin_tools and not self.tools:
+            enabled = set(self.include_tags) if self.include_tags is not None else set(MCP_BUILTIN_TAGS)
+            if self.exclude_tags:
+                enabled -= set(self.exclude_tags)
+            if not enabled:
+                from agno.utils.log import log_warning
+
+                log_warning(
+                    "MCPServerConfig resolves to zero tools: include_tags/exclude_tags scope out every "
+                    "built-in tag and no custom tools were passed, so /mcp will list nothing. Built-in "
+                    f"tags are {sorted(MCP_BUILTIN_TAGS)}; got include_tags="
+                    f"{sorted(self.include_tags) if self.include_tags is not None else None}, "
+                    f"exclude_tags={sorted(self.exclude_tags) if self.exclude_tags else None}. "
+                    "Pass tools=[...] if this is intentional."
+                )
         return self
 
 
