@@ -351,7 +351,10 @@ def _build_summarization_prompt(
     if existing_summary:
         prompt.append(Message(role="user", content=f"Previous summary to update:\n{existing_summary}"))
 
-    prompt.extend(old_messages)
+    # Strip provider_data to avoid model chaining (OpenAI Responses API)
+    for msg in old_messages:
+        prompt.append(Message(role=msg.role, content=msg.content or ""))
+
     prompt.append(Message(role="user", content="Now provide a concise summary of the conversation above."))
     return prompt
 
