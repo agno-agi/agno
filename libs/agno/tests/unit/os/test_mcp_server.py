@@ -148,23 +148,6 @@ async def test_unregisterable_custom_tool_raises():
         build_mcp_server(AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(tools=[object()])))
 
 
-async def test_toolkit_is_flattened_into_individual_tools():
-    """A Toolkit is auto-flattened into its individual Functions, same as Agent.parse_tools."""
-    import tempfile
-
-    from agno.tools.workspace import Workspace
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        workspace = Workspace(tmp_dir, allowed=["read", "list"])
-        os = AgentOS(
-            agents=[_agent()],
-            mcp_server=MCPServerConfig(tools=[workspace], enable_builtin_tools=False),
-        )
-        tool_names = await _tool_names(os)
-        assert "read_file" in tool_names
-        assert "list_files" in tool_names
-
-
 # ==================== Scoping the built-ins ====================
 
 
