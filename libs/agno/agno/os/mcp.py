@@ -130,7 +130,7 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
         return
 
     raise TypeError(
-        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
+        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable, Agno tool/Function, or Toolkit."
     )
 
 
