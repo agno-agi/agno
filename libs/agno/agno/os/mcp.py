@@ -800,10 +800,14 @@ def _validate_exposed_tool_name(component_id: str, singular: str) -> str:
     ``fullmatch`` (not ``match``): ``$`` would accept a trailing newline.
     """
     if not _TOOL_NAME_VALID_RE.fullmatch(component_id):
+        # Suggest, never apply: silently rewriting the id would decouple the tool name
+        # from the continue_run handle and the scope segment, and mutating a component's
+        # id at build could break persisted/registry identity.
+        candidate = re.sub(r"[^A-Za-z0-9_-]+", "-", component_id).strip("-")
+        suggestion = f" For example, set id={candidate!r} on the component." if candidate else ""
         raise ValueError(
             f"MCPConfig cannot expose {singular} id {component_id!r}: exposed tool names use the "
-            "component id verbatim, and this id contains characters outside [A-Za-z0-9_-]. "
-            "Set an id like 'my-agent' on the component."
+            f"component id verbatim, and this id contains characters outside [A-Za-z0-9_-].{suggestion}"
         )
     if len(component_id) > _TOOL_NAME_MAX_LENGTH:
         raise ValueError(
@@ -831,6 +835,17 @@ def _resolve_exposed_entry(entry: Any, kind: str, os: "AgentOS") -> Any:
         for component in roster:
             if getattr(component, "id", None) == entry:
                 return component
+        # The wrong-kind check matters MOST here: an id string carries no type
+        # information, so a team id in MCPConfig.agents is the likeliest mix-up.
+        for other_kind in ("agents", "teams", "workflows"):
+            if other_kind == kind:
+                continue
+            for component in getattr(os, other_kind, None) or []:
+                if getattr(component, "id", None) == entry:
+                    raise ValueError(
+                        f"MCPConfig.{kind} contains id {entry!r}, which is one of this AgentOS's "
+                        f"{other_kind}; move it to MCPConfig.{other_kind}."
+                    )
         raise ValueError(
             f"MCPConfig.{kind} contains id {entry!r} which is not part of the AgentOS roster; "
             f"add the component to AgentOS({kind}=[...]) or remove it from MCPConfig.{kind}."

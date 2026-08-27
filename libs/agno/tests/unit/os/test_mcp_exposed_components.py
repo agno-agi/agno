@@ -205,13 +205,24 @@ async def test_exposed_tool_description_fallback_without_component_description()
     )
 
 
-def test_exposed_id_outside_tool_name_charset_raises():
+def test_exposed_id_outside_tool_name_charset_raises_with_candidate():
     """Ids are never sanitized into a different-looking tool name: the id doubles as the
     continue_run handle and the per-resource scope segment, so a mismatch would break
-    HITL resume and make the visible name disagree with the scope that grants it."""
+    HITL resume and make the visible name disagree with the scope that grants it. The
+    error suggests a clean candidate id without applying it."""
     agent = _agent(id="chief agent (v2)")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
-    with pytest.raises(ValueError, match="outside \\[A-Za-z0-9_-\\]"):
+    with pytest.raises(ValueError, match="set id='chief-agent-v2'"):
+        build_mcp_server(os)
+
+
+def test_wrong_kind_id_string_names_the_actual_kind():
+    """An id string carries no type information, so a team id in MCPConfig.agents is the
+    likeliest mix-up -- it must say 'move it to MCPConfig.teams', not 'add the component
+    to AgentOS(agents=[...])'."""
+    team = _team()
+    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, agents=["support-team"], teams=[team]))
+    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
         build_mcp_server(os)
 
 
