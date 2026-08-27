@@ -31,3 +31,13 @@
 **Result:** Success.
 
 ---
+
+### check_policy.py
+
+**Status:** PASS (2026-08-27, gpt-5.5, demo venv)
+
+**Description:** Per-check policy: a required file check, an advisory length check (required=False), and a JudgeScorer gated by run_when on the required checks passing. Attempt 0: both cheap checks passed, so the judge ran and failed the draft; the model rewrote; attempt 1 passed all three. The judge never runs while required checks fail, so failed attempts never pay for a judge call.
+
+**Result:** Success.
+
+---
