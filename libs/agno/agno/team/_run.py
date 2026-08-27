@@ -7192,6 +7192,7 @@ async def _aprocess_direct_member_content_stream(
             run_messages=run_messages,
             stream_events=stream_events,
         ):
+            await araise_if_cancelled(run_response.run_id)  # type: ignore
             yield event
     if team.parser_model is not None:
         async for event in aparse_response_with_parser_model_stream(
@@ -7201,7 +7202,9 @@ async def _aprocess_direct_member_content_stream(
             stream_events=stream_events,
             run_context=run_context,
         ):
+            await araise_if_cancelled(run_response.run_id)  # type: ignore
             yield event
+    await araise_if_cancelled(run_response.run_id)  # type: ignore
     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
 
@@ -10687,6 +10690,14 @@ async def _acontinue_run_stream(
                         run_context,
                         member_results,
                     )
+                    if stream_events:
+                        yield handle_event(
+                            create_team_run_continued_event(run_response),
+                            run_response,
+                            events_to_skip=team.events_to_skip,
+                            store_events=team.store_events,
+                        )
+
                     async for event in _aprocess_direct_member_content_stream(
                         team,
                         run_response,
@@ -10697,14 +10708,6 @@ async def _acontinue_run_stream(
                         stream_events,
                     ):
                         yield event
-
-                    if stream_events:
-                        yield handle_event(
-                            create_team_run_continued_event(run_response),
-                            run_response,
-                            events_to_skip=team.events_to_skip,
-                            store_events=team.store_events,
-                        )
 
                 elif member_results:
                     # Member-only: continue the same run with member results

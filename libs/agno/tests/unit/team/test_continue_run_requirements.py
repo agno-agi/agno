@@ -1943,6 +1943,117 @@ class TestRespondDirectlyMemberContinuation:
 
         asyncio.run(_exercise())
 
+    def test_async_stream_direct_processor_observes_cancellation(self):
+        from agno.exceptions import RunCancelledException
+        from agno.run import RunContext
+        from agno.run.agent import RunOutput
+        from agno.run.team import RunCancelledEvent
+        from agno.team._run import _acontinue_run_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.output_model = MagicMock()
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content="raw member content",
+        )
+        processor_event = object()
+
+        async def _member_stream(*args, **kwargs):
+            yield member_final
+
+        async def _process_output_model(*args, **kwargs):
+            yield processor_event
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+
+        async def _exercise():
+            cancellation_check = AsyncMock(
+                side_effect=[None, RunCancelledException("cancelled during direct response processing")]
+            )
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._run.araise_if_cancelled", new=cancellation_check),
+                patch(
+                    "agno.team._response.agenerate_response_with_output_model_stream",
+                    side_effect=_process_output_model,
+                ),
+                patch("agno.team._run.adrain_member_tasks", new=AsyncMock()),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                    stream_events=True,
+                    yield_run_output=True,
+                ):
+                    events.append(event)
+
+            assert cancellation_check.await_count == 2
+            assert processor_event not in events
+            assert any(isinstance(event, RunCancelledEvent) for event in events)
+            assert events[-1] is run_response
+            assert run_response.status == RunStatus.cancelled
+
+        asyncio.run(_exercise())
+
+    def test_async_stream_direct_emits_continued_before_parser_events(self):
+        from agno.run import RunContext
+        from agno.run.agent import RunOutput
+        from agno.run.team import RunContinuedEvent
+        from agno.team._run import _acontinue_run_stream
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        team.parser_model = MagicMock()
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content="raw member content",
+        )
+        processor_event = object()
+
+        async def _member_stream(*args, **kwargs):
+            yield member_final
+
+        async def _process_parser_model(*args, **kwargs):
+            yield processor_event
+
+        member.acontinue_run = MagicMock(side_effect=_member_stream)
+
+        async def _exercise():
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._response._ahandle_model_response_stream") as leader_stream,
+                patch(
+                    "agno.team._response.aparse_response_with_parser_model_stream",
+                    side_effect=_process_parser_model,
+                ),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+                patch("agno.team._telemetry.alog_team_telemetry", new=AsyncMock()),
+            ):
+                events = []
+                async for event in _acontinue_run_stream(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                    stream_events=True,
+                ):
+                    events.append(event)
+
+            continued_index = next(index for index, event in enumerate(events) if isinstance(event, RunContinuedEvent))
+            assert continued_index < events.index(processor_event)
+            leader_stream.assert_not_called()
+
+        asyncio.run(_exercise())
+
 
 # ===========================================================================
 # 17. Forwarding team run_context state to member.continue_run
