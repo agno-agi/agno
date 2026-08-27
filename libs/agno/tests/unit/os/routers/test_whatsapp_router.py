@@ -164,6 +164,49 @@ def test_webhook_verification_invalid_token():
         assert response.status_code == 403
 
 
+def test_webhook_verification_compares_token_in_constant_time():
+    """GET /webhook must compare hub.verify_token with hmac.compare_digest."""
+    import hmac
+
+    import agno.os.interfaces.whatsapp.router as router_module
+
+    calls = []
+    real_compare_digest = hmac.compare_digest
+
+    def recording_compare_digest(a, b):
+        calls.append((a, b))
+        return real_compare_digest(a, b)
+
+    agent_mock = _make_agent_mock()
+    with (
+        patch("agno.os.interfaces.whatsapp.router.validate_webhook_signature", return_value=True),
+        patch.dict("os.environ", WHATSAPP_ENV),
+        patch.object(router_module.hmac, "compare_digest", side_effect=recording_compare_digest),
+    ):
+        app = _build_app(agent_mock)
+        client = TestClient(app)
+        response = client.get(
+            "/webhook",
+            params={
+                "hub.mode": "subscribe",
+                "hub.verify_token": "wrong-token",
+                "hub.challenge": "challenge_123",
+            },
+        )
+        assert response.status_code == 403
+
+    expected = WHATSAPP_ENV["WHATSAPP_VERIFY_TOKEN"].encode("utf-8", "surrogateescape")
+    provided = b"wrong-token"
+    assert any(
+        (
+            a if isinstance(a, bytes) else a.encode("utf-8", "surrogateescape"),
+            b if isinstance(b, bytes) else b.encode("utf-8", "surrogateescape"),
+        )
+        == (provided, expected)
+        for a, b in calls
+    ), f"expected compare_digest(wrong-token, verify_token); got {calls!r}"
+
+
 # === Webhook Signature (POST) ===
 
 

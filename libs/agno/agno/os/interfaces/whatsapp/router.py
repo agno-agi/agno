@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import hmac
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from time import time
 from typing import Any, Literal, NamedTuple, Optional, Type, Union
@@ -171,7 +172,15 @@ def attach_routes(
         if not config.verify_token:
             raise HTTPException(status_code=500, detail="WHATSAPP_VERIFY_TOKEN is not set")
 
-        if mode == "subscribe" and token == config.verify_token:
+        # Constant-time comparison (same pattern as slack/telegram/whatsapp signature checks)
+        if (
+            mode == "subscribe"
+            and token is not None
+            and hmac.compare_digest(
+                token.encode("utf-8", "surrogateescape"),
+                config.verify_token.encode("utf-8", "surrogateescape"),
+            )
+        ):
             if not challenge:
                 raise HTTPException(status_code=400, detail="No challenge received")
             return PlainTextResponse(content=challenge)
