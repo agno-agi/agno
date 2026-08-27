@@ -14,6 +14,7 @@ from httpx import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.exceptions import EmbeddingError
 from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
@@ -24,7 +25,12 @@ from agno.knowledge.remote_content.remote_content import (
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
 from agno.knowledge.types import ContentType
-from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
+from agno.knowledge.utils import (
+    get_agno_metadata,
+    merge_user_metadata,
+    set_agno_metadata,
+    strip_agno_metadata,
+)
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.knowledge import strict_user_id_kwarg
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -56,6 +62,12 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+    # Extra attempts when embedding fails during ingestion. Rate limits and transient
+    # network errors are the common case, and an unembedded chunk is unretrievable, so
+    # the write is retried before any failure is reported. Set to 0 to disable.
+    max_embedding_retries: int = 3
+    # Seconds before the first retry; each subsequent wait doubles.
+    embedding_retry_backoff: float = 1.0
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -2579,7 +2591,7 @@ class Knowledge(RemoteKnowledge):
             metadata=content_row.metadata,
             file_type=content_row.type,
             size=content_row.size,
-            status=ContentStatus(content_row.status) if content_row.status else None,
+            status=self._parse_content_status(content_row.status) if content_row.status else None,
             status_message=content_row.status_message,
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
@@ -2623,9 +2635,14 @@ class Knowledge(RemoteKnowledge):
         try:
             return ContentStatus(status_str.lower()) if status_str else ContentStatus.PROCESSING
         except ValueError:
-            if status_str and "failed" in status_str.lower():
+            # "partial" is checked first so a compound legacy value such as
+            # "partially_failed" is not reported as a total failure.
+            lowered = status_str.lower() if status_str else ""
+            if "partial" in lowered:
+                return ContentStatus.PARTIAL
+            elif "failed" in lowered:
                 return ContentStatus.FAILED
-            elif status_str and "completed" in status_str.lower():
+            elif "completed" in lowered:
                 return ContentStatus.COMPLETED
             return ContentStatus.PROCESSING
 
@@ -2652,6 +2669,162 @@ class Knowledge(RemoteKnowledge):
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
     # --- Vector DB Insert Helpers ---
+
+    @staticmethod
+    def _count_embedded(read_documents) -> Tuple[int, int]:
+        """Return ``(embedded, total)`` for the given documents.
+
+        A document with a falsy embedding never reached the vector store in a
+        retrievable form, so it does not count as ingested.
+        """
+        documents = list(read_documents or [])
+        embedded = sum(1 for doc in documents if getattr(doc, "embedding", None))
+        return embedded, len(documents)
+
+    def _embeds_locally(self) -> bool:
+        """Whether the configured vector store embeds documents in this process.
+
+        Stores that embed server-side (LlamaIndex, LangChain, LightRag) never
+        populate ``Document.embedding``, so chunk counts say nothing about
+        whether their ingestion succeeded.
+        """
+        return getattr(self.vector_db, "embedder", None) is not None
+
+    def _set_embedding_success_status(self, content: Content, read_documents) -> None:
+        """Set the final status after the vector store accepted the write.
+
+        The write not raising is not proof every chunk is retrievable: batch
+        embedding paths can skip individual documents without failing the batch.
+        Status therefore reflects how many chunks actually carry an embedding.
+        """
+        if not self._embeds_locally():
+            content.status = ContentStatus.COMPLETED
+            content.status_message = None
+            return
+
+        embedded, total = Knowledge._count_embedded(read_documents)
+
+        if total == 0 or embedded == total:
+            content.status = ContentStatus.COMPLETED
+            content.status_message = None
+        elif embedded == 0:
+            content.status = ContentStatus.FAILED
+            content.status_message = (
+                f"No chunks could be embedded ({total} attempted), so this content is not retrievable. "
+                "Retry ingestion. If the failure persists, check the embedder configuration."
+            )
+        else:
+            failed = total - embedded
+            content.status = ContentStatus.PARTIAL
+            content.status_message = (
+                f"{embedded} of {total} chunks were embedded; {failed} failed and are not retrievable. "
+                "Re-ingest this content to retry the missing chunks."
+            )
+
+    def _retry_attempts(self) -> int:
+        """Total attempts for a vector-store write, including the first."""
+        return max(0, int(self.max_embedding_retries or 0)) + 1
+
+    def _retry_delay(self, attempt: int) -> float:
+        """Seconds to wait before the attempt after ``attempt`` (0-based), doubling each time."""
+        return float(self.embedding_retry_backoff or 0.0) * (2**attempt)
+
+    async def _aretry_vector_write(self, write, content: Content) -> Tuple[Optional[EmbeddingError], int]:
+        """Run ``write`` with retries, returning the final error (if any) and attempts used.
+
+        Only embedding failures are retried here; every other exception propagates to
+        the caller, which reports it without implying the write is worth repeating.
+        """
+        attempts = self._retry_attempts()
+        for attempt in range(attempts):
+            try:
+                await write()
+                return None, attempt + 1
+            except EmbeddingError as e:
+                if not e.is_retryable or attempt == attempts - 1:
+                    return e, attempt + 1
+                delay = self._retry_delay(attempt)
+                log_warning(
+                    f"Embedding failed for '{content.name or content.id}' "
+                    f"(attempt {attempt + 1}/{attempts}, {e.reason}); retrying in {delay:.1f}s"
+                )
+                await asyncio.sleep(delay)
+        return None, attempts
+
+    def _retry_vector_write(self, write, content: Content) -> Tuple[Optional[EmbeddingError], int]:
+        """Synchronous twin of ``_aretry_vector_write``."""
+        attempts = self._retry_attempts()
+        for attempt in range(attempts):
+            try:
+                write()
+                return None, attempt + 1
+            except EmbeddingError as e:
+                if not e.is_retryable or attempt == attempts - 1:
+                    return e, attempt + 1
+                delay = self._retry_delay(attempt)
+                log_warning(
+                    f"Embedding failed for '{content.name or content.id}' "
+                    f"(attempt {attempt + 1}/{attempts}, {e.reason}); retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+        return None, attempts
+
+    def _describe_embedder(self, error: EmbeddingError) -> str:
+        """Identify the embedder that failed, so a multi-provider setup is unambiguous."""
+        parts = [p for p in (error.provider, error.model_id) if p]
+        if parts:
+            return " ".join(parts)
+        embedder = getattr(self.vector_db, "embedder", None)
+        return type(embedder).__name__ if embedder is not None else "unknown embedder"
+
+    @staticmethod
+    def _reingest_instruction(content: Content) -> str:
+        """State how to re-run ingestion for this content.
+
+        Only URL-sourced content records its origin; uploaded files and pasted text
+        are not retained, so the caller has to supply them again.
+        """
+        source_url = get_agno_metadata(content.metadata, "source_url")
+        if source_url:
+            return f"Re-ingest {source_url} once the cause is resolved."
+        return "The original file is not retained, so upload it again once the cause is resolved."
+
+    def _set_embedding_failure_status(
+        self, content: Content, error: EmbeddingError, read_documents, operation: str, attempts: int = 1
+    ) -> None:
+        """Record an embedding failure with the reason, the embedder, and the fix.
+
+        The message is persisted and served over the knowledge API, so the provider's
+        text is redacted and the recovery step is stated explicitly rather than left
+        for the reader to infer.
+        """
+        embedded, total = Knowledge._count_embedded(read_documents) if self._embeds_locally() else (0, 0)
+        name = content.name or content.id or "content"
+
+        if embedded and embedded < total:
+            content.status = ContentStatus.PARTIAL
+            headline = f'Embedding partly failed for "{name}" ({embedded} of {total} chunks embedded).'
+        else:
+            content.status = ContentStatus.FAILED
+            counted = f" (0 of {total} chunks embedded)" if total else ""
+            headline = f'Embedding failed for "{name}"{counted}.'
+
+        if error.is_retryable:
+            tried = f" after {attempts} attempts" if attempts > 1 else ""
+            closing = f"Retrying did not succeed{tried}. {error.recovery_hint}"
+        else:
+            closing = f"Retrying will not help: the same request fails every attempt. {error.recovery_hint}"
+        closing = f"{closing} {Knowledge._reingest_instruction(content)}"
+
+        content.status_message = " ".join(
+            (
+                headline,
+                f"Embedder: {self._describe_embedder(error)}.",
+                f"Reason: {error.reason} (HTTP {error.status_code}).",
+                f"Provider said: {error.safe_message.rstrip().rstrip('.')}.",
+                closing,
+            )
+        )
 
     async def _ahandle_vector_db_insert(self, content: Content, read_documents, upsert):
         from agno.vectordb import VectorDb
@@ -2682,36 +2855,42 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
-        if self.vector_db.upsert_available() and upsert:
-            try:
-                await self.vector_db.async_upsert(
+        use_upsert = self.vector_db.upsert_available() and upsert
+        operation = "upsert" if use_upsert else "insert"
+        vector_db = self.vector_db
+
+        async def write() -> None:
+            if use_upsert:
+                await vector_db.async_upsert(
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error upserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not upsert embedding"
-                await self._aupdate_content(content)
-                return
-        else:
-            try:
-                await self.vector_db.async_insert(
+            else:
+                await vector_db.async_insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error inserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not insert embedding"
-                await self._aupdate_content(content)
-                return
 
-        content.status = ContentStatus.COMPLETED
+        try:
+            embedding_error, attempts = await self._aretry_vector_write(write, content)
+        except Exception as e:
+            log_error(f"Error {operation}ing document: {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Could not {operation} embedding"
+            await self._aupdate_content(content)
+            return
+
+        if embedding_error is not None:
+            log_error(f"Error {operation}ing document: {embedding_error.safe_message}")
+            self._set_embedding_failure_status(content, embedding_error, read_documents, operation, attempts)
+            await self._aupdate_content(content)
+            return
+
+        self._set_embedding_success_status(content, read_documents)
         await self._aupdate_content(content)
 
     def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
@@ -2740,36 +2919,42 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
-        if self.vector_db.upsert_available() and upsert:
-            try:
-                self.vector_db.upsert(
+        use_upsert = self.vector_db.upsert_available() and upsert
+        operation = "upsert" if use_upsert else "insert"
+        vector_db = self.vector_db
+
+        def write() -> None:
+            if use_upsert:
+                vector_db.upsert(
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error upserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not upsert embedding"
-                self._update_content(content)
-                return
-        else:
-            try:
-                self.vector_db.insert(
+            else:
+                vector_db.insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error inserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not insert embedding"
-                self._update_content(content)
-                return
 
-        content.status = ContentStatus.COMPLETED
+        try:
+            embedding_error, attempts = self._retry_vector_write(write, content)
+        except Exception as e:
+            log_error(f"Error {operation}ing document: {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Could not {operation} embedding"
+            self._update_content(content)
+            return
+
+        if embedding_error is not None:
+            log_error(f"Error {operation}ing document: {embedding_error.safe_message}")
+            self._set_embedding_failure_status(content, embedding_error, read_documents, operation, attempts)
+            self._update_content(content)
+            return
+
+        self._set_embedding_success_status(content, read_documents)
         self._update_content(content)
 
     # --- Content Update ---

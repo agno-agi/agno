@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 from agno.utils.log import log_warning, logger
 
 try:
@@ -64,8 +64,8 @@ class JinaEmbedder(Embedder):
             result = self._response(text)
             return result["data"][0]["embedding"]
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Jina")
+            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         try:
@@ -74,8 +74,8 @@ class JinaEmbedder(Embedder):
             usage = result.get("usage")
             return embedding, usage
         except Exception as e:
-            log_warning(f"Failed to get embedding and usage: {str(e)}")
-            return [], None
+            raise_embedding_error(e, model_id=self.id, provider="Jina")
+            raise
 
     async def _async_response(self, text: str) -> Dict[str, Any]:
         """Async version of _response using aiohttp."""
@@ -104,8 +104,8 @@ class JinaEmbedder(Embedder):
             result = await self._async_response(text)
             return result["data"][0]["embedding"]
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Jina")
+            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""
@@ -115,8 +115,8 @@ class JinaEmbedder(Embedder):
             usage = result.get("usage")
             return embedding, usage
         except Exception as e:
-            log_warning(f"Failed to get embedding and usage: {str(e)}")
-            return [], None
+            raise_embedding_error(e, model_id=self.id, provider="Jina")
+            raise
 
     async def _async_batch_response(self, texts: List[str]) -> Dict[str, Any]:
         """Async batch version of _response using aiohttp."""
@@ -168,15 +168,11 @@ class JinaEmbedder(Embedder):
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {str(e)}")
-                # Fallback to individual calls for this batch
+                # Fall back to individual calls: a whole-batch failure is often transient
+                # (or caused by a single bad text), so retry per text before giving up.
                 for text in batch_texts:
-                    try:
-                        embedding, usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
-                    except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
-                        all_embeddings.append([])
-                        all_usage.append(None)
+                    embedding, usage = await self.async_get_embedding_and_usage(text)
+                    all_embeddings.append(embedding)
+                    all_usage.append(usage)
 
         return all_embeddings, all_usage

@@ -4,7 +4,7 @@ from os import getenv
 from typing import Any, Dict, List, Literal, Optional, Tuple
 
 from agno.exceptions import AgnoError, ModelProviderError
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 from agno.utils.log import log_error, log_warning
 
 try:
@@ -306,7 +306,8 @@ class AwsBedrockEmbedder(Embedder):
 
                 # Handle list format (single embedding type or v3 default)
                 if isinstance(embeddings, list):
-                    return embeddings[0] if embeddings else []
+                    if embeddings:
+                        return embeddings[0]
 
                 # Handle dict format (multiple embedding types requested)
                 if isinstance(embeddings, dict):
@@ -318,11 +319,10 @@ class AwsBedrockEmbedder(Embedder):
                         if embeddings[embedding_type]:
                             return embeddings[embedding_type][0]
 
-            log_warning("No embeddings found in response")
-            return []
+            raise ValueError("No embeddings found in response")
         except Exception as e:
-            log_warning(f"Error extracting embeddings: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="AWSBedrock")
+            raise
 
     def response(self, text: str) -> Dict[str, Any]:
         """
@@ -361,7 +361,11 @@ class AwsBedrockEmbedder(Embedder):
         Returns:
             List[float]: The embedding vector.
         """
-        response = self.response(text=text)
+        try:
+            response = self.response(text=text)
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="AWSBedrock")
+            raise
         return self._extract_embeddings(response)
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:

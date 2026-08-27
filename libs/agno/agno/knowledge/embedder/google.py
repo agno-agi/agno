@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -85,17 +85,17 @@ class GeminiEmbedder(Embedder):
         return self.client.models.embed_content(**_request_params)
 
     def get_embedding(self, text: str) -> List[float]:
-        response = self._response(text=text)
         try:
+            response = self._response(text=text)
             if response.embeddings and len(response.embeddings) > 0:
                 values = response.embeddings[0].values
                 if values is not None:
                     return values
-            log_info("No embeddings found in response")
-            return []
+            raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Google")
+            raise
         except Exception as e:
-            log_error(f"Error extracting embeddings: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Google")
+            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response = self._response(text=text)
@@ -111,8 +111,8 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return [], usage
         except Exception as e:
-            log_error(f"Error extracting embeddings: {str(e)}")
-            return [], usage
+            raise_embedding_error(e, model_id=self.id, provider="Google")
+            raise
 
     async def async_get_embedding(self, text: str) -> List[float]:
         """Async version of get_embedding using client.aio."""
@@ -143,8 +143,8 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return []
         except Exception as e:
-            log_error(f"Error extracting embeddings: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Google")
+            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         """Async version of get_embedding_and_usage using client.aio."""
@@ -179,8 +179,8 @@ class GeminiEmbedder(Embedder):
             log_info("No embeddings found in response")
             return [], usage
         except Exception as e:
-            log_error(f"Error extracting embeddings: {str(e)}")
-            return [], usage
+            raise_embedding_error(e, model_id=self.id, provider="Google")
+            raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
@@ -226,14 +226,18 @@ class GeminiEmbedder(Embedder):
                 if response.embeddings:
                     batch_embeddings = []
                     for embedding in response.embeddings:
-                        if embedding.values is not None:
-                            batch_embeddings.append(embedding.values)
-                        else:
-                            batch_embeddings.append([])
+                        if embedding.values is None:
+                            raise_embedding_error(
+                                ValueError("No embedding values in batch response"),
+                                model_id=self.id,
+                                provider="Google",
+                            )
+                        batch_embeddings.append(embedding.values)
                     all_embeddings.extend(batch_embeddings)
                 else:
-                    # If no embeddings, add empty lists for each text in batch
-                    all_embeddings.extend([[] for _ in batch_texts])
+                    raise_embedding_error(
+                        ValueError("No embeddings in batch response"), model_id=self.id, provider="Google"
+                    )
 
                 # Extract usage information
                 usage_dict = None
@@ -245,17 +249,13 @@ class GeminiEmbedder(Embedder):
 
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {str(e)}")
-                # Fallback to individual calls for this batch
+                # Fall back to individual calls: a whole-batch failure is often transient
+                # (or caused by a single bad text), so retry per text before giving up.
                 for text in batch_texts:
-                    try:
-                        text_embedding: List[float]
-                        text_usage: Optional[Dict[str, Any]]
-                        text_embedding, text_usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(text_embedding)
-                        all_usage.append(text_usage)
-                    except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}: {e2}")
-                        all_embeddings.append([])
-                        all_usage.append(None)
+                    text_embedding: List[float]
+                    text_usage: Optional[Dict[str, Any]]
+                    text_embedding, text_usage = await self.async_get_embedding_and_usage(text)
+                    all_embeddings.append(text_embedding)
+                    all_usage.append(text_usage)
 
         return all_embeddings, all_usage

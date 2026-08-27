@@ -763,7 +763,28 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "status": "completed",
                                     "status_message": "",
                                 },
-                            }
+                            },
+                            "partial": {
+                                "summary": "Example partially ingested content status",
+                                "value": {
+                                    "status": "partial",
+                                    "status_message": (
+                                        "7 of 10 chunks were embedded; 3 failed and are not retrievable. "
+                                        "Re-ingest this content to retry the missing chunks."
+                                    ),
+                                },
+                            },
+                            "failed": {
+                                "summary": "Example failed content status",
+                                "value": {
+                                    "status": "failed",
+                                    "status_message": (
+                                        "Could not insert embedding: Rate limit reached. "
+                                        "The embedding provider rate-limited this request. "
+                                        "Retry ingestion, or lower the embedder batch size."
+                                    ),
+                                },
+                            },
                         }
                     }
                 },
@@ -805,10 +826,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             try:
                 status = ContentStatus(status_value.lower())
             except ValueError:
-                # Handle legacy or unknown statuses gracefully
-                if "failed" in status_value.lower():
+                # Handle legacy or unknown statuses gracefully. "partial" is checked
+                # before "failed"/"completed" so a compound legacy value such as
+                # "partially_failed" is not reported as a total failure.
+                lowered = status_value.lower()
+                if "partial" in lowered:
+                    status = ContentStatus.PARTIAL
+                elif "failed" in lowered:
                     status = ContentStatus.FAILED
-                elif "completed" in status_value.lower():
+                elif "completed" in lowered:
                     status = ContentStatus.COMPLETED
                 else:
                     status = ContentStatus.PROCESSING

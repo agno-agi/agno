@@ -2,7 +2,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -170,18 +170,18 @@ class CohereEmbedder(Embedder):
         return [], []
 
     def get_embedding(self, text: str) -> List[float]:
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
         try:
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
             if isinstance(response, EmbeddingsFloatsEmbedResponse):
                 return response.embeddings[0]
             elif isinstance(response, EmbeddingsByTypeEmbedResponse):
-                return response.embeddings.float_[0] if response.embeddings.float_ else []
-            else:
-                log_warning("No embeddings found")
-                return []
+                if response.embeddings.float_:
+                    return response.embeddings.float_[0]
+            raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Cohere")
+            raise
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
+            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
@@ -221,8 +221,8 @@ class CohereEmbedder(Embedder):
                 log_warning("No embeddings found")
                 return []
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
+            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         request_params: Dict[str, Any] = {}
@@ -303,25 +303,18 @@ class CohereEmbedder(Embedder):
                                 all_usage.extend(small_usage)
                             except Exception as e3:
                                 log_error(f"Failed even with reduced batch size: {e3}")
-                                # Fall back to empty results for this batch
-                                all_embeddings.extend([[] for _ in small_batch])
-                                all_usage.extend([None for _ in small_batch])
+                                raise_embedding_error(e3, model_id=self.id, provider="Cohere")
+                                raise
                     else:
-                        # Single item already failed, add empty result
-                        log_debug("Single item failed, adding empty result")
-                        all_embeddings.append([])
-                        all_usage.append(None)
+                        # Single item already failed, surface the error instead of a silent empty vector
+                        raise_embedding_error(e, model_id=self.id, provider="Cohere")
+                        raise
                 else:
                     # For non-rate-limit errors, fall back to individual calls
                     log_debug("Non-rate-limit error, falling back to individual calls")
                     for text in batch_texts:
-                        try:
-                            embedding, usage = await self.async_get_embedding_and_usage(text)
-                            all_embeddings.append(embedding)
-                            all_usage.append(usage)
-                        except Exception as e2:
-                            log_warning(f"Error in individual async embedding fallback: {e2}: {e2}")
-                            all_embeddings.append([])
-                            all_usage.append(None)
+                        embedding, usage = await self.async_get_embedding_and_usage(text)
+                        all_embeddings.append(embedding)
+                        all_usage.append(usage)
 
         return all_embeddings, all_usage

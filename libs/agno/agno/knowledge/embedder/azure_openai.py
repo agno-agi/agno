@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 from agno.utils.log import log_warning, logger
 
 try:
@@ -111,19 +111,23 @@ class AzureOpenAIEmbedder(Embedder):
         return self.client.embeddings.create(**_request_params)
 
     def get_embedding(self, text: str) -> List[float]:
-        response: CreateEmbeddingResponse = self._response(text=text)
         try:
+            response: CreateEmbeddingResponse = self._response(text=text)
             return response.data[0].embedding
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
+            raise
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
-        response: CreateEmbeddingResponse = self._response(text=text)
+        try:
+            response: CreateEmbeddingResponse = self._response(text=text)
 
-        embedding = response.data[0].embedding
-        usage = response.usage
-        return embedding, usage.model_dump()
+            embedding = response.data[0].embedding
+            usage = response.usage
+            return embedding, usage.model_dump()
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
+            raise
 
     async def _aresponse(self, text: str) -> CreateEmbeddingResponse:
         """Async version of _response method."""
@@ -143,20 +147,24 @@ class AzureOpenAIEmbedder(Embedder):
 
     async def async_get_embedding(self, text: str) -> List[float]:
         """Async version of get_embedding using the native Azure OpenAI async client."""
-        response: CreateEmbeddingResponse = await self._aresponse(text=text)
         try:
+            response: CreateEmbeddingResponse = await self._aresponse(text=text)
             return response.data[0].embedding
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
+            raise
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage using the native Azure OpenAI async client."""
-        response: CreateEmbeddingResponse = await self._aresponse(text=text)
+        try:
+            response: CreateEmbeddingResponse = await self._aresponse(text=text)
 
-        embedding = response.data[0].embedding
-        usage = response.usage
-        return embedding, usage.model_dump()
+            embedding = response.data[0].embedding
+            usage = response.usage
+            return embedding, usage.model_dump()
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
+            raise
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
@@ -199,15 +207,11 @@ class AzureOpenAIEmbedder(Embedder):
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {str(e)}")
-                # Fallback to individual calls for this batch
+                # Fall back to individual calls: a whole-batch failure is often transient
+                # (or caused by a single bad text), so retry per text before giving up.
                 for text in batch_texts:
-                    try:
-                        embedding, usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
-                    except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
-                        all_embeddings.append([])
-                        all_usage.append(None)
+                    embedding, usage = await self.async_get_embedding_and_usage(text)
+                    all_embeddings.append(embedding)
+                    all_usage.append(usage)
 
         return all_embeddings, all_usage
