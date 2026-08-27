@@ -5,7 +5,7 @@ from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, T
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
-# the valid values for ``MCPServerConfig.include_tags`` / ``exclude_tags`` without reading
+# the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
 # ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
 # ``@register_builtin_tool(...)`` in that module.
 MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session"})
@@ -15,26 +15,47 @@ MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session"})
 MCPBuiltinTag = Literal["core", "session"]
 
 
-class MCPServerConfig(BaseModel):
+class MCPConfig(BaseModel):
     """Configuration for the AgentOS MCP server (served at ``/mcp``).
 
-    Pass this as ``AgentOS(mcp_server=MCPServerConfig(...))`` to register your own
-    tools, scope the built-in tools, gate the server, and add middleware.
-    With plain ``mcp_server=True``, all built-in tools are registered and no extra
-    gate or middleware is added.
+    Pass this as ``AgentOS(mcp=MCPConfig(...))`` to expose agents/teams/workflows as
+    individual MCP tools, register your own tools, scope the default tools, gate the
+    server, and add middleware. With plain ``mcp=True``, all default tools are
+    registered and no extra gate or middleware is added.
 
-    The built-in tools are tagged so they can be scoped as a group. See
+    The default tools are tagged so they can be scoped as a group. See
     ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
       - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``,
         ``continue_run``, ``cancel_run``
       - ``"session"`` -> read-only session tools (``get_sessions``, ``get_session_runs``)
 
-    The surface is deliberately small (8 tools): it is an operator surface for LLM
-    frontends, not a database console. Session writes and memory CRUD live on the REST
-    surface; anything else can be registered as a custom tool via ``tools``.
+    The default surface is deliberately small (8 tools): it is an operator surface for
+    LLM frontends, not a database console. Session writes and memory CRUD live on the
+    REST surface; anything else can be registered as a custom tool via ``tools``.
     """
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # Components to expose as individual MCP tools, named after their ids: an agent with
+    # id "chief" becomes a tool called "chief" whose description is the agent's own.
+    # Each entry is a component instance (the same object passed to ``AgentOS``) or an id
+    # string resolved against the AgentOS roster. Every exposed component must be part of
+    # the AgentOS roster -- exposure is a view on the deployment, not a second
+    # registration path -- and tool names must not collide with the default tools, custom
+    # ``tools``, or each other; violations fail fast when the server is built.
+    #
+    # The generated tools run through the same machinery as ``run_agent`` /
+    # ``run_team`` / ``run_workflow`` (per-run copies, scope checks, session minting,
+    # ownership gates, progress reporting), so RBAC scopes like ``agents:run`` apply
+    # to them identically. Combine with ``default_tools=False`` to serve ONLY the
+    # named components.
+    #
+    # Note for HITL: resuming a PAUSED run needs the default ``continue_run`` tool, so
+    # deployments exposing agents with ``requires_confirmation`` tools should keep
+    # ``default_tools=True`` or ``include_tags={"core"}``.
+    agents: Optional[List[Any]] = None
+    teams: Optional[List[Any]] = None
+    workflows: Optional[List[Any]] = None
 
     # Custom tools to register on the MCP server. Each entry may be a plain callable
     # (name/description inferred from ``__name__``/docstring) or an Agno tool/``Function``
@@ -46,12 +67,14 @@ class MCPServerConfig(BaseModel):
     # FastMCP ``Context`` parameter, which FastMCP injects natively.
     tools: Optional[List[Any]] = None
 
-    # Master switch for the 8 built-in tools. Set to False to ship ONLY your own tools.
-    enable_builtin_tools: bool = True
+    # Master switch for the 8 default tools. Set to False to ship only your own surface:
+    # exposed components (``agents``/``teams``/``workflows``) and/or custom ``tools``.
+    # ``enable_builtin_tools`` is the deprecated spelling, still accepted at construction.
+    default_tools: bool = True
 
-    # Finer scoping over the built-ins via their tags (see ``MCP_BUILTIN_TAGS``).
-    # When ``include_tags`` is set, only built-ins carrying one of those tags are registered.
-    # ``exclude_tags`` is then subtracted. Both are ignored when ``enable_builtin_tools`` is False.
+    # Finer scoping over the default tools via their tags (see ``MCP_BUILTIN_TAGS``).
+    # When ``include_tags`` is set, only default tools carrying one of those tags are registered.
+    # ``exclude_tags`` is then subtracted. Both are ignored when ``default_tools`` is False.
     # Typed as ``MCPBuiltinTag`` (a ``Literal``) so the IDE autocompletes the values and pydantic
     # rejects typos at construction with a message like "Input should be 'core' or 'session'"
     # -- otherwise an unknown tag would silently produce an empty server.
@@ -100,25 +123,57 @@ class MCPServerConfig(BaseModel):
     # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
 
+    @model_validator(mode="before")
+    @classmethod
+    def _map_deprecated_enable_builtin_tools(cls, data: Any) -> Any:
+        """Accept ``enable_builtin_tools`` as a deprecated alias for ``default_tools``.
+
+        Silent by design: a working config must not warn. Both names passed with
+        different values is a contradiction, never a guess -- raise. Without this
+        mapping the old kwarg would be dropped as pydantic "extra" and the config
+        would silently flip back to serving all default tools.
+        """
+        if isinstance(data, dict) and "enable_builtin_tools" in data:
+            # Copy before popping: model_validate may hand us the caller's own dict.
+            data = dict(data)
+            legacy = data.pop("enable_builtin_tools")
+            if "default_tools" in data and data["default_tools"] != legacy:
+                raise ValueError(
+                    "MCPConfig got both default_tools and its deprecated alias enable_builtin_tools "
+                    f"with different values ({data['default_tools']!r} vs {legacy!r}); pass only default_tools."
+                )
+            data.setdefault("default_tools", legacy)
+        return data
+
+    @property
+    def enable_builtin_tools(self) -> bool:
+        """Deprecated read alias for ``default_tools``."""
+        return self.default_tools
+
+    def _has_exposed_components(self) -> bool:
+        return bool(self.agents) or bool(self.teams) or bool(self.workflows)
+
     @model_validator(mode="after")
-    def _check_has_tools(self) -> "MCPServerConfig":
+    def _check_has_tools(self) -> "MCPConfig":
         """Refuse a config that would mount an MCP server with zero tools.
 
-        ``enable_builtin_tools=False`` plus no ``tools`` is almost always a mistake -- the
-        user disabled the built-ins intending to ship their own and forgot to register them,
-        and ends up with a working ``/mcp`` endpoint that lists nothing. Fail fast at
-        construction with an actionable message instead of booting a useless server.
+        ``default_tools=False`` plus no ``tools`` and no exposed components is almost
+        always a mistake -- the user disabled the default tools intending to ship their
+        own surface and forgot to register it, and ends up with a working ``/mcp``
+        endpoint that lists nothing. Fail fast at construction with an actionable
+        message instead of booting a useless server.
 
         The tags reach the same dead end without tripping that check: an explicitly empty
         ``include_tags``, or an ``exclude_tags`` covering every remaining tag, scopes out
-        all the built-ins while ``enable_builtin_tools`` is still True. That case only
+        all the default tools while ``default_tools`` is still True. That case only
         warns -- see below.
         """
-        if not self.enable_builtin_tools and not self.tools:
+        if not self.default_tools and not self.tools and not self._has_exposed_components():
             raise ValueError(
-                "MCPServerConfig would register zero tools: enable_builtin_tools=False and "
-                "tools is empty. Pass tools=[...] to register custom tools, or leave "
-                "enable_builtin_tools=True (the default) to ship the built-in tools."
+                "MCPConfig would register zero tools: default_tools=False with no tools and no "
+                "exposed components. Pass agents=[...]/teams=[...]/workflows=[...] to expose "
+                "components as tools, tools=[...] to register custom tools, or leave "
+                "default_tools=True (the default) to ship the default tools."
             )
 
         # Warn rather than raise: unlike the branch above, this configuration is accepted
@@ -126,7 +181,7 @@ class MCPServerConfig(BaseModel):
         # Resolution mirrors ``_enabled_builtin_tags`` in ``agno/os/mcp.py``; it is inlined
         # here so this module keeps its typing+pydantic-only imports (``mcp.py`` pulls in
         # FastMCP, an optional extra).
-        if self.enable_builtin_tools and not self.tools:
+        if self.default_tools and not self.tools and not self._has_exposed_components():
             enabled = set(self.include_tags) if self.include_tags is not None else set(MCP_BUILTIN_TAGS)
             if self.exclude_tags:
                 enabled -= set(self.exclude_tags)
@@ -134,14 +189,19 @@ class MCPServerConfig(BaseModel):
                 from agno.utils.log import log_warning
 
                 log_warning(
-                    "MCPServerConfig resolves to zero tools: include_tags/exclude_tags scope out every "
-                    "built-in tag and no custom tools were passed, so /mcp will list nothing. Built-in "
-                    f"tags are {sorted(MCP_BUILTIN_TAGS)}; got include_tags="
+                    "MCPConfig resolves to zero tools: include_tags/exclude_tags scope out every "
+                    "default-tool tag and no custom tools were passed, so /mcp will list nothing. "
+                    f"Default-tool tags are {sorted(MCP_BUILTIN_TAGS)}; got include_tags="
                     f"{sorted(self.include_tags) if self.include_tags is not None else None}, "
                     f"exclude_tags={sorted(self.exclude_tags) if self.exclude_tags else None}. "
                     "Pass tools=[...] if this is intentional."
                 )
         return self
+
+
+# Deprecated spelling, kept as a plain assignment so imports and isinstance checks keep
+# working unchanged. The documented name is MCPConfig; removal targeted for 3.1.
+MCPServerConfig = MCPConfig
 
 
 class AuthorizationConfig(BaseModel):

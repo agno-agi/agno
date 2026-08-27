@@ -3,6 +3,7 @@
 import functools
 import inspect
 import logging
+import re
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Union
 from uuid import uuid4
@@ -40,17 +41,32 @@ from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
-    from agno.os.config import MCPServerConfig
+    from agno.os.config import MCPConfig
 
 logger = logging.getLogger(__name__)
 
 # Built-in MCP tools are tagged by domain so they can be scoped as a group. The canonical
-# tag set lives in agno/os/config.py next to the MCPServerConfig fields that consume it --
+# tag set lives in agno/os/config.py next to the MCPConfig fields that consume it --
 # single source of truth so adding a new tag is a one-place change.
 from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
 
+# Names of the default (built-in) tools by tag, used to detect name collisions with
+# exposed components before registration. Keep in sync with the ``name=`` / ``tags=``
+# arguments on each ``@register_builtin_tool(...)`` below; a unit test asserts this map
+# matches the tools a default server actually registers.
+_BUILTIN_TOOL_NAMES: Dict[str, str] = {
+    "get_agentos_config": "core",
+    "run_agent": "core",
+    "run_team": "core",
+    "run_workflow": "core",
+    "continue_run": "core",
+    "cancel_run": "core",
+    "get_sessions": "session",
+    "get_session_runs": "session",
+}
 
-def _enabled_builtin_tags(config: "Optional[MCPServerConfig]") -> set:
+
+def _enabled_builtin_tags(config: "Optional[MCPConfig]") -> set:
     """Resolve which built-in tool tags should be registered, given the MCP config.
 
     Returns the full set of built-in tags when no config is provided, preserving the
@@ -58,7 +74,7 @@ def _enabled_builtin_tags(config: "Optional[MCPServerConfig]") -> set:
     """
     if config is None:
         return set(_BUILTIN_TOOL_TAGS)
-    if not config.enable_builtin_tools:
+    if not config.default_tools:
         return set()
     # An explicitly empty include_tags set means "no built-in tools", so test against
     # None rather than truthiness.
@@ -68,7 +84,7 @@ def _enabled_builtin_tags(config: "Optional[MCPServerConfig]") -> set:
     return enabled
 
 
-def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPServerConfig]"):
+def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPConfig]"):
     """Return a drop-in replacement for ``mcp.tool`` that scopes the built-in tools.
 
     When a tool's tags are enabled by the config, the tool is registered as usual.
@@ -90,7 +106,7 @@ def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPServerConfig]"):
     return register
 
 
-def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPServerConfig]") -> None:
+def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPConfig]") -> None:
     """Register any user-provided custom tools on the MCP server."""
     if config is None or not config.tools:
         return
@@ -746,6 +762,232 @@ def _make_run_ownership_verifier(os: "AgentOS"):
     return verify
 
 
+# ==================== Exposed components (agents/teams/workflows as tools) ====================
+
+# MCP tool names are restricted to this charset; component ids that already conform are
+# used verbatim so the tool name matches what get_agentos_config and REST show.
+_TOOL_NAME_VALID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+_TOOL_NAME_INVALID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
+
+# One fixed sentence appended to every exposed tool's description: the session contract
+# is part of the tool's calling convention, not something each component should restate.
+_EXPOSED_SESSION_SENTENCE = (
+    "Pass the returned session_id back to continue the conversation; omit it to start a new one."
+)
+
+
+def _exposed_tool_name(component_id: str) -> str:
+    """The MCP tool name for a component id: verbatim when already valid, else sanitized
+    (invalid characters fold to one hyphen, edges stripped)."""
+    if _TOOL_NAME_VALID_RE.match(component_id):
+        return component_id
+    return _TOOL_NAME_INVALID_CHARS_RE.sub("-", component_id).strip("-")
+
+
+def _resolve_exposed_entry(entry: Any, kind: str, roster: List[Any]) -> Any:
+    """Resolve one ``MCPConfig.agents/teams/workflows`` entry against the AgentOS roster.
+
+    Exposure is a view on the deployment, not a second registration path: sessions,
+    config, REST, and MCP must agree on what exists, so every exposed component must be
+    part of the roster. Instances match by identity first, then by id (so an equal copy
+    of a roster component still resolves); id strings match by id.
+    """
+    if isinstance(entry, str):
+        for component in roster:
+            if getattr(component, "id", None) == entry:
+                return component
+        raise ValueError(
+            f"MCPConfig.{kind} contains id {entry!r} which is not part of the AgentOS roster; "
+            f"add the component to AgentOS({kind}=[...]) or remove it from MCPConfig.{kind}."
+        )
+    for component in roster:
+        if component is entry:
+            return component
+    entry_id = getattr(entry, "id", None)
+    if entry_id is not None:
+        for component in roster:
+            if getattr(component, "id", None) == entry_id:
+                return component
+    label = getattr(entry, "name", None) or entry_id or repr(entry)
+    raise ValueError(
+        f"MCPConfig.{kind} contains {label!r} which is not part of the AgentOS roster; "
+        f"add it to AgentOS({kind}=[...]) or remove it from MCPConfig.{kind}."
+    )
+
+
+def _custom_tool_names(mcp_config: "Optional[MCPConfig]") -> Dict[str, str]:
+    """Names the custom ``tools`` will claim, resolved as ``_register_custom_tool`` does."""
+    names: Dict[str, str] = {}
+    for tool in getattr(mcp_config, "tools", None) or []:
+        entrypoint = getattr(tool, "entrypoint", None)
+        if callable(entrypoint):
+            name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
+        elif callable(tool):
+            name = getattr(tool, "__name__", None)
+        else:
+            name = None
+        if name:
+            names[name] = f'custom tool "{name}"'
+    return names
+
+
+def _make_exposed_run_tool(
+    os: "AgentOS",
+    kind: "Literal['agents', 'teams']",
+    component_id: str,
+    display_name: str,
+    result_mode: str,
+) -> Callable:
+    """A run tool bound to one agent or team: the ``run_agent``/``run_team`` body with
+    the component id fixed. Resolution happens at call time so per-run copies, registry
+    lookup, versioning, and factories behave identically to the generic tools."""
+    session_type = SessionType.AGENT if kind == "agents" else SessionType.TEAM
+    label = f"{'Agent' if kind == 'agents' else 'Team'} {display_name}"
+
+    async def run_exposed(
+        message: str,
+        ctx: Context,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> ToolResult:
+        _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
+        resolved_user_id = _resolve_user_id(user_id)
+        component = await _resolve_run_component(
+            os, kind, component_id, user_id=resolved_user_id, session_id=session_id
+        )
+        # Mint a fresh session per call when omitted (matches REST), never the sticky default.
+        new_session_id = _session_id_or_new(session_id)
+        await _assert_session_writable_mcp(os, component, new_session_id, resolved_user_id, session_type)
+        run_output = await _run_agentic_component(
+            ctx, component, message, resolved_user_id, new_session_id, label=label
+        )
+        return build_run_tool_result(run_output, result_mode)
+
+    return run_exposed
+
+
+def _make_exposed_workflow_tool(
+    os: "AgentOS",
+    component_id: str,
+    result_mode: str,
+) -> Callable:
+    """A run tool bound to one workflow: the ``run_workflow`` body with the id fixed."""
+
+    async def run_exposed_workflow(
+        message: str,
+        ctx: Context,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> ToolResult:
+        from agno.workflow.remote import RemoteWorkflow
+
+        _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
+        resolved_user_id = _resolve_user_id(user_id)
+        workflow = await _resolve_run_component(
+            os, "workflows", component_id, user_id=resolved_user_id, session_id=session_id
+        )
+        # Mint a fresh session per call when omitted (matches REST), never the sticky default.
+        new_session_id = _session_id_or_new(session_id)
+        await _assert_session_writable_mcp(os, workflow, new_session_id, resolved_user_id, SessionType.WORKFLOW)
+        # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
+        with _detached_trace_context():
+            if isinstance(workflow, RemoteWorkflow):
+                run_output = await workflow.arun(message, user_id=resolved_user_id, session_id=new_session_id)
+                return build_run_tool_result(run_output, result_mode)
+            steps = getattr(workflow, "steps", None)
+            total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
+            stream = workflow.arun(
+                message,
+                user_id=resolved_user_id,
+                session_id=new_session_id,
+                stream=True,
+                stream_events=True,
+            )
+            run_output = await _consume_workflow_stream(ctx, workflow, stream, total_steps, resolved_user_id)
+        return build_run_tool_result(run_output, result_mode)
+
+    return run_exposed_workflow
+
+
+def _register_exposed_components(
+    mcp: FastMCP,
+    os: "AgentOS",
+    mcp_config: "Optional[MCPConfig]",
+    result_mode: str,
+) -> None:
+    """Register the components named in ``MCPConfig.agents/teams/workflows`` as tools.
+
+    Names come from component ids; collisions with the enabled default tools, custom
+    tools, or other exposed components are a hard error at build -- never silent
+    suffixing. The registered tool list is deliberately static and identical for every
+    caller (per-caller variance in tools/list is not allowed by the MCP spec); access is
+    enforced at call time via the same scope checks the generic run tools apply.
+    """
+    if mcp_config is None or not (mcp_config.agents or mcp_config.teams or mcp_config.workflows):
+        return
+
+    # Names already claimed by the default tools that will actually register, and by
+    # the custom tools registered just before this.
+    enabled_tags = _enabled_builtin_tags(mcp_config)
+    taken: Dict[str, str] = {
+        name: f'the default tool "{name}"' for name, tag in _BUILTIN_TOOL_NAMES.items() if tag in enabled_tags
+    }
+    taken.update(_custom_tool_names(mcp_config))
+
+    exposures: List[tuple] = [
+        ("agents", mcp_config.agents or [], "agent"),
+        ("teams", mcp_config.teams or [], "team"),
+        ("workflows", mcp_config.workflows or [], "workflow"),
+    ]
+    for kind, entries, singular in exposures:
+        roster = list(getattr(os, kind, None) or [])
+        for entry in entries:
+            component = _resolve_exposed_entry(entry, kind, roster)
+            component_id = getattr(component, "id", None)
+            if not component_id and hasattr(component, "set_id"):
+                # Ids are otherwise minted lazily at first run; the tool needs one now.
+                component.set_id()
+                component_id = getattr(component, "id", None)
+            if not component_id:
+                label = getattr(component, "name", None) or repr(component)
+                raise ValueError(
+                    f"MCPConfig.{kind} contains {label!r} which has no id; set id= on the "
+                    f"component so its MCP tool has a stable name."
+                )
+            tool_name = _exposed_tool_name(component_id)
+            if not tool_name:
+                raise ValueError(
+                    f"MCPConfig.{kind} entry {component_id!r} produces an empty MCP tool name; "
+                    "use an id with letters, digits, hyphens, or underscores."
+                )
+            if tool_name in taken:
+                raise ValueError(
+                    f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") collides with '
+                    f"{taken[tool_name]}. Rename the component id, or adjust default_tools/tools/"
+                    "the exposed components so each tool name is unique."
+                )
+            taken[tool_name] = f'exposed {singular} "{component_id}"'
+
+            display_name = getattr(component, "name", None) or component_id
+            base_description = (
+                getattr(component, "description", None) or f"Run the {display_name} {singular} with a message."
+            )
+            base_description = base_description.rstrip()
+            if not base_description.endswith((".", "!", "?")):
+                base_description += "."
+            description = f"{base_description} {_EXPOSED_SESSION_SENTENCE}"
+
+            if kind == "workflows":
+                fn = _make_exposed_workflow_tool(os, component_id, result_mode)
+            else:
+                fn = _make_exposed_run_tool(os, kind, component_id, display_name, result_mode)  # type: ignore[arg-type]
+            mcp.tool(
+                name=tool_name,
+                description=description,
+                annotations={"readOnlyHint": False, "openWorldHint": True},
+            )(fn)
+
+
 def build_mcp_server(
     os: "AgentOS",
 ) -> FastMCP:
@@ -755,7 +997,7 @@ def build_mcp_server(
     Split out from :func:`get_mcp_server` so the tool surface can be exercised directly
     by an in-memory MCP client in tests, without the HTTP/JWT layer.
     """
-    mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
+    mcp_config: "Optional[MCPConfig]" = getattr(os, "mcp_config", None)
 
     # Create an MCP server. With AgentOS(mcp_auth=...) set, the resolved fastmcp provider
     # owns authentication for the HTTP transport: http_app() serves its discovery/OAuth
@@ -1183,6 +1425,10 @@ def build_mcp_server(
     # lifespan, and JWT middleware as the built-in tools.
     _register_custom_tools(mcp, mcp_config)
 
+    # Expose the components named in the config as individual tools ("chief", not
+    # run_agent(agent_id="chief")). Last, so collision checks see the full surface.
+    _register_exposed_components(mcp, os, mcp_config, result_mode)
+
     return mcp
 
 
@@ -1361,7 +1607,7 @@ def get_mcp_server(
     (``_require_tool_scopes``).
     """
     mcp = build_mcp_server(os)
-    mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
+    mcp_config: "Optional[MCPConfig]" = getattr(os, "mcp_config", None)
     mcp_auth = os._get_mcp_auth_provider()
 
     # Use http_app for Streamable HTTP transport (modern MCP standard).
@@ -1369,7 +1615,7 @@ def get_mcp_server(
     # deployed hosts before our own middleware runs. Disable it where the parameter exists
     # and run AgentOS's single validation engine instead (the transport-security middleware
     # below), which protects open servers by default and lets deployed hosts opt in via
-    # MCPServerConfig.allowed_hosts.
+    # MCPConfig.allowed_hosts.
     http_app_kwargs: Dict[str, Any] = {"path": "/mcp"}
     if "host_origin_protection" in inspect.signature(mcp.http_app).parameters:
         http_app_kwargs["host_origin_protection"] = False
@@ -1414,7 +1660,7 @@ def get_mcp_server(
             from agno.utils.log import log_warning
 
             log_warning(
-                "MCPServerConfig.authorize is set but AgentOS(authorization=False); the gate will "
+                "MCPConfig.authorize is set but AgentOS(authorization=False); the gate will "
                 "be called with user_id=None on every request because no JWT middleware populates "
                 "request.state.user_id. Either pass authorization=True with an authorization_config, "
                 "or write your authorize() to handle user_id=None explicitly (e.g. for a dev shortcut)."

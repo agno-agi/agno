@@ -35,7 +35,7 @@ from agno.os.config import (
     KnowledgeInstanceConfig,
     LearningConfig,
     LearningDomainConfig,
-    MCPServerConfig,
+    MCPConfig,
     MemoryConfig,
     MemoryDomainConfig,
     MetricsConfig,
@@ -296,7 +296,8 @@ class AgentOS:
         config: Optional[Union[str, AgentOSConfig]] = None,
         settings: Optional[AgnoAPISettings] = None,
         lifespan: Optional[Any] = None,
-        mcp_server: Union[bool, MCPServerConfig] = False,
+        mcp: Optional[Union[bool, MCPConfig]] = None,
+        mcp_server: Optional[Union[bool, MCPConfig]] = None,
         mcp_auth: Optional["AuthProvider"] = None,
         base_app: Optional[FastAPI] = None,
         on_route_conflict: Literal["preserve_agentos", "preserve_base_app", "error"] = "preserve_agentos",
@@ -333,11 +334,14 @@ class AgentOS:
             config: Configuration file path or AgentOSConfig instance
             settings: API settings for the OS
             lifespan: Optional lifespan context manager for the FastAPI app
-            mcp_server: Serve the OS over MCP (Model Context Protocol) at ``/mcp``. Pass
-                ``True`` for the default surface (all built-in tools), or an
-                ``MCPServerConfig`` to enable the server and register custom tools via
-                ``tools=[...]`` and/or scope the built-in tools via ``enable_builtin_tools`` /
-                ``include_tags`` / ``exclude_tags``.
+            mcp: Serve the OS over MCP (Model Context Protocol) at ``/mcp``. Pass
+                ``True`` for the default surface (all default tools), or an
+                ``MCPConfig`` to expose agents/teams/workflows as individual tools
+                (``agents=[...]`` / ``teams=[...]`` / ``workflows=[...]``), register
+                custom tools via ``tools=[...]``, and/or scope the default tools via
+                ``default_tools`` / ``include_tags`` / ``exclude_tags``.
+            mcp_server: Deprecated alias for ``mcp``, still accepted; passing both with
+                different values is an error.
             mcp_auth: An ``AuthProvider`` object that owns authentication for the MCP
                 endpoint (OAuth for connector clients like claude.ai and ChatGPT). Use
                 ``AgentOSBuiltinAuth.from_env()`` (from ``agno.os``) for the built-in
@@ -347,7 +351,7 @@ class AgentOS:
                 challenge on the MCP surface, agno bridges the verified identity into the
                 tool layer, and the provider is composed with the service-account verifier
                 and the existing JWT config so ``agno_pat_`` and agno-JWT bearers keep
-                working. Requires the MCP server to be enabled via ``mcp_server``.
+                working. Requires the MCP server to be enabled via ``mcp``.
                 When unset, the existing PAT/JWT path is unchanged.
             base_app: Optional base FastAPI app to use for the AgentOS. All routes and middleware will be added to this app.
             on_route_conflict: What to do when a route conflict is detected in case a custom base_app is provided.
@@ -421,15 +425,21 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
-        self.mcp_config: Optional[MCPServerConfig] = None
-        self.mcp_server = mcp_server
+        self.mcp_config: Optional[MCPConfig] = None
+        # ``mcp_server`` is the deprecated alias; both set with different values is a
+        # contradiction, never a guess. ``None`` means unset for both, so an explicit
+        # ``mcp=False`` is distinguishable from the default.
+        if mcp is not None and mcp_server is not None and mcp != mcp_server:
+            raise ValueError(
+                "AgentOS() got both mcp= and its deprecated alias mcp_server= with different "
+                f"values ({mcp!r} vs {mcp_server!r}); pass only mcp=."
+            )
+        self.mcp = mcp if mcp is not None else (mcp_server if mcp_server is not None else False)
         self.mcp_auth: Optional["AuthProvider"] = mcp_auth
         # Resolved lazily (and once): the MultiAuth-wrapped provider handed to FastMCP.
         self._resolved_mcp_auth: Optional["AuthProvider"] = None
-        if self.mcp_auth is not None and not self.mcp_server:
-            raise ValueError(
-                "AgentOS(mcp_auth=...) requires the MCP server: pass mcp_server=True or an MCPServerConfig."
-            )
+        if self.mcp_auth is not None and not self.mcp:
+            raise ValueError("AgentOS(mcp_auth=...) requires the MCP server: pass mcp=True or an MCPConfig.")
         self.lifespan = lifespan
 
         self.registry = registry
@@ -523,18 +533,27 @@ class AgentOS:
             self._setup_tracing()
 
     @property
-    def mcp_server(self) -> bool:
-        """Whether the MCP server is enabled. Assigning an ``MCPServerConfig`` enables
+    def mcp(self) -> bool:
+        """Whether the MCP server is enabled. Assigning an ``MCPConfig`` enables
         the server and stores the config on ``mcp_config``, matching the constructor."""
         return self._mcp_enabled
 
-    @mcp_server.setter
-    def mcp_server(self, value: Union[bool, MCPServerConfig]) -> None:
-        if isinstance(value, MCPServerConfig):
+    @mcp.setter
+    def mcp(self, value: Union[bool, MCPConfig]) -> None:
+        if isinstance(value, MCPConfig):
             self._mcp_enabled = True
             self.mcp_config = value
         else:
             self._mcp_enabled = bool(value)
+
+    @property
+    def mcp_server(self) -> bool:
+        """Deprecated alias for ``mcp``."""
+        return self.mcp
+
+    @mcp_server.setter
+    def mcp_server(self, value: Union[bool, MCPConfig]) -> None:
+        self.mcp = value
 
     def _add_agent_os_to_lifespan_function(self, lifespan):
         """
@@ -592,12 +611,12 @@ class AgentOS:
         # so components added since construction are visible without a rebuild. Building
         # a fresh app here would mount one whose StreamableHTTP lifespan never runs --
         # every subsequent /mcp request would 500 until restart.
-        if self.mcp_server and self._mcp_app is None:
+        if self.mcp and self._mcp_app is None:
             try:
                 from agno.os.mcp import get_mcp_server
             except ImportError as e:
                 raise ImportError(
-                    "`fastmcp` not installed. It is required for `mcp_server=True`. "
+                    "`fastmcp` not installed. It is required for `mcp=True`. "
                     "Please install it using `pip install fastmcp`."
                 ) from e
 
@@ -682,7 +701,7 @@ class AgentOS:
             self._add_router(app, router)
 
         # Mount MCP if needed
-        if self.mcp_server:
+        if self.mcp:
             self._mount_mcp_app(app)
 
     def _add_built_in_routes(self, app: FastAPI) -> None:
@@ -1248,12 +1267,12 @@ class AgentOS:
                 return fastapi_app
 
             # Initialize MCP server if enabled
-            if self.mcp_server and self._mcp_app is None:
+            if self.mcp and self._mcp_app is None:
                 try:
                     from agno.os.mcp import get_mcp_server
                 except ImportError as e:
                     raise ImportError(
-                        "`fastmcp` not installed. It is required for `mcp_server=True`. "
+                        "`fastmcp` not installed. It is required for `mcp=True`. "
                         "Please install it using `pip install fastmcp`."
                     ) from e
 
@@ -1277,7 +1296,7 @@ class AgentOS:
                 lifespans.append(partial(mcp_lifespan, mcp_tools=self.mcp_tools))
 
             # The /mcp server lifespan
-            if self.mcp_server and self._mcp_app:
+            if self.mcp and self._mcp_app:
                 lifespans.append(self._mcp_app.lifespan)
 
             # The async database lifespan
@@ -1316,13 +1335,13 @@ class AgentOS:
 
             # MCP server lifespan (reuse an app built by an earlier get_app() call -- a
             # rebuilt one would orphan the started StreamableHTTP session manager)
-            if self.mcp_server:
+            if self.mcp:
                 if self._mcp_app is None:
                     try:
                         from agno.os.mcp import get_mcp_server
                     except ImportError as e:
                         raise ImportError(
-                            "`fastmcp` not installed. It is required for `mcp_server=True`. "
+                            "`fastmcp` not installed. It is required for `mcp=True`. "
                             "Please install it using `pip install fastmcp`."
                         ) from e
 
@@ -1417,7 +1436,7 @@ class AgentOS:
             self._add_router(fastapi_app, router)
 
         # Mount MCP if needed
-        if self.mcp_server:
+        if self.mcp:
             self._mount_mcp_app(fastapi_app)
 
         if not self._app_set:

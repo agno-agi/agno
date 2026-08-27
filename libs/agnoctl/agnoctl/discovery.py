@@ -395,6 +395,6 @@ MCP_ENABLE_INSTRUCTIONS = """MCP is not enabled on this AgentOS. Enable it and r
 
     agent_os = AgentOS(
         agents=[...],
-        mcp_server=True,  # add this line
+        mcp=True,  # add this line
     )
 """

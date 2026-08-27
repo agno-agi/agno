@@ -1,18 +1,19 @@
 # MCP
 
 AgentOS can expose its agents, teams, and workflows as an MCP server at
-`/mcp`. These examples cover the server side of that boundary: the built-in
-operator surface, custom tools, PAT authentication, tool scoping, and two OAuth
-deployment choices. Examples where an Agno agent consumes another MCP server
-belong in `cookbook/91_tools/mcp`.
+`/mcp`. These examples cover the server side of that boundary: the default
+operator surface, agents served directly as tools, custom tools, PAT
+authentication, tool scoping, and two OAuth deployment choices. Examples where
+an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 
 ## Files
 
 | File | What it teaches |
 |---|---|
-| `basic.py` | Serve the eight built-in AgentOS MCP tools. |
+| `basic.py` | Serve the eight default AgentOS MCP tools. |
+| `agents_as_tools.py` | Turn the default tools off and expose agents directly as named MCP tools. |
 | `mcp_client.py` | Discover, pause, continue, cancel, and inspect runs with a protocol-level client. |
-| `custom_tools.py` | Disable the built-ins and expose one purpose-built tool. |
+| `custom_tools.py` | Disable the default tools and expose one purpose-built tool. |
 | `secure_mcp.py` | Mint a PAT, authorize its principal, restrict hosts and tool tags, and return full results. |
 | `oauth_builtin.py` | Run AgentOS's database-backed OAuth authorization server. |
 | `oauth_authkit.py` | Use WorkOS AuthKit as an external authorization server. |
@@ -26,12 +27,13 @@ Install the MCP extras through the demo environment and set the model key:
 export OPENAI_API_KEY=...
 ```
 
-The examples use the current `mcp_server=` API and omit the legacy MCP
-constructor aliases.
+The examples use the current `mcp=` / `MCPConfig` API. The deprecated
+spellings (`mcp_server=`, `MCPServerConfig`, `enable_builtin_tools`) are still
+accepted as silent aliases.
 
-## Built-in MCP tools
+## Default MCP tools
 
-Plain `mcp_server=True` exposes eight tools:
+Plain `mcp=True` exposes eight tools:
 
 | Tag | Tools |
 |---|---|
@@ -50,10 +52,34 @@ run, cancels a second paused run, and reads the continued session from SQLite.
 Run tools return a trimmed result by default: answer content plus
 `run_id`, `session_id`, `status`, and unresolved requirements when paused.
 
+## Agents as tools
+
+`agents_as_tools.py` serves the deployment's agents as the whole MCP surface:
+
+```python
+agent_os = AgentOS(
+    agents=[chief, researcher],
+    mcp=MCPConfig(
+        default_tools=False,
+        agents=[chief, researcher],
+    ),
+)
+```
+
+`tools/list` then shows `chief` and `researcher` -- each tool named after the
+component id, described by the component's own description, and running through
+the same machinery as `run_agent` (fresh session minting, RBAC scopes such as
+`agents:run`, per-step progress). `teams=` and `workflows=` expose teams and
+workflows the same way. Exposed components must be part of the AgentOS roster,
+and tool-name collisions fail at startup. Note for HITL agents: resuming a
+PAUSED run needs the default `continue_run` tool, so keep `default_tools=True`
+or `include_tags={"core"}` when exposing agents with confirmation-required
+tools.
+
 ## Custom and scoped surfaces
 
 `custom_tools.py` passes an Agno `@tool` through
-`MCPServerConfig(tools=[...])` and sets `enable_builtin_tools=False`, leaving a
+`MCPConfig(tools=[...])` and sets `default_tools=False`, leaving a
 single client-visible tool.
 
 `secure_mcp.py` demonstrates the full security configuration:

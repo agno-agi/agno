@@ -14,7 +14,7 @@ Try: connect an MCP client to http://localhost:7777/mcp and call ask_workspace
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS, MCPServerConfig
+from agno.os import AgentOS, MCPConfig
 from agno.tools import tool
 
 # ---------------------------------------------------------------------------
@@ -54,9 +54,9 @@ agent_os = AgentOS(
     description="AgentOS exposing one purpose-built MCP tool.",
     db=db,
     agents=[workspace_agent],
-    mcp_server=MCPServerConfig(
+    mcp=MCPConfig(
         tools=[ask_workspace],
-        enable_builtin_tools=False,
+        default_tools=False,
     ),
 )
 app = agent_os.get_app()
