@@ -93,7 +93,7 @@ def test_unknown_required_param_raises_at_construction():
         verifier(bad)
     message = str(excinfo.value)
     assert "'run'" in message
-    assert "run_output, run_context, agent, team, session" in message
+    assert "run_output, run_context, agent, team, workflow, session" in message
 
 
 def test_unknown_param_with_default_is_allowed_and_never_filled():

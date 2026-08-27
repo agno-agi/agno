@@ -33,14 +33,137 @@ GuardedVerifier/CallableVerifier, fingerprints through safe_capture), so the gat
 never raises into the surrounding retry loop.
 """
 
-from dataclasses import dataclass
+import asyncio
+from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Dict, List, Optional
 
 from agno.run.base import RunStatus
+from agno.verifiers.base import _ArgMap, _is_async_callable, run_sync
 from agno.verifiers.fingerprints import asafe_capture, noop_between, safe_capture
 from agno.verifiers.report import _first_line, build_report
 from agno.verifiers.types import Verdict, Verification, VerificationAttempt, VerificationConfig
+
+
+# ---------------------------------------------------------------------------
+# The check runner — shared by every mount (the agent/team gate and the
+# workflow Verify step), so the per-check policy semantics exist exactly once.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class CheckRun:
+    """One pass over a mount's checks: the stamped verdicts, in declared order."""
+
+    verdicts: List[Verdict] = field(default_factory=list)
+    # True when a check marked fatal failed: the mount must stop re-entering immediately.
+    fatal_failure: bool = False
+
+    @property
+    def passed(self) -> bool:
+        """Every required, non-skipped check passed (vacuously true when none gate)."""
+        return all(v.passed is True for v in self.verdicts if v.gates)
+
+
+def _should_run(v: Any, verdicts_so_far: List[Verdict], run_output: Any, run_context: Any, owner: Any, session: Any) -> bool:
+    """Evaluate a check's run_when predicate. A broken predicate runs the check: skipping a
+    gate on an exception would fail open."""
+    run_when = getattr(v, "run_when", None)
+    if run_when is None:
+        return True
+    try:
+        argmap = _ArgMap(run_when, label=f"verifier {getattr(v, 'name', '?')!r} run_when", extra_allowed=("verdicts",))
+        args, kwargs = argmap.build(run_output, run_context, owner, session, extras={"verdicts": list(verdicts_so_far)})
+        result = run_when(*args, **kwargs)
+        if _is_async_callable(run_when):
+            result = run_sync(result)
+        return bool(result)
+    except Exception:
+        return True
+
+
+async def _ashould_run(
+    v: Any, verdicts_so_far: List[Verdict], run_output: Any, run_context: Any, owner: Any, session: Any
+) -> bool:
+    """Async twin of `_should_run`."""
+    run_when = getattr(v, "run_when", None)
+    if run_when is None:
+        return True
+    try:
+        argmap = _ArgMap(run_when, label=f"verifier {getattr(v, 'name', '?')!r} run_when", extra_allowed=("verdicts",))
+        args, kwargs = argmap.build(run_output, run_context, owner, session, extras={"verdicts": list(verdicts_so_far)})
+        if _is_async_callable(run_when):
+            result = await run_when(*args, **kwargs)
+        else:
+            result = await asyncio.to_thread(run_when, *args, **kwargs)
+        return bool(result)
+    except Exception:
+        return True
+
+
+def _stamp(verdict: Verdict, v: Any, index: int) -> Verdict:
+    return verdict.named(getattr(v, "name", "") or f"verifier {index}").stamped(required=getattr(v, "required", True))
+
+
+def run_checks(
+    verifiers: List[Any],
+    run_output: Any,
+    run_context: Any = None,
+    owner: Any = None,
+    session: Any = None,
+) -> CheckRun:
+    """Run coerced checks in declared order, no short-circuit, honouring per-check policy:
+    `run_when` skips (recorded, non-gating), `rerun` retries the check itself before
+    trusting a failure, `required=False` reports without gating, `fatal` flags the run as
+    not worth re-entering."""
+    result = CheckRun()
+    for index, v in enumerate(verifiers):
+        required = getattr(v, "required", True)
+        if not _should_run(v, result.verdicts, run_output, run_context, owner, session):
+            result.verdicts.append(
+                Verdict(passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True)
+            )
+            continue
+        tries = 1 + max(int(getattr(v, "rerun", 0) or 0), 0)
+        verdict = None
+        for _ in range(tries):
+            verdict = v.verify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+            if verdict.passed is True:
+                break
+        verdict = _stamp(verdict, v, index)  # type: ignore[arg-type]
+        result.verdicts.append(verdict)
+        if getattr(v, "fatal", False) and verdict.passed is not True:
+            result.fatal_failure = True
+    return result
+
+
+async def arun_checks(
+    verifiers: List[Any],
+    run_output: Any,
+    run_context: Any = None,
+    owner: Any = None,
+    session: Any = None,
+) -> CheckRun:
+    """Async twin of `run_checks`."""
+    result = CheckRun()
+    for index, v in enumerate(verifiers):
+        required = getattr(v, "required", True)
+        if not await _ashould_run(v, result.verdicts, run_output, run_context, owner, session):
+            result.verdicts.append(
+                Verdict(passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True)
+            )
+            continue
+        tries = 1 + max(int(getattr(v, "rerun", 0) or 0), 0)
+        verdict = None
+        for _ in range(tries):
+            verdict = await v.averify(run_output=run_output, run_context=run_context, owner=owner, session=session)
+            if verdict.passed is True:
+                break
+        verdict = _stamp(verdict, v, index)  # type: ignore[arg-type]
+        result.verdicts.append(verdict)
+        if getattr(v, "fatal", False) and verdict.passed is not True:
+            result.fatal_failure = True
+    return result
 
 
 @dataclass
@@ -227,13 +350,20 @@ class VerificationGate:
             attempt.fingerprint = safe_capture(self.config.fingerprint)
             attempt.compared_against = self._settled
             attempt.noop = noop_between(self._settled, attempt.fingerprint)
-        attempt.verdicts = self._run_verifiers_sync()
+        check_run = run_checks(
+            self.verifiers,
+            run_output=self.run_response,
+            run_context=self.run_context,
+            owner=self.owner,
+            session=self.session,
+        )
+        attempt.verdicts = check_run.verdicts
         record.attempts.append(attempt)
         if self.config.fingerprint is not None:
             # Settle AFTER the verifiers: their artefacts (a .pytest_cache, a formatter
             # pass) must not be charged to the model as the next attempt's work.
             self._settled = safe_capture(self.config.fingerprint)
-        return self._decide(record, attempt)
+        return self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
 
     async def asettle_attempt(self) -> GateDecision:
         """Async twin of `settle_attempt`."""
@@ -245,45 +375,33 @@ class VerificationGate:
             attempt.fingerprint = await asafe_capture(self.config.fingerprint)
             attempt.compared_against = self._settled
             attempt.noop = noop_between(self._settled, attempt.fingerprint)
-        attempt.verdicts = await self._run_verifiers_async()
+        check_run = await arun_checks(
+            self.verifiers,
+            run_output=self.run_response,
+            run_context=self.run_context,
+            owner=self.owner,
+            session=self.session,
+        )
+        attempt.verdicts = check_run.verdicts
         record.attempts.append(attempt)
         if self.config.fingerprint is not None:
             self._settled = await asafe_capture(self.config.fingerprint)
-        return self._decide(record, attempt)
+        return self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
 
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
-    def _run_verifiers_sync(self) -> List[Verdict]:
-        verdicts: List[Verdict] = []
-        for index, v in enumerate(self.verifiers):
-            verdict = v.verify(
-                run_output=self.run_response,
-                run_context=self.run_context,
-                owner=self.owner,
-                session=self.session,
-            )
-            verdicts.append(verdict.named(getattr(v, "name", "") or f"verifier {index}"))
-        return verdicts
-
-    async def _run_verifiers_async(self) -> List[Verdict]:
-        verdicts: List[Verdict] = []
-        for index, v in enumerate(self.verifiers):
-            verdict = await v.averify(
-                run_output=self.run_response,
-                run_context=self.run_context,
-                owner=self.owner,
-                session=self.session,
-            )
-            verdicts.append(verdict.named(getattr(v, "name", "") or f"verifier {index}"))
-        return verdicts
-
-    def _decide(self, record: Verification, attempt: VerificationAttempt) -> GateDecision:
+    def _decide(self, record: Verification, attempt: VerificationAttempt, fatal_failure: bool = False) -> GateDecision:
         attempts_used = len(record.attempts) - record.budget_baseline
         passed = attempt.passed
         reenter = False
-        if passed:
+        if fatal_failure:
+            # A fatal check failed: retrying is pointless by the author's own declaration,
+            # whatever the remaining budget says.
+            record.status = "unverified"
+            record.stop_reason = "fatal"
+        elif passed:
             record.status = "verified"
             record.stop_reason = "passed"
         elif attempt.noop and self.config.stop_on_noop:
@@ -327,7 +445,16 @@ class VerificationGate:
         return GateDecision(reenter=reenter, passed=passed, event=event)
 
     def _verdict_payload(self, verdicts: List[Verdict]) -> List[Dict[str, Any]]:
-        return [{"name": v.name, "passed": v.passed, "summary": _first_line(v.report)} for v in verdicts]
+        return [
+            {
+                "name": v.name,
+                "passed": v.passed,
+                "summary": _first_line(v.report),
+                "required": v.required,
+                "skipped": v.skipped,
+            }
+            for v in verdicts
+        ]
 
     def _build_started_event(self, attempt_number: int) -> Any:
         if self.team_mode:

@@ -25,7 +25,7 @@ How this relates to the neighbouring machinery:
   memories and learnings.
 """
 
-from agno.verifiers.base import GuardedVerifier, Verifier, verifier
+from agno.verifiers.base import GuardedVerifier, Verifier, check, verifier
 from agno.verifiers.fingerprints import (
     DEFAULT_EXCLUDES,
     CallableFingerprint,
@@ -60,6 +60,7 @@ __all__ = [
     "VerificationAttempt",
     "VerificationConfig",
     "Verifier",
+    "check",
     "divergence_report",
     "verified_tool",
     "verifier",

@@ -97,8 +97,14 @@ def build_report(
     summary: List[str] = []
     failing: List[Verdict] = []
     for v in attempt.verdicts:
-        if v.passed:
+        if v.skipped:
+            summary.append(f"[SKIP] {_label(v.name)} (skipped this attempt)")
+        elif v.passed:
             summary.append(f"[PASS] {_label(v.name)}")
+        elif not v.required:
+            # Advisory: reported so the model can act on it, but it never gates the outcome
+            # and gets no evidence body — the block's budget belongs to the [FAIL] items.
+            summary.append(f"[WARN] {_label(v.name)}: {_escape(_first_line(v.report))} (advisory)")
         else:
             summary.append(f"[FAIL] {_label(v.name)}: {_escape(_first_line(v.report))}")
             failing.append(v)

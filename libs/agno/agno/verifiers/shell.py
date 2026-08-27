@@ -10,9 +10,9 @@ import threading
 from collections import deque
 from io import BufferedReader
 from time import monotonic
-from typing import Any, Deque, Dict, Optional, cast
+from typing import Any, Callable, Deque, Dict, Optional, cast
 
-from agno.verifiers.base import exception_verdict
+from agno.verifiers.base import exception_verdict, validate_policy
 from agno.verifiers.types import Verdict
 
 # Head and tail kept from a shell command's output, each side. Well above REPORT_CAP_BYTES,
@@ -117,12 +117,21 @@ class ShellVerifier:
         timeout_s: float = 120.0,
         env: Optional[Dict[str, str]] = None,
         name: Optional[str] = None,
+        required: bool = True,
+        rerun: int = 0,
+        run_when: Optional[Callable[..., Any]] = None,
+        fatal: bool = False,
     ) -> None:
         self.command = command
         self.cwd = cwd
         self.timeout_s = timeout_s
         self.env = env
         self.name = name or _default_shell_name(command)
+        validate_policy(rerun, run_when, label=f"ShellVerifier {self.name!r}")
+        self.required = bool(required)
+        self.rerun = int(rerun)
+        self.run_when = run_when
+        self.fatal = bool(fatal)
 
     def _env(self) -> Dict[str, str]:
         merged = dict(os.environ)

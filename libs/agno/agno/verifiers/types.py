@@ -13,7 +13,7 @@ REPORT_CAP_BYTES = 6144
 # Sits between the kept head and the kept tail of a truncated report. 16 bytes of UTF-8.
 ELISION = " …[truncated] "
 
-StopReason = Literal["passed", "exhausted", "timeout", "noop"]
+StopReason = Literal["passed", "exhausted", "timeout", "noop", "fatal"]
 
 
 def _json_safe(value: Any) -> Any:
@@ -71,13 +71,17 @@ class Verdict:
 
     `report` is what the model sees on failure; it is capped to REPORT_CAP_BYTES in
     `__post_init__` so no caller can exceed it. `data` is for programmatic consumers and is
-    never rendered to the model.
+    never rendered to the model. `required` and `skipped` are stamped by the loop from the
+    check's policy: an advisory (required=False) failure is reported but never gates the
+    outcome, and a skipped check (its run_when said no) is recorded without running.
     """
 
     passed: bool
     report: str = ""
     name: str = ""
     data: Optional[Dict[str, Any]] = None
+    required: bool = True
+    skipped: bool = False
 
     def __post_init__(self) -> None:
         if not isinstance(self.name, str):
@@ -95,6 +99,11 @@ class Verdict:
             self.passed = False
         self.report = cap_text(self.report)
 
+    @property
+    def gates(self) -> bool:
+        """Whether this verdict counts toward the outcome: required and actually run."""
+        return self.required and not self.skipped
+
     def named(self, name: str) -> "Verdict":
         """A copy carrying `name` when this verdict has none. Never mutates in place: a
         verifier may return the same Verdict instance on every attempt."""
@@ -102,8 +111,21 @@ class Verdict:
             return self
         return replace(self, name=name)
 
+    def stamped(self, required: bool) -> "Verdict":
+        """A copy carrying the check's policy. Never mutates in place."""
+        if self.required == required:
+            return self
+        return replace(self, required=required)
+
     def to_dict(self) -> Dict[str, Any]:
-        return {"name": self.name, "passed": self.passed, "report": self.report, "data": _json_safe(self.data)}
+        return {
+            "name": self.name,
+            "passed": self.passed,
+            "report": self.report,
+            "data": _json_safe(self.data),
+            "required": self.required,
+            "skipped": self.skipped,
+        }
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "Verdict":
@@ -112,6 +134,8 @@ class Verdict:
             report=data.get("report", ""),
             name=data.get("name", ""),
             data=data.get("data"),
+            required=data.get("required", True),
+            skipped=data.get("skipped", False),
         )
 
 
@@ -171,7 +195,9 @@ class VerificationAttempt:
 
     @property
     def passed(self) -> bool:
-        return bool(self.verdicts) and all(v.passed is True for v in self.verdicts)
+        """Every required, non-skipped check passed. Advisory failures and skipped checks
+        never gate; an attempt whose checks are all advisory passes with warnings on record."""
+        return bool(self.verdicts) and all(v.passed is True for v in self.verdicts if v.gates)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

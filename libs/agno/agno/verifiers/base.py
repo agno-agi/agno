@@ -159,35 +159,41 @@ def _map_return(result: Any, name: str) -> Verdict:
 # By-name argument routing
 # ---------------------------------------------------------------------------
 
-_ALLOWED_PARAMS = ("run_output", "run_context", "agent", "team", "session")
+_ALLOWED_PARAMS = ("run_output", "run_context", "agent", "team", "workflow", "session")
 
 
 def _owner_key(owner: Any) -> str:
     # Which catch-all key carries the owner. A name check instead of an import: this module
-    # must not import agno.team, and the adapter only needs to tell a Team apart.
-    if any(cls.__name__ == "Team" for cls in type(owner).__mro__):
-        return "team"
+    # must not import agno.team or agno.workflow, and the adapter only needs to tell the
+    # owner kinds apart.
+    for cls in type(owner).__mro__:
+        if cls.__name__ == "Team":
+            return "team"
+        if cls.__name__ == "Workflow":
+            return "workflow"
     return "agent"
 
 
 class _ArgMap:
     """By-name argument routing for one verifier callable, resolved once at construction.
 
-    Allowed parameter names: run_output, run_context, agent, team, session. `agent` and
-    `team` both receive the owning Agent or Team. A parameter outside the set with no
-    default raises TypeError here, at construction: a typo in a verifier signature must
-    surface immediately, not silently starve the check on every attempt. A parameter
-    outside the set that has a default is simply never filled. A `**kwargs` catch-all
-    receives run_output, run_context, session, and the owner under exactly one key —
-    `team` when the owner is a Team, else `agent`. A callable whose signature cannot be
+    Allowed parameter names: run_output, run_context, agent, team, workflow, session.
+    `agent`, `team` and `workflow` all receive the mount's owner — a check written for one
+    mount runs on another, receiving None where that mount has no such owner. A parameter
+    outside the set with no default raises TypeError here, at construction: a typo in a
+    verifier signature must surface immediately, not silently starve the check on every
+    attempt. A parameter outside the set that has a default is simply never filled. A
+    `**kwargs` catch-all receives run_output, run_context, session, and the owner under
+    exactly one key — matching the owner's kind. A callable whose signature cannot be
     inspected (some builtins) is handed the run output alone, positionally.
     """
 
-    def __init__(self, fn: Callable[..., Any], label: str) -> None:
+    def __init__(self, fn: Callable[..., Any], label: str, extra_allowed: Tuple[str, ...] = ()) -> None:
         self._uninspectable = False
         self._positional: List[str] = []
         self._by_name: List[str] = []
         self._has_kwargs = False
+        allowed = _ALLOWED_PARAMS + extra_allowed
         try:
             parameters = inspect.signature(fn).parameters
         except (TypeError, ValueError):
@@ -198,18 +204,25 @@ class _ArgMap:
                 self._has_kwargs = True
             elif param.kind is inspect.Parameter.VAR_POSITIONAL:
                 continue
-            elif param.name in _ALLOWED_PARAMS:
+            elif param.name in allowed:
                 if param.kind is inspect.Parameter.POSITIONAL_ONLY:
                     self._positional.append(param.name)
                 else:
                     self._by_name.append(param.name)
             elif param.default is inspect.Parameter.empty:
                 raise TypeError(
-                    f"{label} declares parameter {param.name!r}, which a verifier is never called with; "
-                    f"allowed parameter names are: {', '.join(_ALLOWED_PARAMS)}"
+                    f"{label} declares parameter {param.name!r}, which it is never called with; "
+                    f"allowed parameter names are: {', '.join(allowed)}"
                 )
 
-    def build(self, run_output: Any, run_context: Any, owner: Any, session: Any) -> Tuple[tuple, Dict[str, Any]]:
+    def build(
+        self,
+        run_output: Any,
+        run_context: Any,
+        owner: Any,
+        session: Any,
+        extras: Optional[Dict[str, Any]] = None,
+    ) -> Tuple[tuple, Dict[str, Any]]:
         """The (args, kwargs) for one call."""
         if self._uninspectable:
             return (run_output,), {}
@@ -218,16 +231,21 @@ class _ArgMap:
             "run_context": run_context,
             "agent": owner,
             "team": owner,
+            "workflow": owner,
             "session": session,
         }
+        if extras:
+            values.update(extras)
         args = tuple(values[name] for name in self._positional)
         kwargs = {name: values[name] for name in self._by_name}
         if self._has_kwargs:
             kwargs.setdefault("run_output", run_output)
             kwargs.setdefault("run_context", run_context)
             kwargs.setdefault("session", session)
+            for name, value in (extras or {}).items():
+                kwargs.setdefault(name, value)
             routed = set(kwargs) | set(self._positional)
-            if "agent" not in routed and "team" not in routed:
+            if "agent" not in routed and "team" not in routed and "workflow" not in routed:
                 kwargs[_owner_key(owner)] = owner
         return args, kwargs
 
@@ -237,12 +255,33 @@ class _ArgMap:
 # ---------------------------------------------------------------------------
 
 
+def _adopt_policy(target: Any, source: Any) -> None:
+    """Carry the per-check policy attributes onto a wrapper, defaulting where the source
+    declares none. The loop reads policy off the coerced wrapper only."""
+    target.required = bool(getattr(source, "required", True))
+    target.rerun = int(getattr(source, "rerun", 0) or 0)
+    target.run_when = getattr(source, "run_when", None)
+    target.fatal = bool(getattr(source, "fatal", False))
+
+
+def validate_policy(rerun: int, run_when: Any, label: str) -> None:
+    """The per-check policy checks shared by `check()` and the shipped verifiers. Raises at
+    construction: a bad policy must not surface as a mid-run surprise."""
+    if not isinstance(rerun, int) or isinstance(rerun, bool) or rerun < 0:
+        raise ValueError(f"{label}: rerun must be a non-negative int, got {rerun!r}")
+    if run_when is not None and not callable(run_when):
+        raise TypeError(f"{label}: run_when must be a callable predicate, got {type(run_when).__name__}")
+    if run_when is not None:
+        # Validate the predicate's signature now, with `verdicts` in the allowed set.
+        _ArgMap(run_when, label=f"{label} run_when", extra_allowed=("verdicts",))
+
+
 class CallableVerifier:
     """`verifier()` output: a plain callable adapted to the Verifier protocol.
 
     The callable's parameters are routed by name (run_output, run_context, agent, team,
-    session); its signature is validated at construction. Both twins accept the loop's
-    uniform call shape and only forward what the callable declared.
+    workflow, session); its signature is validated at construction. Both twins accept the
+    loop's uniform call shape and only forward what the callable declared.
     """
 
     def __init__(self, fn: Callable[..., Any], name: Optional[str] = None) -> None:
@@ -250,6 +289,7 @@ class CallableVerifier:
         self.name: str = name or str(getattr(fn, "__name__", type(fn).__name__))
         self._async = _is_async_callable(fn)
         self._argmap = _ArgMap(fn, label=f"verifier {self.name!r}")
+        _adopt_policy(self, fn)
 
     def _invoke(self, run_output: Any, run_context: Any, owner: Any, session: Any) -> Any:
         args, kwargs = self._argmap.build(run_output, run_context, owner, session)
@@ -308,6 +348,7 @@ class GuardedVerifier:
     def __init__(self, inner: Any) -> None:
         self.inner = inner
         self.name: str = str(getattr(inner, "name", None) or type(inner).__name__)
+        _adopt_policy(self, inner)
         sync_half = getattr(inner, "verify", None)
         async_half = getattr(inner, "averify", None)
         # Classify by what each half IS, not by what it is called: an `async def verify` is an
@@ -369,8 +410,11 @@ def coerce_verifier(obj: Any) -> Verifier:
     its own methods, derives a missing half, and guards against exceptions. A callable with
     neither is adapted via `verifier()`. Anything else is a programmer error. The result
     always exposes the uniform twins the run loop calls; a bare user object is never called
-    directly.
+    directly. Idempotent: an already-coerced wrapper (a `check()` result) passes through —
+    re-wrapping one would route the loop's owner/session past the inner adapter.
     """
+    if isinstance(obj, (CallableVerifier, GuardedVerifier)):
+        return obj
     has_sync = callable(getattr(obj, "verify", None))
     has_async = callable(getattr(obj, "averify", None))
     if has_sync or has_async:
@@ -380,12 +424,48 @@ def coerce_verifier(obj: Any) -> Verifier:
     raise ValueError(f"pass a Verifier, a callable, or wrap a Scorer in ScorerVerifier; got {type(obj).__name__}")
 
 
+def check(
+    target: Any,
+    *,
+    name: Optional[str] = None,
+    required: bool = True,
+    rerun: int = 0,
+    run_when: Optional[Callable[..., Any]] = None,
+    fatal: bool = False,
+) -> Verifier:
+    """A check with its per-check policy — the wrapper that gives a bare callable (or any
+    Verifier) the same policy surface the shipped verifiers take as constructor kwargs.
+
+    ``required=False`` makes the check advisory: it runs and reports, but never gates the
+    outcome. ``rerun=N`` re-runs the check itself up to N extra times before trusting a
+    failure — for flaky checks; any success passes. ``run_when`` is a predicate (same
+    by-name arguments as a verifier, plus ``verdicts`` — this attempt's verdicts so far, in
+    declared order) deciding whether the check runs this attempt; a skipped check is
+    recorded as skipped and does not gate. ``fatal=True`` ends the run immediately on a
+    failure — for checks whose failure makes retrying pointless.
+
+    Returns a fresh wrapper, so stamping policy here never mutates a shared instance.
+    """
+    label = name or str(getattr(target, "name", None) or getattr(target, "__name__", type(target).__name__))
+    validate_policy(rerun, run_when, label=f"check {label!r}")
+    coerced = coerce_verifier(target)
+    if name:
+        coerced.name = name  # type: ignore[misc]
+    coerced.required = bool(required)  # type: ignore[attr-defined]
+    coerced.rerun = int(rerun)  # type: ignore[attr-defined]
+    coerced.run_when = run_when  # type: ignore[attr-defined]
+    coerced.fatal = bool(fatal)  # type: ignore[attr-defined]
+    return coerced
+
+
 __all__ = [
     "CallableVerifier",
     "GuardedVerifier",
     "Verifier",
+    "check",
     "coerce_verifier",
     "exception_verdict",
     "run_sync",
+    "validate_policy",
     "verifier",
 ]

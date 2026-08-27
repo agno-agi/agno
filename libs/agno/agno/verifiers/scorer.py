@@ -1,8 +1,8 @@
 """ScorerVerifier: reuse an agno.scorer.Scorer as an in-loop verification gate."""
 
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
-from agno.verifiers.base import exception_verdict, run_sync
+from agno.verifiers.base import exception_verdict, run_sync, validate_policy
 from agno.verifiers.types import Verdict
 
 
@@ -18,12 +18,27 @@ class ScorerVerifier:
     that already drives that model on another loop.
     """
 
-    def __init__(self, scorer: Any, *, expected: Any = None, name: Optional[str] = None) -> None:
+    def __init__(
+        self,
+        scorer: Any,
+        *,
+        expected: Any = None,
+        name: Optional[str] = None,
+        required: bool = True,
+        rerun: int = 0,
+        run_when: Optional[Callable[..., Any]] = None,
+        fatal: bool = False,
+    ) -> None:
         if not callable(getattr(scorer, "ascore", None)):
             raise TypeError(f"ScorerVerifier needs a Scorer with ascore(); got {type(scorer).__name__}")
         self.scorer = scorer
         self.expected = expected
         self.name = name or type(scorer).__name__
+        validate_policy(rerun, run_when, label=f"ScorerVerifier {self.name!r}")
+        self.required = bool(required)
+        self.rerun = int(rerun)
+        self.run_when = run_when
+        self.fatal = bool(fatal)
 
     def _to_verdict(self, score: Any) -> Verdict:
         if score is None:
