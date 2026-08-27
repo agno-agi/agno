@@ -1063,3 +1063,96 @@ def test_get_session_name_workflow_no_input(workflow_session_no_input):
     """Test that get_session_name returns 'New {name} Session' when workflow has no input."""
     session_dict = {**workflow_session_no_input.to_dict(), "session_type": "workflow"}
     assert get_session_name(session_dict) == "New BlogGenerator Session"
+
+
+@pytest.fixture
+def mixed_status_session(shared_db, test_agent: Agent):
+    """A session whose runs span the live and terminal status sets - the
+    shape a queue tray queries."""
+    now = int(time.time())
+    statuses = {
+        "run-q": RunStatus.pending,
+        "run-r": RunStatus.running,
+        "run-p": RunStatus.paused,
+        "run-c": RunStatus.completed,
+        "run-e": RunStatus.error,
+    }
+    runs = []
+    for idx, (run_id, run_status) in enumerate(statuses.items()):
+        run = RunOutput(
+            run_id=run_id,
+            agent_id=test_agent.id,
+            user_id="test-user",
+            status=run_status,
+            messages=[],
+            created_at=now - (len(statuses) - idx),
+        )
+        run.content = f"Content for {run_id} " + "x" * 400
+        runs.append(run)
+    session = AgentSession(
+        session_id="mixed-status-session",
+        agent_id=test_agent.id,
+        user_id="test-user",
+        session_data={"session_name": "Mixed"},
+        agent_data={"name": test_agent.name, "agent_id": test_agent.id},
+        runs=runs,
+        created_at=now,
+        updated_at=now,
+    )
+    shared_db.upsert_session(session)
+    for idx, run in enumerate(runs):
+        shared_db.upsert_run(run=run, session_id=session.session_id, user_id=session.user_id, run_index=idx)
+    return session
+
+
+def _mixed_client(shared_db):
+    agent = Agent(name="test-agent", id="test-agent-id", db=shared_db)
+    return TestClient(AgentOS(agents=[agent]).get_app())
+
+
+def test_get_session_runs_status_filter_live_set(mixed_status_session, shared_db):
+    """Repeatable status filter: the tray's live set (queued + executing +
+    awaiting approval) excludes terminal runs."""
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["PENDING", "RUNNING", "PAUSED"]},
+    )
+    assert response.status_code == 200
+    assert {run["run_id"] for run in response.json()} == {"run-q", "run-r", "run-p"}
+
+
+def test_get_session_runs_status_filter_is_case_insensitive(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["error"]},
+    )
+    assert response.status_code == 200
+    assert {run["run_id"] for run in response.json()} == {"run-e"}
+
+
+def test_get_session_runs_unknown_status_is_400(mixed_status_session, shared_db):
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"status": ["FAILED"]},
+    )
+    assert response.status_code == 400
+    assert "FAILED" in response.json()["detail"]
+
+
+def test_get_session_runs_summary_mode_is_lightweight(mixed_status_session, shared_db):
+    """summary=true: previews truncated, heavy fields absent, filter composes."""
+    client = _mixed_client(shared_db)
+    response = client.get(
+        f"/sessions/{mixed_status_session.session_id}/runs",
+        params={"summary": "true", "status": ["COMPLETED"]},
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert [run["run_id"] for run in data] == ["run-c"]
+    entry = data[0]
+    assert entry["status"] == "COMPLETED"
+    assert len(entry["content_preview"]) <= 280
+    assert "messages" not in entry and "events" not in entry and "metrics" not in entry
