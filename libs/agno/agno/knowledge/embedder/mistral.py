@@ -4,8 +4,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from agno.knowledge.embedder.base import Embedder
 from agno.utils.log import log_info, log_warning
-from agno.utils.models._mistral_compat import EmbeddingResponse
-from agno.utils.models._mistral_compat import MistralClient as Mistral
+
+try:
+    from mistralai.client import Mistral as MistralClient
+    from mistralai.client.models import EmbeddingResponse
+except ImportError:
+    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
 
 
 @dataclass
@@ -21,10 +25,10 @@ class MistralEmbedder(Embedder):
     timeout: Optional[int] = None
     client_params: Optional[Dict[str, Any]] = None
     # -*- Provide the Mistral Client manually
-    mistral_client: Optional[Mistral] = None
+    mistral_client: Optional[MistralClient] = None
 
     @property
-    def client(self) -> Mistral:
+    def client(self) -> MistralClient:
         if self.mistral_client:
             return self.mistral_client
 
@@ -39,7 +43,7 @@ class MistralEmbedder(Embedder):
         if self.client_params:
             _client_params.update(self.client_params)
 
-        self.mistral_client = Mistral(**_client_params)
+        self.mistral_client = MistralClient(**_client_params)
 
         return self.mistral_client
 

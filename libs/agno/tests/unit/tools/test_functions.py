@@ -348,6 +348,23 @@ def test_function_process_schema_for_strict():
     assert "param2" in func.parameters["required"]  # All properties should be required in strict mode
 
 
+def test_process_schema_for_strict_tolerates_a_schema_without_properties():
+    """A tool schema can reach strict processing without a `properties` key.
+
+    An MCP server advertises an argument-free tool as `{"type": "object"}`, and
+    `MCPTools` registers that schema verbatim. Reading the properties map bare used to
+    raise `KeyError: 'properties'` out of every run of the agent, not at registration.
+    """
+    for parameters in ({"type": "object"}, {"type": "object", "properties": None}):
+        func = Function(name="no_args", parameters=dict(parameters))
+
+        func.process_schema_for_strict()
+
+        assert func.parameters["properties"] == {}
+        assert func.parameters["required"] == []
+        assert func.parameters["additionalProperties"] is False
+
+
 def test_function_cache_key_generation():
     """Test generation of cache keys for function calls."""
     func = Function(name="test_func", cache_results=True, cache_dir="/tmp")
@@ -3350,22 +3367,36 @@ def test_cache_files_are_readable_by_their_owner_only(tmp_path):
 
 def test_a_result_that_cannot_be_copied_is_not_cached(tmp_path):
     """The cache keeps a copy of the tool's return because the hooks run after
-    it and may edit it in place. A value too deeply nested to copy leaves
-    nothing safe to keep, so the call is not cached rather than cached with the
-    hook's edit folded in."""
+    it and may edit it in place. A value that cannot be copied leaves nothing
+    safe to keep, so the call is not cached rather than cached with the hook's
+    edit folded in."""
+
+    class Unfoldable(dict):
+        """A value that refuses to be copied.
+
+        Nesting past the recursion limit would refuse a copy too, but that limit
+        is process-wide and any imported library may raise it: py_ecc, which
+        web3 pulls in, sets it to 100000 on import. Depth therefore pins
+        nothing, and refusing outright does."""
+
+        def __deepcopy__(self, memo):
+            raise TypeError("no copy")
 
     def enrich(function_name: str, function_call: Callable, arguments: Dict[str, Any]):
         result = function_call(**arguments)
         result["items"].append("enriched")
         return result
 
-    def nested() -> dict:
-        deep: Any = []
-        for _ in range(600):
-            deep = [deep]
-        return {"items": ["raw"], "deep": deep}
+    def uncopyable() -> dict:
+        return {"items": ["raw"], "handle": Unfoldable(kind="live")}
 
-    func = Function(name="nested", entrypoint=nested, cache_results=True, cache_dir=str(tmp_path), tool_hooks=[enrich])
+    func = Function(
+        name="uncopyable",
+        entrypoint=uncopyable,
+        cache_results=True,
+        cache_dir=str(tmp_path),
+        tool_hooks=[enrich],
+    )
 
     reported = []
     original = function_module.log_exception

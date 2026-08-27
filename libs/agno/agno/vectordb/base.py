@@ -57,17 +57,50 @@ class VectorDb(ABC):
     def id_exists(self, id: str) -> bool:
         raise NotImplementedError
 
+    # user_id is the owner of the chunks, mapped by each backend to its native primitive.
+    # None widens a search, writes the shared bucket, and deletes across every owner.
+
     @abstractmethod
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
+        """Check whether the given content hash was already ingested for an owner.
+
+        Must match exactly the rows a delete of the same content hash under the same user_id
+        would clear, never more.
+
+        Args:
+            content_hash (str): The content hash to look for
+            user_id (Optional[str]): The owner to check. None checks the shared bucket
+
+        Returns:
+            bool: True if that owner already holds the content hash
+        """
         raise NotImplementedError
 
     @abstractmethod
-    def insert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
+    def insert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
+        """Insert the given documents.
+
+        Args:
+            content_hash (str): The content hash the documents were chunked from
+            documents (List[Document]): The documents to insert
+            filters (Optional[Dict[str, Any]]): Metadata to stamp on every chunk
+            user_id (Optional[str]): The owner of the chunks. None writes the shared bucket
+        """
         raise NotImplementedError
 
     @abstractmethod
     async def async_insert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         raise NotImplementedError
 
@@ -75,21 +108,43 @@ class VectorDb(ABC):
         return False
 
     @abstractmethod
-    def upsert(self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None) -> None:
-        raise NotImplementedError
-
-    @abstractmethod
-    async def async_upsert(
-        self, content_hash: str, documents: List[Document], filters: Optional[Dict[str, Any]] = None
+    def upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
     ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    def search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    async def async_upsert(
+        self,
+        content_hash: str,
+        documents: List[Document],
+        filters: Optional[Dict[str, Any]] = None,
+        user_id: Optional[str] = None,
+    ) -> None:
         raise NotImplementedError
 
     @abstractmethod
-    async def async_search(self, query: str, limit: int = 5, filters: Optional[Any] = None) -> List[Document]:
+    def search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Any] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def async_search(
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Any] = None,
+        user_id: Optional[str] = None,
+    ) -> List[Document]:
         raise NotImplementedError
 
     @abstractmethod
@@ -144,7 +199,17 @@ class VectorDb(ABC):
         )
 
     @abstractmethod
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete all chunks with the given content ID.
+
+        Args:
+            content_id (str): The content ID to delete
+            user_id (Optional[str]): Scope the delete to that owner's chunks; shared chunks
+                survive. None deletes across every owner
+
+        Returns:
+            bool: True if chunks were deleted, False otherwise
+        """
         raise NotImplementedError
 
     @abstractmethod

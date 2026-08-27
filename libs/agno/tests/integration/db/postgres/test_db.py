@@ -75,7 +75,7 @@ def test_create_metrics_table_with_constraints(postgres_db_real):
             {"schema": "test_schema", "table": "test_metrics"},
         )
         constraints = [row[0] for row in result]
-        assert any("uq_metrics_date_period" in c for c in constraints)
+        assert any("uq_metrics_user_date_period" in c for c in constraints)
 
 
 def test_create_table_with_indexes(postgres_db_real):

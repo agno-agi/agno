@@ -101,12 +101,12 @@ def stub_redisvl(monkeypatch):
 
 @pytest.fixture()
 def import_redisdb(stub_redisvl):
-    """Import RedisVectorDb after stubbing dependencies and return (RedisVectorDb, search_idx_mock)."""
+    """Import RedisDb after stubbing dependencies and return (RedisDb, search_idx_mock)."""
     # Delayed import to ensure patches are in place
-    from agno.vectordb.redis import RedisVectorDb  # type: ignore
+    from agno.vectordb.redis import RedisDb  # type: ignore
 
     search_idx_mock, async_idx_mock = stub_redisvl
-    return RedisVectorDb, search_idx_mock, async_idx_mock
+    return RedisDb, search_idx_mock, async_idx_mock
 
 
 @pytest.fixture()
@@ -120,9 +120,9 @@ def sample_documents() -> List[Document]:
 
 @pytest.fixture()
 def redis_db(import_redisdb, mock_embedder):
-    RedisVectorDb, _search_idx_mock, _ = import_redisdb
+    RedisDb, _search_idx_mock, _ = import_redisdb
 
-    db = RedisVectorDb(
+    db = RedisDb(
         index_name="test_index",
         redis_url="redis://localhost:6379/0",
         embedder=mock_embedder,
@@ -312,3 +312,30 @@ def test_update_metadata_writes_to_hash(redis_db):
     assert redis_client.hset.call_count == 2
     for call in redis_client.hset.call_args_list:
         assert "mapping" in call.kwargs and call.kwargs["mapping"]["status"] == "updated"
+
+
+def test_update_metadata_drops_reserved_fields(redis_db):
+    """Caller metadata must not overwrite the fields the adapter owns."""
+    db, idx = redis_db
+    idx.query.return_value = [{"id": "test_index:k1"}]
+    redis_client = db.redis_client
+
+    db.update_metadata(
+        "content-xyz",
+        {"user_id": "bob", "id": "hijacked", "embedding": "junk", "status": "updated"},
+    )
+
+    assert redis_client.hset.call_count == 1
+    mapping = redis_client.hset.call_args.kwargs["mapping"]
+    assert mapping == {"status": "updated"}
+
+
+def test_update_metadata_skips_write_when_only_reserved_fields_given(redis_db):
+    """Stripping the reserved keys can empty the mapping, and hset rejects an empty one."""
+    db, idx = redis_db
+    idx.query.return_value = [{"id": "test_index:k1"}]
+    redis_client = db.redis_client
+
+    db.update_metadata("content-xyz", {"user_id": "bob"})
+
+    assert not redis_client.hset.called

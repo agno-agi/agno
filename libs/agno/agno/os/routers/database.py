@@ -10,6 +10,7 @@ from packaging import version
 
 from agno.db.base import AsyncBaseDb
 from agno.db.migrations.manager import MigrationManager
+from agno.exceptions import AgnoError
 from agno.os.auth import get_authentication_dependency
 from agno.os.schema import (
     BadRequestResponse,
@@ -20,6 +21,7 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    AgnoHTTPException,
     get_db,
 )
 from agno.remote.base import RemoteDb
@@ -46,9 +48,13 @@ def get_database_router(
     )
 
     async def _migrate_single_db(db, target_version: Optional[str] = None) -> None:
-        """Migrate a single database."""
+        """Migrate a single local database.
+
+        Remote databases are rejected: they belong to another AgentOS, which owns
+        their schema and exposes its own migrate endpoints.
+        """
         if isinstance(db, RemoteDb):
-            log_info("Skipping logs for remote DB")
+            raise ValueError(f"Database '{db.id}' is remote; run the migration on the AgentOS that owns it instead.")
 
         if target_version:
             # Use the session table as proxy for the database schema version
@@ -87,31 +93,36 @@ def get_database_router(
         },
     )
     async def migrate_all_databases(target_version: Optional[str] = None):
-        """Migrate all databases."""
+        """Migrate all local databases. Remote databases are skipped and listed in the response."""
         all_dbs = {db.id: db for db_id, dbs in os.dbs.items() for db in dbs}
+        local_dbs = {db_id: db for db_id, db in all_dbs.items() if not isinstance(db, RemoteDb)}
+        skipped_dbs = [db_id for db_id in all_dbs if db_id not in local_dbs]
+        if skipped_dbs:
+            log_info(f"Skipping migration for remote databases: {', '.join(skipped_dbs)}")
         failed_dbs: dict[str, str] = {}
 
-        for db_id, db in all_dbs.items():
+        for db_id, db in local_dbs.items():
             try:
                 await _migrate_single_db(db, target_version)
             except Exception as e:
                 failed_dbs[db_id] = str(e)
 
         version_msg = f"version {target_version}" if target_version else "latest version"
-        migrated_count = len(all_dbs) - len(failed_dbs)
+        migrated_count = len(local_dbs) - len(failed_dbs)
 
         if failed_dbs:
-            return JSONResponse(
-                content={
-                    "message": f"Migrated {migrated_count}/{len(all_dbs)} databases to {version_msg}",
-                    "failed": failed_dbs,
-                },
-                status_code=207,  # Multi-Status
-            )
+            content = {
+                "message": f"Migrated {migrated_count}/{len(local_dbs)} databases to {version_msg}",
+                "failed": failed_dbs,
+            }
+            if skipped_dbs:
+                content["skipped"] = skipped_dbs
+            return JSONResponse(content=content, status_code=207)  # Multi-Status
 
-        return JSONResponse(
-            content={"message": f"All databases migrated successfully to {version_msg}"}, status_code=200
-        )
+        content = {"message": f"All databases migrated successfully to {version_msg}"}
+        if skipped_dbs:
+            content["skipped"] = skipped_dbs
+        return JSONResponse(content=content, status_code=200)
 
     @router.post(
         "/databases/{db_id}/migrate",
@@ -140,6 +151,12 @@ def get_database_router(
         if not db:
             raise HTTPException(status_code=404, detail="Database not found")
 
+        if isinstance(db, RemoteDb):
+            raise HTTPException(
+                status_code=400,
+                detail=f"Database '{db_id}' is remote; run the migration on the AgentOS that owns it instead.",
+            )
+
         try:
             await _migrate_single_db(db, target_version)
 
@@ -149,6 +166,8 @@ def get_database_router(
             )
         except HTTPException:
             raise
+        except AgnoError as e:
+            raise AgnoHTTPException(e, detail=f"Failed to migrate database: {str(e)}")
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Failed to migrate database: {str(e)}")
 

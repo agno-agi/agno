@@ -12,7 +12,7 @@ from agno.models.cometapi import CometAPI
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=CometAPI(id="gpt-4o"),  # GPT-4o has vision capabilities
+    model=CometAPI(id="gpt-5.6-luna"),  # gpt-5.6-luna has vision capabilities
     db=SqliteDb(db_file="tmp/cometapi_image_agent.db"),
     session_id="cometapi_image_session",
     markdown=True,
