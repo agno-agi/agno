@@ -134,69 +134,12 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     )
 
 
-def _inject_user_id(fn: Callable) -> Callable:
-    """Inject the authenticated caller's user_id into a custom tool, hidden from clients.
+def _wrap_custom_tool(fn: Callable) -> Callable:
+    """Wrap a custom MCP tool to hide injected params and fill them at call time.
 
-    If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
-    resolved JWT subject at call time and drops it from the wrapper's signature -- so it
-    does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
-    Tools that do not declare ``user_id`` are returned unchanged.
-    """
-    try:
-        sig = inspect.signature(fn)
-    except (ValueError, TypeError):
-        return fn
-
-    if "user_id" not in sig.parameters:
-        return fn
-
-    visible_params = [p for name, p in sig.parameters.items() if name != "user_id"]
-    new_sig = sig.replace(parameters=visible_params)
-
-    if inspect.iscoroutinefunction(fn):
-
-        @functools.wraps(fn)
-        async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            kwargs["user_id"] = _resolve_user_id(None)
-            return await fn(*args, **kwargs)
-
-        async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
-        return async_wrapper
-
-    @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
-        kwargs["user_id"] = _resolve_user_id(None)
-        return fn(*args, **kwargs)
-
-    wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
-    return wrapper
-
-
-def _build_mcp_run_context() -> RunContext:
-    """Construct a minimal RunContext for MCP custom tool calls.
-
-    MCP tools run outside agent context, so we build a fresh RunContext
-    with just the caller's identity from JWT. This allows tools that need
-    RunContext (e.g., for user_id access) to work over MCP.
-    """
-    from uuid import uuid4
-
-    return RunContext(
-        run_id=str(uuid4()),
-        session_id=str(uuid4()),
-        user_id=_resolve_user_id(None),
-    )
-
-
-def _hide_framework_params(fn: Callable) -> Callable:
-    """Hide framework-typed params from schema and inject at call time.
-
-    Detects params typed as RunContext, Agent, or Team BY TYPE (not by name)
-    and:
-    1. Removes them from the signature (so they don't appear in MCP schema)
-    2. Injects values at call time:
-       - RunContext: a minimal context with the caller's identity from JWT
-       - Agent/Team: None (MCP tools run outside agent/team context)
+    Hides two kinds of params from the MCP schema:
+    1. user_id BY NAME — injected from JWT subject
+    2. RunContext/Agent/Team BY TYPE — injected at call time
 
     This mirrors the toolkit path (FunctionCall._build_entrypoint_args) but for
     MCP tools. A param named "agent" with type str stays visible for the client
@@ -213,8 +156,10 @@ def _hide_framework_params(fn: Callable) -> Callable:
     except (ValueError, TypeError):
         return fn
 
-    # Detect framework-typed params BY TYPE
+    # 1. Collect params to hide
+    has_user_id = "user_id" in sig.parameters
     framework_params: Dict[str, Any] = {}
+
     try:
         hints = get_type_hints(fn)
         for param_name, hint in hints.items():
@@ -227,7 +172,6 @@ def _hide_framework_params(fn: Callable) -> Callable:
                 if is_framework_typed(hint):
                     framework_params[param_name] = hint
             except Exception:
-                # Fail closed for security
                 framework_params[param_name] = hint
     except Exception:
         for param_name, param in sig.parameters.items():
@@ -241,17 +185,31 @@ def _hide_framework_params(fn: Callable) -> Callable:
             except Exception:
                 pass
 
-    if not framework_params:
+    if not has_user_id and not framework_params:
         return fn
 
-    # Build new signature without framework params
-    visible_params = [p for name, p in sig.parameters.items() if name not in framework_params]
+    # 2. Build signature without hidden params
+    hidden = set(framework_params.keys())
+    if has_user_id:
+        hidden.add("user_id")
+    visible_params = [p for name, p in sig.parameters.items() if name not in hidden]
     new_sig = sig.replace(parameters=visible_params)
 
+    # 3. Helper to build a fresh RunContext with caller identity
+    def build_run_context() -> RunContext:
+        return RunContext(
+            run_id=str(uuid4()),
+            session_id=str(uuid4()),
+            user_id=_resolve_user_id(None),
+        )
+
+    # 4. Create wrapper that injects values at call time
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
+            if has_user_id:
+                kwargs["user_id"] = _resolve_user_id(None)
             for param_name, hint in framework_params.items():
                 hint = unwrap_annotation(hint)
                 param = sig.parameters[param_name]
@@ -260,7 +218,7 @@ def _hide_framework_params(fn: Callable) -> Callable:
                     for wanted, injected in (
                         ((Agent,), None),
                         ((Team,), None),
-                        ((RunContext,), _build_mcp_run_context()),
+                        ((RunContext,), build_run_context()),
                     )
                     if annotation_binds(hint, wanted)
                 ]
@@ -276,6 +234,8 @@ def _hide_framework_params(fn: Callable) -> Callable:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
+        if has_user_id:
+            kwargs["user_id"] = _resolve_user_id(None)
         for param_name, hint in framework_params.items():
             hint = unwrap_annotation(hint)
             param = sig.parameters[param_name]
@@ -284,7 +244,7 @@ def _hide_framework_params(fn: Callable) -> Callable:
                 for wanted, injected in (
                     ((Agent,), None),
                     ((Team,), None),
-                    ((RunContext,), _build_mcp_run_context()),
+                    ((RunContext,), build_run_context()),
                 )
                 if annotation_binds(hint, wanted)
             ]
@@ -297,16 +257,6 @@ def _hide_framework_params(fn: Callable) -> Callable:
 
     wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
     return wrapper
-
-
-def _wrap_custom_tool(fn: Callable) -> Callable:
-    """Wrap a custom MCP tool to hide framework params and inject user_id.
-
-    Composes two independent wrappers:
-    1. _inject_user_id: hides user_id BY NAME, injects from JWT
-    2. _hide_framework_params: hides RunContext/Agent/Team BY TYPE, injects at call time
-    """
-    return _hide_framework_params(_inject_user_id(fn))
 
 
 def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
