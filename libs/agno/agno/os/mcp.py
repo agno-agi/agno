@@ -135,13 +135,12 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
 
 
 def _inject_user_id(fn: Callable) -> Callable:
-    """Hide user_id from schema and inject from JWT at call time.
+    """Inject the authenticated caller's user_id into a custom tool, hidden from clients.
 
-    If the function declares a ``user_id`` parameter, return a wrapper that:
-    1. Removes user_id from the signature (so it doesn't appear in MCP schema)
-    2. Injects the JWT subject as user_id at call time
-
-    This prevents MCP clients from spoofing the caller's identity.
+    If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
+    resolved JWT subject at call time and drops it from the wrapper's signature -- so it
+    does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
+    Tools that do not declare ``user_id`` are returned unchanged.
     """
     try:
         sig = inspect.signature(fn)
