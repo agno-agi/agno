@@ -106,16 +106,27 @@ def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPConfig]"):
     return register
 
 
-def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPConfig]") -> None:
-    """Register any user-provided custom tools on the MCP server."""
+def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPConfig]") -> Dict[str, str]:
+    """Register any user-provided custom tools on the MCP server.
+
+    Returns the names the tools actually registered under (FastMCP's own naming, e.g.
+    ``functools.partial`` objects register as "partial"), so the exposure collision
+    check downstream sees the real registry rather than a re-derivation.
+    """
+    names: Dict[str, str] = {}
     if config is None or not config.tools:
-        return
+        return names
     for tool in config.tools:
-        _register_custom_tool(mcp, tool)
+        name = _register_custom_tool(mcp, tool)
+        names[name] = f'custom tool "{name}"'
+    return names
 
 
-def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
-    """Register a single custom tool, supporting plain callables and Agno tools/Functions."""
+def _register_custom_tool(mcp: FastMCP, tool: Any) -> str:
+    """Register a single custom tool, supporting plain callables and Agno tools/Functions.
+
+    Returns the name the tool registered under.
+    """
     from fastmcp.tools import Tool
 
     # Agno tool / Function: a callable ``entrypoint`` plus name/description metadata.
@@ -123,13 +134,15 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
-        return
+        tool_obj = Tool.from_function(_inject_user_id(entrypoint), name=name, description=description)
+        mcp.add_tool(tool_obj)
+        return tool_obj.name
 
     # Plain callable: name/description inferred from ``__name__``/docstring.
     if callable(tool):
-        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
-        return
+        tool_obj = Tool.from_function(_inject_user_id(tool))
+        mcp.add_tool(tool_obj)
+        return tool_obj.name
 
     raise TypeError(
         f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
@@ -764,13 +777,15 @@ def _make_run_ownership_verifier(os: "AgentOS"):
 
 # ==================== Exposed components (agents/teams/workflows as tools) ====================
 
-# MCP tool names are restricted to this charset and to 64 characters; component ids that
-# already conform are used verbatim so the tool name matches what get_agentos_config and
-# REST show. Over-long names are a hard error (never silent truncation) -- clients that
-# enforce the limit would otherwise reject the tool, or the whole tool list, at runtime.
+# An exposed tool is named by its component id VERBATIM -- the id is also the client's
+# handle for continue_run/get_sessions and the resource segment in per-resource scopes
+# (agents:<id>:run), so a name that differs from the id would break HITL resume and make
+# the visible tool name disagree with the scope that grants it. Ids outside this shape
+# are therefore a hard error, never sanitized. The 64-char cap is the strictest limit
+# among the LLM providers MCP clients bridge tool names into (the MCP spec itself allows
+# more); a longer name would be rejected client-side at runtime with no server signal.
 _TOOL_NAME_MAX_LENGTH = 64
-_TOOL_NAME_VALID_RE = re.compile(r"^[A-Za-z0-9_-]+$")
-_TOOL_NAME_INVALID_CHARS_RE = re.compile(r"[^A-Za-z0-9_-]+")
+_TOOL_NAME_VALID_RE = re.compile(r"[A-Za-z0-9_-]+")
 
 # One fixed sentence appended to every exposed tool's description: the session contract
 # is part of the tool's calling convention, not something each component should restate.
@@ -779,15 +794,27 @@ _EXPOSED_SESSION_SENTENCE = (
 )
 
 
-def _exposed_tool_name(component_id: str) -> str:
-    """The MCP tool name for a component id: verbatim when already valid, else sanitized
-    (invalid characters fold to one hyphen, edges stripped)."""
-    if _TOOL_NAME_VALID_RE.match(component_id):
-        return component_id
-    return _TOOL_NAME_INVALID_CHARS_RE.sub("-", component_id).strip("-")
+def _validate_exposed_tool_name(component_id: str, singular: str) -> str:
+    """The MCP tool name for a component id: the id verbatim, validated.
+
+    ``fullmatch`` (not ``match``): ``$`` would accept a trailing newline.
+    """
+    if not _TOOL_NAME_VALID_RE.fullmatch(component_id):
+        raise ValueError(
+            f"MCPConfig cannot expose {singular} id {component_id!r}: exposed tool names use the "
+            "component id verbatim, and this id contains characters outside [A-Za-z0-9_-]. "
+            "Set an id like 'my-agent' on the component."
+        )
+    if len(component_id) > _TOOL_NAME_MAX_LENGTH:
+        raise ValueError(
+            f'MCP tool name "{component_id}" (from {singular} id) is {len(component_id)} characters; '
+            f"tool names longer than {_TOOL_NAME_MAX_LENGTH} are rejected by the strictest LLM "
+            "providers MCP clients bridge tools into. Set a shorter id on the component."
+        )
+    return component_id
 
 
-def _resolve_exposed_entry(entry: Any, kind: str, roster: List[Any]) -> Any:
+def _resolve_exposed_entry(entry: Any, kind: str, os: "AgentOS") -> Any:
     """Resolve one ``MCPConfig.agents/teams/workflows`` entry against the AgentOS roster.
 
     Exposure is a view on the deployment, not a second registration path: sessions,
@@ -795,6 +822,7 @@ def _resolve_exposed_entry(entry: Any, kind: str, roster: List[Any]) -> Any:
     part of the roster. Instances match by identity first, then by id (so an equal copy
     of a roster component still resolves); id strings match by id.
     """
+    roster = list(getattr(os, kind, None) or [])
     if isinstance(entry, str):
         for component in roster:
             if getattr(component, "id", None) == entry:
@@ -812,26 +840,22 @@ def _resolve_exposed_entry(entry: Any, kind: str, roster: List[Any]) -> Any:
             if getattr(component, "id", None) == entry_id:
                 return component
     label = getattr(entry, "name", None) or entry_id or repr(entry)
+    # A wrong-kind entry (e.g. a Team in MCPConfig.agents) must not be advised into
+    # AgentOS(agents=[...]) -- AgentOS would accept it silently and the tool would then
+    # be gated on the wrong scope family. Name the actual kind instead.
+    for other_kind in ("agents", "teams", "workflows"):
+        if other_kind == kind:
+            continue
+        for component in getattr(os, other_kind, None) or []:
+            if component is entry or (entry_id is not None and getattr(component, "id", None) == entry_id):
+                raise ValueError(
+                    f"MCPConfig.{kind} contains {label!r}, which is one of this AgentOS's "
+                    f"{other_kind}; move it to MCPConfig.{other_kind}."
+                )
     raise ValueError(
         f"MCPConfig.{kind} contains {label!r} which is not part of the AgentOS roster; "
         f"add it to AgentOS({kind}=[...]) or remove it from MCPConfig.{kind}."
     )
-
-
-def _custom_tool_names(mcp_config: "Optional[MCPConfig]") -> Dict[str, str]:
-    """Names the custom ``tools`` will claim, resolved as ``_register_custom_tool`` does."""
-    names: Dict[str, str] = {}
-    for tool in getattr(mcp_config, "tools", None) or []:
-        entrypoint = getattr(tool, "entrypoint", None)
-        if callable(entrypoint):
-            name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
-        elif callable(tool):
-            name = getattr(tool, "__name__", None)
-        else:
-            name = None
-        if name:
-            names[name] = f'custom tool "{name}"'
-    return names
 
 
 def _make_exposed_run_tool(
@@ -923,25 +947,32 @@ def _register_exposed_components(
     os: "AgentOS",
     mcp_config: "Optional[MCPConfig]",
     result_mode: str,
+    custom_tool_names: "Optional[Dict[str, str]]" = None,
 ) -> None:
     """Register the components named in ``MCPConfig.agents/teams/workflows`` as tools.
 
-    Names come from component ids; collisions with the enabled default tools, custom
-    tools, or other exposed components are a hard error at build -- never silent
-    suffixing. The registered tool list is deliberately static and identical for every
-    caller (per-caller variance in tools/list is not allowed by the MCP spec); access is
-    enforced at call time via the same scope checks the generic run tools apply.
+    Names are component ids verbatim (validated, never sanitized -- the id is the
+    handle for continue_run and the per-resource scope segment, so the visible tool
+    name must equal it); collisions with the enabled default tools, custom tools, or
+    other exposed components are a hard error at build.
+
+    The registered tool list is deliberately static and identical for every caller:
+    exposure is a hand-typed publication list, so listing a tool's name and description
+    is what the deployer asked for, and access is enforced at call time via the same
+    scope checks the generic run tools apply. (The MCP spec does permit per-caller
+    tool lists; serving one is a possible future refinement, not a spec constraint.)
     """
     if mcp_config is None or not (mcp_config.agents or mcp_config.teams or mcp_config.workflows):
         return
 
     # Names already claimed by the default tools that will actually register, and by
-    # the custom tools registered just before this.
+    # the custom tools registered just before this (their REAL registered names, so
+    # e.g. a functools.partial custom tool named "partial" by FastMCP still collides).
     enabled_tags = _enabled_builtin_tags(mcp_config)
     taken: Dict[str, str] = {
         name: f'the default tool "{name}"' for name, tag in _BUILTIN_TOOL_NAMES.items() if tag in enabled_tags
     }
-    taken.update(_custom_tool_names(mcp_config))
+    taken.update(custom_tool_names or {})
 
     exposures: List[tuple] = [
         ("agents", mcp_config.agents or [], "agent"),
@@ -949,9 +980,8 @@ def _register_exposed_components(
         ("workflows", mcp_config.workflows or [], "workflow"),
     ]
     for kind, entries, singular in exposures:
-        roster = list(getattr(os, kind, None) or [])
         for entry in entries:
-            component = _resolve_exposed_entry(entry, kind, roster)
+            component = _resolve_exposed_entry(entry, kind, os)
             # AgentOS mints ids for roster components at construction (name-derived when
             # named, generated otherwise), so the id is normally always set here; the
             # error is defense for exotic components that dodge that path.
@@ -962,18 +992,7 @@ def _register_exposed_components(
                     f"MCPConfig.{kind} contains {label!r} which has no id; set id= on the "
                     f"component so its MCP tool has a stable name."
                 )
-            tool_name = _exposed_tool_name(component_id)
-            if not tool_name:
-                raise ValueError(
-                    f"MCPConfig.{kind} entry {component_id!r} produces an empty MCP tool name; "
-                    "use an id with letters, digits, hyphens, or underscores."
-                )
-            if len(tool_name) > _TOOL_NAME_MAX_LENGTH:
-                raise ValueError(
-                    f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") is '
-                    f"{len(tool_name)} characters; MCP tool names are limited to "
-                    f"{_TOOL_NAME_MAX_LENGTH}. Set a shorter id on the component."
-                )
+            tool_name = _validate_exposed_tool_name(component_id, singular)
             if tool_name in taken:
                 raise ValueError(
                     f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") collides with '
@@ -983,10 +1002,11 @@ def _register_exposed_components(
             taken[tool_name] = f'exposed {singular} "{component_id}"'
 
             display_name = getattr(component, "name", None) or component_id
-            base_description = (
-                getattr(component, "description", None) or f"Run the {display_name} {singular} with a message."
-            )
-            base_description = base_description.rstrip()
+            # strip() BEFORE the fallback test: a whitespace-only description is truthy
+            # but would rstrip to nothing, yielding a description that starts with ".".
+            base_description = (getattr(component, "description", None) or "").strip()
+            if not base_description:
+                base_description = f"Run the {display_name} {singular} with a message."
             if not base_description.endswith((".", "!", "?")):
                 base_description += "."
             description = f"{base_description} {_EXPOSED_SESSION_SENTENCE}"
@@ -1437,11 +1457,11 @@ def build_mcp_server(
 
     # Register any user-provided custom tools. These share the same server, mount (/mcp),
     # lifespan, and JWT middleware as the built-in tools.
-    _register_custom_tools(mcp, mcp_config)
+    custom_tool_names = _register_custom_tools(mcp, mcp_config)
 
     # Expose the components named in the config as individual tools ("chief", not
     # run_agent(agent_id="chief")). Last, so collision checks see the full surface.
-    _register_exposed_components(mcp, os, mcp_config, result_mode)
+    _register_exposed_components(mcp, os, mcp_config, result_mode, custom_tool_names)
 
     return mcp
 

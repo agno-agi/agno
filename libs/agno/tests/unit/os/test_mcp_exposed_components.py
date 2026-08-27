@@ -205,11 +205,31 @@ async def test_exposed_tool_description_fallback_without_component_description()
     )
 
 
-async def test_exposed_tool_name_is_sanitized():
-    """An id outside the MCP tool-name charset folds to hyphens; valid ids pass verbatim."""
+def test_exposed_id_outside_tool_name_charset_raises():
+    """Ids are never sanitized into a different-looking tool name: the id doubles as the
+    continue_run handle and the per-resource scope segment, so a mismatch would break
+    HITL resume and make the visible name disagree with the scope that grants it."""
     agent = _agent(id="chief agent (v2)")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
-    assert await _tool_names(os) == {"chief-agent-v2"}
+    with pytest.raises(ValueError, match="outside \\[A-Za-z0-9_-\\]"):
+        build_mcp_server(os)
+
+
+def test_exposed_id_with_trailing_newline_raises():
+    """fullmatch, not match: a trailing newline must not slip through as 'already valid'."""
+    agent = _agent(id="chief\n")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    with pytest.raises(ValueError, match="outside"):
+        build_mcp_server(os)
+
+
+def test_exposed_id_with_slash_raises():
+    """A slash in the id would take the synthetic scope route out of single-segment
+    shape, so it is rejected with the rest of the charset."""
+    agent = _agent(id="support/admin")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    with pytest.raises(ValueError, match="outside"):
+        build_mcp_server(os)
 
 
 # ==================== Session + identity contract ====================
@@ -413,10 +433,20 @@ def test_exposed_id_colliding_with_custom_tool_raises():
 
 
 def test_exposing_two_components_with_same_tool_name_raises():
-    a1 = _agent(id="chief agent")
-    a2 = _agent(id="chief-agent")
-    os = AgentOS(agents=[a1, a2], mcp=MCPConfig(default_tools=False, agents=[a1, a2]))
-    with pytest.raises(ValueError, match='"chief-agent"'):
+    """Cross-kind id reuse (legal in AgentOS) still collides on the one tool namespace."""
+    agent = _agent(id="shared-name")
+    team = Team(id="shared-name", name="Shared Team", members=[_agent(id="member")])
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, agents=[agent], teams=[team]))
+    with pytest.raises(ValueError, match='"shared-name"'):
+        build_mcp_server(os)
+
+
+def test_wrong_kind_exposure_names_the_actual_kind():
+    """A Team in MCPConfig.agents must say 'move it to MCPConfig.teams' -- advising
+    AgentOS(agents=[team]) would gate the team on the wrong scope family."""
+    team = _team()
+    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, agents=[team], teams=[team]))
+    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
         build_mcp_server(os)
 
 
@@ -473,12 +503,79 @@ async def test_named_component_without_id_gets_its_deterministic_id():
 
 
 def test_over_long_tool_name_raises():
-    """MCP tool names are capped at 64 characters -- a longer id is a hard build error,
-    never silent truncation."""
+    """Tool names are capped at 64 characters (the strictest provider limit MCP clients
+    bridge into) -- a longer id is a hard build error, never silent truncation."""
     agent = _agent(id="a" * 65)
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
-    with pytest.raises(ValueError, match="limited to 64"):
+    with pytest.raises(ValueError, match="longer than 64"):
         build_mcp_server(os)
+
+
+async def test_two_exposed_components_of_same_kind_run_their_own_component():
+    """Each closure must capture its own id -- the classic late-binding loop bug would
+    route every tool to the last component and no single-exposure test would notice."""
+    chief = _agent(id="chief", name="Chief")
+    researcher = _agent(id="researcher", name="Researcher")
+    chief_calls = _stub_arun(chief, RunOutput(content="chief"))
+    researcher_calls = _stub_arun(researcher, RunOutput(content="researcher"))
+    os = AgentOS(agents=[chief, researcher], mcp=MCPConfig(default_tools=False, agents=[chief, researcher]))
+
+    async with Client(build_mcp_server(os)) as client:
+        await client.call_tool("chief", {"message": "to chief"})
+        await client.call_tool("researcher", {"message": "to researcher"})
+
+    assert [c["message"] for c in chief_calls] == ["to chief"]
+    assert [c["message"] for c in researcher_calls] == ["to researcher"]
+
+
+async def test_exposed_tool_honours_result_mode_full():
+    """result_mode='full' applies to exposed tools exactly as to run_agent."""
+    agent = _agent()
+    _stub_arun(agent, RunOutput(run_id="r-full", session_id="s-full", content="done", status=RunStatus.completed))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent], result_mode="full"))
+
+    result = await _call_tool(os, "chief", {"message": "hi"})
+    structured = result.structured_content or {}
+    structured = structured.get("result", structured) or {}
+    # The full run dict carries fields the trimmed mode deliberately omits.
+    assert structured.get("run_id") == "r-full"
+    assert structured.get("content") == "done"
+
+
+async def test_exposed_tool_progress_label_uses_the_resolved_component(monkeypatch):
+    """The progress label comes from the call-time resolved component, not a build-time
+    capture -- a published/registry version may carry a different name."""
+    roster_agent = _agent(id="chief", name="Roster Name")
+    substitute = Agent(id="chief", name="Resolved Name")
+    _stub_arun(substitute, RunOutput(content="ok"))
+    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, agents=[roster_agent]))
+
+    async def _resolve(os_, kind, component_id, **kwargs):
+        return substitute
+
+    labels: list = []
+    real_run = mcp_mod._run_agentic_component
+
+    async def _record_label(ctx, component, message, user_id, session_id, label):
+        labels.append(label)
+        return await real_run(ctx, component, message, user_id, session_id, label)
+
+    monkeypatch.setattr(mcp_mod, "_resolve_run_component", _resolve)
+    monkeypatch.setattr(mcp_mod, "_run_agentic_component", _record_label)
+    await _call_tool(os, "chief", {"message": "hi"})
+
+    assert labels == ["Agent Resolved Name"]
+
+
+def test_exposure_only_config_does_not_warn(caplog):
+    """Tags scoped to zero default tools normally warn about an empty server; exposure
+    is a registered surface, so the warning must not fire."""
+    import logging
+
+    agent = _agent()
+    with caplog.at_level(logging.WARNING):
+        MCPConfig(include_tags=set(), agents=[agent])
+    assert "zero tools" not in caplog.text
 
 
 def test_zero_tools_validator_accepts_exposure_and_still_rejects_empty():
@@ -524,6 +621,22 @@ def test_enable_builtin_tools_alias_does_not_mutate_caller_dict():
     data = {"enable_builtin_tools": False, "tools": [lambda: "x"]}
     MCPConfig.model_validate(data)
     assert "enable_builtin_tools" in data
+
+
+def test_enable_builtin_tools_alias_covers_non_dict_mappings():
+    """Pydantic accepts any Mapping; the alias must not silently drop the key for one."""
+    from collections import UserDict
+
+    config = MCPConfig.model_validate(UserDict({"enable_builtin_tools": False, "tools": [lambda: "x"]}))
+    assert config.default_tools is False
+
+
+def test_unknown_config_key_is_rejected():
+    """extra='forbid': a typo like agent= (for agents=) must fail loudly, not silently
+    serve a different tool surface."""
+    agent = _agent()
+    with pytest.raises(Exception, match="agent"):
+        MCPConfig(default_tools=False, agent=[agent])
 
 
 def test_agentos_mcp_server_kwarg_still_works():

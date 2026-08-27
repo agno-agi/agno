@@ -34,7 +34,10 @@ class MCPConfig(BaseModel):
     REST surface; anything else can be registered as a custom tool via ``tools``.
     """
 
-    model_config = ConfigDict(arbitrary_types_allowed=True)
+    # extra="forbid": a typo like ``agent=`` (for ``agents=``) must fail at construction,
+    # not silently serve a different tool surface. The deprecated ``enable_builtin_tools``
+    # spelling is unaffected -- the before-validator maps it away before this check runs.
+    model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     # Components to expose as individual MCP tools, named after their ids: an agent with
     # id "chief" becomes a tool called "chief" whose description is the agent's own.
@@ -42,7 +45,19 @@ class MCPConfig(BaseModel):
     # string resolved against the AgentOS roster. Every exposed component must be part of
     # the AgentOS roster -- exposure is a view on the deployment, not a second
     # registration path -- and tool names must not collide with the default tools, custom
-    # ``tools``, or each other; violations fail fast when the server is built.
+    # ``tools``, or each other; violations fail fast when the server is built. Ids must
+    # already be valid MCP tool names ([A-Za-z0-9_-], up to 64 chars): the id doubles as
+    # the continue_run handle and the per-resource scope segment, so it is never
+    # sanitized into a different-looking tool name -- set a clean id instead.
+    #
+    # Publication note: listing here is publishing. Every caller who can reach tools/list
+    # sees the exposed tools' names and descriptions (invocation is still gated by
+    # scopes at call time) -- omit a component here to keep it out of the list while it
+    # stays runnable through the default run tools.
+    #
+    # Factories: a factory whose input_schema has required fields cannot currently be
+    # invoked over MCP at all (neither via run_agent nor via exposure -- the MCP run
+    # tools do not carry factory_input yet); invoke those over REST.
     #
     # The generated tools run through the same machinery as ``run_agent`` /
     # ``run_team`` / ``run_workflow`` (per-run copies, scope checks, session minting,
@@ -133,8 +148,12 @@ class MCPConfig(BaseModel):
         mapping the old kwarg would be dropped as pydantic "extra" and the config
         would silently flip back to serving all default tools.
         """
-        if isinstance(data, dict) and "enable_builtin_tools" in data:
-            # Copy before popping: model_validate may hand us the caller's own dict.
+        import collections.abc
+
+        # Mapping, not just dict: pydantic accepts any mapping (UserDict etc.), and a
+        # missed match here would silently drop the key and serve all default tools.
+        if isinstance(data, collections.abc.Mapping) and "enable_builtin_tools" in data:
+            # Copy before popping: model_validate may hand us the caller's own mapping.
             data = dict(data)
             legacy = data.pop("enable_builtin_tools")
             if "default_tools" in data and data["default_tools"] != legacy:

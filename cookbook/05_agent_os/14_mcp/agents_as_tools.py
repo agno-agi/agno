@@ -34,6 +34,8 @@ chief = Agent(
     db=db,
     description="Answers executive questions and delegates follow-ups.",
     instructions="Answer briefly and decisively.",
+    # Every exposed tool tells the client "pass session_id back to continue the
+    # conversation" -- history in context is what makes that promise real.
     add_history_to_context=True,
 )
 
