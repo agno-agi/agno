@@ -1852,6 +1852,79 @@ class TestRespondDirectlyMemberContinuation:
         output_processor.assert_called_once()
         leader_stream.assert_not_called()
 
+    @pytest.mark.parametrize("processor_kind", ["output_model", "parser_model"])
+    def test_sync_stream_direct_processor_observes_cancellation(self, processor_kind):
+        from agno.exceptions import RunCancelledException
+        from agno.run import RunContext
+        from agno.run.agent import RunOutput
+        from agno.run.team import RunCancelledEvent
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        setattr(team, processor_kind, MagicMock())
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        member_final = RunOutput(
+            run_id="member-run-1",
+            session_id="session-1",
+            status=RunStatus.completed,
+            content="raw member content",
+        )
+        processor_event = object()
+        processor_started = False
+
+        member.continue_run = MagicMock(return_value=iter([member_final]))
+
+        def _process_response_model(*args, **kwargs):
+            nonlocal processor_started
+            processor_started = True
+            yield processor_event
+
+        def _check_cancellation(run_id):
+            assert run_id == "team-run-1"
+            if processor_started:
+                raise RunCancelledException("cancelled during direct response processing")
+
+        with (
+            self._sync_dispatch_patches(
+                session,
+                member,
+                member_run_output,
+                requirement,
+                self._sync_opts(stream=True, stream_events=True, yield_run_output=True),
+            ),
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._run.raise_if_cancelled", side_effect=_check_cancellation) as cancellation_check,
+            patch("agno.team._response._handle_model_response_stream") as leader_stream,
+            patch(
+                "agno.team._response.generate_response_with_output_model_stream",
+                side_effect=_process_response_model,
+            ),
+            patch(
+                "agno.team._response.parse_response_with_parser_model_stream",
+                side_effect=_process_response_model,
+            ),
+            patch("agno.team._run._cleanup_and_store"),
+        ):
+            events = list(
+                continue_run_dispatch(
+                    team,
+                    run_response=run_response,
+                    run_context=run_context,
+                    stream=True,
+                    stream_events=True,
+                    yield_run_output=True,
+                )
+            )
+
+        assert cancellation_check.call_count >= 2
+        assert processor_event not in events
+        assert any(isinstance(event, RunCancelledEvent) for event in events)
+        assert events[-1] is run_response
+        assert run_response.status == RunStatus.cancelled
+        leader_stream.assert_not_called()
+
     def test_async_direct_resume_runs_parser_model(self):
         from agno.run import RunContext
         from agno.team._run import _acontinue_run

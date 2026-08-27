@@ -7149,21 +7149,26 @@ def _process_direct_member_content_stream(
 
     run_response.content = direct_content
     if team.output_model is not None:
-        yield from generate_response_with_output_model_stream(
+        for event in generate_response_with_output_model_stream(
             team,
             session=session,
             run_response=run_response,
             run_messages=run_messages,
             stream_events=stream_events,
-        )
+        ):
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+            yield event
     if team.parser_model is not None:
-        yield from parse_response_with_parser_model_stream(
+        for event in parse_response_with_parser_model_stream(
             team,
             session=session,
             run_response=run_response,
             stream_events=stream_events,
             run_context=run_context,
-        )
+        ):
+            raise_if_cancelled(run_response.run_id)  # type: ignore
+            yield event
+    raise_if_cancelled(run_response.run_id)  # type: ignore
     _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
 
 
