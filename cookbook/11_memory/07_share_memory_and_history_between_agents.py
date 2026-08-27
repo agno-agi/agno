@@ -21,7 +21,7 @@ db = SqliteDb(db_file="tmp/agent_sessions.db")
 # Create Agents
 # ---------------------------------------------------------------------------
 agent_1 = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are really friendly and helpful.",
     db=db,
     add_history_to_context=True,
@@ -29,7 +29,7 @@ agent_1 = Agent(
 )
 
 agent_2 = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You are really grumpy and mean.",
     db=db,
     add_history_to_context=True,

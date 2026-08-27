@@ -38,7 +38,7 @@ AgnoInstrumentor().instrument(tracer_provider=tracer_provider)
 # ---------------------------------------------------------------------------
 agent = Agent(
     name="Stock Market Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     markdown=True,
 )

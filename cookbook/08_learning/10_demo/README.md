@@ -66,7 +66,7 @@ curl "http://localhost:7777/learnings?learning_type=user_profile"
 curl "http://localhost:7777/learnings/users"
 ```
 
-Interactive docs are at `http://localhost:7777/docs`. For a client-side walkthrough of the CRUD endpoints, see [cookbook/05_agent_os/learnings](../../05_agent_os/learnings/).
+Interactive docs are at `http://localhost:7777/docs`. For a client-side walkthrough of the CRUD endpoints, see [cookbook/05_agent_os/11_learnings](../../05_agent_os/11_learnings/).
 
 ## Start fresh
 
