@@ -297,7 +297,10 @@ async def test_send_message_italics_wraps_each_line():
     with patch("agno.os.interfaces.teams.helpers._post_activity", new_callable=AsyncMock) as mock_post:
         await send_teams_message_async("svc", "conv", "line1\nline2", cfg, italics=True)
     activity = mock_post.call_args.args[2]
-    assert activity["text"] == "_line1_\n_line2_"
+    # Two trailing spaces, not a bare newline: this is sent as markdown, which
+    # renders a single newline as a space and welds the lines into one
+    # paragraph. Reasoning is the only caller, and it is a list of steps.
+    assert activity["text"] == "_line1_  \n_line2_"
 
 
 @pytest.mark.asyncio
