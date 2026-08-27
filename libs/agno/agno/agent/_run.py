@@ -538,6 +538,7 @@ def _run(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=agent_session,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -990,6 +991,7 @@ def _run_stream(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=agent_session,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -1746,6 +1748,7 @@ async def _arun(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=agent_session,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     await verification_gate.abegin()
@@ -2544,6 +2547,7 @@ async def _arun_stream(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=agent_session,
+                    resume=False,
                 )
                 if verification_gate is not None:
                     await verification_gate.abegin()
@@ -3948,6 +3952,7 @@ def _continue_run(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=session,
+                    resume=True,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -4224,6 +4229,7 @@ def _continue_run_stream(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=session,
+                    resume=True,
                 )
                 if verification_gate is not None:
                     verification_gate.begin()
@@ -5251,6 +5257,7 @@ async def _acontinue_run(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=agent_session,
+                    resume=True,
                 )
                 if verification_gate is not None:
                     await verification_gate.abegin()
@@ -5819,6 +5826,7 @@ async def _acontinue_run_stream(
                     run_messages=run_messages,
                     run_context=run_context,
                     session=agent_session,
+                    resume=True,
                 )
                 if verification_gate is not None:
                     await verification_gate.abegin()

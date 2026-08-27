@@ -22,7 +22,9 @@ def _json_safe(value: Any) -> Any:
     if value is None:
         return None
     try:
-        return json.loads(json.dumps(value, default=str))
+        # allow_nan=False: NaN/Infinity survive Python's json round-trip but are invalid
+        # JSON, so a downstream store would reject the whole run row.
+        return json.loads(json.dumps(value, default=str, allow_nan=False))
     except (TypeError, ValueError):
         return None
 
@@ -168,6 +170,12 @@ class VerificationConfig:
             raise ValueError("VerificationConfig.max_attempts must be at least 1")
         if self.stop_on_noop and self.fingerprint is None:
             raise ValueError("VerificationConfig(stop_on_noop=True) requires a fingerprint")
+        if self.fingerprint is not None:
+            # Coerce here so a capture-only fingerprint object gets its async twin derived;
+            # uncoerced, the async legs fail the capture and noop detection is silently inert.
+            from agno.verifiers.fingerprints import coerce_fingerprint
+
+            self.fingerprint = coerce_fingerprint(self.fingerprint)
 
 
 @dataclass
@@ -226,7 +234,10 @@ class Verification:
     """The verification record of one run, carried on `RunOutput.verification`.
 
     `status` is "pending" while the loop is open (and on a run that left it paused, errored
-    or cancelled before concluding); a concluded record is "verified" or "unverified".
+    or cancelled before concluding); a concluded record is "verified" or "unverified". The
+    record describes the run's LAST GATED attempt window, not a mirror of RunStatus: a later
+    continuation by an owner without verifiers can complete the run while the record still
+    reads "unverified" - genuine audit history, healed by the next gated continuation.
     `stop_reason` is "passed" iff verified. `budget_baseline` is the number of attempts made
     before the current continuation window: continuing a run that ended unverified restarts
     the attempt budget for the new user instruction while keeping the full attempt history,

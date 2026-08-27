@@ -285,10 +285,10 @@ def get_system_message(
             system_message_content += rendered + "\n\n"
     # Tell the model completion is checked when verifiers are configured
     if agent.verifiers and (agent.verification is None or agent.verification.add_notice):
+        from agno.verifiers.base import verifier_names
         from agno.verifiers.report import build_notice
 
-        _verifier_names = [getattr(v, "name", "") or "check" for v in (agent._verifiers or agent.verifiers)]
-        system_message_content += build_notice(_verifier_names) + "\n\n"
+        system_message_content += build_notice(verifier_names(agent.verifiers)) + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"
@@ -588,10 +588,10 @@ async def aget_system_message(
             system_message_content += rendered + "\n\n"
     # Tell the model completion is checked when verifiers are configured
     if agent.verifiers and (agent.verification is None or agent.verification.add_notice):
+        from agno.verifiers.base import verifier_names
         from agno.verifiers.report import build_notice
 
-        _verifier_names = [getattr(v, "name", "") or "check" for v in (agent._verifiers or agent.verifiers)]
-        system_message_content += build_notice(_verifier_names) + "\n\n"
+        system_message_content += build_notice(verifier_names(agent.verifiers)) + "\n\n"
     # 3.3.4 Add additional information
     if len(additional_information) > 0:
         system_message_content += "<additional_information>"

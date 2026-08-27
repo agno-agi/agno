@@ -31,6 +31,9 @@ How this relates to the neighbouring machinery:
 - Learning and memory are not gated by verification: their background work starts before
   the model call and runs regardless of the outcome, so an unverified run still writes
   memories and learnings.
+- Post-hooks run once, on the final output, AFTER verification: the record certifies what
+  the model produced; a post-hook that mutates the output afterwards is downstream of the
+  gate by design (a guardrail raise still wins - the run ends in error).
 """
 
 from agno.verifiers.base import GuardedVerifier, Verifier, check, verifier

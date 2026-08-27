@@ -209,6 +209,7 @@ class VerificationGate:
         verifiers: List[Any],
         config: VerificationConfig,
         team_mode: bool = False,
+        resume: bool = True,
     ) -> None:
         self.owner = owner
         self.run_response = run_response
@@ -218,6 +219,7 @@ class VerificationGate:
         self.verifiers = verifiers
         self.config = config
         self.team_mode = team_mode
+        self.resume = resume
         self._t0: Optional[float] = None
         self._settled: Optional[str] = None
         self._attempt_start: int = 0
@@ -235,24 +237,25 @@ class VerificationGate:
         run_messages: Any,
         run_context: Any,
         session: Any,
+        resume: bool,
         team_mode: bool = False,
     ) -> Optional["VerificationGate"]:
-        """The gate for this run, or None when the owner has no verifiers configured."""
+        """The gate for this run, or None when the owner has no verifiers configured.
+
+        The verifier list is coerced fresh on every run (about 25 microseconds for five
+        checks): a cached list goes stale the moment the owner's ``verifiers`` is mutated,
+        and a stale gate fails open. The constructor's eager coercion remains purely as
+        fail-fast validation. ``resume`` says whether a record already on the run_response
+        is continued (the continue paths: HITL resumes, continue-in-place) or reset (the
+        run paths: a model-level retry must start a fresh window, not resurrect attempts
+        whose message indices point into the discarded transcript).
+        """
         raw = getattr(owner, "verifiers", None)
         if not raw:
             return None
-        verifiers = getattr(owner, "_verifiers", None)
-        if not verifiers:
-            # A deep-copied owner (team member clones, reasoning agents) keeps its public
-            # fields but not the private coerced list; rebuild it so a copy is never
-            # silently ungated.
-            from agno.verifiers.base import coerce_verifier
+        from agno.verifiers.base import coerce_verifier
 
-            verifiers = [coerce_verifier(v) for v in raw]
-            try:
-                owner._verifiers = verifiers
-            except Exception:
-                pass
+        verifiers = [coerce_verifier(v) for v in raw]
         config = getattr(owner, "verification", None) or VerificationConfig()
         return cls(
             owner=owner,
@@ -260,9 +263,10 @@ class VerificationGate:
             run_messages=run_messages,
             run_context=run_context,
             session=session,
-            verifiers=list(verifiers),
+            verifiers=verifiers,
             config=config,
             team_mode=team_mode,
+            resume=resume,
         )
 
     # ------------------------------------------------------------------
@@ -281,7 +285,9 @@ class VerificationGate:
         the world as it stands.
         """
         record = getattr(self.run_response, "verification", None)
-        if record is None or not isinstance(record, Verification):
+        if record is None or not isinstance(record, Verification) or not self.resume:
+            # The run paths never resume: a pre-existing record there can only be a
+            # model-level retry's leftover, whose attempts index a discarded transcript.
             record = Verification()
             self.run_response.verification = record
         if record.status == "unverified":
@@ -298,7 +304,9 @@ class VerificationGate:
     async def abegin(self) -> None:
         """Async twin of `begin`."""
         record = getattr(self.run_response, "verification", None)
-        if record is None or not isinstance(record, Verification):
+        if record is None or not isinstance(record, Verification) or not self.resume:
+            # The run paths never resume: a pre-existing record there can only be a
+            # model-level retry's leftover, whose attempts index a discarded transcript.
             record = Verification()
             self.run_response.verification = record
         if record.status == "unverified":
@@ -364,11 +372,13 @@ class VerificationGate:
         )
         attempt.verdicts = check_run.verdicts
         record.attempts.append(attempt)
-        if self.config.fingerprint is not None:
+        decision = self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
+        if decision.reenter and self.config.fingerprint is not None:
             # Settle AFTER the verifiers: their artefacts (a .pytest_cache, a formatter
-            # pass) must not be charged to the model as the next attempt's work.
+            # pass) must not be charged to the model as the next attempt's work. Only a
+            # re-entry needs the baseline; a terminal attempt's capture would be waste.
             self._settled = safe_capture(self.config.fingerprint)
-        return self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
+        return decision
 
     async def asettle_attempt(self) -> GateDecision:
         """Async twin of `settle_attempt`."""
@@ -389,9 +399,10 @@ class VerificationGate:
         )
         attempt.verdicts = check_run.verdicts
         record.attempts.append(attempt)
-        if self.config.fingerprint is not None:
+        decision = self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
+        if decision.reenter and self.config.fingerprint is not None:
             self._settled = await asafe_capture(self.config.fingerprint)
-        return self._decide(record, attempt, fatal_failure=check_run.fatal_failure)
+        return decision
 
     # ------------------------------------------------------------------
     # Internals

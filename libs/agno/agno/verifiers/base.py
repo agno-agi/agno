@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import copy
 import inspect
 import threading
 import traceback
@@ -255,6 +256,14 @@ class _ArgMap:
 # ---------------------------------------------------------------------------
 
 
+def _reject_contradictory(required: bool, fatal: bool, label: str) -> None:
+    # An advisory check cannot be fatal: advisory means "never gates the outcome" and fatal
+    # means "a failure ends the run" - honouring both at once is impossible, and picking one
+    # silently stamps a run unverified while its events say it passed.
+    if fatal and not required:
+        raise ValueError(f"{label}: fatal=True contradicts required=False; an advisory check cannot end the run")
+
+
 def _adopt_policy(target: Any, source: Any) -> None:
     """Carry the per-check policy attributes onto a wrapper, defaulting where the source
     declares none. The loop reads policy off the coerced wrapper only."""
@@ -262,6 +271,7 @@ def _adopt_policy(target: Any, source: Any) -> None:
     target.rerun = int(getattr(source, "rerun", 0) or 0)
     target.run_when = getattr(source, "run_when", None)
     target.fatal = bool(getattr(source, "fatal", False))
+    _reject_contradictory(target.required, target.fatal, label=f"verifier {getattr(source, 'name', source)!r}")
 
 
 def validate_policy(rerun: int, run_when: Any, label: str) -> None:
@@ -448,7 +458,12 @@ def check(
     """
     label = name or str(getattr(target, "name", None) or getattr(target, "__name__", type(target).__name__))
     validate_policy(rerun, run_when, label=f"check {label!r}")
+    _reject_contradictory(bool(required), bool(fatal), label=f"check {label!r}")
     coerced = coerce_verifier(target)
+    if coerced is target:
+        # An already-coerced target passes through coercion by identity; stamping it in
+        # place would bleed this mount's policy into every other mount sharing it.
+        coerced = copy.copy(coerced)
     if name:
         coerced.name = name  # type: ignore[misc]
     coerced.required = bool(required)  # type: ignore[attr-defined]
@@ -456,6 +471,18 @@ def check(
     coerced.run_when = run_when  # type: ignore[attr-defined]
     coerced.fatal = bool(fatal)  # type: ignore[attr-defined]
     return coerced
+
+
+def verifier_names(entries: Any) -> list:
+    """The display names of a mount's checks, coerced fresh so a mutated verifiers list
+    never yields stale names (the system-message notice reads these before the gate runs)."""
+    names = []
+    for index, entry in enumerate(entries or []):
+        try:
+            names.append(getattr(coerce_verifier(entry), "name", "") or f"verifier {index}")
+        except Exception:
+            names.append(str(getattr(entry, "name", "") or getattr(entry, "__name__", "check")))
+    return names
 
 
 __all__ = [
@@ -468,4 +495,5 @@ __all__ = [
     "run_sync",
     "validate_policy",
     "verifier",
+    "verifier_names",
 ]
