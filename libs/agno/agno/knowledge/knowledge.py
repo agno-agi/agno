@@ -1320,7 +1320,38 @@ class Knowledge(RemoteKnowledge):
             # Never let status bookkeeping mask the original error.
             pass
 
-    def _should_skip(self, content_hash: str, skip_if_exists: bool, user_id: Optional[str] = None) -> bool:
+    def _prior_status(self, content_id: Optional[str], user_id: Optional[str] = None) -> Optional[ContentStatus]:
+        """Read the status stored for ``content_id`` before this ingest overwrites it."""
+        if not content_id or self.contents_db is None or isinstance(self.contents_db, AsyncBaseDb):
+            return None
+        try:
+            row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Could not read prior status for {content_id}: {e}")
+            return None
+        return self._parse_content_status(row.status) if row and row.status else None
+
+    async def _aprior_status(self, content_id: Optional[str], user_id: Optional[str] = None) -> Optional[ContentStatus]:
+        """Asynchronous twin of ``_prior_status``."""
+        if not content_id or self.contents_db is None:
+            return None
+        try:
+            if isinstance(self.contents_db, AsyncBaseDb):
+                row = await self.contents_db.get_knowledge_content(content_id, user_id=user_id)
+            else:
+                row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Could not read prior status for {content_id}: {e}")
+            return None
+        return self._parse_content_status(row.status) if row and row.status else None
+
+    def _should_skip(
+        self,
+        content_hash: str,
+        skip_if_exists: bool,
+        user_id: Optional[str] = None,
+        prior_status: Optional[ContentStatus] = None,
+    ) -> bool:
         """
         Handle the skip_if_exists logic for content that already exists in the vector database.
 
@@ -1329,11 +1360,18 @@ class Knowledge(RemoteKnowledge):
             skip_if_exists: Whether to skip if content already exists
             user_id: Owner of the content being loaded. The existence check is scoped to that
                 owner, so ``None`` matches the shared bucket alone.
+            prior_status: Status recorded for this content before the current ingest. Content
+                that did not finish embedding is never skipped, because the chunks it is
+                missing would stay missing and the row would be marked complete.
 
         Returns:
             bool: True if should skip processing, False if should continue
         """
         from agno.vectordb import VectorDb
+
+        if prior_status in (ContentStatus.PARTIAL, ContentStatus.FAILED):
+            log_debug(f"Content {content_hash} is {prior_status.value}; re-ingesting instead of skipping")
+            return False
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if (
@@ -1551,8 +1589,14 @@ class Knowledge(RemoteKnowledge):
                 if not content.name:
                     content.name = path.name
 
+                prior_status = await self._aprior_status(content.id, user_id=content.user_id)
                 await self._ainsert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+                if self._should_skip(
+                    content.content_hash,  # type: ignore[arg-type]
+                    skip_if_exists,
+                    user_id=content.user_id,
+                    prior_status=prior_status,
+                ):
                     content.status = ContentStatus.COMPLETED
                     await self._aupdate_content(content)
                     return
@@ -1637,8 +1681,14 @@ class Knowledge(RemoteKnowledge):
                 if not content.name:
                     content.name = path.name
 
+                prior_status = self._prior_status(content.id, user_id=content.user_id)
                 self._insert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+                if self._should_skip(
+                    content.content_hash,  # type: ignore[arg-type]
+                    skip_if_exists,
+                    user_id=content.user_id,
+                    prior_status=prior_status,
+                ):
                     content.status = ContentStatus.COMPLETED
                     self._update_content(content)
                     return
@@ -1736,8 +1786,14 @@ class Knowledge(RemoteKnowledge):
             content.name = url_path.name if url_path.name else content.url
 
         # 1. Add content to contents database
+        prior_status = await self._aprior_status(content.id, user_id=content.user_id)
         await self._ainsert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
@@ -1904,8 +1960,14 @@ class Knowledge(RemoteKnowledge):
             content.name = url_path.name if url_path.name else content.url
 
         # 1. Add content to contents database
+        prior_status = self._prior_status(content.id, user_id=content.user_id)
         self._insert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
@@ -2068,8 +2130,14 @@ class Knowledge(RemoteKnowledge):
 
         log_info(f"Adding content from {content.name}")
 
+        prior_status = await self._aprior_status(content.id, user_id=content.user_id)
         await self._ainsert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
@@ -2175,8 +2243,14 @@ class Knowledge(RemoteKnowledge):
 
         log_info(f"Adding content from {content.name}")
 
+        prior_status = self._prior_status(content.id, user_id=content.user_id)
         self._insert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
@@ -2278,8 +2352,11 @@ class Knowledge(RemoteKnowledge):
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
+            prior_status = await self._aprior_status(content.id, user_id=content.user_id)
             await self._ainsert_contents_db(content)
-            if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):
+            if self._should_skip(
+                content.content_hash, skip_if_exists, user_id=content.user_id, prior_status=prior_status
+            ):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
                 continue  # Skip to next topic, don't exit loop
@@ -2336,8 +2413,11 @@ class Knowledge(RemoteKnowledge):
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
+            prior_status = self._prior_status(content.id, user_id=content.user_id)
             self._insert_contents_db(content)
-            if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):
+            if self._should_skip(
+                content.content_hash, skip_if_exists, user_id=content.user_id, prior_status=prior_status
+            ):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
                 continue  # Skip to next topic, don't exit loop
@@ -2798,16 +2878,17 @@ class Knowledge(RemoteKnowledge):
         text is redacted and the recovery step is stated explicitly rather than left
         for the reader to infer.
         """
-        embedded, total = Knowledge._count_embedded(read_documents) if self._embeds_locally() else (0, 0)
+        # The write raised, so no chunk is known to have committed and the status is
+        # FAILED rather than PARTIAL. ``Document.embedding`` is assigned in place as the
+        # store embeds, but a store that writes only after embedding the whole batch
+        # discards all of it on an exception, so those values describe in-memory work
+        # rather than retrievable chunks and are deliberately not counted here.
+        _, total = Knowledge._count_embedded(read_documents) if self._embeds_locally() else (0, 0)
         name = content.name or content.id or "content"
 
-        if embedded and embedded < total:
-            content.status = ContentStatus.PARTIAL
-            headline = f'Embedding partly failed for "{name}" ({embedded} of {total} chunks embedded).'
-        else:
-            content.status = ContentStatus.FAILED
-            counted = f" (0 of {total} chunks embedded)" if total else ""
-            headline = f'Embedding failed for "{name}"{counted}.'
+        content.status = ContentStatus.FAILED
+        counted = f" (0 of {total} chunks embedded)" if total else ""
+        headline = f'Embedding failed for "{name}"{counted}.'
 
         if error.is_retryable:
             tried = f" after {attempts} attempts" if attempts > 1 else ""

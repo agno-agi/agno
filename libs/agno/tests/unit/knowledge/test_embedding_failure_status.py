@@ -117,15 +117,22 @@ class TestFailurePathStatus:
         assert "API key" in content.status_message
         assert "Retrying will not help" in content.status_message
 
-    def test_partial_failure_reports_what_survived(self):
+    def test_raised_write_is_failed_not_partial(self):
+        """A write that raised committed nothing, whatever the in-memory documents say.
+
+        Stores that write only after embedding the whole batch discard everything on an
+        exception, so counting ``Document.embedding`` here would report chunks that are
+        not retrievable and mark the row repairable-in-place.
+        """
         knowledge = make_knowledge()
         content = Content()
         error = EmbeddingError("Rate limit reached", status_code=429)
 
         knowledge._set_embedding_failure_status(content, error, make_documents(4, 10), "insert")
 
-        assert content.status == ContentStatus.PARTIAL
-        assert "4 of 10" in content.status_message
+        assert content.status == ContentStatus.FAILED
+        assert "0 of 10" in content.status_message
+        assert "4 of 10" not in content.status_message
         assert "rate-limited" in content.status_message
 
     def test_message_names_the_embedder_that_failed(self):
@@ -299,7 +306,7 @@ class TestEmbeddingRetry:
         knowledge._handle_vector_db_insert(content, make_documents(4, 10), upsert=False)
 
         assert calls["n"] == 3  # first attempt plus two retries
-        assert content.status == ContentStatus.PARTIAL
+        assert content.status == ContentStatus.FAILED
 
     def test_retries_can_be_disabled(self):
         calls = {"n": 0}
@@ -445,14 +452,14 @@ class TestReingestGuidance:
         assert "https://docs.agno.com/intro" in content.status_message
         assert "not retained" not in content.status_message
 
-    def test_partial_failure_also_says_how_to_recover(self):
+    def test_failed_ingest_also_says_how_to_recover(self):
         knowledge = make_knowledge()
         content = Content(name="q3-report.pdf")
         error = EmbeddingError("Rate limit reached", status_code=429)
 
         knowledge._set_embedding_failure_status(content, error, make_documents(7, 10), "insert", attempts=4)
 
-        assert content.status == ContentStatus.PARTIAL
+        assert content.status == ContentStatus.FAILED
         assert "upload it again" in content.status_message
 
     def test_message_has_no_trailing_whitespace(self):
@@ -464,3 +471,32 @@ class TestReingestGuidance:
         )
 
         assert content.status_message == content.status_message.strip()
+
+
+class TestIncompleteContentIsNotSkipped:
+    """Re-ingesting content that did not finish embedding must actually repair it."""
+
+    def _knowledge(self):
+        knowledge = Knowledge.__new__(Knowledge)
+        vector_db = MagicMock()
+        vector_db.content_hash_exists.return_value = True
+        knowledge.vector_db = vector_db
+        return knowledge
+
+    @pytest.mark.parametrize("prior", [ContentStatus.PARTIAL, ContentStatus.FAILED])
+    def test_incomplete_content_is_re_ingested(self, prior):
+        """The hash exists, but skipping would leave the missing chunks missing."""
+        knowledge = self._knowledge()
+
+        assert knowledge._should_skip("hash", skip_if_exists=True, prior_status=prior) is False
+
+    @pytest.mark.parametrize("prior", [ContentStatus.COMPLETED, None])
+    def test_complete_content_is_still_skipped(self, prior):
+        knowledge = self._knowledge()
+
+        assert knowledge._should_skip("hash", skip_if_exists=True, prior_status=prior) is True
+
+    def test_skip_if_exists_false_always_re_ingests(self):
+        knowledge = self._knowledge()
+
+        assert knowledge._should_skip("hash", skip_if_exists=False, prior_status=ContentStatus.COMPLETED) is False
