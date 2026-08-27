@@ -17,7 +17,7 @@ from agno.utils.media import download_file
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     markdown=True,
 )
 

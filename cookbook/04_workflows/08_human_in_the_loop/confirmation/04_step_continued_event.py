@@ -36,7 +36,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 
 greeting_agent = Agent(
     name="GreetingAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="You greet people warmly. Keep it to one sentence.",
     db=db,
     telemetry=False,
