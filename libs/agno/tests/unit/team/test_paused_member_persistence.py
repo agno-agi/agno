@@ -521,6 +521,23 @@ def _completed_member_run_with_private_storage_payload(team_run_id: str, member_
     )
 
 
+def _completed_subteam_run_with_private_member_payload(
+    outer_run_id: str, subteam_run_id: str, member_run_id: str
+) -> Tuple[TeamRunOutput, RunOutput]:
+    member_run = _completed_member_run_with_private_storage_payload(subteam_run_id, member_run_id)
+    return (
+        TeamRunOutput(
+            run_id=subteam_run_id,
+            parent_run_id=outer_run_id,
+            team_id="comms-team",
+            status=RunStatus.completed,
+            content="Inner done.",
+            member_responses=[member_run],
+        ),
+        member_run,
+    )
+
+
 def _disable_member_storage(member: Agent) -> None:
     member.store_media = False
     member.store_tool_messages = False
@@ -661,6 +678,118 @@ async def test_async_resumed_member_storage_flags_scrub_dedicated_row(tmp_path, 
     _assert_member_storage_payload_scrubbed(stored)
     assert completed.images, "storage scrubbing must not strip the caller's live member output"
     assert any(message.role == "tool" for message in completed.messages or [])
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_sync_resumed_subteam_scrubs_nested_member_storage_without_mutating_live_output(tmp_path, stream):
+    db_file = str(tmp_path / "resume_nested_storage_flags_sync.db")
+    session_id = "s-resume-nested-storage-flags-sync"
+
+    outer1 = _build_nested_team(SqliteDb(db_file=db_file), resuming=False)
+    outer1.store_member_responses = True
+    run1 = outer1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    subteam_run = next(response for response in run1.member_responses if isinstance(response, TeamRunOutput))
+    member_run_id = run1.requirements[0].member_run_id
+    assert subteam_run.run_id is not None
+    assert member_run_id is not None
+
+    outer2 = _build_nested_team(SqliteDb(db_file=db_file), resuming=True)
+    outer2.store_member_responses = True
+    subteam = outer2.members[0]
+    assert isinstance(subteam, Team)
+    subteam.store_history_messages = True
+    nested_member = subteam.members[0]
+    assert isinstance(nested_member, Agent)
+    _disable_member_storage(nested_member)
+    completed, live_nested_member = _completed_subteam_run_with_private_member_payload(
+        run1.run_id, subteam_run.run_id, member_run_id
+    )
+    subteam.continue_run = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda *args, **kwargs: iter([completed]) if kwargs.get("stream") else completed
+    )
+
+    continued = outer2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=stream,
+        yield_run_output=stream,
+    )
+    run2 = list(continued)[-1] if stream else continued
+
+    assert run2.status == RunStatus.completed
+    stored_subteam = SqliteDb(db_file=db_file).get_run(subteam_run.run_id)
+    assert isinstance(stored_subteam, TeamRunOutput)
+    assert len(stored_subteam.member_responses) == 1
+    stored_nested_member = stored_subteam.member_responses[0]
+    assert isinstance(stored_nested_member, RunOutput)
+    _assert_member_storage_payload_scrubbed(stored_nested_member)
+    assert live_nested_member.images, "recursive storage scrubbing must not strip the live nested output"
+    assert any(message.role == "tool" for message in live_nested_member.messages or [])
+    assert any(message.from_history for message in live_nested_member.messages or [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_async_resumed_subteam_scrubs_nested_member_storage_without_mutating_live_output(tmp_path, stream):
+    db_file = str(tmp_path / "resume_nested_storage_flags_async.db")
+    session_id = "s-resume-nested-storage-flags-async"
+
+    outer1 = _build_nested_team(SqliteDb(db_file=db_file), resuming=False)
+    outer1.store_member_responses = True
+    run1 = await outer1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    subteam_run = next(response for response in run1.member_responses if isinstance(response, TeamRunOutput))
+    member_run_id = run1.requirements[0].member_run_id
+    assert subteam_run.run_id is not None
+    assert member_run_id is not None
+
+    outer2 = _build_nested_team(SqliteDb(db_file=db_file), resuming=True)
+    outer2.store_member_responses = True
+    subteam = outer2.members[0]
+    assert isinstance(subteam, Team)
+    subteam.store_history_messages = True
+    nested_member = subteam.members[0]
+    assert isinstance(nested_member, Agent)
+    _disable_member_storage(nested_member)
+    completed, live_nested_member = _completed_subteam_run_with_private_member_payload(
+        run1.run_id, subteam_run.run_id, member_run_id
+    )
+
+    async def _completed_result():
+        return completed
+
+    async def _completed_stream():
+        yield completed
+
+    subteam.acontinue_run = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda *args, **kwargs: _completed_stream() if kwargs.get("stream") else _completed_result()
+    )
+
+    continued = outer2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=stream,
+        yield_run_output=stream,
+    )
+    if stream:
+        events = [event async for event in continued]  # type: ignore[union-attr]
+        run2 = events[-1]
+    else:
+        run2 = await continued  # type: ignore[misc]
+
+    assert run2.status == RunStatus.completed
+    stored_subteam = SqliteDb(db_file=db_file).get_run(subteam_run.run_id)
+    assert isinstance(stored_subteam, TeamRunOutput)
+    assert len(stored_subteam.member_responses) == 1
+    stored_nested_member = stored_subteam.member_responses[0]
+    assert isinstance(stored_nested_member, RunOutput)
+    _assert_member_storage_payload_scrubbed(stored_nested_member)
+    assert live_nested_member.images, "recursive storage scrubbing must not strip the live nested output"
+    assert any(message.role == "tool" for message in live_nested_member.messages or [])
+    assert any(message.from_history for message in live_nested_member.messages or [])
 
 
 def test_nested_member_pause_survives_fresh_process_continue(tmp_path):

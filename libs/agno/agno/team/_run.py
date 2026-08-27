@@ -4699,12 +4699,17 @@ async def _amember_run_for_storage(team: "Team", session: TeamSession, member_ru
 
 
 def _completed_member_storage_view(
-    team: "Team",
     member: Union["Agent", "Team"],
     member_run: Union[RunOutput, TeamRunOutput],
 ) -> Union[RunOutput, TeamRunOutput]:
     """Apply a resumed member's storage flags without mutating its live output."""
-    if member.store_media and member.store_tool_messages and member.store_history_messages:
+    from agno.team.team import Team
+
+    scrub_member = not (member.store_media and member.store_tool_messages and member.store_history_messages)
+    scrub_nested_members = (
+        isinstance(member, Team) and isinstance(member_run, TeamRunOutput) and bool(member_run.member_responses)
+    )
+    if not scrub_member and not scrub_nested_members:
         return member_run
 
     import copy
@@ -4714,7 +4719,10 @@ def _completed_member_storage_view(
 
     storage_view = copy.copy(member_run)
     isolate_media_scrub_targets(storage_view)
-    scrub_run_output_for_storage(member, run_response=storage_view)  # type: ignore[arg-type]
+    if scrub_member:
+        scrub_run_output_for_storage(member, run_response=storage_view)  # type: ignore[arg-type]
+    if scrub_nested_members and isinstance(storage_view, TeamRunOutput) and storage_view.member_responses:
+        member._scrub_member_responses(storage_view.member_responses)  # type: ignore[union-attr]
     return storage_view
 
 
@@ -4724,7 +4732,7 @@ def _completed_member_run_for_storage(
     member: Union["Agent", "Team"],
     member_run: Union[RunOutput, TeamRunOutput],
 ) -> Union[RunOutput, TeamRunOutput]:
-    return _member_run_for_storage(team, session, _completed_member_storage_view(team, member, member_run))
+    return _member_run_for_storage(team, session, _completed_member_storage_view(member, member_run))
 
 
 async def _acompleted_member_run_for_storage(
@@ -4733,7 +4741,7 @@ async def _acompleted_member_run_for_storage(
     member: Union["Agent", "Team"],
     member_run: Union[RunOutput, TeamRunOutput],
 ) -> Union[RunOutput, TeamRunOutput]:
-    return await _amember_run_for_storage(team, session, _completed_member_storage_view(team, member, member_run))
+    return await _amember_run_for_storage(team, session, _completed_member_storage_view(member, member_run))
 
 
 def _persist_member_runs_for_team_run(
