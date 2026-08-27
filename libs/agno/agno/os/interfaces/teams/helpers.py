@@ -311,8 +311,11 @@ async def send_teams_message_async(
 ) -> None:
     """Post a markdown message, serialising a pydantic model if given one.
 
-    Empty payloads are skipped: the Bot Connector rejects them. ``bot_identity``,
-    when given, becomes the outbound ``from``.
+    Empty payloads are skipped: the Bot Connector rejects them. ``bot_identity``
+    becomes the outbound ``from``, and omitting it is not a safe degradation --
+    the Connector answers a proactive send with no ``from`` as
+    ``400 MissingProperty: The 'Activity.From' field is required`` (measured
+    against Web Chat). This is why the conversation reference persists it.
     """
     if message is not None and not isinstance(message, str):
         from pydantic import BaseModel
