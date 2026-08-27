@@ -2,6 +2,7 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from mimetypes import guess_type
 from typing import Any, Dict, List, Optional, Tuple
 
 import httpx
@@ -196,9 +197,16 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
         if not content:
             skipped.append("file")
             continue
-        # Pass None for unsupported types to avoid File validation errors
-        safe_mime = mime if mime in File.valid_mime_types() else None
-        files.append(File(content=content, mime_type=safe_mime, filename=att.get("name")))
+        name = att.get("name")
+        # Resolve the type the way the model would, then decide. Forwarding an
+        # unsupported file with mime_type=None does not hide it -- the model falls
+        # back to guessing from the filename and the provider rejects the run,
+        # costing the user their message text as well as the attachment.
+        resolved_mime = mime or guess_type(name or "")[0]
+        if resolved_mime not in File.valid_mime_types():
+            skipped.append(name or "file")
+            continue
+        files.append(File(content=content, mime_type=resolved_mime, filename=name))
     if files:
         run_kwargs["files"] = files
 

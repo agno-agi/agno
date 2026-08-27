@@ -507,9 +507,11 @@ async def test_download_attachments_skips_missing_url():
 
 
 @pytest.mark.asyncio
-async def test_download_attachments_unsupported_mime_passes_none():
-    """File validates mime against an allowlist; unsupported types must arrive
-    as mime_type=None rather than raising."""
+async def test_download_attachments_unsupported_mime_is_skipped():
+    """An unsupported type cannot be forwarded at all. mime_type=None does not hide
+    it: the model re-derives the type from the filename and the provider rejects the
+    whole run, so the user loses their text along with the attachment. Skipping the
+    file and telling them keeps the message alive."""
     parsed = ActivityContent(
         text="see attached",
         image_attachments=[],
@@ -527,15 +529,29 @@ async def test_download_attachments_unsupported_mime_passes_none():
     with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
         run_kwargs, skipped = await download_attachments_async(parsed, cfg)
 
+    assert "files" not in run_kwargs
+    assert skipped == ["report.bin", "archive.zip"]
+
+
+@pytest.mark.asyncio
+async def test_download_attachments_resolves_supported_mime_from_filename():
+    """A download that omits content-type must not cost the user a supported file:
+    the type is resolved from the name, the way the model would have."""
+    parsed = ActivityContent(
+        text="see attached",
+        image_attachments=[],
+        file_attachments=[{"contentUrl": "https://ex/report", "name": "report.pdf"}],
+    )
+    cfg = _make_config()
+
+    async def fake_download(url, config, use_bot_token=True):
+        return b"pdfbytes", None
+
+    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+        run_kwargs, skipped = await download_attachments_async(parsed, cfg)
+
     assert skipped == []
-    files = run_kwargs["files"]
-    assert len(files) == 2
-    assert files[0].content == b"binbytes"
-    assert files[0].mime_type is None
-    assert files[0].filename == "report.bin"
-    assert files[1].content == b"zipbytes"
-    assert files[1].mime_type is None
-    assert files[1].filename == "archive.zip"
+    assert run_kwargs["files"][0].mime_type == "application/pdf"
 
 
 @pytest.mark.asyncio
