@@ -1794,6 +1794,53 @@ class TestRespondDirectlyMemberContinuation:
         output_processor.assert_called_once()
         leader_model.assert_not_called()
 
+    @pytest.mark.parametrize("processor_kind", ["output_model", "parser_model"])
+    def test_sync_direct_processor_observes_cancellation(self, processor_kind):
+        from agno.exceptions import RunCancelledException
+        from agno.run import RunContext
+        from agno.team._run import continue_run_dispatch
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        setattr(team, processor_kind, MagicMock())
+        team.post_hooks = [MagicMock()]
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        processor_finished = False
+
+        def _process_response_model(*args, **kwargs):
+            nonlocal processor_finished
+            processor_finished = True
+
+        def _check_cancellation(run_id):
+            assert run_id == "team-run-1"
+            if processor_finished:
+                raise RunCancelledException("cancelled during direct response processing")
+
+        with (
+            self._sync_dispatch_patches(session, member, member_run_output, requirement, self._sync_opts()),
+            patch("agno.team._run.register_run"),
+            patch("agno.team._run.cleanup_run"),
+            patch("agno.team._init._disconnect_connectable_tools"),
+            patch("agno.team._run.handle_event"),
+            patch("agno.team._run.raise_if_cancelled", side_effect=_check_cancellation) as cancellation_check,
+            patch("agno.team._run.call_model_with_fallback") as leader_model,
+            patch("agno.team._response.parse_response_with_output_model", side_effect=_process_response_model),
+            patch("agno.team._response.parse_response_with_parser_model", side_effect=_process_response_model),
+            patch("agno.team._hooks._execute_post_hooks", return_value=iter(())) as post_hooks,
+            patch("agno.team._run._cleanup_and_store"),
+            patch("agno.team._telemetry.log_team_telemetry"),
+        ):
+            result = continue_run_dispatch(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                stream=False,
+            )
+
+        assert cancellation_check.call_count >= 3
+        assert result.status == RunStatus.cancelled
+        leader_model.assert_not_called()
+        post_hooks.assert_not_called()
+
     def test_sync_stream_direct_resume_runs_output_model(self):
         from agno.run import RunContext
         from agno.run.agent import RunOutput
@@ -1959,6 +2006,66 @@ class TestRespondDirectlyMemberContinuation:
 
             assert result.content == "processed by parser model"
             parser_processor.assert_awaited_once()
+
+        asyncio.run(_exercise())
+
+    @pytest.mark.parametrize("processor_kind", ["output_model", "parser_model"])
+    def test_async_direct_processor_observes_cancellation(self, processor_kind):
+        from agno.exceptions import RunCancelledException
+        from agno.run import RunContext
+        from agno.team._run import _acontinue_run
+
+        team, session, run_response, requirement, member, member_run_output, _ = self._make_case()
+        setattr(team, processor_kind, MagicMock())
+        team.post_hooks = [MagicMock()]
+        run_context = RunContext(run_id="team-run-1", session_id="session-1")
+        processor_finished = False
+
+        async def _process_response_model(*args, **kwargs):
+            nonlocal processor_finished
+            processor_finished = True
+
+        async def _post_hooks(*args, **kwargs):
+            if False:
+                yield None
+
+        async def _exercise():
+            async def _check_cancellation(run_id):
+                assert run_id == "team-run-1"
+                if processor_finished:
+                    raise RunCancelledException("cancelled during direct response processing")
+
+            cancellation_check = AsyncMock(side_effect=_check_cancellation)
+            with (
+                self._async_dispatch_patches(session, member, member_run_output, requirement),
+                patch("agno.team._run.araise_if_cancelled", new=cancellation_check),
+                patch(
+                    "agno.team._response.agenerate_response_with_output_model",
+                    new=AsyncMock(side_effect=_process_response_model),
+                ),
+                patch(
+                    "agno.team._response.aparse_response_with_parser_model",
+                    new=AsyncMock(side_effect=_process_response_model),
+                ),
+                patch(
+                    "agno.team._run._ahandle_model_response_for_continue",
+                    new=AsyncMock(return_value=None),
+                ) as leader_continue,
+                patch("agno.team._hooks._aexecute_post_hooks", side_effect=_post_hooks) as post_hooks,
+                patch("agno.team._run.adrain_member_tasks", new=AsyncMock()),
+                patch("agno.team._run._acleanup_and_store", new=AsyncMock()),
+            ):
+                result = await _acontinue_run(
+                    team,
+                    session_id="session-1",
+                    run_context=run_context,
+                    run_response=run_response,
+                )
+
+            assert cancellation_check.await_count >= 2
+            assert result.status == RunStatus.cancelled
+            leader_continue.assert_not_awaited()
+            post_hooks.assert_not_called()
 
         asyncio.run(_exercise())
 

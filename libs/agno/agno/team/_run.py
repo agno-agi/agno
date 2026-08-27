@@ -7075,6 +7075,7 @@ def _process_direct_member_content(
     model_response = ModelResponse(content=direct_content)
     if team.output_model is not None:
         parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+        raise_if_cancelled(run_response.run_id)  # type: ignore
     if team.parser_model is not None:
         parse_response_with_parser_model(
             team,
@@ -7083,6 +7084,7 @@ def _process_direct_member_content(
             run_context=run_context,
             run_response=run_response,
         )
+        raise_if_cancelled(run_response.run_id)  # type: ignore
     run_response.content = None
     _update_run_response(
         team,
@@ -7112,6 +7114,7 @@ async def _aprocess_direct_member_content(
     model_response = ModelResponse(content=direct_content)
     if team.output_model is not None:
         await agenerate_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
     if team.parser_model is not None:
         await aparse_response_with_parser_model(
             team,
@@ -7120,6 +7123,7 @@ async def _aprocess_direct_member_content(
             run_context=run_context,
             run_response=run_response,
         )
+        await araise_if_cancelled(run_response.run_id)  # type: ignore
     run_response.content = None
     _update_run_response(
         team,
