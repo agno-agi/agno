@@ -66,7 +66,7 @@ full_e2b_tools = E2BTools(
 basic_agent = Agent(
     name="Basic Code Execution Sandbox",
     id="e2b-basic-sandbox",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[basic_e2b_tools],
     markdown=True,
     instructions=[
@@ -78,7 +78,7 @@ basic_agent = Agent(
 agent = Agent(
     name="Full Code Execution Sandbox",
     id="e2b-sandbox",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[full_e2b_tools],
     markdown=True,
     instructions=[
@@ -120,10 +120,6 @@ if __name__ == "__main__":
         "Write Python code to generate the first 10 Fibonacci numbers and calculate their sum and average"
     )
 
-    # agent.print_response(
-    #     " upload file cookbook/90_tools/sample_data.csv and use it to create a matplotlib visualization of total sales by region and provide chart image or its downloaded path or any link  "
-    # )
-    # agent.print_response(" use dataset sample_data.csv and create a matplotlib visualization of total sales by region and provide chart image")
     # agent.print_response(" run a server and Write a simple fast api web server that displays 'Hello from E2B Sandbox!' and run it , use run_command to get the data from the server and provide the  url of api swagger docs and host link")
     # agent.print_response(
     #     " run server and Create and run a Python script that fetch top 5 latest news from hackernews using hackernews api"

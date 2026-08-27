@@ -23,14 +23,6 @@ uv pip install -U ddgs agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
-```shell
-python cookbook/90_models/neosantara/basic_stream.py
-```
-
-- Streaming off
-
 ```shell
 python cookbook/90_models/neosantara/basic.py
 ```
@@ -46,12 +38,4 @@ python cookbook/90_models/neosantara/tool_use.py
 
 ```shell
 python cookbook/90_models/neosantara/structured_output.py
-```
-
-### 7. Run Async Examples
-
-```shell
-python cookbook/90_models/neosantara/async_basic.py
-python cookbook/90_models/neosantara/async_basic_stream.py
-python cookbook/90_models/neosantara/async_tool_use.py
 ```
