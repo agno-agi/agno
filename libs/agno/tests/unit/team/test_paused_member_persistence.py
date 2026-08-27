@@ -19,6 +19,7 @@ from agno.agent import Agent
 from agno.approval.decorator import approval
 from agno.db.sqlite import SqliteDb
 from agno.exceptions import RunNotContinuableError, RunNotFoundError
+from agno.media import Image
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
@@ -494,6 +495,46 @@ def _reload_runs(db_file: str, session_id: str):
     return session.runs or []
 
 
+def _completed_member_run_with_private_storage_payload(team_run_id: str, member_run_id: str) -> RunOutput:
+    return RunOutput(
+        run_id=member_run_id,
+        parent_run_id=team_run_id,
+        agent_id="emailer",
+        status=RunStatus.completed,
+        content="done",
+        images=[Image(id="private-image", content=b"private image bytes")],
+        messages=[
+            Message(role="user", content="PRIVATE HISTORY", from_history=True),
+            Message(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": "tc-private-result",
+                        "type": "function",
+                        "function": {"name": "private_tool", "arguments": "{}"},
+                    }
+                ],
+            ),
+            Message(role="tool", tool_call_id="tc-private-result", content="PRIVATE TOOL RESULT"),
+            Message(role="assistant", content="done"),
+        ],
+    )
+
+
+def _disable_member_storage(member: Agent) -> None:
+    member.store_media = False
+    member.store_tool_messages = False
+    member.store_history_messages = False
+
+
+def _assert_member_storage_payload_scrubbed(stored: RunOutput) -> None:
+    assert stored.images is None
+    assert not any(message.from_history for message in stored.messages or [])
+    assert not any(message.role == "tool" for message in stored.messages or [])
+    assert not any(message.tool_calls for message in stored.messages or [])
+    assert not any("PRIVATE" in str(message.content) for message in stored.messages or [])
+
+
 def _set_stored_team_run_status(db: SqliteDb, session_id: str, run_id: str, status: RunStatus) -> None:
     """Persist a test status mutation through v3's dedicated run row."""
     stored_run = db.get_run(run_id)
@@ -534,6 +575,92 @@ def test_flat_member_pause_survives_fresh_process_continue(tmp_path):
     # The member run completed, so the next save scrubbed it again.
     team_runs = [r for r in _reload_runs(db_file, session_id) if isinstance(r, TeamRunOutput)]
     assert all(r.member_responses == [] for r in team_runs)
+
+
+@pytest.mark.parametrize("stream", [False, True])
+def test_sync_resumed_member_storage_flags_scrub_dedicated_row(tmp_path, stream):
+    db_file = str(tmp_path / "resume_storage_flags_sync.db")
+    session_id = "s-resume-storage-flags-sync"
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False, respond_directly=True)
+    _disable_member_storage(team1.members[0])
+    run1 = team1.run("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    member_run_id = run1.requirements[0].member_run_id
+    assert member_run_id is not None
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True, respond_directly=True)
+    member = team2.members[0]
+    _disable_member_storage(member)
+    completed = _completed_member_run_with_private_storage_payload(run1.run_id, member_run_id)
+    member.continue_run = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda *args, **kwargs: iter([completed]) if kwargs.get("stream") else completed
+    )
+
+    continued = team2.continue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=stream,
+        yield_run_output=stream,
+    )
+    run2 = list(continued)[-1] if stream else continued
+
+    assert run2.status == RunStatus.completed
+    stored = SqliteDb(db_file=db_file).get_run(member_run_id)
+    assert isinstance(stored, RunOutput)
+    _assert_member_storage_payload_scrubbed(stored)
+    assert completed.images, "storage scrubbing must not strip the caller's live member output"
+    assert any(message.role == "tool" for message in completed.messages or [])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stream", [False, True])
+async def test_async_resumed_member_storage_flags_scrub_dedicated_row(tmp_path, stream):
+    db_file = str(tmp_path / "resume_storage_flags_async.db")
+    session_id = "s-resume-storage-flags-async"
+
+    team1 = _build_flat_team(SqliteDb(db_file=db_file), resuming=False, respond_directly=True)
+    _disable_member_storage(team1.members[0])
+    run1 = await team1.arun("Email a@example.com", session_id=session_id)
+    assert run1.is_paused
+    member_run_id = run1.requirements[0].member_run_id
+    assert member_run_id is not None
+
+    team2 = _build_flat_team(SqliteDb(db_file=db_file), resuming=True, respond_directly=True)
+    member = team2.members[0]
+    _disable_member_storage(member)
+    completed = _completed_member_run_with_private_storage_payload(run1.run_id, member_run_id)
+
+    async def _completed_result():
+        return completed
+
+    async def _completed_stream():
+        yield completed
+
+    member.acontinue_run = MagicMock(  # type: ignore[method-assign]
+        side_effect=lambda *args, **kwargs: _completed_stream() if kwargs.get("stream") else _completed_result()
+    )
+
+    continued = team2.acontinue_run(
+        run_id=run1.run_id,
+        session_id=session_id,
+        requirements=_wire_requirements(run1.requirements),
+        stream=stream,
+        yield_run_output=stream,
+    )
+    if stream:
+        events = [event async for event in continued]  # type: ignore[union-attr]
+        run2 = events[-1]
+    else:
+        run2 = await continued  # type: ignore[misc]
+
+    assert run2.status == RunStatus.completed
+    stored = SqliteDb(db_file=db_file).get_run(member_run_id)
+    assert isinstance(stored, RunOutput)
+    _assert_member_storage_payload_scrubbed(stored)
+    assert completed.images, "storage scrubbing must not strip the caller's live member output"
+    assert any(message.role == "tool" for message in completed.messages or [])
 
 
 def test_nested_member_pause_survives_fresh_process_continue(tmp_path):

@@ -4698,6 +4698,44 @@ async def _amember_run_for_storage(team: "Team", session: TeamSession, member_ru
     return await aoffload_run_for_storage(store, member_run, session_id=session.session_id, user_id=session.user_id)
 
 
+def _completed_member_storage_view(
+    team: "Team",
+    member: Union["Agent", "Team"],
+    member_run: Union[RunOutput, TeamRunOutput],
+) -> Union[RunOutput, TeamRunOutput]:
+    """Apply a resumed member's storage flags without mutating its live output."""
+    if member.store_media and member.store_tool_messages and member.store_history_messages:
+        return member_run
+
+    import copy
+
+    from agno.agent._run import scrub_run_output_for_storage
+    from agno.utils.agent import isolate_media_scrub_targets
+
+    storage_view = copy.copy(member_run)
+    isolate_media_scrub_targets(storage_view)
+    scrub_run_output_for_storage(member, run_response=storage_view)  # type: ignore[arg-type]
+    return storage_view
+
+
+def _completed_member_run_for_storage(
+    team: "Team",
+    session: TeamSession,
+    member: Union["Agent", "Team"],
+    member_run: Union[RunOutput, TeamRunOutput],
+) -> Union[RunOutput, TeamRunOutput]:
+    return _member_run_for_storage(team, session, _completed_member_storage_view(team, member, member_run))
+
+
+async def _acompleted_member_run_for_storage(
+    team: "Team",
+    session: TeamSession,
+    member: Union["Agent", "Team"],
+    member_run: Union[RunOutput, TeamRunOutput],
+) -> Union[RunOutput, TeamRunOutput]:
+    return await _amember_run_for_storage(team, session, _completed_member_storage_view(team, member, member_run))
+
+
 def _persist_member_runs_for_team_run(
     team: "Team", session: TeamSession, team_run_id: Optional[str], team_run: Optional[TeamRunOutput] = None
 ) -> None:
@@ -6577,7 +6615,7 @@ def _route_requirements_to_members(
         else:
             # Update the member's run in the team session so its status is persisted
             # (member agents skip save_session when team_id is set)
-            session.upsert_run(_member_run_for_storage(team, session, member_response))
+            session.upsert_run(_completed_member_run_for_storage(team, session, member, member_response))
 
             content = _record_member_continuation_result(team, run_response, member_response, member)
             member_results.append(f"[{member.name or member_id}]: {content}")
@@ -6696,7 +6734,7 @@ def _route_requirements_to_members_stream(
             # Persist paused member run so continue_run can find it after session reload
             session.upsert_run(_member_run_for_storage(team, session, member_response))
         else:
-            session.upsert_run(_member_run_for_storage(team, session, member_response))
+            session.upsert_run(_completed_member_run_for_storage(team, session, member, member_response))
             content = _record_member_continuation_result(team, run_response, member_response, member)
             member_results.append(f"[{member.name or member_id}]: {content}")
 
@@ -6775,7 +6813,7 @@ async def _aroute_requirements_to_members(
         else:
             # Update the member's run in the team session so its status is persisted
             # (member agents skip save_session when team_id is set, so we do it here)
-            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
+            session.upsert_run(await _acompleted_member_run_for_storage(team, session, member, member_response))
 
             content = _record_member_continuation_result(team, run_response, member_response, member)
             return f"[{member.name or member_id}]: {content}"
@@ -6907,7 +6945,7 @@ async def _aroute_requirements_to_members_stream(
             # Persist paused member run so continue_run can find it after session reload
             session.upsert_run(await _amember_run_for_storage(team, session, member_response))
         else:
-            session.upsert_run(await _amember_run_for_storage(team, session, member_response))
+            session.upsert_run(await _acompleted_member_run_for_storage(team, session, member, member_response))
             content = _record_member_continuation_result(team, run_response, member_response, member)
             member_results.append(f"[{member.name or member_id}]: {content}")
 
