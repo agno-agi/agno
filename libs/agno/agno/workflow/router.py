@@ -41,6 +41,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Verify",  # type: ignore # noqa: F821
         "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
@@ -276,6 +277,12 @@ class Router:
                 return cls.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
                 )
+            elif step_type == "Verify":
+                from agno.workflow.verify import Verify
+
+                return Verify.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
                 return Step.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
@@ -339,6 +346,7 @@ class Router:
         from agno.workflow.parallel import Parallel
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
         from agno.workflow.workflow import Workflow
 
         if callable(step) and hasattr(step, "__name__"):
@@ -349,7 +357,7 @@ class Router:
             return Step(name=step.name, description=step.description, team=step)
         elif isinstance(step, Workflow):
             return Step(name=step.name, description=step.description, workflow=step)
-        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+        elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
             return step
         else:
             raise ValueError(f"Invalid step type: {type(step).__name__}")
@@ -469,6 +477,7 @@ class Router:
         from agno.workflow.loop import Loop
         from agno.workflow.parallel import Parallel
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
 
         if result is None:
             return []
@@ -486,8 +495,8 @@ class Router:
                 )
                 return []
 
-        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router)
-        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router)):
+        # Handle step types (Step, Steps, Loop, Parallel, Condition, Router, Verify)
+        if isinstance(result, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
             # Validate that the returned step is in the router's choices
             step_name = getattr(result, "name", None)
             if step_name and step_name not in self._step_name_map:

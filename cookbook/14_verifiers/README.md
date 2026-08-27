@@ -37,6 +37,7 @@ The principle: **evidence over prose.** The checks, not the model's summary, def
 | `05_team/` | A team member that verifies its own work |
 | `06_agentos/` | A verified agent served over AgentOS |
 | `07_predictions/` | `@verified_tool`: a tool call that carries a falsifiable prediction |
+| `08_workflow/` | `Verify` as a workflow step: conditional continue with evidence |
 
 ## The pieces
 

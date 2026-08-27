@@ -29,7 +29,9 @@ workdir = Path(tempfile.mkdtemp(prefix="check_policy_"))
 
 def summary_exists(run_output) -> object:
     """Required: summary.md must exist."""
-    return True if (workdir / "summary.md").exists() else "summary.md does not exist yet"
+    return (
+        True if (workdir / "summary.md").exists() else "summary.md does not exist yet"
+    )
 
 
 def short_enough(run_output) -> object:

@@ -161,6 +161,7 @@ from agno.workflow.utils import (
     save_paused_session,
     step_pause_status,
 )
+from agno.workflow.verify import Verify, resolve_verify_steps
 
 # Set to prevent background tasks from being garbage-collected
 _workflow_background_tasks: set[asyncio.Task[None]] = set()
@@ -172,6 +173,7 @@ STEP_TYPE_MAPPING = {
     Parallel: StepType.PARALLEL,
     Condition: StepType.CONDITION,
     Router: StepType.ROUTER,
+    Verify: StepType.VERIFY,
 }
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
@@ -197,6 +199,7 @@ WorkflowStep = Union[
     Parallel,
     Condition,
     Router,
+    Verify,
     "Workflow",
     Callable[
         [StepInput],
@@ -351,7 +354,7 @@ class WorkflowLinkCollisionError(ValueError):
 # Container step types, as serialized by each container's ``to_dict``. A
 # config walked from the db has dicts where an in-process workflow has step
 # objects, and both must produce the same links.
-_CONTAINER_STEP_TYPES = {"parallel", "loop", "steps", "condition"}
+_CONTAINER_STEP_TYPES = {"parallel", "loop", "steps", "condition", "verify"}
 
 
 def _step_link_children(step: Any) -> Optional[Tuple[List[Any], List[Any]]]:
@@ -369,7 +372,7 @@ def _step_link_children(step: Any) -> Optional[Tuple[List[Any], List[Any]]]:
         return None
     if isinstance(step, Router):
         return list(getattr(step, "choices", None) or []), []
-    if isinstance(step, (Parallel, Loop, Steps, Condition)):
+    if isinstance(step, (Parallel, Loop, Steps, Condition, Verify)):
         return list(getattr(step, "steps", None) or []), list(getattr(step, "else_steps", None) or [])
     return None
 
@@ -496,7 +499,7 @@ def _step_from_dict(
     links: Optional[List[Dict[str, Any]]] = None,
     strict: bool = False,
     branch_suffix: str = "",
-) -> Union[Step, Steps, Loop, Parallel, Condition, Router]:
+) -> Union[Step, Steps, Loop, Parallel, Condition, Router, Verify]:
     """
     Deserialize a step from a dictionary based on its type.
 
@@ -525,6 +528,8 @@ def _step_from_dict(
         )
     elif step_type == "Router":
         return Router.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
+    elif step_type == "Verify":
+        return Verify.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     elif step_type == "Step":
         return Step.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     else:
@@ -548,6 +553,7 @@ WorkflowSteps = Union[
             Parallel,
             Condition,
             Router,
+            Verify,
             "Workflow",  # Nested workflow support
         ]
     ],
@@ -10857,7 +10863,7 @@ class Workflow:
     def _prepare_steps(self):
         """Prepare the steps for execution"""
         if not callable(self.steps) and self.steps is not None:
-            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router, "Workflow"]] = []
+            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router, Verify, "Workflow"]] = []
             for i, step in enumerate(self.steps):  # type: ignore
                 if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
@@ -10881,7 +10887,7 @@ class Workflow:
                         "but no database is configured in the Workflow. "
                         "History won't be persisted. Add a database to persist runs across executions."
                     )
-                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
                     log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
@@ -10889,7 +10895,9 @@ class Workflow:
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-            self.steps = prepared_steps  # type: ignore
+            # Absorb each Verify's loop-back segment so the gate can re-run it with the
+            # evidence report; raises here — before any step runs — on a bad target.
+            self.steps = resolve_verify_steps(prepared_steps, owner=self)  # type: ignore
             log_debug("Step preparation completed")
 
     def print_response(

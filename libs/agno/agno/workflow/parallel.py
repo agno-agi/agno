@@ -38,6 +38,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Verify",  # type: ignore # noqa: F821
         "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
@@ -140,6 +141,12 @@ class Parallel:
                 return Router.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
                 )
+            elif step_type == "Verify":
+                from agno.workflow.verify import Verify
+
+                return Verify.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
                 return Step.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
@@ -160,6 +167,7 @@ class Parallel:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
         from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
@@ -172,7 +180,10 @@ class Parallel:
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
             elif isinstance(step, Workflow):
                 prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
-            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
+                # Parallel branches run concurrently, so a Verify here is never given a
+                # loop-back segment; only a pure gate (on_fail=None) makes sense inside
+                # a Parallel and anything else fails at execution with a clear error.
                 prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")

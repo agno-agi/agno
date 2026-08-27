@@ -8,9 +8,17 @@ executable definition of done. Configure verifiers on the agent —
 — and every surface the agent runs on gets the same loop: when the model stops, the
 verifiers run; a failure goes back to the model as an evidence report and the model
 continues, inside the same run; a run that never passes within budget ends with
-``RunStatus.unverified`` and the full record on ``RunOutput.verification``. Per-check
-configuration lives on each verifier instance; the shared loop budget lives in
-``VerificationConfig``.
+``RunStatus.unverified`` and the full record on ``RunOutput.verification``.
+
+A verifier is a pure check, and it mounts in three places: ``Agent(verifiers=...)``,
+``Team(verifiers=...)``, and the ``Verify`` workflow step (``agno.workflow.Verify``),
+where a failure re-runs earlier steps with the evidence attached. Everything about the
+check rides the check — its execution config and its policy (``required=False`` for an
+advisory check, ``rerun`` for flaky ones, ``run_when`` to gate expensive checks on
+earlier verdicts, ``fatal`` when retrying is pointless; the ``check()`` wrapper gives
+bare callables the same surface). Only the shared re-entry loop rides the mount, in
+that mount's own vocabulary (``VerificationConfig`` on agents and teams; ``on_fail``
+and ``max_rounds`` on the workflow step).
 
 How this relates to the neighbouring machinery:
 

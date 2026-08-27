@@ -44,7 +44,6 @@ from agno.verifiers.fingerprints import asafe_capture, noop_between, safe_captur
 from agno.verifiers.report import _first_line, build_report
 from agno.verifiers.types import Verdict, Verification, VerificationAttempt, VerificationConfig
 
-
 # ---------------------------------------------------------------------------
 # The check runner — shared by every mount (the agent/team gate and the
 # workflow Verify step), so the per-check policy semantics exist exactly once.
@@ -65,7 +64,9 @@ class CheckRun:
         return all(v.passed is True for v in self.verdicts if v.gates)
 
 
-def _should_run(v: Any, verdicts_so_far: List[Verdict], run_output: Any, run_context: Any, owner: Any, session: Any) -> bool:
+def _should_run(
+    v: Any, verdicts_so_far: List[Verdict], run_output: Any, run_context: Any, owner: Any, session: Any
+) -> bool:
     """Evaluate a check's run_when predicate. A broken predicate runs the check: skipping a
     gate on an exception would fail open."""
     run_when = getattr(v, "run_when", None)
@@ -121,7 +122,9 @@ def run_checks(
         required = getattr(v, "required", True)
         if not _should_run(v, result.verdicts, run_output, run_context, owner, session):
             result.verdicts.append(
-                Verdict(passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True)
+                Verdict(
+                    passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True
+                )
             )
             continue
         tries = 1 + max(int(getattr(v, "rerun", 0) or 0), 0)
@@ -150,7 +153,9 @@ async def arun_checks(
         required = getattr(v, "required", True)
         if not await _ashould_run(v, result.verdicts, run_output, run_context, owner, session):
             result.verdicts.append(
-                Verdict(passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True)
+                Verdict(
+                    passed=True, name=getattr(v, "name", "") or f"verifier {index}", required=required, skipped=True
+                )
             )
             continue
         tries = 1 + max(int(getattr(v, "rerun", 0) or 0), 0)
