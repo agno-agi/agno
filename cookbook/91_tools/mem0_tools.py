@@ -24,7 +24,7 @@ SESSION_ID = "agno_session"
 
 # Example 1: Enable all Mem0 functions
 agent_all = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         Mem0Tools(
             all=True,  # Enable all Mem0 memory functions
@@ -43,7 +43,7 @@ agent_all = Agent(
 
 # Example 2: Enable specific Mem0 functions only
 agent_specific = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         Mem0Tools(
             enable_add_memory=True,
@@ -65,7 +65,7 @@ agent_specific = Agent(
 
 # Example 3: Default behavior with full memory access
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         Mem0Tools(
             enable_add_memory=True,
