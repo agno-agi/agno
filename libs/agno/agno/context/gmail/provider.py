@@ -197,6 +197,8 @@ class GmailContextProvider(ContextProvider):
         return [self._ensure_read_toolkit()]
 
     def _ensure_read_toolkit(self) -> GmailTools:
+        if self.mode == ContextMode.tools:
+            return self._build_read_toolkit(name=self.id, prefix_tools_with_name=True)
         if self._read_toolkit is None:
             self._read_toolkit = self._build_read_toolkit()
         return self._read_toolkit
@@ -237,7 +239,7 @@ class GmailContextProvider(ContextProvider):
             )
         return self._write_agent
 
-    def _build_read_toolkit(self) -> GmailTools:
+    def _build_read_toolkit(self, **kwargs) -> GmailTools:
         return GmailTools(
             auth=self._auth,
             service_account_path=self._sa_path,
@@ -257,6 +259,7 @@ class GmailContextProvider(ContextProvider):
             remove_label=False,
             delete_custom_label=False,
             update_draft=False,
+            **kwargs,
         )
 
     def _build_write_toolkit(self) -> GmailTools:

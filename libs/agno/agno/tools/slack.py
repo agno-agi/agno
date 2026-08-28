@@ -263,7 +263,8 @@ class SlackTools(Toolkit):
                 kwargs["instructions"] = built
                 kwargs.setdefault("add_instructions", True)
 
-        super().__init__(name="slack", tools=tools, **kwargs)
+        toolkit_name = kwargs.pop("name", "slack")
+        super().__init__(name=toolkit_name, tools=tools, **kwargs)
 
     # ── Private helpers ──────────────────────────────────────────────
 

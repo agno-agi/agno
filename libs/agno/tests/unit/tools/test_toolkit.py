@@ -986,3 +986,59 @@ def test_explicit_tools_argument_preserved():
 
     assert example_func in toolkit.tools
     assert "example_func" in toolkit.functions
+
+
+class TestPrefixToolsWithName:
+    """Tests for prefix_tools_with_name feature."""
+
+    def test_prefix_disabled_by_default(self):
+        """Tool names are not prefixed by default."""
+        toolkit = Toolkit(name="my_toolkit", tools=[example_func])
+        assert "example_func" in toolkit.functions
+        assert "my_toolkit_example_func" not in toolkit.functions
+
+    def test_prefix_enabled(self):
+        """When enabled, tool names are prefixed with toolkit name."""
+        toolkit = Toolkit(name="my_toolkit", tools=[example_func], prefix_tools_with_name=True)
+        assert "my_toolkit_example_func" in toolkit.functions
+        assert "example_func" not in toolkit.functions
+
+    def test_prefix_with_multiple_tools(self):
+        """All tools get prefixed when enabled."""
+        toolkit = Toolkit(
+            name="utils",
+            tools=[example_func, another_func, third_func],
+            prefix_tools_with_name=True,
+        )
+        assert "utils_example_func" in toolkit.functions
+        assert "utils_another_func" in toolkit.functions
+        assert "utils_third_func" in toolkit.functions
+
+    def test_prefix_with_tool_decorator(self):
+        """@tool decorated methods also get prefixed."""
+
+        class MyToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="prefixed", tools=[self.my_tool], prefix_tools_with_name=True)
+
+            @tool()
+            def my_tool(self, x: int) -> int:
+                return x * 2
+
+        toolkit = MyToolkit()
+        assert "prefixed_my_tool" in toolkit.functions
+        assert "my_tool" not in toolkit.functions
+
+    def test_prefix_with_custom_name_via_register(self):
+        """Custom name passed to register() gets prefixed."""
+        toolkit = Toolkit(name="ns", prefix_tools_with_name=True, auto_register=False)
+        toolkit.register(example_func, name="add")
+        assert "ns_add" in toolkit.functions
+
+    def test_prefixed_name_helper(self):
+        """_prefixed_name helper returns correct names."""
+        toolkit_enabled = Toolkit(name="foo", prefix_tools_with_name=True)
+        toolkit_disabled = Toolkit(name="foo", prefix_tools_with_name=False)
+
+        assert toolkit_enabled._prefixed_name("bar") == "foo_bar"
+        assert toolkit_disabled._prefixed_name("bar") == "bar"

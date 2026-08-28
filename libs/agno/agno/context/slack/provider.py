@@ -210,24 +210,30 @@ class SlackContextProvider(ContextProvider):
     # ------------------------------------------------------------------
 
     def _ensure_bot_read_tools(self) -> SlackTools:
+        if self.mode == ContextMode.tools:
+            return self._build_bot_read_tools(name=self.id, prefix_tools_with_name=True)
         if self._bot_read_tools is None:
-            self._bot_read_tools = SlackTools(
-                token=self.token,
-                user_token=self._user_token,
-                enable_send_message=False,
-                enable_send_message_thread=False,
-                enable_upload_file=False,
-                enable_download_file=self.enable_media_tools,
-                enable_list_channels=True,
-                enable_get_channel_history=True,
-                enable_search_messages=self._enable_search_messages,
-                enable_search_workspace=False,
-                enable_get_thread=True,
-                enable_list_users=True,
-                enable_get_user_info=True,
-                enable_get_channel_info=True,
-            )
+            self._bot_read_tools = self._build_bot_read_tools()
         return self._bot_read_tools
+
+    def _build_bot_read_tools(self, **kwargs) -> SlackTools:
+        return SlackTools(
+            token=self.token,
+            user_token=self._user_token,
+            enable_send_message=False,
+            enable_send_message_thread=False,
+            enable_upload_file=False,
+            enable_download_file=self.enable_media_tools,
+            enable_list_channels=True,
+            enable_get_channel_history=True,
+            enable_search_messages=self._enable_search_messages,
+            enable_search_workspace=False,
+            enable_get_thread=True,
+            enable_list_users=True,
+            enable_get_user_info=True,
+            enable_get_channel_info=True,
+            **kwargs,
+        )
 
     def _ensure_assisted_read_tools(self) -> SlackTools:
         if self._assisted_read_tools is None:

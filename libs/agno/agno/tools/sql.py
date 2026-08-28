@@ -61,7 +61,8 @@ class SQLTools(Toolkit):
         if enable_run_sql_query or all:
             tools.append(self.run_sql_query)
 
-        super().__init__(name="sql_tools", tools=tools, **kwargs)
+        toolkit_name = kwargs.pop("name", "sql_tools")
+        super().__init__(name=toolkit_name, tools=tools, **kwargs)
 
     def list_tables(self) -> str:
         """Use this function to get a list of table names in the database.

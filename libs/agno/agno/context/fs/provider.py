@@ -92,7 +92,14 @@ class FilesystemContextProvider(ContextProvider):
         return [self._query_tool()]
 
     def _all_tools(self) -> list:
-        return [_build_file_tools(self.root, exclude_patterns=self.exclude_patterns)]
+        return [
+            _build_file_tools(
+                self.root,
+                exclude_patterns=self.exclude_patterns,
+                name=self.id,
+                prefix_tools_with_name=True,
+            )
+        ]
 
     # ------------------------------------------------------------------
     # Sub-agent — built lazily for agent mode and programmatic query()
@@ -117,7 +124,7 @@ class FilesystemContextProvider(ContextProvider):
         )
 
 
-def _build_file_tools(root: Path, *, exclude_patterns: list[str] | None = None) -> FileTools:
+def _build_file_tools(root: Path, *, exclude_patterns: list[str] | None = None, **kwargs) -> FileTools:
     return FileTools(
         base_dir=root,
         enable_save_file=False,
@@ -129,6 +136,7 @@ def _build_file_tools(root: Path, *, exclude_patterns: list[str] | None = None) 
         enable_read_file=True,
         enable_read_file_chunk=True,
         exclude_patterns=exclude_patterns,
+        **kwargs,
     )
 
 

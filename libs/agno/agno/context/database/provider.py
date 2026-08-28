@@ -146,7 +146,14 @@ class DatabaseContextProvider(ContextProvider):
         # default. Writes require mode=default (two-tool surface:
         # query_<id> / update_<id>) or explicit instantiation of a second
         # writable provider.
-        return [SQLTools(db_engine=self.readonly_engine, schema=self.schema)]
+        return [
+            SQLTools(
+                db_engine=self.readonly_engine,
+                schema=self.schema,
+                name=self.id,
+                prefix_tools_with_name=True,
+            )
+        ]
 
     # ------------------------------------------------------------------
     # Sub-agents

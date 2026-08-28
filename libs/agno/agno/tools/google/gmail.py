@@ -305,8 +305,9 @@ class GmailTools(GoogleToolkit):
         if download_attachment:
             tools.append(self.download_attachment)
 
+        toolkit_name = kwargs.pop("name", "gmail_tools")
         super().__init__(
-            name="gmail_tools",
+            name=toolkit_name,
             tools=tools,
             instructions=self.instructions,
             add_instructions=add_instructions,

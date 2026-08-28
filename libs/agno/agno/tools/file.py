@@ -138,7 +138,8 @@ class FileTools(Toolkit):
         if all or enable_search_content:
             tools.append(self.search_content)
 
-        super().__init__(name="file_tools", tools=tools, **kwargs)
+        toolkit_name = kwargs.pop("name", "file_tools")
+        super().__init__(name=toolkit_name, tools=tools, **kwargs)
 
     def _is_excluded(self, path: Path) -> bool:
         """Return True if any component of ``path`` (relative to ``base_dir``) matches an exclude pattern."""

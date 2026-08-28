@@ -131,6 +131,7 @@ class Toolkit:
         cache_dir: Optional[str] = None,
         timeout: Optional[int] = None,
         auto_register: bool = True,
+        prefix_tools_with_name: bool = False,
     ):
         """Initialize a new Toolkit.
 
@@ -164,6 +165,7 @@ class Toolkit:
         self.id: str = id if id is not None else generate_id_from_name(name)
         self.tools: Sequence[Union[Callable[..., Any], Function]] = tools or []
         self._async_tools: Sequence[tuple[Callable[..., Any], str]] = async_tools or []
+        self._prefix_tools_with_name: bool = prefix_tools_with_name
         # Functions dict - used by agent.run() and agent.print_response()
         self.functions: Dict[str, Function] = OrderedDict()
         # Async functions dict - used by agent.arun() and agent.aprint_response()
@@ -206,6 +208,12 @@ class Toolkit:
                 self._register_tools()
             if self._async_tools:
                 self._register_async_tools()
+
+    def _prefixed_name(self, tool_name: str) -> str:
+        """Apply toolkit name prefix if prefix_tools_with_name is enabled."""
+        if self._prefix_tools_with_name:
+            return f"{self.name}_{tool_name}"
+        return tool_name
 
     def _get_tool_name(self, tool: Union[Callable[..., Any], Function]) -> str:
         """Get the name of a tool, whether it's a Function or callable."""
@@ -302,8 +310,9 @@ class Toolkit:
             if self.exclude_tools is not None and tool_name in self.exclude_tools:
                 return
 
+            prefixed_tool_name = self._prefixed_name(tool_name)
             f = Function(
-                name=tool_name,
+                name=prefixed_tool_name,
                 entrypoint=function,
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
@@ -405,9 +414,10 @@ class Toolkit:
         requires_confirmation = function.requires_confirmation or tool_name in self.requires_confirmation_tools
         external_execution = function.external_execution or tool_name in self.external_execution_required_tools
 
+        prefixed_tool_name = self._prefixed_name(tool_name)
         # Create new Function with bound method, preserving decorator settings
         f = Function(
-            name=tool_name,
+            name=prefixed_tool_name,
             description=function.description,
             parameters=function.parameters,
             strict=function.strict,

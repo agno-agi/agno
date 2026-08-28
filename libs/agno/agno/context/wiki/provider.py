@@ -318,6 +318,13 @@ class WikiContextProvider(ContextProvider):
         return text + "\n\n" + WIKI_WEB_INGEST_INSTRUCTIONS
 
     def _build_read_tools(self) -> Workspace:
+        if self.mode == ContextMode.tools:
+            return Workspace(
+                root=self.backend.path,
+                allowed=Workspace.READ_TOOLS,
+                name=self.id,
+                prefix_tools_with_name=True,
+            )
         return Workspace(
             root=self.backend.path,
             allowed=Workspace.READ_TOOLS,

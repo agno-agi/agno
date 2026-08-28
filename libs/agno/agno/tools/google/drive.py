@@ -362,8 +362,9 @@ class GoogleDriveTools(GoogleToolkit):
             tools.append(self.download_file)
             async_tools.append((self.adownload_file, "download_file"))
 
+        toolkit_name = kwargs.pop("name", "google_drive_tools")
         super().__init__(
-            name="google_drive_tools",
+            name=toolkit_name,
             tools=tools,
             async_tools=async_tools,
             instructions=self.instructions,

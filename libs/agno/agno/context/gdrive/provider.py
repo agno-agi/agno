@@ -151,17 +151,23 @@ class GoogleDriveContextProvider(ContextProvider):
     # ------------------------------------------------------------------
 
     def _ensure_tools(self) -> GoogleDriveTools:
+        if self.mode == ContextMode.tools:
+            return self._build_tools(name=self.id, prefix_tools_with_name=True)
         if self._tools is None:
-            self._tools = GoogleDriveTools(
-                service_account_path=self._sa_path,
-                credentials_path=self._credentials_path,
-                token_path=self._token_path,
-                corpora=self._corpora,
-                supports_all_drives=self._supports_all_drives,
-                include_items_from_all_drives=self._include_items_from_all_drives,
-                drive_id=self._drive_id,
-            )
+            self._tools = self._build_tools()
         return self._tools
+
+    def _build_tools(self, **kwargs) -> GoogleDriveTools:
+        return GoogleDriveTools(
+            service_account_path=self._sa_path,
+            credentials_path=self._credentials_path,
+            token_path=self._token_path,
+            corpora=self._corpora,
+            supports_all_drives=self._supports_all_drives,
+            include_items_from_all_drives=self._include_items_from_all_drives,
+            drive_id=self._drive_id,
+            **kwargs,
+        )
 
     async def _aget_query_agent(self, run_context):
         return self._ensure_agent()

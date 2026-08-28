@@ -57,7 +57,8 @@ class PostgresTools(Toolkit):
             self.export_table_to_path,
         ]
 
-        super().__init__(name="postgres_tools", tools=tools, **kwargs)
+        toolkit_name = kwargs.pop("name", "postgres_tools")
+        super().__init__(name=toolkit_name, tools=tools, **kwargs)
 
     def connect(self) -> PgConnection[DictRow]:
         """

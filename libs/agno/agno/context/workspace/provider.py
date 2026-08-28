@@ -141,6 +141,17 @@ class WorkspaceContextProvider(ContextProvider):
         )
 
     def _build_workspace_tools(self) -> Workspace:
+        if self.mode == ContextMode.tools:
+            return Workspace(
+                root=self.root,
+                allowed=Workspace.READ_TOOLS,
+                exclude_patterns=list(self.exclude_patterns),
+                allow_paths=list(self.allow_paths),
+                max_file_lines=self.max_file_lines,
+                max_file_length=self.max_file_length,
+                name=self.id,
+                prefix_tools_with_name=True,
+            )
         return Workspace(
             root=self.root,
             allowed=Workspace.READ_TOOLS,
@@ -148,7 +159,6 @@ class WorkspaceContextProvider(ContextProvider):
             allow_paths=list(self.allow_paths),
             max_file_lines=self.max_file_lines,
             max_file_length=self.max_file_length,
-            **self._toolkit_prefix_kwargs(),
         )
 
 

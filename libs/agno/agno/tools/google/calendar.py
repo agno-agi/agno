@@ -144,8 +144,9 @@ class GoogleCalendarTools(GoogleToolkit):
         if respond_to_event:
             tools.append(self.respond_to_event)
 
+        toolkit_name = kwargs.pop("name", "google_calendar_tools")
         super().__init__(
-            name="google_calendar_tools",
+            name=toolkit_name,
             tools=tools,
             instructions=self.instructions,
             add_instructions=add_instructions,

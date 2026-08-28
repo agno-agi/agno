@@ -182,6 +182,8 @@ class GoogleCalendarContextProvider(ContextProvider):
         return [self._ensure_read_toolkit()]
 
     def _ensure_read_toolkit(self) -> GoogleCalendarTools:
+        if self.mode == ContextMode.tools:
+            return self._build_read_toolkit(name=self.id, prefix_tools_with_name=True)
         if self._read_toolkit is None:
             self._read_toolkit = self._build_read_toolkit()
         return self._read_toolkit
@@ -222,7 +224,7 @@ class GoogleCalendarContextProvider(ContextProvider):
             )
         return self._write_agent
 
-    def _build_read_toolkit(self) -> GoogleCalendarTools:
+    def _build_read_toolkit(self, **kwargs) -> GoogleCalendarTools:
         return GoogleCalendarTools(
             auth=self._auth,
             service_account_path=self._sa_path,
@@ -235,6 +237,7 @@ class GoogleCalendarContextProvider(ContextProvider):
             create_event=False,
             update_event=False,
             delete_event=False,
+            **kwargs,
         )
 
     def _build_write_toolkit(self) -> GoogleCalendarTools:
