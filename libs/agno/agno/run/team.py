@@ -14,7 +14,7 @@ from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -731,14 +731,20 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def team_run_output_event_from_dict(data: dict) -> BaseTeamRunEvent:
+def team_run_output_event_from_dict(data: dict) -> Optional[BaseTeamRunEvent]:
+    """Deserialize a team run event dict into its typed event.
+
+    Returns None for event types this version does not recognize, so sessions
+    written by a newer agno version (with new event types) remain readable.
+    """
     event_type = data.get("event", "")
     if event_type in {e.value for e in RunEvent}:
         return run_output_event_from_dict(data)  # type: ignore
     else:
         event_class = TEAM_RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not event_class:
-        raise ValueError(f"Unknown team event type: {event_type}")
+        log_debug(f"Skipping unknown team run event type: {event_type}")
+        return None
     return event_class.from_dict(data)  # type: ignore
 
 
@@ -979,7 +985,8 @@ class TeamRunOutput:
                 event = run_output_event_from_dict(event)
             else:
                 event = team_run_output_event_from_dict(event)
-            final_events.append(event)
+            if event is not None:
+                final_events.append(event)
         events = final_events
 
         messages = data.pop("messages", None)

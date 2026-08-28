@@ -395,8 +395,11 @@ class AgentOSClient:
                     json_str = line[6:]  # Remove "data: " prefix
                     event_dict = json.loads(json_str)
 
-                    # Parse into typed event using provided factory
+                    # Parse into typed event using provided factory; the factory
+                    # returns None for event types this client version does not know
                     event = event_parser(event_dict)
+                    if event is None:
+                        continue
                     yield event
 
                 except json.JSONDecodeError:

@@ -13,7 +13,7 @@ from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
 from agno.run.requirement import RunRequirement
-from agno.utils.log import log_error
+from agno.utils.log import log_debug, log_error
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -606,11 +606,17 @@ RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
+def run_output_event_from_dict(data: dict) -> Optional[BaseRunOutputEvent]:
+    """Deserialize a run event dict into its typed event.
+
+    Returns None for event types this version does not recognize, so sessions
+    written by a newer agno version (with new event types) remain readable.
+    """
     event_type = data.get("event", "")
     cls = RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not cls:
-        raise ValueError(f"Unknown event type: {event_type}")
+        log_debug(f"Skipping unknown run event type: {event_type}")
+        return None
     return cls.from_dict(data)  # type: ignore
 
 
@@ -880,7 +886,8 @@ class RunOutput:
                 from agno.run.team import team_run_output_event_from_dict
 
                 event = team_run_output_event_from_dict(event)
-            final_events.append(event)
+            if event is not None:
+                final_events.append(event)
         events = final_events
 
         messages = data.pop("messages", None)

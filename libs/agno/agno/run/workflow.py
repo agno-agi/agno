@@ -9,7 +9,7 @@ from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
-from agno.utils.log import log_warning
+from agno.utils.log import log_debug, log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -701,7 +701,12 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEvent:
+def workflow_run_output_event_from_dict(data: dict) -> Optional[BaseWorkflowRunOutputEvent]:
+    """Deserialize a workflow run event dict into its typed event.
+
+    Returns None for event types this version does not recognize, so sessions
+    written by a newer agno version (with new event types) remain readable.
+    """
     event_type = data.get("event", "")
     if event_type in {e.value for e in RunEvent}:
         return run_output_event_from_dict(data)  # type: ignore
@@ -710,7 +715,8 @@ def workflow_run_output_event_from_dict(data: dict) -> BaseWorkflowRunOutputEven
     else:
         event_class = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not event_class:
-        raise ValueError(f"Unknown workflow event type: {event_type}")
+        log_debug(f"Skipping unknown workflow run event type: {event_type}")
+        return None
     return event_class.from_dict(data)  # type: ignore
 
 
@@ -1035,7 +1041,8 @@ class WorkflowRunOutput:
             else:
                 # Pure workflow event
                 event = workflow_run_output_event_from_dict(event)
-            final_events.append(event)
+            if event is not None:
+                final_events.append(event)
         events = final_events
 
         # Parse step_requirements

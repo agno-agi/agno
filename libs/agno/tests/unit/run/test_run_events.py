@@ -523,3 +523,78 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].tool_execution.tool_name == "get_the_weather"
     assert reconstructed.requirements[0].tool_execution.requires_confirmation is True
     assert reconstructed.requirements[0].needs_confirmation is True
+
+
+def test_unknown_event_type_returns_none():
+    """Unknown event types deserialize to None instead of raising, so stored
+    sessions written by a newer agno version remain readable."""
+    from agno.run.agent import run_output_event_from_dict
+    from agno.run.team import team_run_output_event_from_dict
+    from agno.run.workflow import workflow_run_output_event_from_dict
+
+    unknown = {"event": "EventTypeFromTheFuture", "run_id": "run-1"}
+    assert run_output_event_from_dict(unknown) is None
+    assert team_run_output_event_from_dict(unknown) is None
+    assert workflow_run_output_event_from_dict(unknown) is None
+
+
+def test_run_output_from_dict_drops_unknown_events():
+    """RunOutput.from_dict keeps known events and drops unknown ones."""
+    from agno.run.agent import RunOutput, RunStartedEvent
+
+    known = RunStartedEvent(run_id="run-1", agent_id="agent-1").to_dict()
+    unknown_agent = {"event": "EventTypeFromTheFuture", "run_id": "run-1", "agent_id": "agent-1"}
+    unknown_team = {"event": "EventTypeFromTheFuture", "run_id": "run-1"}
+
+    restored = RunOutput.from_dict({"run_id": "run-1", "events": [known, unknown_agent, unknown_team]})
+    assert len(restored.events) == 1
+    assert restored.events[0].event == "RunStarted"
+
+
+def test_team_run_output_from_dict_drops_unknown_events():
+    """TeamRunOutput.from_dict keeps known events and drops unknown ones."""
+    from agno.run.team import RunStartedEvent as TeamRunStartedEvent
+    from agno.run.team import TeamRunOutput
+
+    known = TeamRunStartedEvent(run_id="run-1", team_id="team-1").to_dict()
+    unknown = {"event": "EventTypeFromTheFuture", "run_id": "run-1"}
+
+    restored = TeamRunOutput.from_dict({"run_id": "run-1", "team_id": "team-1", "events": [known, unknown]})
+    assert len(restored.events) == 1
+    assert restored.events[0].event == "TeamRunStarted"
+
+
+def test_workflow_run_output_from_dict_drops_unknown_events():
+    """WorkflowRunOutput.from_dict keeps known events and drops unknown ones."""
+    from agno.run.workflow import WorkflowRunOutput, WorkflowStartedEvent
+
+    known = WorkflowStartedEvent(run_id="run-1", workflow_id="wf-1").to_dict()
+    unknown_workflow = {"event": "EventTypeFromTheFuture", "run_id": "run-1"}
+    unknown_agent = {"event": "EventTypeFromTheFuture", "run_id": "run-1", "agent_id": "agent-1"}
+    unknown_team = {"event": "EventTypeFromTheFuture", "run_id": "run-1", "team_id": "team-1"}
+
+    restored = WorkflowRunOutput.from_dict(
+        {"run_id": "run-1", "events": [known, unknown_workflow, unknown_agent, unknown_team]}
+    )
+    assert len(restored.events) == 1
+    assert restored.events[0].event == "WorkflowStarted"
+
+
+def test_session_from_dict_survives_unknown_stored_event():
+    """A stored session row containing an unknown event type still loads."""
+    from agno.run.agent import RunOutput, RunStartedEvent
+    from agno.session.agent import AgentSession
+
+    run_output = RunOutput(
+        run_id="run-1", agent_id="agent-1", events=[RunStartedEvent(run_id="run-1", agent_id="agent-1")]
+    )
+    session = AgentSession(session_id="session-1", agent_id="agent-1", runs=[run_output])
+
+    session_dict = session.to_dict()
+    session_dict["runs"][0]["events"].append(
+        {"event": "EventTypeFromTheFuture", "run_id": "run-1", "agent_id": "agent-1"}
+    )
+
+    restored = AgentSession.from_dict(session_dict)
+    assert len(restored.runs[0].events) == 1
+    assert restored.runs[0].events[0].event == "RunStarted"
