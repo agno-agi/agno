@@ -862,21 +862,18 @@ class Workspace(Toolkit):
         pattern: str,
         directory: str = ".",
         context_lines: int = 0,
-        files_only: bool = False,
         limit: int = 100,
     ) -> str:
         """Regex search with line numbers across text files in the workspace.
 
         Returns matches in ``path:line:text`` format, grouped by file with context lines.
-        Use ``files_only=True`` for a quick list of matching files without content.
         Matching is always case-insensitive.
 
         :param pattern: Regex pattern to search for.
         :param directory: Subdirectory to scope the search to (default ".").
         :param context_lines: Lines of context before and after each match (default 0).
-        :param files_only: Return only file paths, not matching lines (default False).
         :param limit: Maximum number of matches to return (default 100, capped by max_grep_matches).
-        :return: Matching lines as ``path:line:text``, or file paths if ``files_only``.
+        :return: Matching lines as ``path:line:text``.
         """
         try:
             if not pattern or not pattern.strip():
@@ -900,7 +897,6 @@ class Workspace(Toolkit):
 
             max_file_size = self.max_search_file_size
             out_lines: List[str] = []
-            files_with_matches: List[str] = []
             total_matches = 0
 
             # 3. Walk the directory tree
@@ -939,10 +935,6 @@ class Workspace(Toolkit):
                         continue
 
                     rel_path = file_path.relative_to(self.root).as_posix()
-                    files_with_matches.append(rel_path)
-
-                    if files_only:
-                        continue
 
                     # Collect matches with context
                     shown: Set[int] = set()
@@ -968,12 +960,6 @@ class Workspace(Toolkit):
                             out_lines.append("--")
 
             # 4. Format output
-            if files_only:
-                if files_with_matches:
-                    result = "\n".join(files_with_matches)
-                    return f"{result}\n({len(files_with_matches)} files)"
-                return f"No files match pattern: {pattern}"
-
             if out_lines:
                 # Remove trailing separator
                 if out_lines and out_lines[-1] == "--":
@@ -1217,12 +1203,11 @@ class Workspace(Toolkit):
         pattern: str,
         directory: str = ".",
         context_lines: int = 0,
-        files_only: bool = False,
         limit: int = 100,
     ) -> str:
         """Async variant of ``grep_content``."""
         return await asyncio.to_thread(
-            self.grep_content, pattern, directory, context_lines, files_only, limit
+            self.grep_content, pattern, directory, context_lines, limit
         )
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
