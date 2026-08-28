@@ -112,7 +112,13 @@ def test_workspace_default_surface_is_single_query_tool(tmp_path: Path):
 def test_workspace_tools_mode_is_read_only(tmp_path: Path):
     p = WorkspaceContextProvider(root=tmp_path, mode=ContextMode.tools)
     workspace = p.get_tools()[0]
-    assert sorted(workspace.functions.keys()) == ["list_files", "read_file", "search_content"]
+    # In mode=tools, function names are prefixed with provider id to avoid collisions
+    assert sorted(workspace.functions.keys()) == [
+        "workspace_grep_content",
+        "workspace_list_files",
+        "workspace_read_file",
+        "workspace_search_content",
+    ]
 
 
 def test_workspace_context_excludes_agent_scratch_and_plural_venvs(tmp_path: Path):

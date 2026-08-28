@@ -185,8 +185,8 @@ class WikiContextProvider(ContextProvider):
             # Tool names are prefixed with provider id when mode=tools
             prefix = f"{self.id}_"
             return (
-                f"`{self.name}`: read-only `{prefix}read_file` / `{prefix}list_files` / `{prefix}search_content` over the wiki "
-                f"at {self.backend.path}. Writes require mode=default (two-tool surface)."
+                f"`{self.name}`: read-only `{prefix}read_file`, `{prefix}list_files`, `{prefix}search_content`, "
+                f"`{prefix}grep_content` over the wiki at {self.backend.path}. Writes require mode=default (two-tool surface)."
             )
         if self.mode == ContextMode.agent:
             return f"`{self.name}`: call `{self.query_tool_name}(question)` to read the wiki."
