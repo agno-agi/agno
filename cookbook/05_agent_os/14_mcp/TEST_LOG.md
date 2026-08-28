@@ -29,9 +29,14 @@ of this cookbook. The `chief` tool carried the agent's own description plus
 the session sentence; `deep_research` carried the as_tool override pitch. The
 client-facing schema was `message` (required), `session_id`, `user_id`;
 structuredContent carried `agent_id` ("chief") alongside
-run_id/session_id/status. The sessionless call minted a session and completed
-with content "Earth"; the follow-up call on the returned session_id recalled
-"Earth", proving live session continuity through the exposed tool.
+run_id/session_id/status, and (verified in a same-day re-run after the fix
+landed) mirrors the answer text in its `content` key, so structuredContent-
+rendering clients show the answer. The sessionless call minted a session and
+completed with content "Earth"; the follow-up call on the returned session_id
+recalled "Earth", proving live session continuity through the exposed tool.
+The same re-run verified the publication bound on the riding pair:
+`cancel_run` acted on the published `researcher` but refused an id outside
+the publication list with the "published components" error.
 
 ---
 
