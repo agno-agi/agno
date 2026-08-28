@@ -866,14 +866,14 @@ class Workspace(Toolkit):
     ) -> str:
         """Regex search with line numbers across text files in the workspace.
 
-        Returns matches in ``path:line:text`` format, grouped by file with context lines.
         Matching is always case-insensitive.
 
         :param pattern: Regex pattern to search for.
         :param directory: Subdirectory to scope the search to (default ".").
         :param context_lines: Lines of context before and after each match (default 0).
         :param limit: Maximum number of matches to return (default 100, capped by max_grep_matches).
-        :return: Matching lines as ``path:line:text``.
+        :return: JSON with keys ``pattern``, ``total_matches``, ``truncated``, and ``matches``
+            (list of ``{"file", "line", "text"}``).
         """
         try:
             if not pattern or not pattern.strip():
@@ -896,7 +896,7 @@ class Workspace(Toolkit):
                 return f"Error: not a directory: {directory}"
 
             max_file_size = self.max_search_file_size
-            out_lines: List[str] = []
+            matches: List[dict] = []
             total_matches = 0
 
             # 3. Walk the directory tree
@@ -928,8 +928,8 @@ class Workspace(Toolkit):
                     except Exception:
                         continue
 
-                    lines = content.splitlines()
-                    hits = [idx for idx, line in enumerate(lines) if rx.search(line)]
+                    file_lines = content.splitlines()
+                    hits = [idx for idx, line in enumerate(file_lines) if rx.search(line)]
 
                     if not hits:
                         continue
@@ -938,35 +938,29 @@ class Workspace(Toolkit):
 
                     # Collect matches with context
                     shown: Set[int] = set()
-                    file_output: List[str] = []
 
                     for hit in hits:
                         if total_matches >= limit:
                             break
                         # Calculate context range
                         start = max(0, hit - context_lines)
-                        end = min(len(lines), hit + context_lines + 1)
+                        end = min(len(file_lines), hit + context_lines + 1)
 
                         for j in range(start, end):
                             if j not in shown:
                                 shown.add(j)
-                                file_output.append(f"{rel_path}:{j + 1}:{lines[j]}")
+                                matches.append({"file": rel_path, "line": j + 1, "text": file_lines[j]})
 
                         total_matches += 1
 
-                    if file_output:
-                        out_lines.extend(file_output)
-                        if context_lines > 0:
-                            out_lines.append("--")
-
-            # 4. Format output
-            if out_lines:
-                # Remove trailing separator
-                if out_lines and out_lines[-1] == "--":
-                    out_lines.pop()
-                truncated = f"\n(showing {total_matches} matches, limit={limit})" if total_matches >= limit else ""
-                return "\n".join(out_lines) + truncated
-            return f"No matches for pattern: {pattern}"
+            # 4. Format output as JSON
+            result = {
+                "pattern": pattern,
+                "total_matches": total_matches,
+                "truncated": total_matches >= limit,
+                "matches": matches,
+            }
+            return json.dumps(result, indent=2)
 
         except Exception as e:
             log_error(f"grep_content failed: {e}")
