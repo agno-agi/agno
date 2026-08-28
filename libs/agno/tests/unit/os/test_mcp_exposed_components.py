@@ -430,6 +430,25 @@ async def test_exposed_tools_apply_the_session_ownership_gate(monkeypatch):
     assert all(r["session_id"] for r in recorded)
 
 
+async def test_ownership_gate_refusal_propagates_to_the_caller(monkeypatch):
+    """The gate's raise must surface as a tool error and stop the run -- a handler that
+    swallowed it and ran the component anyway would still pass the invocation pin
+    above (audit-without-enforcement is the fail-open this exists to catch)."""
+
+    async def _deny(os_app, component, session_id, user_id, session_type):
+        raise Exception("session belongs to another user")
+
+    monkeypatch.setattr(mcp_mod, "_assert_session_writable_mcp", _deny)
+    agent = _agent()
+    calls = _stub_arun(agent, RunOutput(content="must not run"))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
+
+    result = await _call_tool(os, "chief", {"message": "hi", "session_id": "sess-x"}, raise_on_error=False)
+    assert result.is_error
+    assert "another user" in str(result.content)
+    assert calls == []
+
+
 async def test_exposed_workflow_enforces_scopes_and_mints_sessions(monkeypatch):
     """The workflow factory is its own code path: pin its scope gate and session minting."""
     _patch_request(monkeypatch, _pat_request(["agents:run"]))
@@ -673,6 +692,18 @@ async def test_tool_name_cap_is_128():
     os2 = AgentOS(agents=[long_agent], mcp=MCPConfig(default_tools=False, tools=[long_agent]))
     with pytest.raises(ValueError, match="128"):
         build_mcp_server(os2)
+
+
+async def test_as_tool_name_cap_is_128_too():
+    """The cap applies to the override path as well, and 128 exactly registers."""
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="x" * 129)]))
+    with pytest.raises(ValueError, match="128") as exc_info:
+        build_mcp_server(os)
+    assert "as_tool" in str(exc_info.value)
+
+    ok = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="x" * 128)]))
+    assert "x" * 128 in await _tool_names(ok)
 
 
 async def test_two_exposed_components_of_same_kind_run_their_own_component():
@@ -1183,7 +1214,7 @@ async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
     continued: dict = {}
 
     async def fake_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
-        continued.update(run_id=run_id, session_id=session_id)
+        continued.update(run_id=run_id, session_id=session_id, requirements=requirements)
         return RunOutput(agent_id="chief", run_id=run_id, session_id=session_id, content="resumed")
 
     agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
@@ -1201,8 +1232,12 @@ async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
         assert len(structured.get("requirements") or []) == 1
         assert "continue_run tool is not registered" not in result.content[0].text
 
+        # The recipe the cookbook client uses: resolution fields are NESTED. A
+        # top-level "confirmed" key is ignored by RunRequirement.from_dict, so a run
+        # "resumed" that way would re-pause on the still-unconfirmed tool.
         requirement = structured["requirements"][0]
-        requirement["confirmed"] = True
+        requirement["confirmation"] = True
+        requirement["tool_execution"]["confirmed"] = True
         resumed = await client.call_tool(
             "continue_run",
             {
@@ -1216,4 +1251,68 @@ async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
         resumed_structured = resumed_structured.get("result", resumed_structured) or {}
         assert resumed_structured.get("session_id") == "sess-hitl"
 
-    assert continued == {"run_id": "run-hitl", "session_id": "sess-hitl"}
+    assert continued["run_id"] == "run-hitl"
+    assert continued["session_id"] == "sess-hitl"
+    # The resolution must round-trip: the component receives parsed RunRequirement
+    # objects with the confirmation applied, not raw dicts or dropped fields.
+    parsed = continued["requirements"]
+    assert len(parsed) == 1 and isinstance(parsed[0], RunRequirement)
+    assert parsed[0].confirmation is True
+    assert parsed[0].tool_execution.confirmed is True
+    assert parsed[0].tool_execution.tool_name == "send_email"
+
+
+async def test_riding_lifecycle_pair_is_scope_gated(monkeypatch):
+    """continue_run/cancel_run ride along with every exposure, so their scope gate is
+    the only thing between a read-only PAT and run mutation -- pin the refusal."""
+    _patch_request(monkeypatch, _pat_request(["sessions:read"]))
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
+
+    continued = await _call_tool(
+        os, "continue_run", {"agent_id": "chief", "run_id": "r1", "session_id": "s1"}, raise_on_error=False
+    )
+    assert continued.is_error
+    assert "Insufficient permissions" in str(continued.content)
+
+    cancelled = await _call_tool(
+        os, "cancel_run", {"agent_id": "chief", "run_id": "r1", "session_id": "s1"}, raise_on_error=False
+    )
+    assert cancelled.is_error
+    assert "Insufficient permissions" in str(cancelled.content)
+
+
+async def test_remote_workflow_runs_through_the_non_streaming_branch(monkeypatch):
+    """RemoteWorkflow.arun is awaited directly -- there is no local step stream to
+    consume -- and the result still flows through build_run_tool_result with a minted
+    session and the workflow id attached. The ownership gate is stubbed: it reads the
+    component's db, which on a remote is a network-backed property."""
+    from agno.workflow.remote import RemoteWorkflow
+
+    async def _gate(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(mcp_mod, "_assert_session_writable_mcp", _gate)
+    remote = RemoteWorkflow(base_url="http://127.0.0.1:9", workflow_id="remote-wf")
+    captured: dict = {}
+
+    async def fake_arun(message, **kwargs):
+        captured.update(message=message, session_id=kwargs.get("session_id"))
+        return WorkflowRunOutput(
+            workflow_id="remote-wf",
+            run_id="r-remote",
+            session_id=kwargs.get("session_id"),
+            content="remote done",
+            status=RunStatus.completed,
+        )
+
+    remote.arun = fake_arun  # type: ignore[method-assign]
+    os = AgentOS(workflows=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
+
+    result = await _call_tool(os, "remote-wf", {"message": "go"})
+    structured = result.structured_content or {}
+    structured = structured.get("result", structured) or {}
+    assert captured["message"] == "go"
+    assert captured["session_id"]
+    assert structured.get("workflow_id") == "remote-wf"
+    assert structured.get("status") == RunStatus.completed.value
