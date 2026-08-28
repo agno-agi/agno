@@ -992,10 +992,23 @@ async def test_lifecycle_tools_opt_out_gives_exactly_the_configured_tools():
 
 async def test_explicit_lifecycle_exclude_is_honoured():
     """exclude_tags={'lifecycle'} beats the ride-along -- an explicit exclusion is never
-    silently overridden."""
+    silently overridden. This gates only the ride-along: with the default surface on the
+    pair are core tools (test_exclude_lifecycle_keeps_the_default_surface_intact in
+    test_mcp_server.py pins that side)."""
     agent = _agent()
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], exclude_tags={"lifecycle"}))
     assert await _tool_names(os) == {"chief"}
+
+
+async def test_exposure_with_exclude_core_still_rides_lifecycle():
+    """The ride-along composes with tag scoping: excluding ``core`` drops the generic
+    run tools AND the pair's core membership, but the exposure adds ``lifecycle`` back
+    so a paused exposed run stays resumable."""
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent], exclude_tags={"core"}))
+    names = await _tool_names(os)
+    assert names == {"chief", "continue_run", "cancel_run", "get_sessions", "get_session_runs"}
+    assert "run_agent" not in names
 
 
 async def test_exposed_id_collides_with_riding_lifecycle_tool():

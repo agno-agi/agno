@@ -100,15 +100,20 @@ class MCPConfig(BaseModel):
     # ids the caller already holds from its own results and are scope-gated per
     # component like the tool that produced the run. Set False for a tools/list that
     # shows exactly the configured tools; paused runs then say to resume over REST.
-    # (An explicit ``exclude_tags={"lifecycle"}`` is also honoured.)
+    # An explicit ``exclude_tags={"lifecycle"}`` disables the ride-along the same way.
+    # Both switches gate ONLY the ride-along: with the default surface on, the pair
+    # are ordinary ``core`` tools, removed by ``exclude_tags={"core"}``.
     lifecycle_tools: bool = True
 
     # Finer scoping over the default tools via their tags (see ``MCP_BUILTIN_TAGS``).
-    # When ``include_tags`` is set, only default tools carrying one of those tags are registered.
-    # ``exclude_tags`` is then subtracted. Both are ignored when ``default_tools`` is False.
+    # When ``include_tags`` is set, only default tools carrying one of those tags are
+    # registered (name ``lifecycle`` explicitly to serve just the run-resumption pair).
+    # ``exclude_tags`` is then subtracted. With ``default_tools=False`` there are no
+    # default tools to scope, but ``exclude_tags={"lifecycle"}`` still disables the
+    # exposure ride-along (see ``lifecycle_tools``).
     # Typed as ``MCPBuiltinTag`` (a ``Literal``) so the IDE autocompletes the values and pydantic
-    # rejects typos at construction with a message like "Input should be 'core' or 'session'"
-    # -- otherwise an unknown tag would silently produce an empty server.
+    # rejects typos at construction with a message like "Input should be 'core', 'session' or
+    # 'lifecycle'" -- otherwise an unknown tag would silently produce an empty server.
     include_tags: Optional[Set[MCPBuiltinTag]] = None
     exclude_tags: Optional[Set[MCPBuiltinTag]] = None
 
@@ -219,7 +224,10 @@ class MCPConfig(BaseModel):
         # here so this module keeps its typing+pydantic-only imports (``mcp.py`` pulls in
         # FastMCP, an optional extra).
         if self.default_tools and not self.tools:
-            enabled = set(self.include_tags) if self.include_tags is not None else set(MCP_BUILTIN_TAGS)
+            # ``lifecycle`` never enters the enabled set implicitly (the pair are core
+            # tools; the tag exists for explicit include_tags and the exposure
+            # ride-along, and there are no exposures on this branch).
+            enabled = set(self.include_tags) if self.include_tags is not None else set(MCP_BUILTIN_TAGS) - {"lifecycle"}
             if self.exclude_tags:
                 enabled -= set(self.exclude_tags)
             if not enabled:

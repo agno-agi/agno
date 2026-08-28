@@ -30,7 +30,7 @@ from agno.db.schemas.service_accounts import ServiceAccount  # noqa: E402
 from agno.models.base import Model  # noqa: E402
 from agno.models.message import MessageMetrics  # noqa: E402
 from agno.models.response import ModelResponse  # noqa: E402
-from agno.os import AgentOS, MCPServerConfig  # noqa: E402
+from agno.os import AgentOS, MCPConfig, MCPServerConfig  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 from agno.os.mcp import _resolve_user_id, build_mcp_server, get_mcp_server  # noqa: E402
 from agno.os.service_accounts import ServiceAccountVerification, VerificationStatus, generate_token  # noqa: E402
@@ -191,6 +191,10 @@ def _noop_tool() -> str:
     "kwargs",
     [
         pytest.param({"include_tags": set()}, id="empty-include-tags"),
+        # The pre-lifecycle spelling must keep meaning "no tools": ``lifecycle`` never
+        # enters the enabled set implicitly, so a config written before the tag existed
+        # does not silently regain the run-resumption pair on upgrade.
+        pytest.param({"exclude_tags": {"core", "session"}}, id="exclude-every-original-tag"),
         pytest.param({"exclude_tags": {"core", "session", "lifecycle"}}, id="exclude-every-tag"),
         pytest.param({"include_tags": {"core"}, "exclude_tags": {"core"}}, id="exclude-cancels-include"),
     ],
@@ -236,7 +240,10 @@ async def test_zero_tool_tag_scoping_still_builds_an_empty_server(monkeypatch):
     """The warning is advisory: the resolved surface is unchanged (still empty)."""
     monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: None)
 
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session", "lifecycle"}))
+    # The pre-lifecycle spelling: excluding the two original tags must still resolve to
+    # an empty server on upgrade (the dual-tagged pair must not ride back via an
+    # implicitly enabled ``lifecycle``).
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session"}))
     assert await _tool_names(os) == set()
 
 
@@ -250,6 +257,34 @@ async def test_exclude_tags_drops_session_builtins():
     names = await _tool_names(os)
     assert names == CORE_TOOLS
     assert not (names & SESSION_TOOLS)
+
+
+async def test_exclude_core_removes_the_lifecycle_pair():
+    """continue_run/cancel_run are core tools: excluding ``core`` removes them exactly
+    as it did before the ``lifecycle`` tag existed. A read-only surface built with
+    ``exclude_tags={"core"}`` must not silently retain run mutation."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"core"}))
+    assert await _tool_names(os) == SESSION_TOOLS
+
+
+async def test_exclude_lifecycle_keeps_the_default_surface_intact():
+    """``lifecycle`` gates only the exposure ride-along: excluding it with the default
+    surface on leaves the pair in place (they are core tools there)."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"lifecycle"}))
+    assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
+
+
+async def test_lifecycle_tools_flag_leaves_the_default_surface_alone():
+    """``lifecycle_tools=False`` turns off the exposure ride-along, not the pair's core
+    membership -- with no exposures configured the default surface is unchanged."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(lifecycle_tools=False))
+    assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
+
+
+async def test_include_lifecycle_alone_serves_only_the_pair():
+    """The tag is explicitly includable: a surface of just the run-resumption pair."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(include_tags={"lifecycle"}))
+    assert await _tool_names(os) == {"continue_run", "cancel_run"}
 
 
 def test_unknown_include_tag_is_rejected():

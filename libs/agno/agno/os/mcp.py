@@ -72,21 +72,28 @@ _BUILTIN_TOOL_NAMES: Dict[str, frozenset] = {
 def _enabled_builtin_tags(config: "Optional[MCPConfig]", has_exposures: bool = False) -> set:
     """Resolve which built-in tool tags should be registered, given the MCP config.
 
-    Returns the full set of built-in tags when no config is provided, preserving the
-    default behavior (all built-in tools registered). With exposed components present,
-    the ``lifecycle`` tag (continue_run/cancel_run) rides along even when the rest of
-    the default surface is scoped out -- an exposed component can pause on a HITL tool,
-    and without continue_run the pause would be a dead end over MCP. Both off-switches
-    are honoured: ``lifecycle_tools=False`` and an explicit ``exclude_tags``.
+    ``lifecycle`` never enters the set implicitly: with the default surface on,
+    continue_run/cancel_run are ordinary core tools (``exclude_tags={"core"}`` removes
+    them, exactly as it did before the tag existed -- tools register on tag
+    INTERSECTION, so an implicitly enabled ``lifecycle`` would resurrect the dual-tagged
+    pair on a surface that excluded ``core``). The tag is added only when named
+    explicitly in ``include_tags``, or by the exposure ride-along below: an exposed
+    component can pause on a HITL tool, and without continue_run the pause would be a
+    dead end over MCP. Both ride-along off-switches are honoured --
+    ``lifecycle_tools=False`` and an explicit ``exclude_tags={"lifecycle"}`` -- and
+    both gate ONLY the ride-along; neither strips the pair from an enabled ``core``
+    surface.
     """
     if config is None:
-        return set(_BUILTIN_TOOL_TAGS)
+        return set(_BUILTIN_TOOL_TAGS) - {"lifecycle"}
     if not config.default_tools:
         enabled: set = set()
     else:
         # An explicitly empty include_tags set means "no built-in tools", so test
         # against None rather than truthiness.
-        enabled = set(config.include_tags) if config.include_tags is not None else set(_BUILTIN_TOOL_TAGS)
+        enabled = (
+            set(config.include_tags) if config.include_tags is not None else set(_BUILTIN_TOOL_TAGS) - {"lifecycle"}
+        )
         if config.exclude_tags:
             enabled -= set(config.exclude_tags)
     if has_exposures and config.lifecycle_tools and "lifecycle" not in (config.exclude_tags or set()):
