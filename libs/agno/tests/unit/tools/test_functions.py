@@ -1984,7 +1984,7 @@ def test_optional_agent_param_registers_and_is_excluded():
 # ----------------------------------------------------------------------------
 # Exclusion and injection must name the same annotations.
 #
-# _is_framework_typed decides what to hide from the model; _build_entrypoint_args
+# is_framework_typed decides what to hide from the model; _build_entrypoint_args
 # decides what to fill. An annotation hidden by the first and skipped by the second
 # is filled by nobody: a required parameter raises on every call, and one with a
 # default silently keeps it forever.
@@ -2366,7 +2366,7 @@ def test_the_whole_annotation_graph_decides_identity():
 
     from agno.agent.agent import Agent
     from agno.media import Image
-    from agno.tools.function import _is_framework_typed
+    from agno.utils.schema import is_framework_typed
 
     @dataclass
     class DataclassWrapper:
@@ -2399,8 +2399,8 @@ def test_the_whole_annotation_graph_decides_identity():
         List[Image],
         List[List[List[List[List[List[str]]]]]],
     ]
-    assert [h for h in hidden if not _is_framework_typed(h)] == []
-    assert [h for h in fillable if _is_framework_typed(h)] == []
+    assert [h for h in hidden if not is_framework_typed(h)] == []
+    assert [h for h in fillable if is_framework_typed(h)] == []
 
 
 @pytest.mark.skipif(sys.version_info < (3, 12), reason="PEP 695 type alias syntax needs 3.12")
@@ -2443,14 +2443,14 @@ def test_a_parameter_that_cannot_be_classified_does_not_expose_the_others(monkey
     off an identity parameter, and fail open while doing it."""
     from agno.tools import function as function_module
 
-    real = function_module._is_framework_typed
+    real = function_module.is_framework_typed
 
     def raising(hint):
         if hint is str:
             raise RuntimeError("cannot read this one")
         return real(hint)
 
-    monkeypatch.setattr(function_module, "_is_framework_typed", raising)
+    monkeypatch.setattr(function_module, "is_framework_typed", raising)
 
     def probe(note: str, ctx: RunContext = None) -> str:  # type: ignore[assignment]
         return f"user={getattr(ctx, 'user_id', None)}"
@@ -2503,7 +2503,7 @@ def test_identity_is_found_through_structural_types_and_typevars():
     bound or constraints all carry identity just as a plain field does."""
     from typing import NamedTuple, TypedDict, TypeVar
 
-    from agno.tools.function import _is_framework_typed
+    from agno.utils.schema import is_framework_typed
 
     class Payload(TypedDict):
         ctx: RunContext
@@ -2517,7 +2517,7 @@ def test_identity_is_found_through_structural_types_and_typevars():
     Constrained = TypeVar("Constrained", str, RunContext)
 
     for hint in (Payload, Row, Bound, Constrained):
-        assert _is_framework_typed(hint), hint
+        assert is_framework_typed(hint), hint
 
     # A field whose annotation is a string, which is every annotation in a
     # module using postponed evaluation.
@@ -2526,14 +2526,14 @@ def test_identity_is_found_through_structural_types_and_typevars():
         "from dataclasses import dataclass\n@dataclass\nclass Postponed:\n    ctx: 'RunContext'\n    note: str = ''\n",
         namespace,
     )
-    assert _is_framework_typed(namespace["Postponed"])
+    assert is_framework_typed(namespace["Postponed"])
 
     # An annotation this walk cannot read is not one to hand the model.
     class Unresolvable:
         __annotations__ = {"ctx": "NameThatDoesNotExistAnywhere"}
         __total__ = True
 
-    assert _is_framework_typed(Unresolvable)
+    assert is_framework_typed(Unresolvable)
 
 
 @pytest.mark.parametrize(

@@ -4,7 +4,7 @@ import functools
 import inspect
 import logging
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Union
+from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Union, get_type_hints
 from uuid import uuid4
 
 from fastmcp import Context, FastMCP
@@ -13,6 +13,7 @@ from fastmcp.server.http import (
 )
 from fastmcp.tools import ToolResult
 
+from agno.agent.agent import Agent
 from agno.db.base import SessionType
 from agno.os.mcp_results import build_run_tool_result, trim_session_run
 from agno.os.schema import (
@@ -35,8 +36,15 @@ from agno.os.utils import (
 )
 from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
+from agno.run.base import RunContext
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
+from agno.team.team import Team
+from agno.utils.schema import (
+    annotation_binds,
+    is_framework_typed,
+    unwrap_annotation,
+)
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -91,58 +99,220 @@ def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPServerConfig]"):
 
 
 def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPServerConfig]") -> None:
-    """Register any user-provided custom tools on the MCP server."""
+    """Register any user-provided custom tools on the MCP server.
+
+    Toolkits are flattened: each method becomes its own MCP tool. Plain callables
+    and Agno tools/Functions are registered directly.
+    """
+    from agno.tools.toolkit import Toolkit
+
     if config is None or not config.tools:
         return
+
     for tool in config.tools:
+        # Toolkit: flatten into individual functions
+        if isinstance(tool, Toolkit):
+            for func in tool.get_async_functions().values():
+                _register_custom_tool(mcp, func)
+            continue
         _register_custom_tool(mcp, tool)
 
 
 def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
-    """Register a single custom tool, supporting plain callables and Agno tools/Functions."""
+    """Register a single custom tool on the MCP server.
+
+    Hides internal params from the MCP schema and injects values at call time:
+        Original:  fn(query, user_id, ctx: RunContext)
+        MCP sees:  fn(query)                            ← user_id, ctx hidden
+        Call time: fn(query, user_id=<jwt>, ctx=<new>)  ← values injected
+    """
     from fastmcp.tools import Tool
 
-    # Agno tool / Function: a callable ``entrypoint`` plus name/description metadata.
+    # 1. Get entrypoint and metadata
     entrypoint = getattr(tool, "entrypoint", None)
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
-        return
+    elif callable(tool):
+        entrypoint = tool
+        name = None
+        description = None
+    else:
+        raise TypeError(
+            f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
+        )
 
-    # Plain callable: name/description inferred from ``__name__``/docstring.
-    if callable(tool):
-        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
-        return
+    # 2. Find params to hide from MCP schema
+    # Returns {param_name: type_hint} for params that shouldn't be visible to clients:
+    #   - "user_id" (by name) → will inject JWT subject
+    #   - RunContext/Agent/Team (by type) → will inject framework values
+    # Empty dict means nothing to hide.
+    hidden = _compute_hidden_params(entrypoint)
 
-    raise TypeError(
-        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
-    )
+    # 3. Build wrapper (or use original if nothing to hide)
+    # If hidden is non-empty: create a wrapper with those params REMOVED from signature
+    #   - MCP client sees: fn(query)           ← clean signature
+    #   - At call time:    fn(query, user_id=..., ctx=...)  ← wrapper injects hidden params
+    # If hidden is empty: no wrapper needed, use original function as-is
+    wrapped = _build_mcp_wrapper(entrypoint, hidden) if hidden else entrypoint
+
+    # 4. Register on MCP server
+    # FastMCP builds Pydantic schema from wrapped's signature (hidden params removed)
+    mcp.add_tool(Tool.from_function(wrapped, name=name, description=description))
 
 
-def _inject_user_id(fn: Callable) -> Callable:
-    """Inject the authenticated caller's user_id into a custom tool, hidden from clients.
+def _compute_hidden_params(fn: Callable) -> Dict[str, Optional[Any]]:
+    """Find params to hide from MCP schema, returning {param_name: type_hint}.
 
-    If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
-    resolved JWT subject at call time and drops it from the wrapper's signature -- so it
-    does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
-    Tools that do not declare ``user_id`` are returned unchanged.
+    MCP tools expose their signature to clients (Claude Code) via Pydantic schema.
+    Some params must be hidden: internal ones like ``user_id`` (from JWT, not
+    user-supplied), and framework types that Pydantic can't serialize (RunContext,
+    Agent, Team). Detection mirrors toolkit's ``_compute_framework_params``: the
+    ``user_id`` param is found by name (MCP auth pattern), while framework types
+    are found via ``is_framework_typed()``. For ``user_id``, the returned type_hint
+    is None (a sentinel meaning "inject JWT subject"); for framework types, it's
+    the actual annotation so the wrapper knows what to inject.
     """
     try:
         sig = inspect.signature(fn)
     except (ValueError, TypeError):
-        return fn
-    if "user_id" not in sig.parameters:
-        return fn
+        return {}
 
-    visible_params = [p for name, p in sig.parameters.items() if name != "user_id"]
+    hidden: Dict[str, Optional[Any]] = {}
+
+    # 1. Hide user_id BY NAME (MCP-specific pattern)
+    # The JWT subject identifies who's calling; hiding prevents spoofing.
+    if "user_id" in sig.parameters:
+        hidden["user_id"] = None
+
+    # 2. Hide framework types BY TYPE (same as toolkit path)
+    # A param like `ctx: RunContext` or `my_agent: Agent` would crash Pydantic
+    # when building the MCP tool schema -- these types aren't serializable.
+    try:
+        hints = get_type_hints(fn)
+    except Exception:
+        # One bad forward ref fails get_type_hints wholesale; resolve per-param instead.
+        # For security, fail closed on framework type NAMES if we can't resolve them.
+        globalns = getattr(fn, "__globals__", {})
+        framework_by_name = {"RunContext": RunContext, "Agent": Agent, "Team": Team}
+        hints = {}
+        for name, p in sig.parameters.items():
+            annotation = p.annotation
+            if annotation is inspect.Parameter.empty:
+                continue
+            if isinstance(annotation, str):
+                # Try to resolve string annotation using function's globals
+                try:
+                    annotation = eval(annotation, globalns)  # noqa: S307
+                except Exception:
+                    # Unresolvable - fail closed if it's a framework type name
+                    resolved = framework_by_name.get(annotation)
+                    if resolved is not None:
+                        annotation = resolved
+                    else:
+                        continue  # Unknown bad annotation, skip it
+            hints[name] = annotation
+
+    for param_name, hint in hints.items():
+        # get_type_hints includes "return" which isn't a parameter
+        if param_name == "return" or param_name not in sig.parameters:
+            continue
+        param = sig.parameters[param_name]
+        # Variadic (*args, **kwargs) and positional-only can't be injected by name
+        if param.kind in (
+            inspect.Parameter.VAR_POSITIONAL,
+            inspect.Parameter.VAR_KEYWORD,
+            inspect.Parameter.POSITIONAL_ONLY,
+        ):
+            continue
+        # Per parameter, not per signature. One annotation this walk cannot
+        # read used to abort the loop, so a recursive alias sitting BEFORE
+        # `ctx: RunContext` left ctx unclassified and model-facing -- the
+        # parameter's own protection undone by an unrelated neighbour.
+        try:
+            owned = is_framework_typed(hint)
+        except Exception:
+            owned = True  # Cannot classify it, so do not hand it to the model.
+        if owned:
+            hidden[param_name] = hint
+
+    return hidden
+
+
+def _build_mcp_wrapper(fn: Callable, hidden: Dict[str, Optional[Any]]) -> Callable:
+    """Build wrapper that hides params from signature and injects values at call time.
+
+    Unlike the toolkit path where FunctionCall controls invocation and can pass args
+    at call time via ``_build_entrypoint_args``, MCP has FastMCP/Pydantic inspecting
+    the function signature directly to build the schema. If RunContext is in the
+    signature, Pydantic tries to serialize it and crashes. The solution is to give
+    FastMCP a wrapper with a clean signature (hidden params removed) that injects
+    the values when actually called. Injection mirrors toolkit's logic: ``user_id``
+    gets the JWT subject from ``_resolve_user_id()``, RunContext gets a fresh context
+    with the caller's identity, and Agent/Team get None since MCP tools run outside
+    agent/team context.
+    """
+    sig = inspect.signature(fn)
+
+    # Step 1: Build new signature with hidden params removed.
+    # This is what FastMCP/Pydantic will see when building the tool schema.
+    visible_params = [p for name, p in sig.parameters.items() if name not in hidden]
     new_sig = sig.replace(parameters=visible_params)
+
+    def get_injected_value(param_name: str, hint: Optional[Any]) -> Any:
+        """Determine what value to inject for a hidden param.
+
+        - hint=None means user_id (detected by name) → inject JWT subject
+        - hint=Type means framework type (detected by type) → inject based on type
+        """
+        # user_id detected BY NAME (hint is None from _compute_hidden_params)
+        if hint is None:
+            return _resolve_user_id(None)
+
+        # Framework types detected BY TYPE
+        # Same pattern as toolkit's _build_entrypoint_args: try each type,
+        # return the first matching value. Handles Union[Agent, Team] correctly.
+        hint = unwrap_annotation(hint)
+        matches = [
+            injected
+            for wanted, injected in (
+                # Agent/Team get None because MCP tools run outside agent/team context
+                ((Agent,), None),
+                ((Team,), None),
+                # RunContext gets a fresh context with the caller's identity
+                (
+                    (RunContext,),
+                    RunContext(
+                        run_id=str(uuid4()),
+                        session_id=str(uuid4()),
+                        user_id=_resolve_user_id(None),
+                    ),
+                ),
+            )
+            if annotation_binds(hint, wanted)
+        ]
+        # Take first non-None match (for Union types where one part can be filled)
+        return next((m for m in matches if m is not None), None) if matches else None
+
+    def inject_hidden_params(kwargs: Dict[str, Any]) -> None:
+        """Inject hidden param values into kwargs before calling original function."""
+        for param_name, hint in hidden.items():
+            value = get_injected_value(param_name, hint)
+            param = sig.parameters[param_name]
+            # Only inject if: value is non-None, OR param has no default
+            # (a required param with None injection still needs the None)
+            if value is not None or param.default is inspect.Parameter.empty:
+                kwargs[param_name] = value
+
+    # Step 2: Create wrapper that injects hidden param values at call time.
+    # The wrapper has the clean signature (new_sig) but calls the original fn
+    # with all params including the injected ones.
 
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            kwargs["user_id"] = _resolve_user_id(None)
+            inject_hidden_params(kwargs)
             return await fn(*args, **kwargs)
 
         async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
@@ -150,7 +320,7 @@ def _inject_user_id(fn: Callable) -> Callable:
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        kwargs["user_id"] = _resolve_user_id(None)
+        inject_hidden_params(kwargs)
         return fn(*args, **kwargs)
 
     wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
@@ -456,9 +626,6 @@ async def _run_agentic_component(
     output object, so they run non-streaming (no intermediate progress, same result
     contract).
     """
-    from agno.agent.agent import Agent
-    from agno.team.team import Team
-
     with _detached_trace_context():
         if not isinstance(component, (Agent, Team)):
             return await component.arun(message, user_id=user_id, session_id=session_id)
