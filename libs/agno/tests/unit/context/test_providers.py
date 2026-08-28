@@ -7,6 +7,7 @@ The full end-to-end behaviour is covered by the cookbooks.
 
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -449,6 +450,41 @@ def test_db_read_false_drops_query_tool():
     assert [t.name for t in p.get_tools()] == ["update_crm"]
 
 
+def test_db_write_tools_replace_default_toolset():
+    from agno.tools import tool
+    from agno.tools.sql import SQLTools
+
+    @tool(name="create_crm_record")
+    def _create_crm_record(payload: str) -> str:
+        return "ok"
+
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+        write_tools=[_create_crm_record],
+    )
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _create_crm_record
+    assert not any(isinstance(t, SQLTools) for t in agent.tools)
+
+
+def test_db_default_write_agent_keeps_sqltools():
+    from agno.tools.sql import SQLTools
+
+    engine = create_engine("sqlite:///:memory:")
+    p = DatabaseContextProvider(
+        id="crm",
+        sql_engine=engine,
+        readonly_engine=engine,
+    )
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, SQLTools) for t in agent.tools or [])
+
+
 # ---------------------------------------------------------------------------
 # Slack
 # ---------------------------------------------------------------------------
@@ -496,6 +532,30 @@ def test_slack_status_reports_configured():
     status = p.status()
     assert status.ok is True
     assert "token configured" in status.detail
+
+
+def test_slack_write_tools_replace_default_toolset():
+    from agno.tools import tool
+    from agno.tools.slack import SlackTools
+
+    @tool(name="post_release_note")
+    def _post_release_note(text: str) -> str:
+        return "ok"
+
+    p = SlackContextProvider(token="xoxb-x", write_tools=[_post_release_note])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _post_release_note
+    assert not any(isinstance(t, SlackTools) for t in agent.tools)
+
+
+def test_slack_default_write_agent_keeps_slack_tools():
+    from agno.tools.slack import SlackTools
+
+    p = SlackContextProvider(token="xoxb-x")
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, SlackTools) for t in agent.tools or [])
 
 
 def test_slack_read_surfaces_are_split_by_mode():
@@ -791,6 +851,33 @@ def test_gmail_write_enabled_adds_update_tool(monkeypatch):
     assert [t.name for t in tools] == ["query_gmail", "update_gmail"]
 
 
+def test_gmail_write_tools_replace_default_toolkit(monkeypatch):
+    from agno.tools import tool
+    from agno.tools.google.gmail import GmailTools
+
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+
+    @tool(name="create_draft_only")
+    def _create_draft_only(subject: str) -> str:
+        return "ok"
+
+    p = GmailContextProvider(write=True, write_tools=[_create_draft_only])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _create_draft_only
+    assert not any(isinstance(t, GmailTools) for t in agent.tools)
+
+
+def test_gmail_default_write_agent_keeps_gmail_toolkit(monkeypatch):
+    from agno.tools.google.gmail import GmailTools
+
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    p = GmailContextProvider(write=True)
+    agent = p._ensure_write_agent()
+    assert any(isinstance(t, GmailTools) for t in agent.tools or [])
+
+
 # ---------------------------------------------------------------------------
 # Calendar
 # ---------------------------------------------------------------------------
@@ -1020,3 +1107,68 @@ async def test_mcp_aclose_noop_when_never_connected():
     p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
     # Must not raise even though asetup was never called.
     await p.aclose()
+
+
+@pytest.mark.asyncio
+async def test_mcp_ensure_session_resets_on_cancelled_connect():
+    """A query_timeout deadline cancels _connect mid-handshake (CancelledError).
+    _ensure_session must clear the partial toolkit so the next query reconnects
+    fresh, instead of caching a half-connected MCPTools that wedges the provider."""
+    p = MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp")
+
+    class _PartialTools:
+        initialized = False
+
+        async def _connect(self):
+            raise asyncio.CancelledError()
+
+    p._tools = _PartialTools()  # type: ignore[assignment]
+    p._tool_descriptions = [("stale", "d", "a")]
+
+    with pytest.raises(asyncio.CancelledError):
+        await p._ensure_session()
+
+    assert p._tools is None
+    assert p._tool_descriptions == []
+
+
+# ---------------------------------------------------------------------------
+# query_timeout plumbing — every concrete provider forwards the knob to the
+# base class, where the query-tool deadline reads it.
+# ---------------------------------------------------------------------------
+
+
+def test_query_timeout_reaches_base_from_every_provider(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    engine = create_engine("sqlite:///:memory:")
+    providers = [
+        FilesystemContextProvider(root=tmp_path, query_timeout=2.5),
+        WorkspaceContextProvider(root=tmp_path, query_timeout=2.5),
+        WebContextProvider(backend=ExaBackend(api_key="x"), query_timeout=2.5),
+        DatabaseContextProvider(sql_engine=engine, readonly_engine=engine, query_timeout=2.5),
+        SlackContextProvider(token="xoxb-x", query_timeout=2.5),
+        GmailContextProvider(query_timeout=2.5),
+        GoogleCalendarContextProvider(query_timeout=2.5),
+        GoogleDriveContextProvider(query_timeout=2.5),
+        MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp", query_timeout=2.5),
+    ]
+    for p in providers:
+        assert p.query_timeout == 2.5, type(p).__name__
+
+
+def test_query_timeout_defaults_to_none_per_provider(tmp_path: Path, monkeypatch):
+    monkeypatch.delenv("GOOGLE_SERVICE_ACCOUNT_FILE", raising=False)
+    engine = create_engine("sqlite:///:memory:")
+    providers = [
+        FilesystemContextProvider(root=tmp_path),
+        WorkspaceContextProvider(root=tmp_path),
+        WebContextProvider(backend=ExaBackend(api_key="x")),
+        DatabaseContextProvider(sql_engine=engine, readonly_engine=engine),
+        SlackContextProvider(token="xoxb-x"),
+        GmailContextProvider(),
+        GoogleCalendarContextProvider(),
+        GoogleDriveContextProvider(),
+        MCPContextProvider("srv", transport="streamable-http", url="https://example.com/mcp"),
+    ]
+    for p in providers:
+        assert p.query_timeout is None, type(p).__name__
