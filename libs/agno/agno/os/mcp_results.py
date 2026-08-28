@@ -81,6 +81,11 @@ def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
         "run_id": run_output.run_id,
         "session_id": run_output.session_id,
         "status": run_status_string(run_output),
+        # The answer rides in BOTH result fields: clients that render
+        # structuredContent when it is present (Claude Code among them) would
+        # otherwise show metadata with no answer, and the official MCP servers keep
+        # the two fields mirrored the same way.
+        "content": _content_text(run_output),
     }
     # The component id is the handle for continue_run/get_sessions. The generic run
     # tools' callers already know it (they passed it), but an exposed tool's caller only
