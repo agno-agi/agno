@@ -503,24 +503,80 @@ def test_exposing_two_components_with_same_tool_name_raises():
         build_mcp_server(os)
 
 
-def test_kind_derives_from_roster_membership():
-    """A Team in tools= is gated on teams:run -- kind comes from the roster it lives
-    in, never from which parameter it was passed to (there is only one now)."""
+async def test_kind_derives_from_roster_membership(monkeypatch):
+    """A Team in tools= is gated on teams scopes -- kind comes from the roster it lives
+    in, never from which parameter it was passed to (there is only one now). The scope
+    ROUTE is the pin: an agents:run PAT must be denied on the exposed team tool."""
     team = _team()
-    _stub_arun(team, TeamRunOutput(content="ok"))
+    calls = _stub_arun(team, TeamRunOutput(content="ok"))
     os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, tools=[team]))
-    assert build_mcp_server(os) is not None
+
+    _patch_request(monkeypatch, _pat_request(["agents:run"]))
+    denied = await _call_tool(os, "support-team", {"message": "hi"}, raise_on_error=False)
+    assert denied.is_error
+    assert "teams:run" in str(denied.content)
+    assert calls == []
+
+    _patch_request(monkeypatch, _pat_request(["teams:run"]))
+    allowed = await _call_tool(os, "support-team", {"message": "hi"}, raise_on_error=False)
+    assert not allowed.is_error
+    assert calls[0]["message"] == "hi"
 
 
 def test_ambiguous_id_copy_across_rosters_raises():
-    """AgentOS permits an Agent and a Team to share an id. The roster INSTANCE resolves
-    by identity, but an equal-id COPY matches two rosters -- ambiguous, and silently
-    picking one would publish a component under the other kind's scopes."""
+    """AgentOS permits an Agent and a Team to share an id. A concrete-class entry
+    resolves within its own kind's roster, but a duck-typed entry (the Remote* shape)
+    carries no kind on its class -- an equal-id copy matching two rosters is ambiguous,
+    and silently picking one would publish a component under the other kind's scopes."""
     agent = _agent(id="shared", name="The Agent")
     team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+
+    async def _arun(message, **kwargs):
+        yield None
+
+    stray_duck = SimpleNamespace(id="shared", name="Stray Remote", arun=_arun)
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[stray_duck]))
+    with pytest.raises(ValueError, match="more than one"):
+        build_mcp_server(os)
+
+
+async def test_concrete_copy_with_cross_kind_shared_id_resolves_to_its_own_kind():
+    """An equal-id Team COPY resolves to the roster team even when an agent shares the
+    id: the concrete class names the kind, so nothing is ambiguous."""
+    agent = _agent(id="shared", name="The Agent")
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    agent_calls = _stub_arun(agent, RunOutput(content="agent ran"))
+    team_calls = _stub_arun(team, TeamRunOutput(content="team ran"))
     stray_copy = Team(id="shared", name="Stray Copy", members=[_agent(id="m2")])
     os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[stray_copy]))
-    with pytest.raises(ValueError, match="more than one"):
+
+    await _call_tool(os, "shared", {"message": "go"})
+    assert team_calls[0]["message"] == "go"
+    assert agent_calls == []
+
+
+def test_wrong_kind_entry_with_roster_id_of_another_kind_raises():
+    """A non-roster Agent entry must never resolve to a same-id roster TEAM: that would
+    run the team under the agent entry's name and description, gated by the wrong
+    kind's scopes. Regression pin: the tools= reshape briefly dropped this guard and
+    silently published the team."""
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    stray_agent = _agent(id="shared", name="Stray Agent")
+    os = AgentOS(agents=[_agent()], teams=[team], mcp=MCPConfig(default_tools=False, tools=[stray_agent]))
+    with pytest.raises(ValueError, match="different kind"):
+        build_mcp_server(os)
+
+
+def test_wrong_kind_as_tool_entry_raises_too():
+    """The same guard applies through the as_tool wrapper."""
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    stray_agent = _agent(id="shared", name="Stray Agent")
+    os = AgentOS(
+        agents=[_agent()],
+        teams=[team],
+        mcp=MCPConfig(default_tools=False, tools=[stray_agent.as_tool(name="ask")]),
+    )
+    with pytest.raises(ValueError, match="different kind"):
         build_mcp_server(os)
 
 

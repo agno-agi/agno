@@ -902,7 +902,7 @@ def _validate_exposed_tool_name(
     return value
 
 
-def _locate_component(entry: Any, os: "AgentOS") -> "tuple[str, Any]":
+def _locate_component(entry: Any, os: "AgentOS", expected_kind: "Optional[str]" = None) -> "tuple[str, Any]":
     """``(kind, component)`` for an exposure entry, derived from roster membership.
 
     Exposure is a view on the deployment, not a second registration path: sessions,
@@ -913,6 +913,12 @@ def _locate_component(entry: Any, os: "AgentOS") -> "tuple[str, Any]":
     still resolves -- but an id present in more than one roster is ambiguous and
     errors, because publishing the wrong same-id component under another kind's scopes
     is exactly the silent failure this check exists to prevent.
+
+    ``expected_kind`` restricts the id fallback for entries whose concrete class
+    already names their kind: a non-roster ``Agent`` entry must never resolve to a
+    same-id roster ``Team`` -- that would run the team under the agent entry's name
+    and description, gated by the other kind's scopes. Duck-typed entries (``Remote*``)
+    carry no kind on their class, so they keep the all-roster scan.
     """
     for kind in ("agents", "teams", "workflows"):
         for component in getattr(os, kind, None) or []:
@@ -921,7 +927,7 @@ def _locate_component(entry: Any, os: "AgentOS") -> "tuple[str, Any]":
     entry_id = getattr(entry, "id", None)
     if entry_id is not None:
         matches = []
-        for kind in ("agents", "teams", "workflows"):
+        for kind in (expected_kind,) if expected_kind else ("agents", "teams", "workflows"):
             for component in getattr(os, kind, None) or []:
                 if getattr(component, "id", None) == entry_id:
                     matches.append((kind, component))
@@ -933,6 +939,22 @@ def _locate_component(entry: Any, os: "AgentOS") -> "tuple[str, Any]":
                 f"MCPConfig.tools entry with id {entry_id!r} matches components in more than one "
                 f"AgentOS roster ({kinds}); pass the roster instance itself so the kind is unambiguous."
             )
+        if expected_kind:
+            other_kinds = [
+                kind
+                for kind in ("agents", "teams", "workflows")
+                if kind != expected_kind
+                and any(getattr(c, "id", None) == entry_id for c in getattr(os, kind, None) or [])
+            ]
+            if other_kinds:
+                singular = {"agents": "agent", "teams": "team", "workflows": "workflow"}[expected_kind]
+                raise ValueError(
+                    f"MCPConfig.tools contains a {singular} with id {entry_id!r} that is not in "
+                    f"AgentOS({expected_kind}=[...]); the roster component with that id is of a different "
+                    f"kind ({' and '.join(other_kinds)}). If you meant that component, pass the roster "
+                    "instance itself -- exposing it through a same-id entry of another kind would swap "
+                    "which component runs and which scopes gate it."
+                )
     name, _ = _safe_component_metadata(entry)
     label = name or entry_id or type(entry).__name__
     raise ValueError(
@@ -954,11 +976,27 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
     from agno.tools.component_tool import ComponentTool
     from agno.workflow.workflow import Workflow
 
+    def _concrete_kind(obj: Any) -> "Optional[str]":
+        # The concrete class names the intended kind, so _locate_component can refuse a
+        # same-id roster component of another kind instead of silently publishing it.
+        # Remote*/duck-typed components return None (kind comes from the roster alone).
+        for cls, kind in ((Agent, "agents"), (Team, "teams"), (Workflow, "workflows")):
+            if isinstance(obj, cls):
+                return kind
+        return None
+
+    def _roster_member(obj: Any) -> bool:
+        return any(
+            obj is component
+            for kind in ("agents", "teams", "workflows")
+            for component in getattr(os, kind, None) or []
+        )
+
     customs: List[Any] = []
     exposures: List[tuple] = []
     for entry in getattr(mcp_config, "tools", None) or []:
         if isinstance(entry, ComponentTool):
-            kind, component = _locate_component(entry.component, os)
+            kind, component = _locate_component(entry.component, os, expected_kind=_concrete_kind(entry.component))
             exposures.append((kind, component, entry.name, entry.description))
             continue
         if isinstance(entry, str):
@@ -967,16 +1005,23 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
                 "(or a callable/Agno tool)."
             )
         if isinstance(entry, (Agent, Team, Workflow)):
-            kind, component = _locate_component(entry, os)
+            kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
             exposures.append((kind, component, None, None))
             continue
         # Remote components and protocol implementations are not concrete subclasses;
-        # roster membership is what identifies them as components.
-        if not callable(getattr(entry, "entrypoint", None)) and not callable(entry):
-            if getattr(entry, "id", None) is not None and hasattr(entry, "arun"):
+        # roster membership is what identifies them as components. Callables are checked
+        # for roster identity too: a component FACTORY registered on the roster is a
+        # component entry, not a custom tool (Tool.from_function on a factory would
+        # register a tool that returns an Agent object).
+        if callable(getattr(entry, "entrypoint", None)) or callable(entry):
+            if _roster_member(entry):
                 kind, component = _locate_component(entry, os)
                 exposures.append((kind, component, None, None))
                 continue
+        elif getattr(entry, "id", None) is not None and hasattr(entry, "arun"):
+            kind, component = _locate_component(entry, os)
+            exposures.append((kind, component, None, None))
+            continue
         customs.append(entry)
     return customs, exposures
 
