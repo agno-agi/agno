@@ -240,11 +240,12 @@ def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
     return caller_user_id
 
 
-def _forwarded_auth_headers() -> Optional[Dict[str, str]]:
-    """The caller's bearer token as an Authorization header for downstream RemoteDb calls.
+def _forwarded_auth_token() -> Optional[str]:
+    """The caller's inbound bearer token, for forwarding to Remote* components.
 
-    Mirrors the REST routers, which forward the inbound token on every RemoteDb call so
-    a JWT/PAT-protected downstream AgentOS accepts the request.
+    Remote run/continue/cancel take an ``auth_token`` and build their own Authorization
+    header from it (the REST routers forward the same token on every remote call), so a
+    JWT/PAT-protected downstream AgentOS accepts the proxied request instead of 401ing.
     """
     from fastmcp.server.dependencies import get_http_request
 
@@ -254,7 +255,16 @@ def _forwarded_auth_headers() -> Optional[Dict[str, str]]:
         request = get_http_request()
     except RuntimeError:
         return None
-    token = get_auth_token_from_request(request)
+    return get_auth_token_from_request(request)
+
+
+def _forwarded_auth_headers() -> Optional[Dict[str, str]]:
+    """The caller's bearer token as an Authorization header for downstream RemoteDb calls.
+
+    Mirrors the REST routers, which forward the inbound token on every RemoteDb call so
+    a JWT/PAT-protected downstream AgentOS accepts the request.
+    """
+    token = _forwarded_auth_token()
     return {"Authorization": f"Bearer {token}"} if token else None
 
 
@@ -529,7 +539,11 @@ async def _run_agentic_component(
 
     with _detached_trace_context():
         if not isinstance(component, (Agent, Team)):
-            return await component.arun(message, user_id=user_id, session_id=session_id)
+            # Forward the caller's bearer token to Remote* proxies (as the REST routers
+            # do) so a protected downstream AgentOS accepts the run; duck-typed protocol
+            # implementations do not take auth_token, so only pass it to BaseRemote.
+            extra = {"auth_token": _forwarded_auth_token()} if isinstance(component, BaseRemote) else {}
+            return await component.arun(message, user_id=user_id, session_id=session_id, **extra)
 
         stream = component.arun(
             message,
@@ -947,6 +961,16 @@ def _locate_component(entry: Any, os: "AgentOS", expected_kind: "Optional[str]" 
     for kind in ("agents", "teams", "workflows"):
         for component in getattr(os, kind, None) or []:
             if component is entry:
+                # A concrete-class entry names its kind: if it was placed in the wrong
+                # roster (a Team in agents=, violating the annotation), running it under
+                # that roster's scopes and SessionType would be silently wrong. Refuse
+                # instead -- roster placement and class must agree.
+                if expected_kind is not None and kind != expected_kind:
+                    raise ValueError(
+                        f"MCPConfig.tools entry {getattr(entry, 'id', None)!r} is a {expected_kind[:-1]} "
+                        f"by type but is registered in AgentOS({kind}=[...]); place it in the roster "
+                        f"matching its type so its scopes and session semantics are correct."
+                    )
                 return kind, component
     entry_id = getattr(entry, "id", None)
     if entry_id is not None:
@@ -1145,7 +1169,9 @@ def _make_exposed_workflow_tool(
         # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
         with _detached_trace_context():
             if isinstance(workflow, RemoteWorkflow):
-                run_output = await workflow.arun(message, user_id=resolved_user_id, session_id=new_session_id)
+                run_output = await workflow.arun(
+                    message, user_id=resolved_user_id, session_id=new_session_id, auth_token=_forwarded_auth_token()
+                )
                 return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
             steps = getattr(workflow, "steps", None)
             total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
@@ -1211,7 +1237,17 @@ def _register_exposed_components(
         # named, generated otherwise), so the id is normally always set here; the
         # error is defense for exotic components that dodge that path.
         component_id = getattr(component, "id", None)
-        component_name, component_description = _safe_component_metadata(component)
+        # On Remote* components name/description are network-backed properties (a
+        # synchronous config fetch that blocks to the timeout when the remote is
+        # unreachable). Skip the read entirely when both overrides are supplied and
+        # non-blank -- neither the tool name nor the description needs the component's
+        # own metadata then. The bare path (no name override) still needs the name for
+        # the auto-derived-id origin hint; a blank description override still needs the
+        # component description as its fallback.
+        if name_override is not None and (description_override or "").strip():
+            component_name, component_description = None, None
+        else:
+            component_name, component_description = _safe_component_metadata(component)
         if not component_id:
             # Type name, never repr(): a component repr can carry credentials (a
             # model api_key) into the error message.
@@ -1222,6 +1258,22 @@ def _register_exposed_components(
             )
         if name_override is not None:
             tool_name = _validate_exposed_tool_name(name_override, singular, None, taken, source="as_tool")
+            # The override renames the TOOL, but the component id is still the
+            # per-resource scope segment (``agents:<id>:run``), the continue_run handle,
+            # and the session key. A slash or other out-of-charset id would make the
+            # synthetic scope path (``/agents/<id>/runs``) truncate at the first slash,
+            # so ``agents:<prefix>:run`` would authorize a different component. The bare
+            # path validates this as a side effect of validating the tool name; the
+            # override path must check the id explicitly.
+            if not _TOOL_NAME_VALID_RE.fullmatch(component_id):
+                raise ValueError(
+                    f"MCPConfig.tools exposes {singular} id {component_id!r} via as_tool(name={tool_name!r}), "
+                    "but the id must still start with a letter or underscore and contain only "
+                    "letters, digits, hyphens, and underscores: it is the RBAC scope segment "
+                    f"(agents:<id>:run), the continue_run handle, and the session key. Set a "
+                    "scope-safe id on the component (changing it is a migration -- sessions and "
+                    "memories are keyed by it)."
+                )
         else:
             tool_name = _validate_exposed_tool_name(component_id, singular, component_name, taken)
         if tool_name in taken:
@@ -1503,7 +1555,9 @@ def build_mcp_server(
         # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
         with _detached_trace_context():
             if isinstance(workflow, RemoteWorkflow):
-                run_output = await workflow.arun(message, user_id=user_id, session_id=session_id)
+                run_output = await workflow.arun(
+                    message, user_id=user_id, session_id=session_id, auth_token=_forwarded_auth_token()
+                )
                 return build_run_tool_result(run_output, result_mode)
             steps = getattr(workflow, "steps", None)
             total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
@@ -1620,7 +1674,7 @@ def build_mcp_server(
             os, component_type, component_id, user_id=None, session_id=session_id, strict=False, published_only=False
         )
         await _verify_run_ownership(component, component_type, component_id, session_id, run_id)
-        await run_service.cancel_component_run(component, run_id)
+        await run_service.cancel_component_run(component, run_id, auth_token=_forwarded_auth_token())
         return f"Run {run_id} cancellation requested"
 
     # ==================== Session Tools (read-only) ====================

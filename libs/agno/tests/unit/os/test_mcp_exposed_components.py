@@ -121,6 +121,12 @@ def _pat_request(scopes, name="bot"):
     )
 
 
+def _request_with_bearer(token, scopes=("agents:run", "teams:run", "workflows:run")):
+    req = _pat_request(scopes)
+    req.headers = {"Authorization": f"Bearer {token}"}
+    return req
+
+
 # ==================== Exposure surface ====================
 
 
@@ -978,6 +984,28 @@ async def test_exposing_unreachable_remote_does_not_fail_the_build():
     assert tool.description.startswith("Run the remote-team team with a message.")
 
 
+async def test_remote_with_both_overrides_skips_the_metadata_fetch(monkeypatch):
+    """On a remote, name/description are network-backed. When as_tool supplies both,
+    neither is needed at build -- so the (blocking, uncached) metadata read must be
+    skipped entirely, not just tolerated on failure."""
+    from agno.team.remote import RemoteTeam
+
+    def _boom(component):
+        raise AssertionError("metadata was fetched despite both overrides being supplied")
+
+    monkeypatch.setattr(mcp_mod, "_safe_component_metadata", _boom)
+    remote = RemoteTeam(base_url="http://127.0.0.1:9", team_id="remote-team")
+    os = AgentOS(
+        teams=[remote],
+        mcp=MCPConfig(
+            default_tools=False,
+            tools=[remote.as_tool(name="ask_remote", description="Ask the remote team.")],
+        ),
+    )
+    tool = await _tool_by_name(os, "ask_remote")
+    assert tool.description.startswith("Ask the remote team.")
+
+
 async def test_whitespace_only_description_falls_back():
     """A whitespace-only description must not produce a tool description starting '. '."""
     agent = _agent(description="   ")
@@ -1006,6 +1034,12 @@ async def test_paused_run_without_continue_run_points_at_rest():
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], lifecycle_tools=False))
     result = await _call_tool(os, "chief", {"message": "hi"})
     assert "continue_run tool is not registered" in result.content[0].text
+    # The recovery hint must reach structuredContent-only clients too: the "content"
+    # key mirrors the final text block, not the raw (empty) paused content.
+    structured = result.structured_content or {}
+    structured = structured.get("result", structured) or {}
+    assert structured.get("content") == result.content[0].text
+    assert "REST" in (structured.get("content") or "")
 
     # Default: the lifecycle pair rides along, so the hint must NOT appear.
     agent2 = _agent(id="chief2")
@@ -1485,6 +1519,81 @@ async def test_riding_pair_scope_route_uses_the_target_kind(monkeypatch):
     assert past_gate.is_error
     assert "Insufficient permissions" not in str(past_gate.content)
     assert "Run not found" in str(past_gate.content)
+
+
+def test_as_tool_override_still_validates_the_scope_unsafe_id():
+    """The override renames the tool, but the component id is still the RBAC scope
+    segment: a slash id would truncate the synthetic scope path and authorize a
+    different component, so the id is validated even when a name override hides it."""
+    slash = _agent(id="billing/admin", name="Billing Admin")
+    os = AgentOS(agents=[slash], mcp=MCPConfig(default_tools=False, tools=[slash.as_tool(name="billing_admin")]))
+    with pytest.raises(ValueError, match="scope segment") as exc_info:
+        build_mcp_server(os)
+    assert "billing/admin" in str(exc_info.value)
+
+
+def test_team_in_agents_roster_is_refused_by_kind_mismatch():
+    """A Team placed in AgentOS.agents (violating the annotation) must not run under
+    agent scopes/SessionType: the identity fast path checks the concrete kind against
+    the roster it was found in."""
+    team = Team(id="squad", name="Squad", members=[_agent(id="m1")])
+    os = AgentOS(agents=[team], mcp=MCPConfig(default_tools=False, tools=[team]))  # type: ignore[list-item]
+    with pytest.raises(ValueError, match="by type but is registered"):
+        build_mcp_server(os)
+
+
+async def test_remote_exposure_forwards_the_caller_bearer_token(monkeypatch):
+    """A protected downstream AgentOS 401s without the token: the exposed run tool
+    forwards the caller's bearer token to a Remote* component, as the REST routers do."""
+    from agno.agent.remote import RemoteAgent
+
+    async def _gate(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(mcp_mod, "_assert_session_writable_mcp", _gate)
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+
+    remote = RemoteAgent(base_url="http://127.0.0.1:9", agent_id="downstream")
+    captured: dict = {}
+
+    async def fake_arun(message, **kwargs):
+        captured.update(auth_token=kwargs.get("auth_token"))
+        return RunOutput(agent_id="downstream", content="ok", status=RunStatus.completed)
+
+    remote.arun = fake_arun  # type: ignore[method-assign]
+    os = AgentOS(agents=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
+
+    _patch_request(monkeypatch, _request_with_bearer("tok-123"))
+    await _call_tool(os, "downstream", {"message": "hi"})
+    assert captured["auth_token"] == "tok-123"
+
+
+async def test_remote_cancel_forwards_the_caller_bearer_token(monkeypatch):
+    """cancel_run on a remote exposure forwards the token too -- a protected downstream
+    would otherwise reject the proxied cancel."""
+    from agno.agent.remote import RemoteAgent
+
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+
+    async def _verify(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(mcp_mod, "_make_run_ownership_verifier", lambda os: _verify)
+
+    remote = RemoteAgent(base_url="http://127.0.0.1:9", agent_id="downstream")
+    captured: dict = {}
+
+    async def fake_acancel_run(run_id, auth_token=None, **kwargs):
+        captured.update(run_id=run_id, auth_token=auth_token)
+        return True
+
+    remote.acancel_run = fake_acancel_run  # type: ignore[method-assign]
+    os = AgentOS(agents=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
+
+    _patch_request(monkeypatch, _request_with_bearer("tok-cancel"))
+    result = await _call_tool(os, "cancel_run", {"agent_id": "downstream", "run_id": "r1"}, raise_on_error=False)
+    assert not result.is_error
+    assert captured["auth_token"] == "tok-cancel"
 
 
 def test_wrong_kind_external_adapter_entry_raises_too():

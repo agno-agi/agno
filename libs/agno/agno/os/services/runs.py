@@ -108,7 +108,9 @@ async def continue_paused_run(
     return result
 
 
-async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: str) -> None:
+async def cancel_component_run(
+    component: Union[Agent, Team, Workflow], run_id: str, auth_token: Optional[str] = None
+) -> None:
     """Request cancellation of ``run_id`` on the component that owns it.
 
     Local agent/team/workflow cancellation all delegate to one process-global
@@ -131,6 +133,11 @@ async def cancel_component_run(component: Union[Agent, Team, Workflow], run_id: 
     queue_worker = get_active_queue_worker()
     if queue_worker is not None:
         await queue_worker.acancel_queued(run_id)
-    cancelled = await component.acancel_run(run_id=run_id)
+    # Forward the caller's token to a remote proxy (as the run path does) so a
+    # protected downstream AgentOS accepts the cancel; local components ignore it.
+    if isinstance(component, BaseRemote):
+        cancelled = await component.acancel_run(run_id=run_id, auth_token=auth_token)
+    else:
+        cancelled = await component.acancel_run(run_id=run_id)
     if cancelled is False and isinstance(component, BaseRemote):
         raise Exception(f"Cancellation of run {run_id} could not be delivered to the remote component.")

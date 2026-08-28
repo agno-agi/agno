@@ -9,7 +9,7 @@ over the wire and raises on binary media.
 """
 
 import json
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from mcp.types import AudioContent, ContentBlock, ImageContent, TextContent
 
@@ -76,7 +76,7 @@ def _json_safe(data: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(json.dumps(data, default=json_serializer))
 
 
-def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
+def trimmed_structured_content(run_output: AnyRunOutput, content_text: Optional[str] = None) -> Dict[str, Any]:
     structured: Dict[str, Any] = {
         "run_id": run_output.run_id,
         "session_id": run_output.session_id,
@@ -84,8 +84,10 @@ def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
         # The answer rides in BOTH result fields: clients that render
         # structuredContent when it is present (Claude Code among them) would
         # otherwise show metadata with no answer, and the official MCP servers keep
-        # the two fields mirrored the same way.
-        "content": _content_text(run_output),
+        # the two fields mirrored the same way. ``content_text`` lets the caller pass
+        # the final text block (the paused/no-continue placeholder and REST-recovery
+        # hint) so the two fields stay identical, not just for completed runs.
+        "content": _content_text(run_output) if content_text is None else content_text,
     }
     # The component id is the handle for continue_run/get_sessions. The generic run
     # tools' callers already know it (they passed it), but an exposed tool's caller only
@@ -135,7 +137,9 @@ def build_run_tool_result(
         structured = _json_safe(run_output.to_dict())
     else:
         content.extend(_media_blocks(run_output))
-        structured = trimmed_structured_content(run_output)
+        # Pass the final text so structuredContent["content"] carries the same message
+        # the text block does -- including the paused / no-continue REST-recovery hint.
+        structured = trimmed_structured_content(run_output, content_text=text)
 
     return ToolResult(content=content, structured_content=structured)
 

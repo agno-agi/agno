@@ -322,7 +322,7 @@ async def test_cancel_run_reaches_draft_only_components(tmp_path, monkeypatch):
 
     cancelled = []
 
-    async def fake_cancel(component, run_id):
+    async def fake_cancel(component, run_id, auth_token=None):
         cancelled.append((component.id, run_id))
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", fake_cancel)
