@@ -55,8 +55,11 @@ class ExaMCPBackend(ContextBackend):
     async def astatus(self) -> Status:
         return await asyncio.to_thread(self.status)
 
-    def get_tools(self) -> list:
+    def get_tools(self, *, tool_name_prefix: str | None = None) -> list:
         if self._mcp_tools is None:
+            # Use passed prefix if constructor didn't set one
+            if tool_name_prefix and not self.tool_name_prefix:
+                self.tool_name_prefix = tool_name_prefix
             self._mcp_tools = self._build_tools()
         return [self._mcp_tools]
 

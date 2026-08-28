@@ -50,10 +50,11 @@ class ParallelBackend(ContextBackend):
             self._client = AsyncParallel(api_key=self.api_key)
         return self._client
 
-    def get_tools(self) -> list:
+    def get_tools(self, *, tool_name_prefix: str | None = None) -> list:
         backend = self
+        prefix = f"{tool_name_prefix}_" if tool_name_prefix else ""
 
-        @tool(name="web_search")
+        @tool(name=f"{prefix}web_search")
         async def web_search(objective: str, max_results: int = 8) -> str:
             """Search the web with a natural-language objective.
 
@@ -86,7 +87,7 @@ class ParallelBackend(ContextBackend):
                 )
             return json.dumps({"results": results})
 
-        @tool(name="web_extract")
+        @tool(name=f"{prefix}web_extract")
         async def web_extract(url: str) -> str:
             """Fetch a URL's full content as text.
 

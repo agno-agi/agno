@@ -74,9 +74,11 @@ class WebContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
+            # Tool names are prefixed with provider id when mode=tools
+            prefix = f"{self.id}_"
             return (
-                f"`{self.name}`: search the web for URLs/snippets, then fetch full pages when you need depth. "
-                "Cite every URL you use."
+                f"`{self.name}`: use `{prefix}web_search` for URLs/snippets, then `{prefix}web_extract` or "
+                f"`{prefix}web_fetch` for full pages. Cite every URL you use."
             )
         return (
             f"`{self.name}`: call `{self.query_tool_name}(question)` for web research. "
@@ -95,7 +97,9 @@ class WebContextProvider(ContextProvider):
         return [self._query_tool()]
 
     def _all_tools(self) -> list:
-        return self.backend.get_tools()
+        # Prefix tool names with provider id to avoid collisions when
+        # multiple web providers expose tools directly (mode=tools).
+        return self.backend.get_tools(tool_name_prefix=self.id)
 
     # ------------------------------------------------------------------
     # Sub-agent — built lazily for agent mode and programmatic query()

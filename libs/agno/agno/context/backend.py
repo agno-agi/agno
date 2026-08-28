@@ -26,7 +26,13 @@ class ContextBackend(ABC):
     async def astatus(self) -> Status: ...
 
     @abstractmethod
-    def get_tools(self) -> list: ...
+    def get_tools(self, *, tool_name_prefix: str | None = None) -> list:
+        """Return tools exposed by this backend.
+
+        Args:
+            tool_name_prefix: Optional prefix for tool names (e.g., "web" yields "web_search").
+        """
+        ...
 
     async def asetup(self) -> None:
         """Setup any resources the backend needs. Default: no-op.
