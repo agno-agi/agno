@@ -1200,9 +1200,7 @@ class Workspace(Toolkit):
         limit: int = 100,
     ) -> str:
         """Async variant of ``grep_content``."""
-        return await asyncio.to_thread(
-            self.grep_content, pattern, directory, context_lines, limit
-        )
+        return await asyncio.to_thread(self.grep_content, pattern, directory, context_lines, limit)
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Async variant of ``write_file``."""
