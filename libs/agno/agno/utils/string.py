@@ -311,6 +311,45 @@ def generate_id_from_name(name: Optional[str] = None) -> str:
         return generate_human_readable_id()
 
 
+def generate_component_id_from_name(name: str) -> str:
+    """Strict single-segment component id: lowercase, non-alphanumerics fold to
+    one hyphen, edges stripped.
+
+    This is the Studio and REST mint (it has been Studio's since 2.8 as _slugify).
+    It never produces a value validate_component_id rejects, so a machine-
+    minted id is always a safe URL path segment. generate_id_from_name above
+    stays untouched: it is a persisted identity contract for code-defined
+    components, Toolkit ids, and everything keyed on them.
+    """
+    slug = "".join(c.lower() if c.isalnum() else "-" for c in name.strip())
+    while "--" in slug:
+        slug = slug.replace("--", "-")
+    return slug.strip("-") or "component"
+
+
+def validate_component_id(component_id: str) -> Optional[str]:
+    """One shared rule for explicit component ids; returns the problem or None.
+
+    Ids appear as URL path segments (/components/{id}, /agents/{id}/runs) and
+    inside schedule endpoints, so whitespace, path and query metacharacters,
+    and control characters are refused. Unicode letters are allowed - the
+    strict mint keeps them too, so the two agree.
+    """
+    if not component_id:
+        return "component_id must not be empty"
+    if any(ch.isspace() for ch in component_id):
+        return "component_id must not contain whitespace"
+    forbidden = set("/\\?#%")
+    hit = next((ch for ch in component_id if ch in forbidden or ord(ch) < 32), None)
+    if hit is not None:
+        return f"component_id must not contain {hit!r}"
+    # "." and ".." are path segments, not names: a URL carrying one is
+    # normalised before it reaches a route, so the row would be unaddressable.
+    if component_id in (".", ".."):
+        return "component_id must not be a path segment"
+    return None
+
+
 def sanitize_postgres_string(value: Optional[str]) -> Optional[str]:
     """Remove illegal chars from string values to prevent PostgreSQL encoding errors.
 

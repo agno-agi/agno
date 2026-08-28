@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optiona
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
-from agno.utils.log import log_debug, log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.mcp import get_default_toolkit_name, get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
@@ -103,7 +103,10 @@ class MCPTools(Toolkit):
                 transport = "streamable-http"
 
         if transport == "sse":
-            log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+            log_warning(
+                "SSE as a standalone transport is deprecated and will be removed in a future release. "
+                "Please use Streamable HTTP instead."
+            )
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # because tools are not available until `initialize()` is called.

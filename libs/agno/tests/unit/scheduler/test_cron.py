@@ -60,23 +60,28 @@ class TestValidateTimezone:
 
 
 class TestComputeNextRun:
+    # compute_next_run reads the clock itself to apply its monotonicity guard.
+    # Sampling time before the call keeps the comparison true across a second
+    # boundary landing mid-call; sampling after makes the bound one too high.
     def test_returns_future_time(self):
+        before = int(time.time())
         result = compute_next_run("* * * * *")
-        assert result > int(time.time())
+        assert result > before
 
     def test_monotonicity_guard(self):
         # Even if we provide an after_epoch in the distant past, the result
         # should still be >= now + 1
-        result = compute_next_run("* * * * *", after_epoch=0)
         minimum = int(time.time()) + 1
+        result = compute_next_run("* * * * *", after_epoch=0)
         assert result >= minimum
 
     def test_respects_timezone(self):
         # Both should return valid future timestamps
+        before = int(time.time())
         utc_result = compute_next_run("0 12 * * *", "UTC")
         ny_result = compute_next_run("0 12 * * *", "America/New_York")
-        assert utc_result > int(time.time())
-        assert ny_result > int(time.time())
+        assert utc_result > before
+        assert ny_result > before
         # They should differ (different timezones, different absolute times)
         # But edge cases exist, so we just check they're both valid
         assert isinstance(utc_result, int)

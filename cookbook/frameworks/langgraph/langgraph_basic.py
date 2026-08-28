@@ -5,7 +5,7 @@ Requirements:
     pip install langgraph langchain-openai
 
 Usage:
-    .venvs/demo/bin/python cookbook/frameworks/langgraph_basic.py
+    .venvs/demo/bin/python cookbook/frameworks/langgraph/langgraph_basic.py
 """
 
 from agno.agents.langgraph import LangGraphAgent
