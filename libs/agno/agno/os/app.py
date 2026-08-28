@@ -429,10 +429,11 @@ class AgentOS:
         # ``mcp_server`` is the deprecated alias; both set with different values is a
         # contradiction, never a guess. ``None`` means unset for both, so an explicit
         # ``mcp=False`` is distinguishable from the default.
+        # No value reprs in the message: an MCPConfig can hold component instances whose
+        # repr may carry credentials (e.g. a model api_key).
         if mcp is not None and mcp_server is not None and mcp != mcp_server:
             raise ValueError(
-                "AgentOS() got both mcp= and its deprecated alias mcp_server= with different "
-                f"values ({mcp!r} vs {mcp_server!r}); pass only mcp=."
+                "AgentOS() got both mcp= and its deprecated alias mcp_server= with different values; pass only mcp=."
             )
         self.mcp = mcp if mcp is not None else (mcp_server if mcp_server is not None else False)
         self.mcp_auth: Optional["AuthProvider"] = mcp_auth
@@ -546,6 +547,16 @@ class AgentOS:
             self._mcp_enabled = True
             self.mcp_config = value
         else:
+            import collections.abc
+
+            # A dict here is always a mistake: bool(dict) would enable the server while
+            # silently discarding every setting in it -- including authorize.
+            if isinstance(value, collections.abc.Mapping):
+                raise TypeError(
+                    "AgentOS.mcp takes True/False or an MCPConfig instance; got a dict. "
+                    "Pass MCPConfig(**your_dict) -- a plain dict would enable the server "
+                    "but silently discard its settings, including authorize."
+                )
             self._mcp_enabled = bool(value)
 
     @property

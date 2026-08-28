@@ -88,7 +88,9 @@ def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
     return _json_safe(structured)
 
 
-def build_run_tool_result(run_output: AnyRunOutput, result_mode: str = "trimmed") -> "Any":
+def build_run_tool_result(
+    run_output: AnyRunOutput, result_mode: str = "trimmed", continue_run_available: bool = True
+) -> "Any":
     """Build the MCP ``ToolResult`` for a completed (or paused) run.
 
     ``trimmed`` (default): answer text + generated media as MCP content blocks,
@@ -105,6 +107,14 @@ def build_run_tool_result(run_output: AnyRunOutput, result_mode: str = "trimmed"
     if not text and getattr(run_output, "is_paused", False):
         requirements = serialized_paused_requirements(run_output) or []
         text = f"Run paused: {len(requirements)} requirement(s) awaiting resolution."
+    if getattr(run_output, "is_paused", False) and not continue_run_available:
+        # An exposed-only server (default_tools=False) has no continue_run tool, so a
+        # paused run is a dead end over MCP -- say so at the moment it happens instead
+        # of letting the client hunt for a tool that is not registered.
+        text = (
+            f"{text} The continue_run tool is not registered on this server; resume this run over "
+            "the REST API, or serve the core default tools alongside the exposed components."
+        ).strip()
 
     content: List[ContentBlock] = [TextContent(type="text", text=text)]
 

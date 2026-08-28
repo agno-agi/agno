@@ -230,7 +230,7 @@ def test_exposed_id_with_trailing_newline_raises():
     """fullmatch, not match: a trailing newline must not slip through as 'already valid'."""
     agent = _agent(id="chief\n")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
-    with pytest.raises(ValueError, match="outside"):
+    with pytest.raises(ValueError, match="letters"):
         build_mcp_server(os)
 
 
@@ -239,8 +239,64 @@ def test_exposed_id_with_slash_raises():
     shape, so it is rejected with the rest of the charset."""
     agent = _agent(id="support/admin")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
-    with pytest.raises(ValueError, match="outside"):
+    with pytest.raises(ValueError, match="letters"):
         build_mcp_server(os)
+
+
+def test_auto_derived_id_error_names_the_source_and_suggests_cleanly():
+    """The user typed name=..., not the derived id -- the error must say where the id
+    came from, and the candidate must collapse the hyphen-flanked fold (never
+    'research---writing-team')."""
+    agent = Agent(name="Research & Writing Team")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    with pytest.raises(ValueError) as exc_info:
+        build_mcp_server(os)
+    message = str(exc_info.value)
+    assert "auto-derived from name='Research & Writing Team'" in message
+    assert "set id='research-writing-team'" in message
+
+
+def test_leading_digit_id_is_rejected_with_prefixed_suggestion():
+    """Gemini 400s tool names starting with a digit -- and validates per request, so one
+    bad name would take down every exposed tool. Rejected at build instead."""
+    agent = Agent(name="2024 Reporter")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    with pytest.raises(ValueError) as exc_info:
+        build_mcp_server(os)
+    message = str(exc_info.value)
+    assert "'2024-reporter'" in message
+    assert "set id='agent-2024-reporter'" in message
+
+
+def test_accented_id_suggestion_transliterates():
+    """NFKD folding gives 'reviseur', not the mangled 'r-viseur'."""
+    agent = _agent(id="r\u00e9viseur")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    with pytest.raises(ValueError, match="set id='reviseur'"):
+        build_mcp_server(os)
+
+
+def test_non_latin_id_gets_generic_advice_not_a_bogus_candidate():
+    agent = _agent(id="\u7814\u7a76\u5458")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    with pytest.raises(ValueError) as exc_info:
+        build_mcp_server(os)
+    message = str(exc_info.value)
+    assert "For example" not in message
+    assert "Set an id on the component" in message
+
+
+def test_suggestion_is_omitted_when_it_would_collide():
+    """The candidate id must not point at a name already taken on the server -- that
+    would be a two-round failure (fix the id, then hit the collision error)."""
+    holder = _agent(id="ops-risk", name="Ops Risk")
+    invalid = _agent(id="ops-&-risk", name="Ops And Risk")
+    os = AgentOS(agents=[holder, invalid], mcp=MCPConfig(default_tools=False, agents=[holder, invalid]))
+    with pytest.raises(ValueError) as exc_info:
+        build_mcp_server(os)
+    message = str(exc_info.value)
+    assert "set id='ops-risk'" not in message
+    assert "Set an id on the component" in message
 
 
 # ==================== Session + identity contract ====================
@@ -549,13 +605,17 @@ async def test_named_component_without_id_gets_its_deterministic_id():
     assert agent.id == "solo-named"
 
 
-def test_over_long_tool_name_raises():
-    """Tool names are capped at 64 characters (the strictest provider limit MCP clients
-    bridge into) -- a longer id is a hard build error, never silent truncation."""
-    agent = _agent(id="a" * 65)
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
-    with pytest.raises(ValueError, match="longer than 64"):
-        build_mcp_server(os)
+async def test_tool_name_cap_is_128():
+    """OpenAI, Anthropic, and Gemini all accept 128-char tool names and reject 129
+    (probed live in review) -- so 65 registers fine and 129 is the hard error."""
+    ok_agent = _agent(id="a" * 65)
+    os = AgentOS(agents=[ok_agent], mcp=MCPConfig(default_tools=False, agents=[ok_agent]))
+    assert await _tool_names(os) == {"a" * 65}
+
+    long_agent = _agent(id="b" * 129)
+    os2 = AgentOS(agents=[long_agent], mcp=MCPConfig(default_tools=False, agents=[long_agent]))
+    with pytest.raises(ValueError, match="128"):
+        build_mcp_server(os2)
 
 
 async def test_two_exposed_components_of_same_kind_run_their_own_component():
@@ -721,3 +781,69 @@ def test_assigning_via_deprecated_mcp_server_property_applies_config():
     os.mcp_server = config
     assert os.mcp is True
     assert os.mcp_config is config
+
+
+# ==================== Review round: remote metadata, paused hint, dict guard ====================
+
+
+async def test_exposing_unreachable_remote_does_not_fail_the_build():
+    """RemoteTeam/RemoteWorkflow name/description are network-backed properties; an
+    unreachable remote at boot must degrade the tool description to the id, not take
+    down get_app() -- REST included -- before anything called the component."""
+    from agno.team.remote import RemoteTeam
+
+    remote = RemoteTeam(base_url="http://127.0.0.1:9", team_id="remote-team")
+    os = AgentOS(teams=[remote], mcp=MCPConfig(default_tools=False, teams=[remote]))
+
+    async with Client(build_mcp_server(os)) as client:
+        (tool,) = await client.list_tools()
+    assert tool.name == "remote-team"
+    assert tool.description is not None
+    assert tool.description.startswith("Run the remote-team team with a message.")
+
+
+async def test_whitespace_only_description_falls_back():
+    """A whitespace-only description must not produce a tool description starting '. '."""
+    agent = _agent(description="   ")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+
+    async with Client(build_mcp_server(os)) as client:
+        (tool,) = await client.list_tools()
+    assert tool.description is not None
+    assert tool.description.startswith("Run the Chief agent with a message.")
+
+
+async def test_paused_run_without_continue_run_points_at_rest():
+    """With the core default tools off there is no continue_run; the paused result says
+    so instead of leaving the client hunting for an unregistered tool."""
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+
+    paused = RunOutput(
+        run_id="r-p",
+        session_id="s-p",
+        content=None,
+        status=RunStatus.paused,
+        requirements=[RunRequirement(tool_execution=ToolExecution(tool_name="x", requires_confirmation=True))],
+    )
+    agent = _agent()
+    _stub_arun(agent, paused)
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    result = await _call_tool(os, "chief", {"message": "hi"})
+    assert "continue_run tool is not registered" in result.content[0].text
+
+    agent2 = _agent(id="chief2")
+    _stub_arun(agent2, paused)
+    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(include_tags={"core"}, agents=[agent2]))
+    result2 = await _call_tool(os2, "chief2", {"message": "hi"})
+    assert "continue_run tool is not registered" not in result2.content[0].text
+
+
+def test_assigning_dict_to_mcp_raises_type_error():
+    """bool(dict) would enable the server while silently discarding every setting in it,
+    including authorize -- a dict is always a mistake and must say so."""
+    os = AgentOS(agents=[_agent()])
+    with pytest.raises(TypeError, match="MCPConfig"):
+        os.mcp = {"default_tools": False, "authorize": lambda user_id: False}  # type: ignore[assignment]
+    with pytest.raises(TypeError, match="MCPConfig"):
+        AgentOS(agents=[_agent(id="d2")], mcp={"default_tools": False})  # type: ignore[arg-type]

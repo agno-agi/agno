@@ -46,9 +46,16 @@ class MCPConfig(BaseModel):
     # the AgentOS roster -- exposure is a view on the deployment, not a second
     # registration path -- and tool names must not collide with the default tools, custom
     # ``tools``, or each other; violations fail fast when the server is built. Ids must
-    # already be valid MCP tool names ([A-Za-z0-9_-], up to 64 chars): the id doubles as
-    # the continue_run handle and the per-resource scope segment, so it is never
-    # sanitized into a different-looking tool name -- set a clean id instead.
+    # already be valid tool names: start with a letter or underscore, then only letters,
+    # digits, hyphens, and underscores, at most 128 chars (what OpenAI, Anthropic, and
+    # Gemini accept for tool names). The id doubles as the continue_run handle and the
+    # per-resource scope segment, so it is never sanitized into a different-looking tool
+    # name -- set a clean id instead. Pick MCP-safe ids early: changing a component's id
+    # later is a migration (sessions and memories are keyed by it).
+    #
+    # The exposed tool list is fixed when the app is built. Components added to a live
+    # deployment (resync) are runnable through the generic run tools immediately, but
+    # appear as named tools only after a restart.
     #
     # Publication note: listing here is publishing. Every caller who can reach tools/list
     # sees the exposed tools' names and descriptions (invocation is still gated by

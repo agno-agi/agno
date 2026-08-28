@@ -38,6 +38,7 @@ from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
+from agno.utils.string import generate_component_id_from_name, generate_id_from_name
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -781,11 +782,14 @@ def _make_run_ownership_verifier(os: "AgentOS"):
 # handle for continue_run/get_sessions and the resource segment in per-resource scopes
 # (agents:<id>:run), so a name that differs from the id would break HITL resume and make
 # the visible tool name disagree with the scope that grants it. Ids outside this shape
-# are therefore a hard error, never sanitized. The 64-char cap is the strictest limit
-# among the LLM providers MCP clients bridge tool names into (the MCP spec itself allows
-# more); a longer name would be rejected client-side at runtime with no server signal.
-_TOOL_NAME_MAX_LENGTH = 64
-_TOOL_NAME_VALID_RE = re.compile(r"[A-Za-z0-9_-]+")
+# are therefore a hard error, never sanitized. The shape is what the LLM providers MCP
+# clients bridge tool names into actually accept (probed live against OpenAI, Anthropic,
+# and Gemini, 2026-08): at most 128 characters, starting with a letter or underscore --
+# Gemini 400s a leading digit, and it validates per request, so ONE bad name takes down
+# every tool in the call. A violating name would fail client-side at runtime with no
+# server signal, which is why it is rejected at build instead.
+_TOOL_NAME_MAX_LENGTH = 128
+_TOOL_NAME_VALID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
 
 # One fixed sentence appended to every exposed tool's description: the session contract
 # is part of the tool's calling convention, not something each component should restate.
@@ -794,26 +798,80 @@ _EXPOSED_SESSION_SENTENCE = (
 )
 
 
-def _validate_exposed_tool_name(component_id: str, singular: str) -> str:
+def _safe_component_metadata(component: Any) -> "tuple[Optional[str], Optional[str]]":
+    """``(name, description)`` without letting a remote component take down the build.
+
+    On ``RemoteTeam``/``RemoteWorkflow`` these are network-backed properties (a
+    synchronous config fetch); an unreachable remote at boot must degrade this tool's
+    description to the id, not hard-fail ``get_app()`` -- REST included -- before
+    anything called the component.
+    """
+    try:
+        name = getattr(component, "name", None)
+    except Exception:
+        name = None
+    try:
+        description = getattr(component, "description", None)
+    except Exception:
+        description = None
+    return name, description
+
+
+def _suggest_exposed_id(component_id: str, singular: str, taken: Dict[str, str]) -> Optional[str]:
+    """A clean candidate id to put in the invalid-id error, or None when no good one
+    exists (e.g. a fully non-Latin id). Suggest, never apply: silently rewriting would
+    decouple the tool name from the continue_run handle and the scope segment, and
+    mutating a component's id at build could break persisted/registry identity."""
+    import unicodedata
+
+    # NFKD + ASCII fold transliterates accents (réviseur -> reviseur) instead of
+    # deleting them; the house id mint then lowercases and collapses separator runs.
+    ascii_id = unicodedata.normalize("NFKD", component_id).encode("ascii", "ignore").decode("ascii")
+    candidate = generate_component_id_from_name(ascii_id) if ascii_id.strip() else ""
+    candidate = re.sub(r"-{2,}", "-", re.sub(r"[^A-Za-z0-9_-]+", "-", candidate)).strip("-")
+    if candidate and not re.match(r"[A-Za-z_]", candidate):
+        candidate = f"{singular}-{candidate}"
+    if not candidate or candidate in taken or not _TOOL_NAME_VALID_RE.fullmatch(candidate):
+        return None
+    if len(candidate) > _TOOL_NAME_MAX_LENGTH:
+        return None
+    return candidate
+
+
+def _validate_exposed_tool_name(
+    component_id: str, singular: str, component_name: Optional[str], taken: Dict[str, str]
+) -> str:
     """The MCP tool name for a component id: the id verbatim, validated.
 
     ``fullmatch`` (not ``match``): ``$`` would accept a trailing newline.
     """
     if not _TOOL_NAME_VALID_RE.fullmatch(component_id):
-        # Suggest, never apply: silently rewriting the id would decouple the tool name
-        # from the continue_run handle and the scope segment, and mutating a component's
-        # id at build could break persisted/registry identity.
-        candidate = re.sub(r"[^A-Za-z0-9_-]+", "-", component_id).strip("-")
-        suggestion = f" For example, set id={candidate!r} on the component." if candidate else ""
+        # Say where the id came from: with no explicit id= the user only ever typed
+        # name=..., so an error quoting the derived id alone sends them hunting for a
+        # string that is not in their source.
+        origin = ""
+        if component_name and generate_id_from_name(component_name) == component_id:
+            origin = f" (auto-derived from name={component_name!r})"
+        candidate = _suggest_exposed_id(component_id, singular, taken)
+        advice = (
+            f" For example, set id={candidate!r} on the component."
+            if candidate
+            else " Set an id on the component using letters, digits, hyphens, or underscores, starting with a letter or underscore."
+        )
         raise ValueError(
-            f"MCPConfig cannot expose {singular} id {component_id!r}: exposed tool names use the "
-            f"component id verbatim, and this id contains characters outside [A-Za-z0-9_-].{suggestion}"
+            f"MCPConfig cannot expose {singular} id {component_id!r}{origin}: exposed tool names use "
+            "the component id verbatim, and tool names must start with a letter or underscore and "
+            "contain only letters, digits, hyphens, and underscores (Gemini rejects a leading digit, "
+            f"and one invalid name fails every tool in the request).{advice} Note: changing the id of "
+            "a component that already has sessions is a migration -- sessions and memories are keyed "
+            "by it."
         )
     if len(component_id) > _TOOL_NAME_MAX_LENGTH:
         raise ValueError(
             f'MCP tool name "{component_id}" (from {singular} id) is {len(component_id)} characters; '
-            f"tool names longer than {_TOOL_NAME_MAX_LENGTH} are rejected by the strictest LLM "
-            "providers MCP clients bridge tools into. Set a shorter id on the component."
+            f"the LLM providers MCP clients bridge tools into cap tool names at {_TOOL_NAME_MAX_LENGTH} "
+            "characters (OpenAI, Anthropic, and Gemini all reject longer). Set a shorter id on the "
+            "component."
         )
     return component_id
 
@@ -904,6 +962,7 @@ def _make_exposed_run_tool(
     kind: "Literal['agents', 'teams']",
     component_id: str,
     result_mode: str,
+    continue_run_available: bool = True,
 ) -> Callable:
     """A run tool bound to one agent or team: the ``run_agent``/``run_team`` body with
     the component id fixed. Resolution happens at call time so per-run copies, registry
@@ -926,16 +985,18 @@ def _make_exposed_run_tool(
         new_session_id = _session_id_or_new(session_id)
         await _assert_session_writable_mcp(os, component, new_session_id, resolved_user_id, session_type)
         # Label from the resolved component, matching run_agent/run_team -- a registry or
-        # published version may carry a different name than the roster instance.
+        # published version may carry a different name than the roster instance. Safe
+        # read: on a remote component the name is a network-backed property.
+        resolved_name, _ = _safe_component_metadata(component)
         run_output = await _run_agentic_component(
             ctx,
             component,
             message,
             resolved_user_id,
             new_session_id,
-            label=f"{label_prefix} {component.name or component_id}",
+            label=f"{label_prefix} {resolved_name or component_id}",
         )
-        return build_run_tool_result(run_output, result_mode)
+        return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
 
     return run_exposed
 
@@ -944,6 +1005,7 @@ def _make_exposed_workflow_tool(
     os: "AgentOS",
     component_id: str,
     result_mode: str,
+    continue_run_available: bool = True,
 ) -> Callable:
     """A run tool bound to one workflow: the ``run_workflow`` body with the id fixed."""
 
@@ -967,7 +1029,7 @@ def _make_exposed_workflow_tool(
         with _detached_trace_context():
             if isinstance(workflow, RemoteWorkflow):
                 run_output = await workflow.arun(message, user_id=resolved_user_id, session_id=new_session_id)
-                return build_run_tool_result(run_output, result_mode)
+                return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
             steps = getattr(workflow, "steps", None)
             total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
             stream = workflow.arun(
@@ -978,7 +1040,7 @@ def _make_exposed_workflow_tool(
                 stream_events=True,
             )
             run_output = await _consume_workflow_stream(ctx, workflow, stream, total_steps, resolved_user_id)
-        return build_run_tool_result(run_output, result_mode)
+        return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
 
     return run_exposed_workflow
 
@@ -1020,6 +1082,11 @@ def _register_exposed_components(
         ("teams", mcp_config.teams or [], "team"),
         ("workflows", mcp_config.workflows or [], "workflow"),
     ]
+    # With the core tag scoped out (or default_tools off) there is no continue_run on
+    # this server; the paused-result text then points the caller at REST instead of at a
+    # tool that does not exist.
+    continue_run_available = "core" in enabled_tags
+
     for kind, entries, singular in exposures:
         for entry in entries:
             component = _resolve_exposed_entry(entry, kind, os)
@@ -1027,13 +1094,14 @@ def _register_exposed_components(
             # named, generated otherwise), so the id is normally always set here; the
             # error is defense for exotic components that dodge that path.
             component_id = getattr(component, "id", None)
+            component_name, component_description = _safe_component_metadata(component)
             if not component_id:
-                label = getattr(component, "name", None) or repr(component)
+                label = component_name or repr(component)
                 raise ValueError(
                     f"MCPConfig.{kind} contains {label!r} which has no id; set id= on the "
                     f"component so its MCP tool has a stable name."
                 )
-            tool_name = _validate_exposed_tool_name(component_id, singular)
+            tool_name = _validate_exposed_tool_name(component_id, singular, component_name, taken)
             if tool_name in taken:
                 raise ValueError(
                     f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") collides with '
@@ -1042,10 +1110,10 @@ def _register_exposed_components(
                 )
             taken[tool_name] = f'exposed {singular} "{component_id}"'
 
-            display_name = getattr(component, "name", None) or component_id
+            display_name = component_name or component_id
             # strip() BEFORE the fallback test: a whitespace-only description is truthy
             # but would rstrip to nothing, yielding a description that starts with ".".
-            base_description = (getattr(component, "description", None) or "").strip()
+            base_description = (component_description or "").strip()
             if not base_description:
                 base_description = f"Run the {display_name} {singular} with a message."
             if not base_description.endswith((".", "!", "?")):
@@ -1053,9 +1121,9 @@ def _register_exposed_components(
             description = f"{base_description} {_EXPOSED_SESSION_SENTENCE}"
 
             if kind == "workflows":
-                fn = _make_exposed_workflow_tool(os, component_id, result_mode)
+                fn = _make_exposed_workflow_tool(os, component_id, result_mode, continue_run_available)
             else:
-                fn = _make_exposed_run_tool(os, kind, component_id, result_mode)  # type: ignore[arg-type]
+                fn = _make_exposed_run_tool(os, kind, component_id, result_mode, continue_run_available)  # type: ignore[arg-type]
             mcp.tool(
                 name=tool_name,
                 description=description,

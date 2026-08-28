@@ -71,7 +71,18 @@ component id, described by the component's own description, and running through
 the same machinery as `run_agent` (fresh session minting, RBAC scopes such as
 `agents:run`, per-step progress). `teams=` and `workflows=` expose teams and
 workflows the same way. Exposed components must be part of the AgentOS roster,
-and tool-name collisions fail at startup. Note for HITL agents: resuming a
+and tool-name collisions fail at startup.
+
+The component id is the tool name, verbatim. It must start with a letter or
+underscore and contain only letters, digits, hyphens, and underscores (at most
+128 characters) -- the shape OpenAI, Anthropic, and Gemini all accept for tool
+names. An id outside that shape fails at startup with a suggested clean id;
+auto-derived ids from names like "Research & Writing Team" are the usual trip.
+Pick MCP-safe ids before a deployment accumulates sessions: sessions and
+memories are keyed by the id, so changing it later is a migration. The exposed
+tool list is fixed at startup -- components added to a live deployment are
+runnable through the generic run tools immediately, but appear as named tools
+after a restart. Note for HITL agents: resuming a
 PAUSED run needs the default `continue_run` tool, so keep `default_tools=True`
 or `include_tags={"core"}` when exposing agents with confirmation-required
 tools.
