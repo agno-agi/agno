@@ -1191,8 +1191,15 @@ def _register_exposed_components(
         else:
             tool_name = _validate_exposed_tool_name(component_id, singular, component_name, taken)
         if tool_name in taken:
+            # Attribute the name to where the user actually typed it: an as_tool
+            # override quoted as "the component id" sends them hunting the wrong string.
+            source_label = (
+                f'as_tool(name="{tool_name}") on {singular} "{component_id}"'
+                if name_override is not None
+                else f'{singular} id "{component_id}"'
+            )
             raise ValueError(
-                f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") collides with '
+                f'MCP tool name "{tool_name}" (from {source_label}) collides with '
                 f"{taken[tool_name]}. Rename the tool (as_tool(name=...)) or the component id, or "
                 "adjust default_tools/tools so each tool name is unique."
             )

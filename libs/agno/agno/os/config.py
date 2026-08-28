@@ -196,6 +196,16 @@ class MCPConfig(BaseModel):
         # the alias keeps that path working too.
         self.default_tools = bool(value)
 
+    def model_copy(self, *, update: Optional[Dict[str, Any]] = None, deep: bool = False) -> "MCPConfig":
+        # model_copy bypasses validators and writes ``update`` straight into the copy's
+        # __dict__, where the class-level ``enable_builtin_tools`` property would shadow
+        # the entry -- silently dropping the update (it was a real field pre-rename, so
+        # ``model_copy(update={"enable_builtin_tools": False})`` used to work). Route the
+        # legacy key through the same mapping the constructor uses.
+        if update and "enable_builtin_tools" in update:
+            update = self._map_deprecated_enable_builtin_tools(update)
+        return super().model_copy(update=update, deep=deep)
+
     @model_validator(mode="after")
     def _check_has_tools(self) -> "MCPConfig":
         """Refuse a config that would mount an MCP server with zero tools.

@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from agno.client import AgentOSClient
     from agno.client.a2a import A2AClient
     from agno.client.a2a.schemas import AgentCard
+    from agno.tools.component_tool import ComponentTool
     from agno.os.routers.evals.schemas import EvalSchema
     from agno.os.routers.knowledge.schemas import (
         ConfigResponseSchema,
@@ -422,6 +423,19 @@ class BaseRemote:
             self.a2a_client = self.get_a2a_client()
         else:
             raise ValueError(f"Invalid protocol: {protocol}")
+
+    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
+        """Publish this remote component as a tool with its own model-facing name and
+        description, for surfaces that turn components into tools -- today the AgentOS
+        MCP server: ``MCPConfig(tools=[remote.as_tool(name=..., description=...)])``.
+        Both overrides are optional. A remote component's id comes from the remote
+        deployment, so ``name=`` is how the local deployment renames the published
+        tool without touching that id (which remains the continue_run handle and the
+        scope segment).
+        """
+        from agno.tools.component_tool import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description)
 
     def get_os_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.

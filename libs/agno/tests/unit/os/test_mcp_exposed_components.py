@@ -781,6 +781,28 @@ def test_enable_builtin_tools_assignment_still_works():
     assert config.enable_builtin_tools is False
 
 
+def test_enable_builtin_tools_survives_model_copy_update():
+    """model_copy bypasses validators; the legacy key must still map (it was a real
+    field pre-rename, and the class-level property would otherwise shadow the copy's
+    __dict__ entry and silently drop the update)."""
+
+    def noop() -> str:
+        """Return ok."""
+        return "ok"
+
+    config = MCPConfig(tools=[noop])
+    copied = config.model_copy(update={"enable_builtin_tools": False})
+    assert copied.default_tools is False
+    assert copied.enable_builtin_tools is False
+    assert config.default_tools is True
+
+
+def test_conflicting_spellings_in_model_copy_update_raise():
+    config = MCPConfig()
+    with pytest.raises(ValueError, match="deprecated alias"):
+        config.model_copy(update={"enable_builtin_tools": False, "default_tools": True})
+
+
 def test_enable_builtin_tools_alias_does_not_mutate_caller_dict():
     data = {"enable_builtin_tools": False, "tools": [lambda: "x"]}
     MCPConfig.model_validate(data)
@@ -979,14 +1001,31 @@ def test_as_tool_invalid_override_name_raises_with_candidate():
 
 
 def test_as_tool_override_collision_raises():
+    """The error attributes the name to the as_tool override the user typed, not to the
+    component id (which is a different string they would hunt for in vain)."""
     a1 = _agent(id="one", name="One")
     a2 = _agent(id="two", name="Two")
     os = AgentOS(
         agents=[a1, a2],
         mcp=MCPConfig(default_tools=False, tools=[a1.as_tool(name="ask"), a2.as_tool(name="ask")]),
     )
-    with pytest.raises(ValueError, match='"ask"'):
+    with pytest.raises(ValueError, match='as_tool\\(name="ask"\\) on agent "two"') as exc_info:
         build_mcp_server(os)
+    assert 'from agent id "two"' not in str(exc_info.value)
+
+
+def test_remote_components_have_as_tool_too():
+    """Remote* components get the same as_tool escape hatch: their id is minted by the
+    remote deployment, so the override is the only local way to pick the tool name."""
+    from agno.agent.remote import RemoteAgent
+    from agno.tools import ComponentTool
+
+    marker = RemoteAgent(base_url="http://localhost:9", agent_id="far-away").as_tool(
+        name="ask_remote", description="d"
+    )
+    assert isinstance(marker, ComponentTool)
+    assert marker.name == "ask_remote"
+    assert marker.description == "d"
 
 
 async def test_team_and_workflow_as_tool_work():
