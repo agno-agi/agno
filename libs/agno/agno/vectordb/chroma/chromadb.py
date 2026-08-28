@@ -494,12 +494,9 @@ class ChromaDb(VectorDb):
                     raise_embedding_failures(results)
         else:
             # Use individual embedding
-            try:
-                embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-                results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-                raise_embedding_failures(results)
-            except Exception:
-                logger.exception("Error processing document")
+            embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         id_counts: Dict[str, int] = {}
         for document in documents:

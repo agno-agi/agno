@@ -5,6 +5,7 @@ from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
 from agno.filters import FilterExpr
+from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
@@ -475,6 +476,10 @@ class CouchbaseSearch(VectorDb):
                 # and the value is the document content itself.
                 doc_id = doc_data.pop("_id")
                 docs_to_upsert[doc_id] = doc_data
+            except EmbeddingError:
+                # A chunk that did not embed is unretrievable. Swallowing it here would
+                # report a successful upsert for content the agent can never find.
+                raise
             except Exception:
                 logger.exception(f"Error preparing document '{document.name}'")
 

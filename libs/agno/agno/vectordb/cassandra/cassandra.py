@@ -270,22 +270,14 @@ class Cassandra(VectorDb):
                 else:
                     log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
-                    for doc in documents:
-                        try:
-                            embed_tasks = [doc.async_embed(embedder=self.embedder)]
-                            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-                            raise_embedding_failures(results)
-                        except Exception as e:
-                            log_error(f"Error processing document '{doc.name}': {str(e)}")
-        else:
-            # Use individual embedding (original behavior)
-            for doc in documents:
-                try:
-                    embed_tasks = [doc.async_embed(embedder=self.embedder)]
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                     raise_embedding_failures(results)
-                except Exception as e:
-                    log_error(f"Error processing document '{doc.name}': {str(e)}")
+        else:
+            # Use individual embedding (original behavior)
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         futures = []
         for doc in documents:

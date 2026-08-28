@@ -6,6 +6,7 @@ from typing import Any, Dict, List, Optional, Union
 
 from bson import ObjectId
 
+from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder

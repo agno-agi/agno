@@ -670,8 +670,7 @@ class UpstashVectorDb(VectorDb):
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
                     raise_embedding_failures(results)
-        else:
-            # Use individual embedding
+        elif not self.use_upstash_embeddings and self.embedder is not None:
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
             raise_embedding_failures(results)
