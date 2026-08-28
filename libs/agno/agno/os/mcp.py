@@ -998,7 +998,7 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
     """
     from agno.agent.agent import Agent
     from agno.team.team import Team
-    from agno.tools.component_tool import ComponentTool
+    from agno.tools.component import ComponentTool
     from agno.workflow.workflow import Workflow
 
     def _concrete_kind(obj: Any) -> "Optional[str]":

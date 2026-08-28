@@ -32,7 +32,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
-    from agno.tools.component_tool import ComponentTool
+    from agno.tools.component import ComponentTool
 
 from agno.media import Audio, File, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -735,14 +735,14 @@ class Team:
     def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
         """Publish this team as a tool with its own model-facing name and description.
 
-        Returns a declarative :class:`~agno.tools.component_tool.ComponentTool` marker
+        Returns a declarative :class:`~agno.tools.component.ComponentTool` marker
         for surfaces that turn components into tools -- today the AgentOS MCP server:
         ``MCPConfig(tools=[support.as_tool(name="ask_support", description=...)])``. Both
         overrides are optional; the tool name must be a valid tool identifier (start
         with a letter or underscore, then letters/digits/hyphens/underscores). The
         team id remains the continue_run handle and the scope segment.
         """
-        from agno.tools.component_tool import ComponentTool
+        from agno.tools.component import ComponentTool
 
         return ComponentTool(component=self, name=name, description=description)
 

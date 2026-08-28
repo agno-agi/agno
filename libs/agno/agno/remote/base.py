@@ -46,7 +46,7 @@ if TYPE_CHECKING:
         WorkflowRunSchema,
         WorkflowSessionDetailSchema,
     )
-    from agno.tools.component_tool import ComponentTool
+    from agno.tools.component import ComponentTool
 
 
 @dataclass
@@ -433,7 +433,7 @@ class BaseRemote:
         tool without touching that id (which remains the continue_run handle and the
         scope segment).
         """
-        from agno.tools.component_tool import ComponentTool
+        from agno.tools.component import ComponentTool
 
         return ComponentTool(component=self, name=name, description=description)
 
