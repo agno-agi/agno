@@ -41,6 +41,7 @@ from agno.utils.path_safety import safe_join_relative_path
 TEXT_EXTENSIONS = {
     # Markup and data
     ".md",
+    ".mdx",
     ".txt",
     ".csv",
     ".json",
@@ -302,7 +303,8 @@ class Workspace(Toolkit):
     | -------- | -------------------- | --------------------------------------- |
     | ``read``   | ``read_file``        | Read a file (line-numbered)             |
     | ``list``   | ``list_files``       | List a directory (recursive option)     |
-    | ``search`` | ``search_content``   | Recursive content grep                  |
+    | ``search`` | ``search_content``   | Recursive content search (substring)    |
+    | ``grep``   | ``grep_content``     | Regex search with line numbers          |
     | ``write``  | ``write_file``       | Create or overwrite a file (atomic)     |
     | ``edit``   | ``edit_file``        | Replace a substring (with ``replace_all``)|
     | ``move``   | ``move_file``        | Move or rename a file                   |
@@ -363,7 +365,7 @@ class Workspace(Toolkit):
     this session. Catches the "agent hallucinated the file's contents" bug class.
     """
 
-    READ_TOOLS: List[str] = ["read", "list", "search"]
+    READ_TOOLS: List[str] = ["read", "list", "search", "grep"]
     WRITE_TOOLS: List[str] = ["write", "edit", "move", "delete", "shell"]
     ALL_TOOLS: List[str] = READ_TOOLS + WRITE_TOOLS
 
@@ -372,6 +374,7 @@ class Workspace(Toolkit):
         "read": "read_file",
         "list": "list_files",
         "search": "search_content",
+        "grep": "grep_content",
         "write": "write_file",
         "edit": "edit_file",
         "move": "move_file",
@@ -387,6 +390,8 @@ class Workspace(Toolkit):
         require_read_before_write: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
+        max_grep_matches: int = 500,
+        max_search_file_size: int = 500 * 1024,
         exclude_patterns: Optional[List[str]] = None,
         allow_paths: Optional[List[str]] = None,
         **kwargs,
@@ -399,6 +404,8 @@ class Workspace(Toolkit):
 
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
+        self.max_grep_matches = max_grep_matches
+        self.max_search_file_size = max_search_file_size
         self.require_read_before_write = require_read_before_write
         self.exclude_patterns: List[str] = _validate_exclude_patterns(exclude_patterns)
         _resolve_allow_paths(self.root, allow_paths)
@@ -435,8 +442,10 @@ class Workspace(Toolkit):
             )
             toolkit_kwargs["add_instructions"] = True
 
+        # Allow name override via kwargs (for prefixed tools in context providers)
+        toolkit_name = kwargs.pop("name", "workspace")
         super().__init__(
-            name="workspace",
+            name=toolkit_name,
             tools=sync_tools,
             async_tools=async_tools,
             requires_confirmation_tools=resolved_confirm_methods,
@@ -811,7 +820,7 @@ class Workspace(Toolkit):
 
             lower_query = query.lower()
             matches: List[dict] = []
-            max_file_size = 500 * 1024
+            max_file_size = self.max_search_file_size
             walk_done = False
 
             for dirpath, dirnames, filenames in os.walk(search_dir):
@@ -849,6 +858,115 @@ class Workspace(Toolkit):
         except Exception as e:
             log_error(f"search_content failed: {e}")
             return f"Error searching content: {e}"
+
+    def grep_content(
+        self,
+        pattern: str,
+        directory: str = ".",
+        context_lines: int = 0,
+        limit: int = 100,
+    ) -> str:
+        """Regex search with line numbers across text files in the workspace.
+
+        Matching is always case-insensitive.
+
+        :param pattern: Regex pattern to search for.
+        :param directory: Subdirectory to scope the search to (default ".").
+        :param context_lines: Lines of context before and after each match (default 0).
+        :param limit: Maximum number of matches to return (default 100, capped by max_grep_matches).
+        :return: JSON with keys ``pattern``, ``total_matches``, ``truncated``, and ``matches``
+            (list of ``{"file", "line", "text"}``).
+        """
+        try:
+            if not pattern or not pattern.strip():
+                return "Error: pattern cannot be empty"
+
+            # Clamp limit to constructor-defined max
+            limit = min(limit, self.max_grep_matches)
+
+            # 1. Compile regex (always case-insensitive)
+            try:
+                rx = re.compile(pattern, re.IGNORECASE)
+            except re.error as exc:
+                return f"Error: invalid regex pattern: {exc}"
+
+            # 2. Resolve directory
+            err, search_dir = self._resolve(directory, what="directory")
+            if err:
+                return err
+            if not search_dir.is_dir():
+                return f"Error: not a directory: {directory}"
+
+            max_file_size = self.max_search_file_size
+            matches: List[dict] = []
+            total_matches = 0
+
+            # 3. Walk the directory tree
+            for dirpath, dirnames, filenames in os.walk(search_dir):
+                if total_matches >= limit:
+                    break
+                # Prune excluded directories
+                dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+
+                for filename in filenames:
+                    if total_matches >= limit:
+                        break
+                    file_path = Path(dirpath) / filename
+
+                    # Skip hidden/excluded files
+                    if self._hidden(file_path):
+                        continue
+                    if file_path.suffix.lower() not in TEXT_EXTENSIONS:
+                        continue
+                    try:
+                        if file_path.stat().st_size > max_file_size:
+                            continue
+                    except OSError:
+                        continue
+
+                    # Read and search
+                    try:
+                        content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
+
+                    file_lines = content.splitlines()
+                    hits = [idx for idx, line in enumerate(file_lines) if rx.search(line)]
+
+                    if not hits:
+                        continue
+
+                    rel_path = file_path.relative_to(self.root).as_posix()
+
+                    # Collect matches with context
+                    shown: Set[int] = set()
+
+                    for hit in hits:
+                        if total_matches >= limit:
+                            break
+                        # Calculate context range
+                        start = max(0, hit - context_lines)
+                        end = min(len(file_lines), hit + context_lines + 1)
+
+                        for j in range(start, end):
+                            if j not in shown:
+                                shown.add(j)
+                                matches.append({"file": rel_path, "line": j + 1, "text": file_lines[j]})
+
+                        total_matches += 1
+
+            # 4. Format output as JSON
+            result = {
+                "pattern": pattern,
+                "total_matches": total_matches,
+                "truncated": total_matches >= limit,
+                "matches": matches,
+            }
+            return json.dumps(result, indent=2)
+
+        except Exception as e:
+            log_error(f"grep_content failed: {e}")
+            return f"Error in grep: {e}"
 
     # ------------------------------------------------------------------
     # Write operations (require confirmation by default)
@@ -1075,6 +1193,16 @@ class Workspace(Toolkit):
     async def asearch_content(self, query: str, directory: str = ".", limit: int = 10) -> str:
         """Async variant of ``search_content``."""
         return await asyncio.to_thread(self.search_content, query, directory, limit)
+
+    async def agrep_content(
+        self,
+        pattern: str,
+        directory: str = ".",
+        context_lines: int = 0,
+        limit: int = 100,
+    ) -> str:
+        """Async variant of ``grep_content``."""
+        return await asyncio.to_thread(self.grep_content, pattern, directory, context_lines, limit)
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Async variant of ``write_file``."""
