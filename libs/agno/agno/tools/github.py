@@ -6,8 +6,13 @@ from agno.tools import Toolkit
 from agno.utils.log import log_debug, logger
 
 try:
-    from github import Auth, Github, GithubException
-
+    from github import Auth, Github
+    from github.GithubException import (
+        BadCredentialsException,
+        GithubException,
+        RateLimitExceededException,
+        UnknownObjectException,
+    )
 except ImportError:
     raise ImportError("`PyGithub` not installed. Please install using `pip install pygithub`")
 
@@ -21,6 +26,7 @@ class GithubTools(Toolkit):
     ):
         self.access_token = access_token or getenv("GITHUB_ACCESS_TOKEN")
         self.base_url = base_url
+        self.is_authenticated = bool(self.access_token)
 
         self.g = self.authenticate()
 
@@ -68,18 +74,63 @@ class GithubTools(Toolkit):
 
         super().__init__(name="github", tools=tools, **kwargs)
 
-    def authenticate(self):
-        """Authenticate with GitHub using the provided access token."""
-        if not self.access_token:  # Fixes lint type error
-            raise ValueError("GitHub access token is required")
+    def authenticate(self) -> Github:
+        """Connect to GitHub, optionally with authentication.
 
-        auth = Auth.Token(self.access_token)
+        If access_token is provided, authenticates for 5,000 requests/hour and private repo access.
+        Without a token, connects unauthenticated for public repos only (60 requests/hour).
+        """
+        auth = Auth.Token(self.access_token) if self.access_token else None
+
         if self.base_url:
-            log_debug(f"Authenticating with GitHub Enterprise at {self.base_url}")
+            if auth:
+                log_debug(f"Authenticating with GitHub Enterprise at {self.base_url}")
+            else:
+                log_debug(f"Connecting to GitHub Enterprise at {self.base_url} (unauthenticated)")
             return Github(base_url=self.base_url, auth=auth)
         else:
-            log_debug("Authenticating with public GitHub")
+            if auth:
+                log_debug("Authenticating with public GitHub")
+            else:
+                log_debug("Connecting to public GitHub (unauthenticated, 60 req/hour limit)")
             return Github(auth=auth)
+
+    def _auth_required_response(self, tool_name: str) -> str:
+        """Return error JSON when authentication is required but not provided."""
+        return json.dumps(
+            {
+                "error": f"{tool_name} requires authentication. Provide access_token to GithubTools or set GITHUB_ACCESS_TOKEN environment variable."
+            }
+        )
+
+    def _format_github_exception(self, e: GithubException, is_search: bool = False) -> str:
+        """Format a GithubException into a user-friendly JSON error response."""
+        if isinstance(e, RateLimitExceededException):
+            if is_search:
+                msg = "GitHub search rate limit exceeded (10 requests/minute). Wait before retrying."
+            elif self.is_authenticated:
+                msg = "GitHub rate limit exceeded (5,000 requests/hour). Wait before retrying."
+            else:
+                msg = "GitHub rate limit exceeded (60 requests/hour for unauthenticated access). Provide access_token for higher limits."
+            return json.dumps({"error": msg, "type": "rate_limit"})
+
+        if isinstance(e, BadCredentialsException):
+            return json.dumps(
+                {
+                    "error": "GitHub token is invalid, expired, or revoked. Check your access_token.",
+                    "type": "bad_credentials",
+                }
+            )
+
+        if isinstance(e, UnknownObjectException):
+            return json.dumps(
+                {
+                    "error": "Resource not found or inaccessible. The repository may be private or may not exist.",
+                    "type": "not_found",
+                }
+            )
+
+        return json.dumps({"error": str(e), "type": "github_error"})
 
     def search_repositories(
         self,
@@ -138,6 +189,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing a list of repository names.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("list_repositories")
+
         log_debug("Listing repositories")
         try:
             repos = self.g.get_user().get_repos()
@@ -167,6 +221,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the created repository details.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("create_repository")
+
         log_debug(f"Creating repository: {name}")
         try:
             description = description if description is not None else ""
@@ -361,6 +418,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the created issue details.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("create_issue")
+
         log_debug(f"Creating issue in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -483,6 +543,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the comment details.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("comment_on_issue")
+
         log_debug(f"Adding comment to issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -510,6 +573,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the issue is closed.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("close_issue")
+
         log_debug(f"Closing issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -530,6 +596,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the issue is reopened.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("reopen_issue")
+
         log_debug(f"Reopening issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -551,6 +620,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the assignees.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("assign_issue")
+
         log_debug(f"Assigning users to issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -572,6 +644,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the labels.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("label_issue")
+
         log_debug(f"Labeling issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -633,6 +708,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string confirming the issue has been updated.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("edit_issue")
+
         log_debug(f"Editing issue #{issue_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -652,6 +730,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string with success message or error.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("delete_repository")
+
         log_debug(f"Deleting repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -820,6 +901,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the created comment details.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("create_pull_request_comment")
+
         log_debug(f"Creating comment on pull request #{pr_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -854,6 +938,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the updated comment details.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("edit_pull_request_comment")
+
         log_debug(f"Editing comment #{comment_id} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1177,6 +1264,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the created pull request details.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("create_pull_request")
+
         log_debug(f"Creating pull request in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1225,6 +1315,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string with the success message or error.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("create_review_request")
+
         log_debug(f"Creating review request for PR #{pr_number} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1263,6 +1356,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the file creation result.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("create_file")
+
         log_debug(f"Creating file {path} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1370,6 +1466,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the file update result.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("update_file")
+
         log_debug(f"Updating file {path} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1423,6 +1522,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the file deletion result.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("delete_file")
+
         log_debug(f"Deleting file {path} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1521,6 +1623,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing information about the created branch.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("create_branch")
+
         log_debug(f"Creating branch {branch_name} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1557,6 +1662,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string with success message or error.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("set_default_branch")
+
         log_debug(f"Setting default branch to {branch_name} in repository: {repo_name}")
         try:
             repo = self.g.get_repo(repo_name)
@@ -1592,6 +1700,9 @@ class GithubTools(Toolkit):
     ) -> str:
         """Search for code in GitHub repositories.
 
+        Note: This method requires authentication. GitHub's code search API
+        does not work without a token, even for public repositories.
+
         Args:
             query (str): The search query.
             language (str, optional): Filter by language. Defaults to None.
@@ -1603,6 +1714,9 @@ class GithubTools(Toolkit):
         Returns:
             A JSON-formatted string containing the search results.
         """
+        if not self.is_authenticated:
+            return self._auth_required_response("search_code")
+
         log_debug(f"Searching code with query: {query}")
         try:
             search_query = query
