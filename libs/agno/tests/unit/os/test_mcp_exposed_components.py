@@ -1311,6 +1311,108 @@ async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
     assert parsed[0].tool_execution.tool_name == "send_email"
 
 
+async def test_riding_pair_refuses_unpublished_components(monkeypatch):
+    """The escalation guard: on an exposure-only server the riding pair must not act
+    on roster components the deployer left off tools= -- continue_run could otherwise
+    resume (and execute) a confirmation-gated tool on an unpublished component."""
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+    public = _agent(id="public-agent")
+    internal = _agent(id="internal-treasury")
+    resumed: list = []
+
+    async def fake_acontinue_run(**kwargs):
+        resumed.append(kwargs)
+        return RunOutput(agent_id="internal-treasury", content="resumed")
+
+    internal.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    os = AgentOS(agents=[public, internal], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    continued = await _call_tool(
+        os,
+        "continue_run",
+        {"agent_id": "internal-treasury", "run_id": "r1", "session_id": "s1"},
+        raise_on_error=False,
+    )
+    assert continued.is_error
+    assert "published components" in str(continued.content)
+    assert resumed == []
+
+    cancelled = await _call_tool(
+        os, "cancel_run", {"agent_id": "internal-treasury", "run_id": "r1"}, raise_on_error=False
+    )
+    assert cancelled.is_error
+    assert "published components" in str(cancelled.content)
+
+
+async def test_riding_pair_gate_is_keyed_by_kind():
+    """A published agent id does not unlock a same-id team: the gate matches
+    (kind, id), never the bare id."""
+    agent = _agent(id="shared")
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[agent]))
+
+    refused = await _call_tool(os, "cancel_run", {"team_id": "shared", "run_id": "r1"}, raise_on_error=False)
+    assert refused.is_error
+    assert "published components" in str(refused.content)
+
+    allowed = await _call_tool(os, "cancel_run", {"agent_id": "shared", "run_id": "r1"}, raise_on_error=False)
+    assert not allowed.is_error
+
+
+async def test_pair_reaches_roster_when_core_is_served(monkeypatch):
+    """With the default surface on, the pair keeps REST parity: run_agent reaches the
+    whole roster, so continue_run/cancel_run do too -- the publication bound applies
+    only when the pair exists purely via the ride-along."""
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+    exposed = _agent(id="exposed-agent")
+    unexposed = _agent(id="unexposed-agent")
+    resumed: list = []
+
+    async def fake_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
+        resumed.append(run_id)
+        return RunOutput(agent_id="unexposed-agent", run_id=run_id, session_id=session_id, content="resumed")
+
+    unexposed.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    os = AgentOS(agents=[exposed, unexposed], mcp=MCPConfig(tools=[exposed]))
+
+    result = await _call_tool(
+        os,
+        "continue_run",
+        {"agent_id": "unexposed-agent", "run_id": "r9", "session_id": "s9"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert resumed == ["r9"]
+
+
+async def test_explicit_lifecycle_include_is_roster_wide(monkeypatch):
+    """include_tags={'lifecycle'} under the default surface is the deployer explicitly
+    choosing a roster-wide resume surface; adding exposures does not narrow it."""
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+    exposed = _agent(id="exposed-agent")
+    unexposed = _agent(id="unexposed-agent")
+    resumed: list = []
+
+    async def fake_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
+        resumed.append(run_id)
+        return RunOutput(agent_id="unexposed-agent", run_id=run_id, session_id=session_id, content="resumed")
+
+    unexposed.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    os = AgentOS(
+        agents=[exposed, unexposed],
+        mcp=MCPConfig(include_tags={"lifecycle"}, tools=[exposed]),
+    )
+
+    result = await _call_tool(
+        os,
+        "continue_run",
+        {"agent_id": "unexposed-agent", "run_id": "r7", "session_id": "s7"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert resumed == ["r7"]
+
+
 async def test_riding_lifecycle_pair_is_scope_gated(monkeypatch):
     """continue_run/cancel_run ride along with every exposure, so their scope gate is
     the only thing between a read-only PAT and run mutation -- pin the refusal."""

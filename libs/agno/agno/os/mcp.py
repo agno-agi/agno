@@ -1211,7 +1211,9 @@ def _register_exposed_components(
         component_id = getattr(component, "id", None)
         component_name, component_description = _safe_component_metadata(component)
         if not component_id:
-            label = component_name or repr(component)
+            # Type name, never repr(): a component repr can carry credentials (a
+            # model api_key) into the error message.
+            label = component_name or type(component).__name__
             raise ValueError(
                 f"MCPConfig.tools contains {label!r} which has no id; set id= on the "
                 f"component so its MCP tool has a stable name."
@@ -1288,6 +1290,40 @@ def build_mcp_server(
 
     # Component resolution + ownership gate shared by continue_run and cancel_run.
     _verify_run_ownership = _make_run_ownership_verifier(os)
+
+    # The ride-along pair is bounded to the publication list. When continue_run/
+    # cancel_run would not register at all without exposures -- neither "core" (whose
+    # generic run tools reach the whole roster anyway) nor "lifecycle" (an explicit
+    # include under the default surface: the deployer chose a roster-wide resume
+    # surface) is enabled on its own -- they must not reach components the deployer
+    # chose not to publish: tools= bounds what can be started on this server AND what
+    # can be resumed or cancelled. None means unrestricted (REST parity).
+    tags_without_ride_along = _enabled_builtin_tags(mcp_config, has_exposures=False)
+    lifecycle_rides_only = "lifecycle" in enabled_tags and not ({"core", "lifecycle"} & tags_without_ride_along)
+    published_lifecycle_targets: "Optional[set]" = (
+        {(kind, getattr(component, "id", None)) for kind, component, _, _ in exposure_entries}
+        if lifecycle_rides_only
+        else None
+    )
+
+    def _require_published_component(tool_name: str, component_type: str, component_id: str) -> None:
+        """Fail closed when the riding pair is asked about an unpublished component.
+
+        Without this, an exposure-only server (default_tools=False) would let any
+        caller resume or cancel runs on EVERY roster component -- including resuming a
+        paused confirmation-required tool on a component the deployer deliberately
+        left off the surface. The publication list is public via tools/list, so this
+        reveals nothing new."""
+        if published_lifecycle_targets is None:
+            return
+        if (component_type, component_id) in published_lifecycle_targets:
+            return
+        singular = {"agents": "agent", "teams": "team", "workflows": "workflow"}.get(component_type, component_type)
+        raise Exception(
+            f"{tool_name} on this server only acts on runs of its published components; "
+            f"{singular} {component_id!r} is not one of them. Use the REST API to manage "
+            "other components' runs."
+        )
 
     @register_builtin_tool(
         name="get_agentos_config",
@@ -1504,6 +1540,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
     ) -> ToolResult:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
+        _require_published_component("continue_run", component_type, component_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
         user_id = _resolve_user_id(user_id)
         # published_only=False, like the REST /continue routes: the run may live
@@ -1571,6 +1608,7 @@ def build_mcp_server(
         workflow_id: Optional[str] = None,
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
+        _require_published_component("cancel_run", component_type, component_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
         # Lenient: cancel needs only a handle on the component, and a drifted
         # registry must never make a run uncancellable. Matches the REST route

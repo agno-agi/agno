@@ -91,9 +91,9 @@ class MCPConfig(BaseModel):
     # The tool list is fixed when the app is built: components added to a live
     # deployment (resync) are immediately runnable through the generic run tools where
     # those are served, but appear as named tools only after a restart (with
-    # ``default_tools=False`` there are no generic run tools, so no MCP tool can start
-    # a run on a post-boot component until then -- the riding lifecycle pair still
-    # reaches its existing runs at call time). Listing here is publishing: every
+    # ``default_tools=False`` a post-boot component is unreachable over MCP until
+    # then -- the riding lifecycle pair is bounded to the components published at
+    # build time). Listing here is publishing: every
     # caller who can reach tools/list sees the names and descriptions (invocation is
     # still gated by scopes at call time). HITL works out of the box: whenever
     # components are exposed, ``continue_run`` and ``cancel_run`` register alongside
@@ -116,9 +116,11 @@ class MCPConfig(BaseModel):
     # Whether ``continue_run``/``cancel_run`` ride along whenever components are
     # exposed via ``tools`` -- even with ``default_tools=False``. Default True: an
     # exposed component can pause on a confirmation-required (HITL) tool, and without
-    # continue_run the pause would be a dead end over MCP. These two act only on run
-    # ids the caller already holds from its own results and are scope-gated per
-    # component like the tool that produced the run. Set False for a tools/list that
+    # continue_run the pause would be a dead end over MCP. The riding pair is bounded
+    # to the publication list: when it registered only because exposures exist (not
+    # via ``core`` or an explicit include), it refuses runs of unpublished roster
+    # components, and it is scope-gated per component like the tool that produced the
+    # run. Set False for a tools/list that
     # shows exactly the configured tools; paused runs then say to resume over REST.
     # An explicit ``exclude_tags={"lifecycle"}`` disables the ride-along the same way.
     # Both switches gate ONLY the ride-along: with the default surface on, the pair
