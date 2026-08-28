@@ -1009,6 +1009,7 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
         # the roster alone).
         from agno.agent.factory import AgentFactory
         from agno.agent.remote import RemoteAgent
+        from agno.agents.base import BaseExternalAgent
         from agno.team.factory import TeamFactory
         from agno.team.remote import RemoteTeam
         from agno.workflow.factory import WorkflowFactory
@@ -1018,6 +1019,7 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
             (Agent, "agents"),
             (RemoteAgent, "agents"),
             (AgentFactory, "agents"),
+            (BaseExternalAgent, "agents"),
             (Team, "teams"),
             (RemoteTeam, "teams"),
             (TeamFactory, "teams"),

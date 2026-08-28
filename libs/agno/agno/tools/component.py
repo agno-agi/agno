@@ -26,3 +26,20 @@ class ComponentTool:
     component: Any
     name: Optional[str] = None
     description: Optional[str] = None
+
+
+def raise_if_component_tool(tool: Any, owner: str, delegate_hint: str) -> None:
+    """Reject a ``ComponentTool`` marker passed where callable tools belong.
+
+    ``Agent(tools=[...])`` / ``Team(tools=[...])`` chains classify entries by shape
+    and silently skip what they do not recognize -- a marker would register nothing.
+    No repr of the marker in the message: it embeds the component, whose repr can
+    carry a model api_key.
+    """
+    if not isinstance(tool, ComponentTool):
+        return
+    label = tool.name or getattr(tool.component, "id", None)
+    raise ValueError(
+        f"{owner}(tools=[...]) got the as_tool() marker for {label!r}: it publishes a component "
+        f"on the AgentOS MCP server -- pass it in MCPConfig(tools=[...]) instead. {delegate_hint}"
+    )

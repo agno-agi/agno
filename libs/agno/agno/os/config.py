@@ -7,10 +7,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
 # ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
-# ``@register_builtin_tool(...)`` in that module. ``lifecycle`` is the run-resumption
-# pair (``continue_run``/``cancel_run``, also tagged ``core``): it rides along
-# automatically whenever components are exposed, so HITL works without the rest of the
-# default surface -- see ``MCPConfig.lifecycle_tools``.
+# ``@register_builtin_tool(...)`` in that module.
 MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "lifecycle"})
 
 # Type alias for ``include_tags`` / ``exclude_tags`` -- gives IDE autocomplete on the
@@ -20,10 +17,8 @@ MCPBuiltinTag = Literal["core", "session", "lifecycle"]
 
 def _apply_legacy_enable_builtin_tools(data: Dict[str, Any]) -> Dict[str, Any]:
     """Map the deprecated ``enable_builtin_tools`` key onto ``default_tools`` in a dict
-    copy (the caller's mapping is never mutated). Both keys with different values is a
-    contradiction, never a guess -- raise. Shared by the construction validator and
-    ``model_copy``; pydantic's deprecated ``.copy(update=...)`` bypasses both and
-    still drops the legacy key."""
+    copy (the caller's mapping is never mutated).
+    """
     data = dict(data)
     legacy = data.pop("enable_builtin_tools")
     if "default_tools" in data and data["default_tools"] != legacy:
@@ -57,8 +52,7 @@ class MCPConfig(BaseModel):
     """
 
     # extra="forbid": a typo like ``tool=`` (for ``tools=``) must fail at construction,
-    # not silently serve a different tool surface. The deprecated ``enable_builtin_tools``
-    # spelling is unaffected -- the before-validator maps it away before this check runs.
+    # not silently serve a different tool surface.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
     # The tool surface of this MCP server. Each entry may be:
@@ -72,21 +66,12 @@ class MCPConfig(BaseModel):
     #     component (a tool description is a prompt for the CALLING model; the
     #     component's description is written for humans).
     #
-    # Exposed components run through the same machinery as ``run_agent`` / ``run_team``
-    # / ``run_workflow`` (per-run copies, scope checks, session minting, ownership
-    # gates, progress reporting), so RBAC scopes like ``agents:run`` -- keyed on the
-    # component id, not the tool name -- apply identically. Combine with
-    # ``default_tools=False`` to serve ONLY your own surface.
-    #
     # Exposure rules (violations fail fast when the server is built):
-    #   - every exposed component must be part of the AgentOS roster (exposure is a view
-    #     on the deployment, not a second registration path); pass the instance itself;
+    #   - every exposed component must be part of the AgentOS roster
     #   - tool names (the id, or the ``as_tool`` override) must start with a letter or
     #     underscore, then contain only letters/digits/hyphens/underscores, at most 128
-    #     chars -- what OpenAI, Anthropic, and Gemini accept; never sanitized. Pick
-    #     MCP-safe ids early: changing a component's id later is a migration (sessions
-    #     and memories are keyed by it);
-    #   - names must not collide across default tools, custom tools, and exposures.
+    #     chars -- what OpenAI, Anthropic, and Gemini accept
+    #   - names must not collide across default tools, custom tools, and exposures
     #
     # The tool list is fixed when the app is built: components added to a live
     # deployment (resync) are immediately runnable through the generic run tools where
@@ -120,11 +105,7 @@ class MCPConfig(BaseModel):
     # to the publication list: when it registered only because exposures exist (not
     # via ``core`` or an explicit include), it refuses runs of unpublished roster
     # components, and it is scope-gated per component like the tool that produced the
-    # run. Set False for a tools/list that
-    # shows exactly the configured tools; paused runs then say to resume over REST.
-    # An explicit ``exclude_tags={"lifecycle"}`` disables the ride-along the same way.
-    # Both switches gate ONLY the ride-along: with the default surface on, the pair
-    # are ordinary ``core`` tools, removed by ``exclude_tags={"core"}``.
+    # run.
     lifecycle_tools: bool = True
 
     # Finer scoping over the default tools via their tags (see ``MCP_BUILTIN_TAGS``).
@@ -133,9 +114,6 @@ class MCPConfig(BaseModel):
     # ``exclude_tags`` is then subtracted. With ``default_tools=False`` there are no
     # default tools to scope, but ``exclude_tags={"lifecycle"}`` still disables the
     # exposure ride-along (see ``lifecycle_tools``).
-    # Typed as ``MCPBuiltinTag`` (a ``Literal``) so the IDE autocompletes the values and pydantic
-    # rejects typos at construction with a message like "Input should be 'core', 'session' or
-    # 'lifecycle'" -- otherwise an unknown tag would silently produce an empty server.
     include_tags: Optional[Set[MCPBuiltinTag]] = None
     exclude_tags: Optional[Set[MCPBuiltinTag]] = None
 
@@ -186,10 +164,7 @@ class MCPConfig(BaseModel):
     def _map_deprecated_enable_builtin_tools(cls, data: Any) -> Any:
         """Accept ``enable_builtin_tools`` as a deprecated alias for ``default_tools``.
 
-        Silent by design: a working config must not warn. Both names passed with
-        different values is a contradiction, never a guess -- raise. Without this
-        mapping the old kwarg would be dropped as pydantic "extra" and the config
-        would silently flip back to serving all default tools.
+        Silent by design: a working config must not warn.
         """
         import collections.abc
 

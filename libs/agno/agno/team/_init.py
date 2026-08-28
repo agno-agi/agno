@@ -895,8 +895,10 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
 
 
 def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> None:
+    from agno.tools.component import raise_if_component_tool
     from agno.utils.callables import is_callable_factory
 
+    raise_if_component_tool(tool, "Team", "To let this team delegate to the component, add it to members=[...].")
     if is_callable_factory(team.tools, excluded_types=(Toolkit, Function)):
         raise RuntimeError(
             "Cannot add_tool() when tools is a callable factory. Use set_tools() to replace the factory."
@@ -907,13 +909,19 @@ def add_tool(team: "Team", tool: Union[Toolkit, Callable, Function, Dict]) -> No
 
 
 def set_tools(team: "Team", tools: Union[List[Union[Toolkit, Callable, Function, Dict]], Callable[..., List]]) -> None:
+    from agno.tools.component import raise_if_component_tool
     from agno.utils.callables import is_callable_factory
 
     if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
         team.tools = tools  # type: ignore[assignment]
         team._callable_tools_cache.clear()
     else:
-        team.tools = list(tools) if tools else []  # type: ignore[arg-type]
+        concrete_tools = list(tools) if tools else []  # type: ignore[arg-type]
+        for tool in concrete_tools:
+            raise_if_component_tool(
+                tool, "Team", "To let this team delegate to the component, add it to members=[...]."
+            )
+        team.tools = concrete_tools
 
 
 async def _connect_mcp_tools(team: "Team") -> None:

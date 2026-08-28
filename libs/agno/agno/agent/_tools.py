@@ -429,7 +429,11 @@ def parse_tools(
     ):
         strict = True
 
+    from agno.tools.component import raise_if_component_tool
+
     for tool_index, tool in enumerate(tools):
+        # A marker would otherwise fall off the end of this chain and register nothing.
+        raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent

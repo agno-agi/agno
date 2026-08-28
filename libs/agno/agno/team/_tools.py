@@ -383,7 +383,11 @@ def _determine_tools_for_model(
     ):
         strict = True
 
+    from agno.tools.component import raise_if_component_tool
+
     for tool_index, tool in enumerate(_tools):
+        # A marker would otherwise fall off the end of this chain and register nothing.
+        raise_if_component_tool(tool, "Team", "To let this team delegate to the component, add it to members=[...].")
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent

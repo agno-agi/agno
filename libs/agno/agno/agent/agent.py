@@ -766,11 +766,9 @@ class Agent:
         """Publish this agent as a tool with its own model-facing name and description.
 
         Returns a declarative :class:`~agno.tools.component.ComponentTool` marker
-        for surfaces that turn components into tools -- today the AgentOS MCP server:
-        ``MCPConfig(tools=[chief.as_tool(name="ask_chief", description=...)])``. Both
-        overrides are optional; the tool name must be a valid tool identifier (start
-        with a letter or underscore, then letters/digits/hyphens/underscores). The
-        agent id remains the continue_run handle and the scope segment.
+        for surfaces that turn components into tools. The tool name must be a
+        valid tool identifier (start with a letter or underscore, then
+        letters/digits/hyphens/underscores).
         """
         from agno.tools.component import ComponentTool
 

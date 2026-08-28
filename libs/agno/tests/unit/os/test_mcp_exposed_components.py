@@ -406,7 +406,9 @@ async def test_exposed_tools_apply_the_session_ownership_gate(monkeypatch):
     recorded: list = []
 
     async def _record_gate(os_app, component, session_id, user_id, session_type):
-        recorded.append({"session_id": session_id, "session_type": session_type})
+        recorded.append(
+            {"component": component, "session_id": session_id, "user_id": user_id, "session_type": session_type}
+        )
 
     monkeypatch.setattr(mcp_mod, "_assert_session_writable_mcp", _record_gate)
 
@@ -428,6 +430,10 @@ async def test_exposed_tools_apply_the_session_ownership_gate(monkeypatch):
 
     assert [r["session_type"] for r in recorded] == [SessionType.AGENT, SessionType.TEAM, SessionType.WORKFLOW]
     assert all(r["session_id"] for r in recorded)
+    # The gate must receive the RESOLVED component and the resolved caller identity --
+    # a fake that drops these would stay green while the gate checked nothing.
+    assert [r["component"] for r in recorded] == [agent, team, workflow]
+    assert all(r["user_id"] is None for r in recorded)
 
 
 async def test_ownership_gate_refusal_propagates_to_the_caller(monkeypatch):
@@ -756,16 +762,46 @@ async def test_two_exposed_components_of_same_kind_run_their_own_component():
 
 async def test_exposed_tool_honours_result_mode_full():
     """result_mode='full' applies to exposed tools exactly as to run_agent."""
+    from agno.models.message import Message
+
     agent = _agent()
-    _stub_arun(agent, RunOutput(run_id="r-full", session_id="s-full", content="done", status=RunStatus.completed))
+    _stub_arun(
+        agent,
+        RunOutput(
+            run_id="r-full",
+            session_id="s-full",
+            content="done",
+            status=RunStatus.completed,
+            messages=[Message(role="user", content="hi")],
+        ),
+    )
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], result_mode="full"))
 
     result = await _call_tool(os, "chief", {"message": "hi"})
     structured = result.structured_content or {}
     structured = structured.get("result", structured) or {}
-    # The full run dict carries fields the trimmed mode deliberately omits.
     assert structured.get("run_id") == "r-full"
+    # The discriminator must be a field TRIMMED mode deliberately omits -- "content"
+    # is mirrored in both modes now, so it proves nothing about the mode.
+    assert "messages" in structured
+
+
+async def test_exposed_tool_trimmed_mode_omits_the_transcript():
+    """The trimmed direction: default results carry the answer and ids, never the
+    message transcript the full mode returns."""
+    agent = _agent()
+    _stub_arun(
+        agent,
+        RunOutput(run_id="r-trim", session_id="s-trim", content="done", status=RunStatus.completed),
+    )
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
+
+    result = await _call_tool(os, "chief", {"message": "hi"})
+    structured = result.structured_content or {}
+    structured = structured.get("result", structured) or {}
     assert structured.get("content") == "done"
+    assert "messages" not in structured
+    assert "metrics" not in structured
 
 
 async def test_exposed_tool_progress_label_uses_the_resolved_component(monkeypatch):
@@ -1117,6 +1153,18 @@ async def test_structured_content_carries_the_component_id():
     assert structured.get("agent_id") == "researcher"
 
 
+async def test_structured_content_carries_the_team_id_too():
+    """The id contract holds for every kind, not just agents."""
+    team = _team()
+    _stub_arun(team, TeamRunOutput(team_id="support-team", content="ok", status=RunStatus.completed))
+    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, tools=[team.as_tool(name="ask_support")]))
+
+    result = await _call_tool(os, "ask_support", {"message": "hi"})
+    structured = result.structured_content or {}
+    structured = structured.get("result", structured) or {}
+    assert structured.get("team_id") == "support-team"
+
+
 def test_component_tool_marker_is_declarative():
     """as_tool returns a marker, not a callable -- binding a callable here would bypass
     the exposure machinery."""
@@ -1411,6 +1459,88 @@ async def test_explicit_lifecycle_include_is_roster_wide(monkeypatch):
     )
     assert not result.is_error
     assert resumed == ["r7"]
+
+
+async def test_riding_pair_scope_route_uses_the_target_kind(monkeypatch):
+    """cancel_run(team_id=...) gates on the teams route: an agents:run PAT is denied,
+    teams:run passes -- the pair's scope path is built from the target's kind."""
+    _patch_request(monkeypatch, _pat_request(["agents:run"]))
+    team = _team()
+    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, tools=[team]))
+
+    denied = await _call_tool(os, "cancel_run", {"team_id": "support-team", "run_id": "r1"}, raise_on_error=False)
+    assert denied.is_error
+    assert "teams:run" in str(denied.content)
+
+    _patch_request(monkeypatch, _pat_request(["teams:run"]))
+    past_gate = await _call_tool(
+        os,
+        "cancel_run",
+        {"team_id": "support-team", "run_id": "r1", "session_id": "s1"},
+        raise_on_error=False,
+    )
+    # teams:run clears the scope gate; the authenticated call then fails on run
+    # ownership (no such run exists) -- proof the gate consulted the /teams/ route
+    # and that the ownership check runs for the riding pair.
+    assert past_gate.is_error
+    assert "Insufficient permissions" not in str(past_gate.content)
+    assert "Run not found" in str(past_gate.content)
+
+
+def test_wrong_kind_external_adapter_entry_raises_too():
+    """BaseExternalAgent adapters name their kind (agents): a non-roster adapter must
+    not resolve to a same-id roster TEAM."""
+    from agno.agents.base import BaseExternalAgent
+
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    stray = BaseExternalAgent(name="Stray Adapter", id="shared")
+    os = AgentOS(agents=[_agent()], teams=[team], mcp=MCPConfig(default_tools=False, tools=[stray]))
+    with pytest.raises(ValueError, match="different kind"):
+        build_mcp_server(os)
+
+
+def test_factory_and_external_adapter_have_as_tool():
+    """Every exposure-capable family carries the as_tool escape hatch the error
+    messages prescribe -- factories and external adapters included."""
+    from agno.agent.factory import AgentFactory
+    from agno.agents.base import BaseExternalAgent
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+    from agno.tools import ComponentTool
+
+    factory = AgentFactory(id="fab", db=InMemoryDb(), factory=lambda ctx: _agent(id="fab"))
+    marker = factory.as_tool(name="build_fab")
+    assert isinstance(marker, ComponentTool) and marker.name == "build_fab"
+
+    adapter = BaseExternalAgent(name="Ext", id="ext-1")
+    marker2 = adapter.as_tool(description="external")
+    assert isinstance(marker2, ComponentTool) and marker2.description == "external"
+
+
+def test_component_tool_in_agent_or_team_tools_raises():
+    """as_tool() markers belong in MCPConfig.tools; the Agent/Team tool chains would
+    otherwise silently skip them (nothing registers). Both the construction boundary
+    and the run-time processing chain refuse them with a pointer to the right place."""
+    from types import SimpleNamespace as NS
+
+    from agno.agent import _tools as agent_tools_mod
+
+    marker = _agent(id="helper").as_tool(name="ask_helper")
+
+    boss = Agent(id="boss", name="Boss")
+    with pytest.raises(ValueError, match="MCPConfig"):
+        boss.set_tools([marker])
+    with pytest.raises(ValueError, match="MCPConfig"):
+        boss.add_tool(marker)
+
+    team = Team(id="squad", name="Squad", members=[_agent(id="m1")])
+    with pytest.raises(ValueError, match="MCPConfig"):
+        team.set_tools([marker])
+    with pytest.raises(ValueError, match="MCPConfig"):
+        team.add_tool(marker)
+
+    # The deep guard on the processing chain (covers per-run tools= paths).
+    with pytest.raises(ValueError, match="MCPConfig"):
+        agent_tools_mod.parse_tools(boss, [marker], model=NS(supports_native_structured_outputs=False))
 
 
 async def test_riding_lifecycle_pair_is_scope_gated(monkeypatch):
