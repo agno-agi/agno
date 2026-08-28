@@ -7,12 +7,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
 # ``agno/os/mcp.py``. Keep in sync with the ``tags={...}`` argument on each
-# ``@register_builtin_tool(...)`` in that module.
-MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session"})
+# ``@register_builtin_tool(...)`` in that module. ``lifecycle`` is the run-resumption
+# pair (``continue_run``/``cancel_run``, also tagged ``core``): it rides along
+# automatically whenever components are exposed, so HITL works without the rest of the
+# default surface -- see ``MCPConfig.lifecycle_tools``.
+MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "lifecycle"})
 
 # Type alias for ``include_tags`` / ``exclude_tags`` -- gives IDE autocomplete on the
 # string values while keeping the API stringly-typed (callers still pass ``{"core"}``).
-MCPBuiltinTag = Literal["core", "session"]
+MCPBuiltinTag = Literal["core", "session", "lifecycle"]
 
 
 class MCPConfig(BaseModel):
@@ -25,9 +28,11 @@ class MCPConfig(BaseModel):
 
     The default tools are tagged so they can be scoped as a group. See
     ``MCP_BUILTIN_TAGS`` for the canonical set; current values:
-      - ``"core"``    -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``,
+      - ``"core"``      -> ``get_agentos_config``, ``run_agent``, ``run_team``, ``run_workflow``,
         ``continue_run``, ``cancel_run``
-      - ``"session"`` -> read-only session tools (``get_sessions``, ``get_session_runs``)
+      - ``"session"``   -> read-only session tools (``get_sessions``, ``get_session_runs``)
+      - ``"lifecycle"`` -> ``continue_run``, ``cancel_run`` (dual-tagged with ``core``);
+        registered automatically alongside exposed components -- see ``lifecycle_tools``
 
     The default surface is deliberately small (8 tools): it is an operator surface for
     LLM frontends, not a database console. Session writes and memory CRUD live on the
@@ -70,12 +75,12 @@ class MCPConfig(BaseModel):
     # deployment (resync) are runnable through the generic run tools immediately, but
     # appear as named tools only after a restart. Listing here is publishing: every
     # caller who can reach tools/list sees the names and descriptions (invocation is
-    # still gated by scopes at call time). Resuming a PAUSED (HITL) run needs the
-    # default ``continue_run`` tool, so keep ``default_tools=True`` or
-    # ``include_tags={"core"}`` when exposing components with confirmation-required
-    # tools; the exposed result's structuredContent carries the component id either
-    # way. Factories whose input_schema has required fields cannot be invoked over MCP
-    # yet (true for run_agent too); invoke those over REST.
+    # still gated by scopes at call time). HITL works out of the box: whenever
+    # components are exposed, ``continue_run`` and ``cancel_run`` register alongside
+    # them (see ``lifecycle_tools``), and the exposed result's structuredContent
+    # carries the component id a resume needs. Factories whose input_schema has
+    # required fields cannot be invoked over MCP yet (true for run_agent too); invoke
+    # those over REST.
     #
     # Identity: a custom tool may declare a ``user_id`` parameter. AgentOS fills it with
     # the authenticated caller's id (the JWT subject) and hides it from the client-facing
@@ -87,6 +92,16 @@ class MCPConfig(BaseModel):
     # ``tools`` surface. ``enable_builtin_tools`` is the deprecated spelling, still
     # accepted at construction.
     default_tools: bool = True
+
+    # Whether ``continue_run``/``cancel_run`` ride along whenever components are
+    # exposed via ``tools`` -- even with ``default_tools=False``. Default True: an
+    # exposed component can pause on a confirmation-required (HITL) tool, and without
+    # continue_run the pause would be a dead end over MCP. These two act only on run
+    # ids the caller already holds from its own results and are scope-gated per
+    # component like the tool that produced the run. Set False for a tools/list that
+    # shows exactly the configured tools; paused runs then say to resume over REST.
+    # (An explicit ``exclude_tags={"lifecycle"}`` is also honoured.)
+    lifecycle_tools: bool = True
 
     # Finer scoping over the default tools via their tags (see ``MCP_BUILTIN_TAGS``).
     # When ``include_tags`` is set, only default tools carrying one of those tags are registered.

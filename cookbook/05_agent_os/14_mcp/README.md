@@ -94,10 +94,15 @@ Pick MCP-safe ids before a deployment accumulates sessions: sessions and
 memories are keyed by the id, so changing it later is a migration. The exposed
 tool list is fixed at startup -- components added to a live deployment are
 runnable through the generic run tools immediately, but appear as named tools
-after a restart. Note for HITL agents: resuming a
-PAUSED run needs the default `continue_run` tool, so keep `default_tools=True`
-or `include_tags={"core"}` when exposing agents with confirmation-required
-tools.
+after a restart.
+
+HITL works out of the box: whenever components are exposed, `continue_run` and
+`cancel_run` ride along -- even with `default_tools=False` -- so a run that
+pauses on a confirmation-required tool is resumable over MCP (the paused
+result's structuredContent carries the component id, run_id, session_id, and
+requirements that `continue_run` needs). Set `lifecycle_tools=False` for a
+tools/list that shows exactly the configured tools; paused runs then say to
+resume over the REST API.
 
 ## Custom and scoped surfaces
 

@@ -51,48 +51,56 @@ logger = logging.getLogger(__name__)
 # single source of truth so adding a new tag is a one-place change.
 from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
 
-# Names of the default (built-in) tools by tag, used to detect name collisions with
+# Names of the default (built-in) tools by tag set, used to detect name collisions with
 # exposed components before registration. Keep in sync with the ``name=`` / ``tags=``
 # arguments on each ``@register_builtin_tool(...)`` below; a unit test asserts this map
-# matches the tools a default server actually registers.
-_BUILTIN_TOOL_NAMES: Dict[str, str] = {
-    "get_agentos_config": "core",
-    "run_agent": "core",
-    "run_team": "core",
-    "run_workflow": "core",
-    "continue_run": "core",
-    "cancel_run": "core",
-    "get_sessions": "session",
-    "get_session_runs": "session",
+# matches the tools a default server actually registers. continue_run/cancel_run carry
+# ``lifecycle`` alongside ``core`` so they can ride along with exposed components even
+# when the rest of the default surface is off.
+_BUILTIN_TOOL_NAMES: Dict[str, frozenset] = {
+    "get_agentos_config": frozenset({"core"}),
+    "run_agent": frozenset({"core"}),
+    "run_team": frozenset({"core"}),
+    "run_workflow": frozenset({"core"}),
+    "continue_run": frozenset({"core", "lifecycle"}),
+    "cancel_run": frozenset({"core", "lifecycle"}),
+    "get_sessions": frozenset({"session"}),
+    "get_session_runs": frozenset({"session"}),
 }
 
 
-def _enabled_builtin_tags(config: "Optional[MCPConfig]") -> set:
+def _enabled_builtin_tags(config: "Optional[MCPConfig]", has_exposures: bool = False) -> set:
     """Resolve which built-in tool tags should be registered, given the MCP config.
 
     Returns the full set of built-in tags when no config is provided, preserving the
-    default behavior (all built-in tools registered).
+    default behavior (all built-in tools registered). With exposed components present,
+    the ``lifecycle`` tag (continue_run/cancel_run) rides along even when the rest of
+    the default surface is scoped out -- an exposed component can pause on a HITL tool,
+    and without continue_run the pause would be a dead end over MCP. Both off-switches
+    are honoured: ``lifecycle_tools=False`` and an explicit ``exclude_tags``.
     """
     if config is None:
         return set(_BUILTIN_TOOL_TAGS)
     if not config.default_tools:
-        return set()
-    # An explicitly empty include_tags set means "no built-in tools", so test against
-    # None rather than truthiness.
-    enabled = set(config.include_tags) if config.include_tags is not None else set(_BUILTIN_TOOL_TAGS)
-    if config.exclude_tags:
-        enabled -= set(config.exclude_tags)
+        enabled: set = set()
+    else:
+        # An explicitly empty include_tags set means "no built-in tools", so test
+        # against None rather than truthiness.
+        enabled = set(config.include_tags) if config.include_tags is not None else set(_BUILTIN_TOOL_TAGS)
+        if config.exclude_tags:
+            enabled -= set(config.exclude_tags)
+    if has_exposures and config.lifecycle_tools and "lifecycle" not in (config.exclude_tags or set()):
+        enabled.add("lifecycle")
     return enabled
 
 
-def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPConfig]"):
+def _builtin_tool_registrar(mcp: FastMCP, enabled_tags: set):
     """Return a drop-in replacement for ``mcp.tool`` that scopes the built-in tools.
 
-    When a tool's tags are enabled by the config, the tool is registered as usual.
+    When a tool's tags intersect the enabled set, the tool is registered as usual.
     Otherwise the decorator is a no-op (the function is returned unregistered), so
     scoping happens at registration time without depending on FastMCP tool-removal APIs.
     """
-    enabled_tags = _enabled_builtin_tags(config)
 
     def register(*args: Any, **kwargs: Any):
         tags = kwargs.get("tags") or set()
@@ -1057,10 +1065,10 @@ def _make_exposed_workflow_tool(
 def _register_exposed_components(
     mcp: FastMCP,
     os: "AgentOS",
-    mcp_config: "Optional[MCPConfig]",
     result_mode: str,
     custom_tool_names: "Optional[Dict[str, str]]" = None,
     exposure_entries: "Optional[List[tuple]]" = None,
+    enabled_tags: "Optional[set]" = None,
 ) -> None:
     """Register the component entries from ``MCPConfig.tools`` as named tools.
 
@@ -1085,16 +1093,16 @@ def _register_exposed_components(
     # Names already claimed by the default tools that will actually register, and by
     # the custom tools registered just before this (their REAL registered names, so
     # e.g. a functools.partial custom tool named "partial" by FastMCP still collides).
-    enabled_tags = _enabled_builtin_tags(mcp_config)
+    enabled_tags = enabled_tags if enabled_tags is not None else set()
     taken: Dict[str, str] = {
-        name: f'the default tool "{name}"' for name, tag in _BUILTIN_TOOL_NAMES.items() if tag in enabled_tags
+        name: f'the default tool "{name}"' for name, tags in _BUILTIN_TOOL_NAMES.items() if tags & enabled_tags
     }
     taken.update(custom_tool_names or {})
 
-    # With the core tag scoped out (or default_tools off) there is no continue_run on
-    # this server; the paused-result text then points the caller at REST instead of at a
-    # tool that does not exist.
-    continue_run_available = "core" in enabled_tags
+    # continue_run rides along with exposure by default (the lifecycle tag), so this is
+    # False only when the deployer opted out -- the paused-result text then points the
+    # caller at REST instead of at a tool that does not exist.
+    continue_run_available = bool({"core", "lifecycle"} & enabled_tags)
     singulars = {"agents": "agent", "teams": "team", "workflows": "workflow"}
 
     for kind, component, name_override, description_override in exposure_entries:
@@ -1160,9 +1168,14 @@ def build_mcp_server(
     # The in-memory client path used in tests ignores it.
     mcp = FastMCP(os.name or "AgentOS", auth=os._get_mcp_auth_provider())
 
+    # Classify the tool surface up front: the enabled default-tool tags depend on
+    # whether components are exposed (the lifecycle pair rides along with exposure).
+    custom_entries, exposure_entries = _split_tool_entries(mcp_config, os)
+    enabled_tags = _enabled_builtin_tags(mcp_config, has_exposures=bool(exposure_entries))
+
     # Decorator used to register the built-in tools. Honors ``mcp_config`` scoping;
     # behaves exactly like ``mcp.tool`` when no config (or default config) is provided.
-    register_builtin_tool = _builtin_tool_registrar(mcp, mcp_config)
+    register_builtin_tool = _builtin_tool_registrar(mcp, enabled_tags)
 
     # How the run tools serialize their results ("trimmed" keeps the frontend model's
     # context clean; "full" is the escape hatch for programmatic clients).
@@ -1372,7 +1385,7 @@ def build_mcp_server(
             "back here unchanged otherwise. Provide exactly one of agent_id / team_id / workflow_id "
             "(the component that owns the run) plus the run_id and session_id from the paused result."
         ),
-        tags={"core"},
+        tags={"core", "lifecycle"},
         annotations={"readOnlyHint": False, "destructiveHint": False},
     )  # type: ignore
     async def continue_run(
@@ -1442,7 +1455,7 @@ def build_mcp_server(
             "(if it has not started yet, the intent is recorded and applied when it does). Provide the "
             "run_id, its session_id, and exactly one of agent_id / team_id / workflow_id."
         ),
-        tags={"core"},
+        tags={"core", "lifecycle"},
         annotations={"destructiveHint": True, "idempotentHint": True},
     )  # type: ignore
     async def cancel_run(
@@ -1578,12 +1591,11 @@ def build_mcp_server(
 
     # Register any user-provided custom tools. These share the same server, mount (/mcp),
     # lifespan, and JWT middleware as the built-in tools.
-    custom_entries, exposure_entries = _split_tool_entries(mcp_config, os)
     custom_tool_names = _register_custom_tools(mcp, custom_entries)
 
     # Expose the components named in the config as individual tools ("chief", not
     # run_agent(agent_id="chief")). Last, so collision checks see the full surface.
-    _register_exposed_components(mcp, os, mcp_config, result_mode, custom_tool_names, exposure_entries)
+    _register_exposed_components(mcp, os, result_mode, custom_tool_names, exposure_entries, enabled_tags)
 
     return mcp
 

@@ -8,7 +8,9 @@ agent's own description; agent.as_tool(name=..., description=...) publishes
 it under a model-facing name and pitch of your choosing instead. An MCP
 client sees chief and deep_research -- not run_agent(agent_id=...) -- and
 each call runs through the same machinery as the default run tools (fresh
-session minting, scope checks, progress).
+session minting, scope checks, progress). continue_run and cancel_run ride
+along automatically so paused (human-in-the-loop) runs stay resumable; set
+lifecycle_tools=False to serve exactly the configured tools.
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/agents_as_tools.py

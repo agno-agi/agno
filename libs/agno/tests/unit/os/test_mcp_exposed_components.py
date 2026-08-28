@@ -48,6 +48,11 @@ def _workflow(id: str = "daily-brief") -> Workflow:
     return Workflow(id=id, name="Daily Brief", steps=[Step(agent=_agent(id=f"{id}-step-agent"))])
 
 
+async def _tool_by_name(os: AgentOS, name: str):
+    async with Client(build_mcp_server(os)) as client:
+        return {t.name: t for t in await client.list_tools()}[name]
+
+
 async def _tool_names(os: AgentOS) -> set:
     async with Client(build_mcp_server(os)) as client:
         return {t.name for t in await client.list_tools()}
@@ -125,7 +130,8 @@ async def test_exposed_agent_is_the_only_tool_with_default_tools_off():
     calls = _stub_arun(agent, RunOutput(content="done", status=RunStatus.completed))
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    assert await _tool_names(os) == {"chief"}
+    # continue_run/cancel_run ride along with exposure so HITL works by default.
+    assert await _tool_names(os) == {"chief", "continue_run", "cancel_run"}
     result = await _call_tool(os, "chief", {"message": "hi"})
     assert calls[0]["message"] == "hi"
     structured = result.structured_content or {}
@@ -145,7 +151,7 @@ async def test_exposed_team_and_workflow_register_and_run():
         mcp=MCPConfig(default_tools=False, tools=[team, workflow]),
     )
 
-    assert await _tool_names(os) == {"support-team", "daily-brief"}
+    assert await _tool_names(os) == {"support-team", "daily-brief", "continue_run", "cancel_run"}
     await _call_tool(os, "support-team", {"message": "help"})
     await _call_tool(os, "daily-brief", {"message": "go"})
     assert team_calls[0]["message"] == "help"
@@ -173,8 +179,7 @@ async def test_exposed_tool_description_carries_component_description():
     agent = _agent(description="Handles executive requests")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    async with Client(build_mcp_server(os)) as client:
-        (tool,) = await client.list_tools()
+    tool = await _tool_by_name(os, "chief")
     assert tool.description is not None
     assert tool.description.startswith("Handles executive requests.")
     assert "session_id" in tool.description
@@ -185,8 +190,7 @@ async def test_exposed_tool_schema_shows_only_client_facing_params():
     agent = _agent()
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    async with Client(build_mcp_server(os)) as client:
-        (tool,) = await client.list_tools()
+    tool = await _tool_by_name(os, "chief")
     assert set(tool.inputSchema.get("properties", {})) == {"message", "user_id", "session_id"}
     assert tool.inputSchema.get("required") == ["message"]
     assert tool.annotations is not None
@@ -199,8 +203,7 @@ async def test_exposed_tool_description_fallback_without_component_description()
     agent = _agent()  # name "Chief", no description
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    async with Client(build_mcp_server(os)) as client:
-        (tool,) = await client.list_tools()
+    tool = await _tool_by_name(os, "chief")
     assert tool.description == (
         "Run the Chief agent with a message. "
         "Pass the returned session_id back to continue the conversation; omit it to start a new one."
@@ -477,7 +480,7 @@ async def test_colliding_default_tool_name_is_fine_when_builtins_off():
     """The same id is fine when the default tools are off -- the name is free."""
     agent = _agent(id="run_agent")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
-    assert await _tool_names(os) == {"run_agent"}
+    assert await _tool_names(os) == {"run_agent", "continue_run", "cancel_run"}
 
 
 def test_exposed_id_colliding_with_custom_tool_raises():
@@ -586,8 +589,8 @@ async def test_exposure_composes_with_include_tags():
     os = AgentOS(agents=[agent], mcp=MCPConfig(include_tags={"core"}, tools=[agent]))
 
     names = await _tool_names(os)
-    core = {name for name, tag in mcp_mod._BUILTIN_TOOL_NAMES.items() if tag == "core"}
-    session = {name for name, tag in mcp_mod._BUILTIN_TOOL_NAMES.items() if tag == "session"}
+    core = {name for name, tags in mcp_mod._BUILTIN_TOOL_NAMES.items() if "core" in tags}
+    session = {name for name, tags in mcp_mod._BUILTIN_TOOL_NAMES.items() if "session" in tags}
     assert names == core | {"chief"}
     assert not (names & session)
 
@@ -599,7 +602,7 @@ async def test_named_component_without_id_gets_its_deterministic_id():
     _stub_arun(agent, RunOutput(content="ok"))
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    assert await _tool_names(os) == {"solo-named"}
+    assert await _tool_names(os) == {"solo-named", "continue_run", "cancel_run"}
     assert agent.id == "solo-named"
 
 
@@ -608,7 +611,7 @@ async def test_tool_name_cap_is_128():
     (probed live in review) -- so 65 registers fine and 129 is the hard error."""
     ok_agent = _agent(id="a" * 65)
     os = AgentOS(agents=[ok_agent], mcp=MCPConfig(default_tools=False, tools=[ok_agent]))
-    assert await _tool_names(os) == {"a" * 65}
+    assert await _tool_names(os) == {"a" * 65, "continue_run", "cancel_run"}
 
     long_agent = _agent(id="b" * 129)
     os2 = AgentOS(agents=[long_agent], mcp=MCPConfig(default_tools=False, tools=[long_agent]))
@@ -793,8 +796,7 @@ async def test_exposing_unreachable_remote_does_not_fail_the_build():
     remote = RemoteTeam(base_url="http://127.0.0.1:9", team_id="remote-team")
     os = AgentOS(teams=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
 
-    async with Client(build_mcp_server(os)) as client:
-        (tool,) = await client.list_tools()
+    tool = await _tool_by_name(os, "remote-team")
     assert tool.name == "remote-team"
     assert tool.description is not None
     assert tool.description.startswith("Run the remote-team team with a message.")
@@ -805,8 +807,7 @@ async def test_whitespace_only_description_falls_back():
     agent = _agent(description="   ")
     os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    async with Client(build_mcp_server(os)) as client:
-        (tool,) = await client.list_tools()
+    tool = await _tool_by_name(os, "chief")
     assert tool.description is not None
     assert tool.description.startswith("Run the Chief agent with a message.")
 
@@ -826,13 +827,14 @@ async def test_paused_run_without_continue_run_points_at_rest():
     )
     agent = _agent()
     _stub_arun(agent, paused)
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], lifecycle_tools=False))
     result = await _call_tool(os, "chief", {"message": "hi"})
     assert "continue_run tool is not registered" in result.content[0].text
 
+    # Default: the lifecycle pair rides along, so the hint must NOT appear.
     agent2 = _agent(id="chief2")
     _stub_arun(agent2, paused)
-    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(include_tags={"core"}, tools=[agent2]))
+    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(default_tools=False, tools=[agent2]))
     result2 = await _call_tool(os2, "chief2", {"message": "hi"})
     assert "continue_run tool is not registered" not in result2.content[0].text
 
@@ -862,8 +864,7 @@ async def test_as_tool_overrides_name_and_description():
         ),
     )
 
-    async with Client(build_mcp_server(os)) as client:
-        (tool,) = await client.list_tools()
+    tool = await _tool_by_name(os, "deep_research")
     assert tool.name == "deep_research"
     assert tool.description is not None
     assert tool.description.startswith("Thorough, sourced research. Send one question.")
@@ -877,15 +878,13 @@ async def test_as_tool_partial_overrides_fall_back_to_component():
         agents=[agent],
         mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(description="Only the pitch changes.")]),
     )
-    async with Client(build_mcp_server(os)) as client:
-        (tool,) = await client.list_tools()
+    tool = await _tool_by_name(os, "chief")
     assert tool.name == "chief"
     assert tool.description is not None and tool.description.startswith("Only the pitch changes.")
 
     agent2 = _agent(id="chief2", description="Kept description.")
     os2 = AgentOS(agents=[agent2], mcp=MCPConfig(default_tools=False, tools=[agent2.as_tool(name="ask_chief")]))
-    async with Client(build_mcp_server(os2)) as client:
-        (tool2,) = await client.list_tools()
+    tool2 = await _tool_by_name(os2, "ask_chief")
     assert tool2.name == "ask_chief"
     assert tool2.description is not None and tool2.description.startswith("Kept description.")
 
@@ -947,7 +946,7 @@ async def test_team_and_workflow_as_tool_work():
             tools=[team.as_tool(name="ask_support"), workflow.as_tool(name="run_brief")],
         ),
     )
-    assert await _tool_names(os) == {"ask_support", "run_brief"}
+    assert await _tool_names(os) == {"ask_support", "run_brief", "continue_run", "cancel_run"}
 
 
 async def test_structured_content_carries_the_component_id():
@@ -980,3 +979,90 @@ def test_as_tool_of_non_roster_component_raises():
     os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, tools=[outsider.as_tool(name="ask")]))
     with pytest.raises(ValueError, match="not part of the AgentOS roster"):
         build_mcp_server(os)
+
+
+# ==================== Lifecycle tools ride along with exposure (HITL) ====================
+
+
+async def test_lifecycle_tools_opt_out_gives_exactly_the_configured_tools():
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], lifecycle_tools=False))
+    assert await _tool_names(os) == {"chief"}
+
+
+async def test_explicit_lifecycle_exclude_is_honoured():
+    """exclude_tags={'lifecycle'} beats the ride-along -- an explicit exclusion is never
+    silently overridden."""
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], exclude_tags={"lifecycle"}))
+    assert await _tool_names(os) == {"chief"}
+
+
+async def test_exposed_id_collides_with_riding_lifecycle_tool():
+    """With the lifecycle pair riding along by default, an exposed id 'continue_run'
+    collides -- and is free again once the deployer opts out."""
+    agent = _agent(id="continue_run")
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
+    with pytest.raises(ValueError, match='"continue_run"'):
+        build_mcp_server(os)
+
+    os2 = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], lifecycle_tools=False))
+    assert await _tool_names(os2) == {"continue_run"}
+
+
+async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
+    """The full HITL loop with default_tools=False: the exposed tool pauses with the
+    component id + requirements in structuredContent, and the riding continue_run
+    resumes that exact run."""
+    from agno.models.response import ToolExecution
+    from agno.run.requirement import RunRequirement
+
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+    agent = _agent()
+    paused = RunOutput(
+        agent_id="chief",
+        run_id="run-hitl",
+        session_id="sess-hitl",
+        content=None,
+        status=RunStatus.paused,
+        requirements=[RunRequirement(tool_execution=ToolExecution(tool_name="send_email", requires_confirmation=True))],
+    )
+    _stub_arun(agent, paused)
+
+    continued: dict = {}
+
+    async def fake_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
+        continued.update(run_id=run_id, session_id=session_id)
+        return RunOutput(agent_id="chief", run_id=run_id, session_id=session_id, content="resumed")
+
+    agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="ask_chief")]))
+
+    async with Client(build_mcp_server(os)) as client:
+        names = {t.name for t in await client.list_tools()}
+        assert names == {"ask_chief", "continue_run", "cancel_run"}
+
+        result = await client.call_tool("ask_chief", {"message": "send the email"})
+        structured = result.structured_content or {}
+        structured = structured.get("result", structured) or {}
+        assert structured.get("status") == RunStatus.paused.value
+        assert structured.get("agent_id") == "chief"
+        assert len(structured.get("requirements") or []) == 1
+        assert "continue_run tool is not registered" not in result.content[0].text
+
+        requirement = structured["requirements"][0]
+        requirement["confirmed"] = True
+        resumed = await client.call_tool(
+            "continue_run",
+            {
+                "agent_id": structured["agent_id"],
+                "run_id": structured["run_id"],
+                "session_id": structured["session_id"],
+                "requirements": [requirement],
+            },
+        )
+        resumed_structured = resumed.structured_content or {}
+        resumed_structured = resumed_structured.get("result", resumed_structured) or {}
+        assert resumed_structured.get("session_id") == "sess-hitl"
+
+    assert continued == {"run_id": "run-hitl", "session_id": "sess-hitl"}

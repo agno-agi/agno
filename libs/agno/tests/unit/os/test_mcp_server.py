@@ -191,7 +191,7 @@ def _noop_tool() -> str:
     "kwargs",
     [
         pytest.param({"include_tags": set()}, id="empty-include-tags"),
-        pytest.param({"exclude_tags": {"core", "session"}}, id="exclude-every-tag"),
+        pytest.param({"exclude_tags": {"core", "session", "lifecycle"}}, id="exclude-every-tag"),
         pytest.param({"include_tags": {"core"}, "exclude_tags": {"core"}}, id="exclude-cancels-include"),
     ],
 )
@@ -236,7 +236,7 @@ async def test_zero_tool_tag_scoping_still_builds_an_empty_server(monkeypatch):
     """The warning is advisory: the resolved surface is unchanged (still empty)."""
     monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: None)
 
-    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session"}))
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session", "lifecycle"}))
     assert await _tool_names(os) == set()
 
 
@@ -255,14 +255,14 @@ async def test_exclude_tags_drops_session_builtins():
 def test_unknown_include_tag_is_rejected():
     """A typo like ``{"sessions"}`` (plural) would silently produce an empty server. The
     ``MCPBuiltinTag`` Literal makes pydantic reject it at construction."""
-    with pytest.raises(ValueError, match="Input should be 'core' or 'session'"):
+    with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
         MCPServerConfig(include_tags={"sessions"})
 
 
 def test_removed_memory_tag_is_rejected():
     """The memory tools were removed from the MCP surface; the old tag must fail loudly
     instead of silently scoping nothing."""
-    with pytest.raises(ValueError, match="Input should be 'core' or 'session'"):
+    with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
         MCPServerConfig(exclude_tags={"memory"})
 
 
