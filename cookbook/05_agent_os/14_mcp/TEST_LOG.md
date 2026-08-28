@@ -2,16 +2,19 @@
 
 Tested on 2026-07-24 against Agno source commit
 `a463d3be3563d30d11d32d4f0f9dc23ccefdb4d2`.
-`agents_as_tools.py` tested on 2026-08-27 on the `feat/mcp-agents-as-tools`
-branch, alongside the folder-wide move to the `mcp=` / `MCPConfig` /
-`default_tools` spellings (behavior unchanged; the old spellings remain
-accepted aliases).
+`agents_as_tools.py` first tested LIVE on 2026-08-27 on the
+`feat/mcp-agents-as-tools` branch (pre-lifecycle: `tools/list` showed exactly
+`chief` and `deep_research`), alongside the folder-wide move to the `mcp=` /
+`MCPConfig` / `default_tools` spellings (behavior unchanged; the old spellings
+remain accepted aliases). Re-run LIVE on 2026-08-28 after the lifecycle
+ride-along and the review-round fixes landed; the entry below records the
+2026-08-28 run.
 
 ### agents_as_tools.py
 
 **Status:** PASS
 
-**Test mode:** LIVE
+**Test mode:** LIVE (2026-08-28)
 
 **Description:** Started the checked-in server (two gpt-5.6-luna agents,
 `default_tools=False`, one exposed bare and one via
@@ -20,14 +23,15 @@ accepted aliases).
 listed tools, checked the generated schemas and descriptions, ran `chief`
 twice -- once sessionless, once continuing the returned session.
 
-**Result:** `tools/list` returned `chief`, `deep_research`, and the riding lifecycle pair (`continue_run`, `cancel_run`). The
-`chief` tool carried the agent's own description plus the session sentence;
-`deep_research` carried the as_tool override pitch. The client-facing schema
-was `message` (required), `session_id`, `user_id`; structuredContent carried
-`agent_id` ("chief") alongside run_id/session_id/status. The sessionless call
-minted a session and completed with content "Earth"; the follow-up call on the
-returned session_id recalled "Earth", proving live session continuity through
-the exposed tool.
+**Result:** `tools/list` returned `chief`, `deep_research`, and the riding
+lifecycle pair (`continue_run`, `cancel_run`) introduced after the first run
+of this cookbook. The `chief` tool carried the agent's own description plus
+the session sentence; `deep_research` carried the as_tool override pitch. The
+client-facing schema was `message` (required), `session_id`, `user_id`;
+structuredContent carried `agent_id` ("chief") alongside
+run_id/session_id/status. The sessionless call minted a session and completed
+with content "Earth"; the follow-up call on the returned session_id recalled
+"Earth", proving live session continuity through the exposed tool.
 
 ---
 
