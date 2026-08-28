@@ -14,14 +14,13 @@ ALL_METHODS = [
     "list_files",
     "search_content",
     "grep_content",
-    "get_outline",
     "write_file",
     "edit_file",
     "move_file",
     "delete_file",
     "run_command",
 ]
-READ_METHODS = ["read_file", "list_files", "search_content", "grep_content", "get_outline"]
+READ_METHODS = ["read_file", "list_files", "search_content", "grep_content"]
 WRITE_METHODS = ["write_file", "edit_file", "move_file", "delete_file", "run_command"]
 
 
@@ -479,91 +478,91 @@ def test_search_content_empty_query():
 
 
 # ------------------------------------------------------------------
-# grep_content (regex with line numbers)
+# grep_content (regex with line numbers, JSON output)
 # ------------------------------------------------------------------
 
 
 def test_grep_content_basic():
-    """grep_content returns path:line:text format."""
+    """grep_content returns JSON with matches."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
         (base / "code.py").write_text("def foo():\n    pass\n\ndef bar():\n    return 1")
 
-        result = ws.grep_content(pattern="def ")
-        assert "code.py:1:def foo():" in result
-        assert "code.py:4:def bar():" in result
+        result = json.loads(ws.grep_content(pattern="def "))
+        assert result["pattern"] == "def "
+        assert result["total_matches"] == 2
+        files = [m["file"] for m in result["matches"]]
+        lines = [m["line"] for m in result["matches"]]
+        assert "code.py" in files[0]
+        assert 1 in lines
+        assert 4 in lines
 
 
 def test_grep_content_regex():
     """grep_content supports regex patterns."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
         (base / "code.py").write_text("async def run():\n    pass\ndef sync_run():\n    pass")
 
-        # Match only async def
-        result = ws.grep_content(pattern=r"async\s+def")
-        assert "code.py:1:async def run():" in result
-        assert "sync_run" not in result
+        result = json.loads(ws.grep_content(pattern=r"async\s+def"))
+        assert result["total_matches"] == 1
+        assert result["matches"][0]["line"] == 1
+        assert "async def run" in result["matches"][0]["text"]
 
 
-def test_grep_content_ignore_case():
-    """grep_content ignore_case flag works."""
+def test_grep_content_case_insensitive():
+    """grep_content is always case-insensitive."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
         (base / "doc.md").write_text("TODO: fix this\nTodo: later\ntodo: now")
 
-        result = ws.grep_content(pattern="TODO", ignore_case=True)
-        assert result.count("doc.md:") == 3
-
-        result = ws.grep_content(pattern="TODO", ignore_case=False)
-        assert result.count("doc.md:") == 1
+        result = json.loads(ws.grep_content(pattern="TODO"))
+        assert result["total_matches"] == 3
 
 
 def test_grep_content_context_lines():
     """grep_content context_lines shows surrounding lines."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
         (base / "code.py").write_text("# header\ndef target():\n    pass\n# footer")
 
-        result = ws.grep_content(pattern="def target", context_lines=1)
-        assert "code.py:1:# header" in result
-        assert "code.py:2:def target():" in result
-        assert "code.py:3:    pass" in result
-
-
-def test_grep_content_files_only():
-    """grep_content files_only=True returns only file names."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        ws = Workspace(tmp_dir)
-        base = Path(tmp_dir)
-        (base / "a.py").write_text("def foo(): pass")
-        (base / "b.py").write_text("def bar(): pass")
-        (base / "c.txt").write_text("nothing special here")
-
-        result = ws.grep_content(pattern="def ", files_only=True)
-        assert "a.py" in result
-        assert "b.py" in result
-        assert "c.txt" not in result
-        assert "(2 files)" in result
+        result = json.loads(ws.grep_content(pattern="def target", context_lines=1))
+        lines = [m["line"] for m in result["matches"]]
+        assert 1 in lines  # header (context)
+        assert 2 in lines  # target (match)
+        assert 3 in lines  # pass (context)
 
 
 def test_grep_content_respects_limit():
     """grep_content respects the limit parameter."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
         (base / "code.py").write_text("\n".join(f"line{i}" for i in range(100)))
 
-        result = ws.grep_content(pattern="line", limit=5)
-        assert "(showing 5 matches, limit=5)" in result
+        result = json.loads(ws.grep_content(pattern="line", limit=5))
+        assert result["total_matches"] == 5
+        assert result["truncated"] is True
 
 
 def test_grep_content_max_grep_matches_clamps_limit():
     """grep_content clamps limit to max_grep_matches from constructor."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         # Constructor sets max_grep_matches=10, LLM requests limit=50
         ws = Workspace(tmp_dir, max_grep_matches=10)
@@ -571,8 +570,9 @@ def test_grep_content_max_grep_matches_clamps_limit():
         (base / "code.py").write_text("\n".join(f"match{i}" for i in range(100)))
 
         # Even though limit=50 is requested, max_grep_matches=10 wins
-        result = ws.grep_content(pattern="match", limit=50)
-        assert "(showing 10 matches, limit=10)" in result
+        result = json.loads(ws.grep_content(pattern="match", limit=50))
+        assert result["total_matches"] == 10
+        assert result["truncated"] is True
 
 
 def test_grep_content_invalid_regex():
@@ -584,18 +584,23 @@ def test_grep_content_invalid_regex():
 
 
 def test_grep_content_no_matches():
-    """grep_content returns message when no matches."""
+    """grep_content returns empty matches when no matches."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
         (base / "file.py").write_text("nothing here")
 
-        result = ws.grep_content(pattern="NOTFOUND")
-        assert "No matches for pattern" in result
+        result = json.loads(ws.grep_content(pattern="NOTFOUND"))
+        assert result["total_matches"] == 0
+        assert result["matches"] == []
 
 
 def test_grep_content_skips_excluded():
     """grep_content skips excluded directories."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
@@ -603,20 +608,24 @@ def test_grep_content_skips_excluded():
         (base / ".venv").mkdir()
         (base / ".venv" / "hidden.py").write_text("def hidden(): pass")
 
-        result = ws.grep_content(pattern="def ")
-        assert "real.py" in result
-        assert ".venv" not in result
+        result = json.loads(ws.grep_content(pattern="def "))
+        files = [m["file"] for m in result["matches"]]
+        assert any("real.py" in f for f in files)
+        assert not any(".venv" in f for f in files)
 
 
 def test_agrep_content_async():
     """agrep_content async variant works."""
+    import json
+
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         base = Path(tmp_dir)
         (base / "code.py").write_text("def foo(): pass")
 
-        result = asyncio.run(ws.agrep_content(pattern="def "))
-        assert "code.py:1:def foo():" in result
+        result = json.loads(asyncio.run(ws.agrep_content(pattern="def ")))
+        assert result["total_matches"] == 1
+        assert result["matches"][0]["file"] == "code.py"
 
 
 # ------------------------------------------------------------------
@@ -1836,89 +1845,3 @@ def test_empty_deny_list_with_only_exemptions_excludes_nothing():
         _write(base, ".env", "SECRET=1\n")
         ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
         assert "SECRET=1" in ws.read_file(".env")
-
-
-# ---------------------------------------------------------------------------
-# get_outline tests
-# ---------------------------------------------------------------------------
-
-
-def test_get_outline_returns_class_and_function_definitions():
-    """get_outline extracts classes and functions with line numbers."""
-    code = '''\
-class Foo:
-    """A foo class."""
-    def bar(self, x, y):
-        pass
-
-    async def baz(self):
-        pass
-
-def standalone(a, b, c):
-    pass
-'''
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        base = Path(tmp_dir).resolve()
-        _write(base, "example.py", code)
-        ws = Workspace(tmp_dir)
-        result = ws.get_outline("example.py")
-
-        assert "class Foo" in result
-        assert "line 1" in result or "line 2" in result
-        assert "def bar(x, y)" in result
-        assert "async def baz()" in result
-        assert "def standalone(a, b, c)" in result
-        assert "# Outline of example.py" in result
-
-
-def test_get_outline_only_supports_python_files():
-    """get_outline returns error for non-Python files."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        base = Path(tmp_dir).resolve()
-        _write(base, "readme.md", "# Hello")
-        ws = Workspace(tmp_dir)
-        result = ws.get_outline("readme.md")
-        assert "Error" in result
-        assert "only supports Python" in result
-
-
-def test_get_outline_handles_syntax_errors():
-    """get_outline returns error for invalid Python syntax."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        base = Path(tmp_dir).resolve()
-        _write(base, "broken.py", "def foo(:\n    pass")
-        ws = Workspace(tmp_dir)
-        result = ws.get_outline("broken.py")
-        assert "Error" in result
-        assert "syntax error" in result
-
-
-def test_get_outline_respects_exclude_patterns():
-    """get_outline refuses excluded paths."""
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        base = Path(tmp_dir).resolve()
-        git_dir = base / ".git"
-        git_dir.mkdir()
-        _write(git_dir, "config.py", "class Config: pass")
-        ws = Workspace(tmp_dir)
-        result = ws.get_outline(".git/config.py")
-        assert "Error" in result
-        assert "excluded" in result
-
-
-def test_get_outline_shows_docstring_preview():
-    """get_outline includes first line of class docstrings."""
-    code = '''\
-class Agent:
-    """The main agent class for running AI tasks."""
-    def run(self):
-        pass
-'''
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        base = Path(tmp_dir).resolve()
-        _write(base, "agent.py", code)
-        ws = Workspace(tmp_dir)
-        result = ws.get_outline("agent.py")
-
-        assert "class Agent" in result
-        assert "main agent class" in result
