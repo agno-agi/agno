@@ -79,16 +79,10 @@ class GithubTools(Toolkit):
         auth = Auth.Token(self.access_token) if self.access_token else None
 
         if self.base_url:
-            if auth:
-                log_debug(f"Authenticating with GitHub Enterprise at {self.base_url}")
-            else:
-                log_debug(f"Connecting to GitHub Enterprise at {self.base_url} (unauthenticated)")
+            log_debug(f"Connecting to GitHub Enterprise at {self.base_url}")
             return Github(base_url=self.base_url, auth=auth)
         else:
-            if auth:
-                log_debug("Authenticating with public GitHub")
-            else:
-                log_debug("Connecting to public GitHub (unauthenticated, 60 req/hour limit)")
+            log_debug("Connecting to GitHub")
             return Github(auth=auth)
 
     def _auth_required_response(self, tool_name: str) -> str:
