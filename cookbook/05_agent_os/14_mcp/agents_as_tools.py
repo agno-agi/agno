@@ -2,15 +2,17 @@
 Serve agents as MCP tools
 =========================
 
-Turn the default MCP surface off and expose agents directly: each agent in
-MCPConfig(agents=[...]) becomes an MCP tool named after its id, with the
-agent's own description. An MCP client sees chief and researcher -- not
-run_agent(agent_id=...) -- and each call runs through the same machinery as
-the default run tools (fresh session minting, scope checks, progress).
+Turn the default MCP surface off and serve agents directly as tools. A bare
+agent in MCPConfig(tools=[...]) becomes a tool named after its id with the
+agent's own description; agent.as_tool(name=..., description=...) publishes
+it under a model-facing name and pitch of your choosing instead. An MCP
+client sees chief and deep_research -- not run_agent(agent_id=...) -- and
+each call runs through the same machinery as the default run tools (fresh
+session minting, scope checks, progress).
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/agents_as_tools.py
-Try: connect an MCP client to http://localhost:7777/mcp and call chief
+Try: connect an MCP client to http://localhost:7777/mcp and call chief or deep_research
 """
 
 from agno.agent import Agent
@@ -60,7 +62,13 @@ agent_os = AgentOS(
     agents=[chief, researcher],
     mcp=MCPConfig(
         default_tools=False,
-        agents=[chief, researcher],
+        tools=[
+            chief,
+            researcher.as_tool(
+                name="deep_research",
+                description="Thorough, sourced research. Send one clear question.",
+            ),
+        ],
     ),
 )
 app = agent_os.get_app()

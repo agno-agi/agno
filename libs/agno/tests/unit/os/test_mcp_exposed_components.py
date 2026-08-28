@@ -1,9 +1,11 @@
 """Unit tests for exposing agents/teams/workflows as individual MCP tools.
 
-Covers the ``MCPConfig.agents/teams/workflows`` exposure surface and the API rename set
+Covers the ``MCPConfig.tools`` exposure surface (bare components and
+``component.as_tool(name=..., description=...)`` markers) and the API rename set
 (``mcp=`` / ``MCPConfig`` / ``default_tools``):
-  1. Exposed components register as tools named after their ids and run through the
-     same machinery as the generic run tools (identity, session minting, scopes).
+  1. Exposed components register as tools -- named after their ids, or the as_tool
+     override -- and run through the same machinery as the generic run tools
+     (identity, session minting, scopes).
   2. Collisions and non-roster components fail fast at build.
   3. The deprecated spellings (``mcp_server=``, ``MCPServerConfig``,
      ``enable_builtin_tools``) keep working via silent aliases.
@@ -121,7 +123,7 @@ async def test_exposed_agent_is_the_only_tool_with_default_tools_off():
     """default_tools=False + agents=[chief] serves exactly one tool named after the id."""
     agent = _agent()
     calls = _stub_arun(agent, RunOutput(content="done", status=RunStatus.completed))
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     assert await _tool_names(os) == {"chief"}
     result = await _call_tool(os, "chief", {"message": "hi"})
@@ -140,7 +142,7 @@ async def test_exposed_team_and_workflow_register_and_run():
     os = AgentOS(
         teams=[team],
         workflows=[workflow],
-        mcp=MCPConfig(default_tools=False, teams=[team], workflows=["daily-brief"]),
+        mcp=MCPConfig(default_tools=False, tools=[team, workflow]),
     )
 
     assert await _tool_names(os) == {"support-team", "daily-brief"}
@@ -158,7 +160,7 @@ async def test_exposure_composes_with_default_tools_and_custom_tools():
         return "pong"
 
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(agents=[agent], tools=[ping]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent, ping]))
 
     names = await _tool_names(os)
     assert "chief" in names
@@ -169,7 +171,7 @@ async def test_exposure_composes_with_default_tools_and_custom_tools():
 async def test_exposed_tool_description_carries_component_description():
     """The tool description is the component's own plus the fixed session sentence."""
     agent = _agent(description="Handles executive requests")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     async with Client(build_mcp_server(os)) as client:
         (tool,) = await client.list_tools()
@@ -181,7 +183,7 @@ async def test_exposed_tool_description_carries_component_description():
 async def test_exposed_tool_schema_shows_only_client_facing_params():
     """The client-facing schema is message/user_id/session_id; ctx is injected, hidden."""
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     async with Client(build_mcp_server(os)) as client:
         (tool,) = await client.list_tools()
@@ -195,7 +197,7 @@ async def test_exposed_tool_schema_shows_only_client_facing_params():
 async def test_exposed_tool_description_fallback_without_component_description():
     """A component without a description gets the documented fallback plus the fixed sentence."""
     agent = _agent()  # name "Chief", no description
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     async with Client(build_mcp_server(os)) as client:
         (tool,) = await client.list_tools()
@@ -211,25 +213,15 @@ def test_exposed_id_outside_tool_name_charset_raises_with_candidate():
     HITL resume and make the visible name disagree with the scope that grants it. The
     error suggests a clean candidate id without applying it."""
     agent = _agent(id="chief agent (v2)")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     with pytest.raises(ValueError, match="set id='chief-agent-v2'"):
-        build_mcp_server(os)
-
-
-def test_wrong_kind_id_string_names_the_actual_kind():
-    """An id string carries no type information, so a team id in MCPConfig.agents is the
-    likeliest mix-up -- it must say 'move it to MCPConfig.teams', not 'add the component
-    to AgentOS(agents=[...])'."""
-    team = _team()
-    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, agents=["support-team"], teams=[team]))
-    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
         build_mcp_server(os)
 
 
 def test_exposed_id_with_trailing_newline_raises():
     """fullmatch, not match: a trailing newline must not slip through as 'already valid'."""
     agent = _agent(id="chief\n")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     with pytest.raises(ValueError, match="letters"):
         build_mcp_server(os)
 
@@ -238,7 +230,7 @@ def test_exposed_id_with_slash_raises():
     """A slash in the id would take the synthetic scope route out of single-segment
     shape, so it is rejected with the rest of the charset."""
     agent = _agent(id="support/admin")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     with pytest.raises(ValueError, match="letters"):
         build_mcp_server(os)
 
@@ -248,7 +240,7 @@ def test_auto_derived_id_error_names_the_source_and_suggests_cleanly():
     came from, and the candidate must collapse the hyphen-flanked fold (never
     'research---writing-team')."""
     agent = Agent(name="Research & Writing Team")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     with pytest.raises(ValueError) as exc_info:
         build_mcp_server(os)
     message = str(exc_info.value)
@@ -260,7 +252,7 @@ def test_leading_digit_id_is_rejected_with_prefixed_suggestion():
     """Gemini 400s tool names starting with a digit -- and validates per request, so one
     bad name would take down every exposed tool. Rejected at build instead."""
     agent = Agent(name="2024 Reporter")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     with pytest.raises(ValueError) as exc_info:
         build_mcp_server(os)
     message = str(exc_info.value)
@@ -271,14 +263,14 @@ def test_leading_digit_id_is_rejected_with_prefixed_suggestion():
 def test_accented_id_suggestion_transliterates():
     """NFKD folding gives 'reviseur', not the mangled 'r-viseur'."""
     agent = _agent(id="r\u00e9viseur")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     with pytest.raises(ValueError, match="set id='reviseur'"):
         build_mcp_server(os)
 
 
 def test_non_latin_id_gets_generic_advice_not_a_bogus_candidate():
     agent = _agent(id="\u7814\u7a76\u5458")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     with pytest.raises(ValueError) as exc_info:
         build_mcp_server(os)
     message = str(exc_info.value)
@@ -291,7 +283,7 @@ def test_suggestion_is_omitted_when_it_would_collide():
     would be a two-round failure (fix the id, then hit the collision error)."""
     holder = _agent(id="ops-risk", name="Ops Risk")
     invalid = _agent(id="ops-&-risk", name="Ops And Risk")
-    os = AgentOS(agents=[holder, invalid], mcp=MCPConfig(default_tools=False, agents=[holder, invalid]))
+    os = AgentOS(agents=[holder, invalid], mcp=MCPConfig(default_tools=False, tools=[holder, invalid]))
     with pytest.raises(ValueError) as exc_info:
         build_mcp_server(os)
     message = str(exc_info.value)
@@ -306,7 +298,7 @@ async def test_exposed_agent_mints_distinct_sessions_and_honours_explicit():
     """Omitted session_id mints a fresh one per call; an explicit one is reused."""
     agent = _agent()
     calls = _stub_arun(agent, RunOutput(content="ok"))
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     async with Client(build_mcp_server(os)) as client:
         await client.call_tool("chief", {"message": "one"})
@@ -323,7 +315,7 @@ async def test_exposed_agent_threads_resolved_identity(monkeypatch):
     monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: "jwt-alice")
     agent = _agent()
     calls = _stub_arun(agent, RunOutput(content="ok"))
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     await _call_tool(os, "chief", {"message": "hi", "user_id": "spoofed", "session_id": "s-1"})
     assert calls[0]["user_id"] == "jwt-alice"
@@ -334,7 +326,7 @@ async def test_exposed_agent_enforces_run_scopes(monkeypatch):
     """A sessions:read-only PAT is denied on the named tool exactly as on run_agent."""
     _patch_request(monkeypatch, _pat_request(["sessions:read"]))
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     result = await _call_tool(os, "chief", {"message": "hi"}, raise_on_error=False)
     assert result.is_error
@@ -347,7 +339,7 @@ async def test_exposed_agent_allows_matching_scope(monkeypatch):
     _patch_request(monkeypatch, _pat_request(["agents:run"]))
     agent = _agent()
     _stub_arun(agent, RunOutput(content="ok"))
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     result = await _call_tool(os, "chief", {"message": "hi"}, raise_on_error=False)
     assert not result.is_error
@@ -371,7 +363,7 @@ async def test_exposed_agent_surfaces_paused_runs():
             ],
         ),
     )
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     result = await _call_tool(os, "chief", {"message": "hi"})
     structured = result.structured_content or {}
@@ -390,7 +382,7 @@ async def test_exposed_tool_resolves_at_call_time(monkeypatch):
     roster_calls = _stub_arun(roster_agent, RunOutput(content="roster"))
     substitute = Agent(id="chief", name="Chief Substitute")
     substitute_calls = _stub_arun(substitute, RunOutput(content="substitute"))
-    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, agents=[roster_agent]))
+    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, tools=[roster_agent]))
 
     async def _resolve(os_, kind, component_id, **kwargs):
         assert kind == "agents" and component_id == "chief"
@@ -423,7 +415,7 @@ async def test_exposed_tools_apply_the_session_ownership_gate(monkeypatch):
         agents=[agent],
         teams=[team],
         workflows=[workflow],
-        mcp=MCPConfig(default_tools=False, agents=[agent], teams=[team], workflows=[workflow]),
+        mcp=MCPConfig(default_tools=False, tools=[agent, team, workflow]),
     )
 
     async with Client(build_mcp_server(os)) as client:
@@ -440,7 +432,7 @@ async def test_exposed_workflow_enforces_scopes_and_mints_sessions(monkeypatch):
     _patch_request(monkeypatch, _pat_request(["agents:run"]))
     workflow = _workflow()
     wf_calls = _stub_arun(workflow, WorkflowRunOutput(content="ok"))
-    os = AgentOS(workflows=[workflow], mcp=MCPConfig(default_tools=False, workflows=[workflow]))
+    os = AgentOS(workflows=[workflow], mcp=MCPConfig(default_tools=False, tools=[workflow]))
 
     denied = await _call_tool(os, "daily-brief", {"message": "go"}, raise_on_error=False)
     assert denied.is_error
@@ -458,7 +450,7 @@ async def test_exposed_agent_honours_per_resource_scopes(monkeypatch):
     """agents:<id>:run grants exactly that agent's tool -- the fail-open regression guard."""
     agent = _agent()
     _stub_arun(agent, RunOutput(content="ok"))
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     _patch_request(monkeypatch, _pat_request(["agents:chief:run"]))
     allowed = await _call_tool(os, "chief", {"message": "hi"}, raise_on_error=False)
@@ -476,7 +468,7 @@ async def test_exposed_agent_honours_per_resource_scopes(monkeypatch):
 async def test_exposed_id_colliding_with_default_tool_raises():
     """An exposed component whose tool name matches a default tool is a hard build error."""
     agent = _agent(id="run_agent")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent]))
     with pytest.raises(ValueError, match='"run_agent"'):
         build_mcp_server(os)
 
@@ -484,7 +476,7 @@ async def test_exposed_id_colliding_with_default_tool_raises():
 async def test_colliding_default_tool_name_is_fine_when_builtins_off():
     """The same id is fine when the default tools are off -- the name is free."""
     agent = _agent(id="run_agent")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     assert await _tool_names(os) == {"run_agent"}
 
 
@@ -494,7 +486,7 @@ def test_exposed_id_colliding_with_custom_tool_raises():
         return "custom"
 
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent], tools=[chief]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent, chief]))
     with pytest.raises(ValueError, match='custom tool "chief"'):
         build_mcp_server(os)
 
@@ -503,51 +495,57 @@ def test_exposing_two_components_with_same_tool_name_raises():
     """Cross-kind id reuse (legal in AgentOS) still collides on the one tool namespace."""
     agent = _agent(id="shared-name")
     team = Team(id="shared-name", name="Shared Team", members=[_agent(id="member")])
-    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, agents=[agent], teams=[team]))
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[agent, team]))
     with pytest.raises(ValueError, match='"shared-name"'):
         build_mcp_server(os)
 
 
-def test_wrong_kind_exposure_names_the_actual_kind():
-    """A Team in MCPConfig.agents must say 'move it to MCPConfig.teams' -- advising
-    AgentOS(agents=[team]) would gate the team on the wrong scope family."""
+def test_kind_derives_from_roster_membership():
+    """A Team in tools= is gated on teams:run -- kind comes from the roster it lives
+    in, never from which parameter it was passed to (there is only one now)."""
     team = _team()
-    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, agents=[team], teams=[team]))
-    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
-        build_mcp_server(os)
+    _stub_arun(team, TeamRunOutput(content="ok"))
+    os = AgentOS(teams=[team], mcp=MCPConfig(default_tools=False, tools=[team]))
+    assert build_mcp_server(os) is not None
 
 
-def test_wrong_kind_entry_never_id_matches_a_same_id_component():
-    """AgentOS permits an Agent and a Team to share an id; a Team entry in
-    MCPConfig.agents must error, not id-match and silently publish the Agent."""
+def test_ambiguous_id_copy_across_rosters_raises():
+    """AgentOS permits an Agent and a Team to share an id. The roster INSTANCE resolves
+    by identity, but an equal-id COPY matches two rosters -- ambiguous, and silently
+    picking one would publish a component under the other kind's scopes."""
     agent = _agent(id="shared", name="The Agent")
     team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
-    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, agents=[team]))
-    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
+    stray_copy = Team(id="shared", name="Stray Copy", members=[_agent(id="m2")])
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[stray_copy]))
+    with pytest.raises(ValueError, match="more than one"):
         build_mcp_server(os)
 
 
-def test_wrong_kind_copy_outside_all_rosters_is_still_rejected():
-    """Even a copy of a wrong-kind component (in no roster, so identity checks miss it)
-    is caught by its concrete class before the id fallback can run."""
+def test_roster_instance_wins_by_identity_even_with_shared_id():
+    """The actual roster Team resolves by identity, shared id or not."""
     agent = _agent(id="shared", name="The Agent")
-    stray_team = Team(id="shared", name="Stray Team", members=[_agent(id="m2")])
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[stray_team]))
-    with pytest.raises(ValueError, match="move it to MCPConfig.teams"):
-        build_mcp_server(os)
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[team]))
+    with pytest.raises(ValueError, match="collides") as exc_info:
+        # Both roster components exposed under the same id: the second collides -- but
+        # BOTH resolved (the collision message proves the team resolved as a team).
+        build_mcp_server(AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[agent, team])))
+    assert 'exposed agent "shared"' in str(exc_info.value)
+    assert build_mcp_server(os) is not None
 
 
 def test_exposing_non_roster_instance_raises():
     roster_agent = _agent()
     outsider = _agent(id="outsider", name="Outsider")
-    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, agents=[outsider]))
+    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, tools=[outsider]))
     with pytest.raises(ValueError, match="not part of the AgentOS roster"):
         build_mcp_server(os)
 
 
-def test_exposing_unknown_id_string_raises():
-    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, agents=["ghost"]))
-    with pytest.raises(ValueError, match="'ghost'"):
+def test_id_string_in_tools_raises_type_error():
+    """Strings are ambiguous in tools= -- pass the component instance."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, tools=["chief"]))
+    with pytest.raises(TypeError, match="instance"):
         build_mcp_server(os)
 
 
@@ -562,7 +560,7 @@ def test_exposed_id_colliding_with_fastmcp_derived_name_raises():
 
     partial_tool = functools.partial(base_tool, y="fixed")
     agent = _agent(id="partial", name="Partial Agent")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent], tools=[partial_tool]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent, partial_tool]))
     with pytest.raises(ValueError, match='custom tool "partial"'):
         build_mcp_server(os)
 
@@ -577,7 +575,7 @@ def test_exposed_id_colliding_with_named_agno_function_raises():
         return "custom"
 
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent], tools=[chief_fn]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent, chief_fn]))
     with pytest.raises(ValueError, match='custom tool "chief"'):
         build_mcp_server(os)
 
@@ -585,7 +583,7 @@ def test_exposed_id_colliding_with_named_agno_function_raises():
 async def test_exposure_composes_with_include_tags():
     """Tag scoping keeps applying to the default tools while exposure adds its own names."""
     agent = _agent()
-    os = AgentOS(agents=[agent], mcp=MCPConfig(include_tags={"core"}, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(include_tags={"core"}, tools=[agent]))
 
     names = await _tool_names(os)
     core = {name for name, tag in mcp_mod._BUILTIN_TOOL_NAMES.items() if tag == "core"}
@@ -599,7 +597,7 @@ async def test_named_component_without_id_gets_its_deterministic_id():
     construction (stable across boots), and the exposed tool follows it."""
     agent = Agent(name="Solo Named")
     _stub_arun(agent, RunOutput(content="ok"))
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     assert await _tool_names(os) == {"solo-named"}
     assert agent.id == "solo-named"
@@ -609,11 +607,11 @@ async def test_tool_name_cap_is_128():
     """OpenAI, Anthropic, and Gemini all accept 128-char tool names and reject 129
     (probed live in review) -- so 65 registers fine and 129 is the hard error."""
     ok_agent = _agent(id="a" * 65)
-    os = AgentOS(agents=[ok_agent], mcp=MCPConfig(default_tools=False, agents=[ok_agent]))
+    os = AgentOS(agents=[ok_agent], mcp=MCPConfig(default_tools=False, tools=[ok_agent]))
     assert await _tool_names(os) == {"a" * 65}
 
     long_agent = _agent(id="b" * 129)
-    os2 = AgentOS(agents=[long_agent], mcp=MCPConfig(default_tools=False, agents=[long_agent]))
+    os2 = AgentOS(agents=[long_agent], mcp=MCPConfig(default_tools=False, tools=[long_agent]))
     with pytest.raises(ValueError, match="128"):
         build_mcp_server(os2)
 
@@ -625,7 +623,7 @@ async def test_two_exposed_components_of_same_kind_run_their_own_component():
     researcher = _agent(id="researcher", name="Researcher")
     chief_calls = _stub_arun(chief, RunOutput(content="chief"))
     researcher_calls = _stub_arun(researcher, RunOutput(content="researcher"))
-    os = AgentOS(agents=[chief, researcher], mcp=MCPConfig(default_tools=False, agents=[chief, researcher]))
+    os = AgentOS(agents=[chief, researcher], mcp=MCPConfig(default_tools=False, tools=[chief, researcher]))
 
     async with Client(build_mcp_server(os)) as client:
         await client.call_tool("chief", {"message": "to chief"})
@@ -639,7 +637,7 @@ async def test_exposed_tool_honours_result_mode_full():
     """result_mode='full' applies to exposed tools exactly as to run_agent."""
     agent = _agent()
     _stub_arun(agent, RunOutput(run_id="r-full", session_id="s-full", content="done", status=RunStatus.completed))
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent], result_mode="full"))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent], result_mode="full"))
 
     result = await _call_tool(os, "chief", {"message": "hi"})
     structured = result.structured_content or {}
@@ -655,7 +653,7 @@ async def test_exposed_tool_progress_label_uses_the_resolved_component(monkeypat
     roster_agent = _agent(id="chief", name="Roster Name")
     substitute = Agent(id="chief", name="Resolved Name")
     _stub_arun(substitute, RunOutput(content="ok"))
-    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, agents=[roster_agent]))
+    os = AgentOS(agents=[roster_agent], mcp=MCPConfig(default_tools=False, tools=[roster_agent]))
 
     async def _resolve(os_, kind, component_id, **kwargs):
         return substitute
@@ -681,12 +679,12 @@ def test_exposure_only_config_does_not_warn(caplog):
 
     agent = _agent()
     with caplog.at_level(logging.WARNING):
-        MCPConfig(include_tags=set(), agents=[agent])
+        MCPConfig(include_tags=set(), tools=[agent])
     assert "zero tools" not in caplog.text
 
 
 def test_zero_tools_validator_accepts_exposure_and_still_rejects_empty():
-    MCPConfig(default_tools=False, agents=[_agent()])
+    MCPConfig(default_tools=False, tools=[_agent()])
     with pytest.raises(ValueError, match="zero tools"):
         MCPConfig(default_tools=False)
 
@@ -746,7 +744,7 @@ def test_unknown_config_key_is_rejected():
 
     agent = _agent()
     with pytest.raises(ValidationError) as exc_info:
-        MCPConfig(default_tools=False, agents=[agent], agent=[agent])
+        MCPConfig(default_tools=False, tools=[agent], agent=[agent])
     assert [(e["type"], e["loc"]) for e in exc_info.value.errors()] == [("extra_forbidden", ("agent",))]
 
 
@@ -793,7 +791,7 @@ async def test_exposing_unreachable_remote_does_not_fail_the_build():
     from agno.team.remote import RemoteTeam
 
     remote = RemoteTeam(base_url="http://127.0.0.1:9", team_id="remote-team")
-    os = AgentOS(teams=[remote], mcp=MCPConfig(default_tools=False, teams=[remote]))
+    os = AgentOS(teams=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
 
     async with Client(build_mcp_server(os)) as client:
         (tool,) = await client.list_tools()
@@ -805,7 +803,7 @@ async def test_exposing_unreachable_remote_does_not_fail_the_build():
 async def test_whitespace_only_description_falls_back():
     """A whitespace-only description must not produce a tool description starting '. '."""
     agent = _agent(description="   ")
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
     async with Client(build_mcp_server(os)) as client:
         (tool,) = await client.list_tools()
@@ -828,13 +826,13 @@ async def test_paused_run_without_continue_run_points_at_rest():
     )
     agent = _agent()
     _stub_arun(agent, paused)
-    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, agents=[agent]))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent]))
     result = await _call_tool(os, "chief", {"message": "hi"})
     assert "continue_run tool is not registered" in result.content[0].text
 
     agent2 = _agent(id="chief2")
     _stub_arun(agent2, paused)
-    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(include_tags={"core"}, agents=[agent2]))
+    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(include_tags={"core"}, tools=[agent2]))
     result2 = await _call_tool(os2, "chief2", {"message": "hi"})
     assert "continue_run tool is not registered" not in result2.content[0].text
 
@@ -847,3 +845,138 @@ def test_assigning_dict_to_mcp_raises_type_error():
         os.mcp = {"default_tools": False, "authorize": lambda user_id: False}  # type: ignore[assignment]
     with pytest.raises(TypeError, match="MCPConfig"):
         AgentOS(agents=[_agent(id="d2")], mcp={"default_tools": False})  # type: ignore[arg-type]
+
+
+# ==================== as_tool: model-facing name/description overrides ====================
+
+
+async def test_as_tool_overrides_name_and_description():
+    """as_tool decouples the model-facing presentation from the running component."""
+    agent = _agent(description="Digs into topics.")
+    _stub_arun(agent, RunOutput(content="ok"))
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(
+            default_tools=False,
+            tools=[agent.as_tool(name="deep_research", description="Thorough, sourced research. Send one question.")],
+        ),
+    )
+
+    async with Client(build_mcp_server(os)) as client:
+        (tool,) = await client.list_tools()
+    assert tool.name == "deep_research"
+    assert tool.description is not None
+    assert tool.description.startswith("Thorough, sourced research. Send one question.")
+    assert "session_id" in tool.description
+
+
+async def test_as_tool_partial_overrides_fall_back_to_component():
+    """Omitted overrides fall back: name to the id, description to the component's."""
+    agent = _agent(description="The component description.")
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(description="Only the pitch changes.")]),
+    )
+    async with Client(build_mcp_server(os)) as client:
+        (tool,) = await client.list_tools()
+    assert tool.name == "chief"
+    assert tool.description is not None and tool.description.startswith("Only the pitch changes.")
+
+    agent2 = _agent(id="chief2", description="Kept description.")
+    os2 = AgentOS(agents=[agent2], mcp=MCPConfig(default_tools=False, tools=[agent2.as_tool(name="ask_chief")]))
+    async with Client(build_mcp_server(os2)) as client:
+        (tool2,) = await client.list_tools()
+    assert tool2.name == "ask_chief"
+    assert tool2.description is not None and tool2.description.startswith("Kept description.")
+
+
+async def test_as_tool_runs_the_wrapped_component_with_full_machinery(monkeypatch):
+    """The override changes presentation only: scopes still gate on the component id,
+    and the run threads through the same chain as a bare exposure."""
+    _patch_request(monkeypatch, _pat_request(["agents:researcher:run"]))
+    agent = _agent(id="researcher", name="Researcher")
+    calls = _stub_arun(agent, RunOutput(content="ok"))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="deep_research")]))
+
+    allowed = await _call_tool(os, "deep_research", {"message": "hi"}, raise_on_error=False)
+    assert not allowed.is_error
+    assert calls[0]["message"] == "hi"
+
+    _patch_request(monkeypatch, _pat_request(["agents:other:run"]))
+    blocked = await _call_tool(os, "deep_research", {"message": "hi"}, raise_on_error=False)
+    assert blocked.is_error
+    assert "Insufficient permissions" in str(blocked.content)
+
+
+def test_as_tool_invalid_override_name_raises_with_candidate():
+    """The override goes through the same provider-shape validation as ids."""
+    agent = _agent()
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="Ask Chief")]),
+    )
+    with pytest.raises(ValueError, match="as_tool"):
+        try:
+            build_mcp_server(os)
+        except ValueError as e:
+            assert "name='ask-chief'" in str(e)
+            raise
+
+
+def test_as_tool_override_collision_raises():
+    a1 = _agent(id="one", name="One")
+    a2 = _agent(id="two", name="Two")
+    os = AgentOS(
+        agents=[a1, a2],
+        mcp=MCPConfig(default_tools=False, tools=[a1.as_tool(name="ask"), a2.as_tool(name="ask")]),
+    )
+    with pytest.raises(ValueError, match='"ask"'):
+        build_mcp_server(os)
+
+
+async def test_team_and_workflow_as_tool_work():
+    team = _team()
+    workflow = _workflow()
+    _stub_arun(team, TeamRunOutput(content="ok"))
+    _stub_arun(workflow, WorkflowRunOutput(content="ok"))
+    os = AgentOS(
+        teams=[team],
+        workflows=[workflow],
+        mcp=MCPConfig(
+            default_tools=False,
+            tools=[team.as_tool(name="ask_support"), workflow.as_tool(name="run_brief")],
+        ),
+    )
+    assert await _tool_names(os) == {"ask_support", "run_brief"}
+
+
+async def test_structured_content_carries_the_component_id():
+    """With the tool name decoupled from the id, the result must carry the id -- it is
+    the continue_run/get_sessions handle."""
+    agent = _agent(id="researcher", name="Researcher")
+    _stub_arun(agent, RunOutput(agent_id="researcher", content="ok", status=RunStatus.completed))
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="deep_research")]))
+
+    result = await _call_tool(os, "deep_research", {"message": "hi"})
+    structured = result.structured_content or {}
+    structured = structured.get("result", structured) or {}
+    assert structured.get("agent_id") == "researcher"
+
+
+def test_component_tool_marker_is_declarative():
+    """as_tool returns a marker, not a callable -- binding a callable here would bypass
+    the exposure machinery."""
+    from agno.tools import ComponentTool
+
+    marker = _agent().as_tool(name="ask_chief", description="d")
+    assert isinstance(marker, ComponentTool)
+    assert not callable(marker)
+    assert marker.name == "ask_chief"
+    assert marker.description == "d"
+
+
+def test_as_tool_of_non_roster_component_raises():
+    outsider = _agent(id="outsider")
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, tools=[outsider.as_tool(name="ask")]))
+    with pytest.raises(ValueError, match="not part of the AgentOS roster"):
+        build_mcp_server(os)

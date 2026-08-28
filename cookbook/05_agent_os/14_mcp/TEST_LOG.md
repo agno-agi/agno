@@ -14,17 +14,20 @@ accepted aliases).
 **Test mode:** LIVE
 
 **Description:** Started the checked-in server (two gpt-5.6-luna agents,
-`default_tools=False`, both agents exposed via `MCPConfig(agents=[...])`) and
-drove it with a FastMCP streamable-HTTP client: listed tools, checked the
-generated schema and description, ran `chief` twice -- once sessionless, once
-continuing the returned session.
+`default_tools=False`, one exposed bare and one via
+`researcher.as_tool(name="deep_research", description=...)` in
+`MCPConfig(tools=[...])`) and drove it with a FastMCP streamable-HTTP client:
+listed tools, checked the generated schemas and descriptions, ran `chief`
+twice -- once sessionless, once continuing the returned session.
 
-**Result:** `tools/list` returned exactly `chief` and `researcher`. The
-`chief` tool carried the agent's own description plus the session sentence,
-and its client-facing schema was `message` (required), `session_id`,
-`user_id`. The sessionless call minted a session and completed with content
-"Earth"; the follow-up call on the returned session_id recalled "Earth",
-proving live session continuity through the exposed tool.
+**Result:** `tools/list` returned exactly `chief` and `deep_research`. The
+`chief` tool carried the agent's own description plus the session sentence;
+`deep_research` carried the as_tool override pitch. The client-facing schema
+was `message` (required), `session_id`, `user_id`; structuredContent carried
+`agent_id` ("chief") alongside run_id/session_id/status. The sessionless call
+minted a session and completed with content "Earth"; the follow-up call on the
+returned session_id recalled "Earth", proving live session continuity through
+the exposed tool.
 
 ---
 

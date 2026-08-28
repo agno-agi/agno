@@ -82,6 +82,14 @@ def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
         "session_id": run_output.session_id,
         "status": run_status_string(run_output),
     }
+    # The component id is the handle for continue_run/get_sessions. The generic run
+    # tools' callers already know it (they passed it), but an exposed tool's caller only
+    # knows the tool name -- which may be an as_tool() override -- so the result must
+    # carry the id or a paused run is unresumable.
+    for key in ("agent_id", "team_id", "workflow_id"):
+        value = getattr(run_output, key, None)
+        if value:
+            structured[key] = value
     requirements = serialized_paused_requirements(run_output)
     if requirements is not None:
         structured["requirements"] = requirements

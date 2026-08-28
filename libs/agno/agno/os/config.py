@@ -39,49 +39,43 @@ class MCPConfig(BaseModel):
     # spelling is unaffected -- the before-validator maps it away before this check runs.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
-    # Components to expose as individual MCP tools, named after their ids: an agent with
-    # id "chief" becomes a tool called "chief" whose description is the agent's own.
-    # Each entry is a component instance (the same object passed to ``AgentOS``) or an id
-    # string resolved against the AgentOS roster. Every exposed component must be part of
-    # the AgentOS roster -- exposure is a view on the deployment, not a second
-    # registration path -- and tool names must not collide with the default tools, custom
-    # ``tools``, or each other; violations fail fast when the server is built. Ids must
-    # already be valid tool names: start with a letter or underscore, then only letters,
-    # digits, hyphens, and underscores, at most 128 chars (what OpenAI, Anthropic, and
-    # Gemini accept for tool names). The id doubles as the continue_run handle and the
-    # per-resource scope segment, so it is never sanitized into a different-looking tool
-    # name -- set a clean id instead. Pick MCP-safe ids early: changing a component's id
-    # later is a migration (sessions and memories are keyed by it).
+    # The tool surface of this MCP server. Each entry may be:
     #
-    # The exposed tool list is fixed when the app is built. Components added to a live
+    #   - a plain callable or an Agno ``@tool``/``Function`` -- a custom tool
+    #     (name/description inferred from the function or taken from the tool);
+    #   - an ``Agent`` / ``Team`` / ``Workflow`` instance -- exposed as a tool named
+    #     after its id, described by the component's own description;
+    #   - ``component.as_tool(name=..., description=...)`` -- the same exposure with a
+    #     model-facing name and description of your choosing, decoupled from the
+    #     component (a tool description is a prompt for the CALLING model; the
+    #     component's description is written for humans).
+    #
+    # Exposed components run through the same machinery as ``run_agent`` / ``run_team``
+    # / ``run_workflow`` (per-run copies, scope checks, session minting, ownership
+    # gates, progress reporting), so RBAC scopes like ``agents:run`` -- keyed on the
+    # component id, not the tool name -- apply identically. Combine with
+    # ``default_tools=False`` to serve ONLY your own surface.
+    #
+    # Exposure rules (violations fail fast when the server is built):
+    #   - every exposed component must be part of the AgentOS roster (exposure is a view
+    #     on the deployment, not a second registration path); pass the instance itself;
+    #   - tool names (the id, or the ``as_tool`` override) must start with a letter or
+    #     underscore, then contain only letters/digits/hyphens/underscores, at most 128
+    #     chars -- what OpenAI, Anthropic, and Gemini accept; never sanitized. Pick
+    #     MCP-safe ids early: changing a component's id later is a migration (sessions
+    #     and memories are keyed by it);
+    #   - names must not collide across default tools, custom tools, and exposures.
+    #
+    # The tool list is fixed when the app is built: components added to a live
     # deployment (resync) are runnable through the generic run tools immediately, but
-    # appear as named tools only after a restart.
-    #
-    # Publication note: listing here is publishing. Every caller who can reach tools/list
-    # sees the exposed tools' names and descriptions (invocation is still gated by
-    # scopes at call time) -- omit a component here to keep it out of the list while it
-    # stays runnable through the default run tools.
-    #
-    # Factories: a factory whose input_schema has required fields cannot currently be
-    # invoked over MCP at all (neither via run_agent nor via exposure -- the MCP run
-    # tools do not carry factory_input yet); invoke those over REST.
-    #
-    # The generated tools run through the same machinery as ``run_agent`` /
-    # ``run_team`` / ``run_workflow`` (per-run copies, scope checks, session minting,
-    # ownership gates, progress reporting), so RBAC scopes like ``agents:run`` apply
-    # to them identically. Combine with ``default_tools=False`` to serve ONLY the
-    # named components.
-    #
-    # Note for HITL: resuming a PAUSED run needs the default ``continue_run`` tool, so
-    # deployments exposing agents with ``requires_confirmation`` tools should keep
-    # ``default_tools=True`` or ``include_tags={"core"}``.
-    agents: Optional[List[Any]] = None
-    teams: Optional[List[Any]] = None
-    workflows: Optional[List[Any]] = None
-
-    # Custom tools to register on the MCP server. Each entry may be a plain callable
-    # (name/description inferred from ``__name__``/docstring) or an Agno tool/``Function``
-    # (name/description taken from the tool, entrypoint used as the callable).
+    # appear as named tools only after a restart. Listing here is publishing: every
+    # caller who can reach tools/list sees the names and descriptions (invocation is
+    # still gated by scopes at call time). Resuming a PAUSED (HITL) run needs the
+    # default ``continue_run`` tool, so keep ``default_tools=True`` or
+    # ``include_tags={"core"}`` when exposing components with confirmation-required
+    # tools; the exposed result's structuredContent carries the component id either
+    # way. Factories whose input_schema has required fields cannot be invoked over MCP
+    # yet (true for run_agent too); invoke those over REST.
     #
     # Identity: a custom tool may declare a ``user_id`` parameter. AgentOS fills it with
     # the authenticated caller's id (the JWT subject) and hides it from the client-facing
@@ -89,9 +83,9 @@ class MCPConfig(BaseModel):
     # FastMCP ``Context`` parameter, which FastMCP injects natively.
     tools: Optional[List[Any]] = None
 
-    # Master switch for the 8 default tools. Set to False to ship only your own surface:
-    # exposed components (``agents``/``teams``/``workflows``) and/or custom ``tools``.
-    # ``enable_builtin_tools`` is the deprecated spelling, still accepted at construction.
+    # Master switch for the 8 default tools. Set to False to ship only your own
+    # ``tools`` surface. ``enable_builtin_tools`` is the deprecated spelling, still
+    # accepted at construction.
     default_tools: bool = True
 
     # Finer scoping over the default tools via their tags (see ``MCP_BUILTIN_TAGS``).
@@ -182,17 +176,13 @@ class MCPConfig(BaseModel):
         # the alias keeps that path working too.
         self.default_tools = bool(value)
 
-    def _has_exposed_components(self) -> bool:
-        return bool(self.agents) or bool(self.teams) or bool(self.workflows)
-
     @model_validator(mode="after")
     def _check_has_tools(self) -> "MCPConfig":
         """Refuse a config that would mount an MCP server with zero tools.
 
-        ``default_tools=False`` plus no ``tools`` and no exposed components is almost
-        always a mistake -- the user disabled the default tools intending to ship their
-        own surface and forgot to register it, and ends up with a working ``/mcp``
-        endpoint that lists nothing. Fail fast at construction with an actionable
+        ``default_tools=False`` plus no ``tools`` is almost always a mistake -- the user
+        disabled the default tools intending to ship their own surface and forgot to
+        register it, and ends up with a working ``/mcp`` endpoint that lists nothing. Fail fast at construction with an actionable
         message instead of booting a useless server.
 
         The tags reach the same dead end without tripping that check: an explicitly empty
@@ -200,12 +190,12 @@ class MCPConfig(BaseModel):
         all the default tools while ``default_tools`` is still True. That case only
         warns -- see below.
         """
-        if not self.default_tools and not self.tools and not self._has_exposed_components():
+        if not self.default_tools and not self.tools:
             raise ValueError(
-                "MCPConfig would register zero tools: default_tools=False with no tools and no "
-                "exposed components. Pass agents=[...]/teams=[...]/workflows=[...] to expose "
-                "components as tools, tools=[...] to register custom tools, or leave "
-                "default_tools=True (the default) to ship the default tools."
+                "MCPConfig would register zero tools: default_tools=False and tools is empty. "
+                "Pass tools=[...] -- components (chief), wrapped components "
+                "(chief.as_tool(name=..., description=...)), and custom callables all go there -- "
+                "or leave default_tools=True (the default) to ship the default tools."
             )
 
         # Warn rather than raise: unlike the branch above, this configuration is accepted
@@ -213,7 +203,7 @@ class MCPConfig(BaseModel):
         # Resolution mirrors ``_enabled_builtin_tags`` in ``agno/os/mcp.py``; it is inlined
         # here so this module keeps its typing+pydantic-only imports (``mcp.py`` pulls in
         # FastMCP, an optional extra).
-        if self.default_tools and not self.tools and not self._has_exposed_components():
+        if self.default_tools and not self.tools:
             enabled = set(self.include_tags) if self.include_tags is not None else set(MCP_BUILTIN_TAGS)
             if self.exclude_tags:
                 enabled -= set(self.exclude_tags)

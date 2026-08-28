@@ -61,23 +61,35 @@ agent_os = AgentOS(
     agents=[chief, researcher],
     mcp=MCPConfig(
         default_tools=False,
-        agents=[chief, researcher],
+        tools=[
+            chief,
+            researcher.as_tool(
+                name="deep_research",
+                description="Thorough, sourced research. Send one clear question.",
+            ),
+        ],
     ),
 )
 ```
 
-`tools/list` then shows `chief` and `researcher` -- each tool named after the
-component id, described by the component's own description, and running through
-the same machinery as `run_agent` (fresh session minting, RBAC scopes such as
-`agents:run`, per-step progress). `teams=` and `workflows=` expose teams and
-workflows the same way. Exposed components must be part of the AgentOS roster,
-and tool-name collisions fail at startup.
+`tools/list` then shows `chief` and `deep_research`. A bare component is named
+after its id and described by its own description; `as_tool(name=...,
+description=...)` publishes it under a model-facing name and pitch instead --
+a tool description is a prompt for the calling model, so it often wants to be
+different from the component's human-facing description. Either way the call
+runs through the same machinery as `run_agent` (fresh session minting, RBAC
+scopes such as `agents:run` -- keyed on the component id, not the tool name --
+per-step progress), and the result's structuredContent carries the component
+id for `continue_run`/`get_sessions`. Teams and workflows expose the same way.
+Exposed components must be part of the AgentOS roster, and tool-name
+collisions fail at startup.
 
-The component id is the tool name, verbatim. It must start with a letter or
-underscore and contain only letters, digits, hyphens, and underscores (at most
-128 characters) -- the shape OpenAI, Anthropic, and Gemini all accept for tool
-names. An id outside that shape fails at startup with a suggested clean id;
-auto-derived ids from names like "Research & Writing Team" are the usual trip.
+Tool names (a bare component's id, or the `as_tool` override) must start with
+a letter or underscore and contain only letters, digits, hyphens, and
+underscores (at most 128 characters) -- the shape OpenAI, Anthropic, and
+Gemini all accept. A name outside that shape fails at startup with a suggested
+clean one; auto-derived ids from names like "Research & Writing Team" are the
+usual trip.
 Pick MCP-safe ids before a deployment accumulates sessions: sessions and
 memories are keyed by the id, so changing it later is a migration. The exposed
 tool list is fixed at startup -- components added to a live deployment are

@@ -107,17 +107,17 @@ def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPConfig]"):
     return register
 
 
-def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPConfig]") -> Dict[str, str]:
-    """Register any user-provided custom tools on the MCP server.
+def _register_custom_tools(mcp: FastMCP, entries: List[Any]) -> Dict[str, str]:
+    """Register the custom-tool entries (callables and Agno tools) on the MCP server.
 
-    Returns the names the tools actually registered under (FastMCP's own naming, e.g.
-    ``functools.partial`` objects register as "partial"), so the exposure collision
-    check downstream sees the real registry rather than a re-derivation.
+    Entries are pre-classified by ``_split_tool_entries`` -- components and
+    ``ComponentTool`` markers never reach here. Returns the names the tools actually
+    registered under (FastMCP's own naming, e.g. ``functools.partial`` objects register
+    as "partial"), so the exposure collision check downstream sees the real registry
+    rather than a re-derivation.
     """
     names: Dict[str, str] = {}
-    if config is None or not config.tools:
-        return names
-    for tool in config.tools:
+    for tool in entries:
         name = _register_custom_tool(mcp, tool)
         names[name] = f'custom tool "{name}"'
     return names
@@ -839,122 +839,131 @@ def _suggest_exposed_id(component_id: str, singular: str, taken: Dict[str, str])
 
 
 def _validate_exposed_tool_name(
-    component_id: str, singular: str, component_name: Optional[str], taken: Dict[str, str]
+    value: str,
+    singular: str,
+    component_name: Optional[str],
+    taken: Dict[str, str],
+    source: str = "id",
 ) -> str:
-    """The MCP tool name for a component id: the id verbatim, validated.
+    """The exposed tool name -- the component id, or an ``as_tool(name=...)`` override
+    -- validated verbatim, never sanitized.
 
     ``fullmatch`` (not ``match``): ``$`` would accept a trailing newline.
     """
-    if not _TOOL_NAME_VALID_RE.fullmatch(component_id):
+    shape_rule = (
+        "tool names must start with a letter or underscore and contain only letters, digits, "
+        "hyphens, and underscores (Gemini rejects a leading digit, and one invalid name fails "
+        "every tool in the request)"
+    )
+    if not _TOOL_NAME_VALID_RE.fullmatch(value):
+        candidate = _suggest_exposed_id(value, singular, taken)
+        if source == "as_tool":
+            advice = f" For example, name={candidate!r}." if candidate else ""
+            raise ValueError(f"as_tool(name={value!r}) is not a valid tool name: {shape_rule}.{advice}")
         # Say where the id came from: with no explicit id= the user only ever typed
         # name=..., so an error quoting the derived id alone sends them hunting for a
         # string that is not in their source.
         origin = ""
-        if component_name and generate_id_from_name(component_name) == component_id:
+        if component_name and generate_id_from_name(component_name) == value:
             origin = f" (auto-derived from name={component_name!r})"
-        candidate = _suggest_exposed_id(component_id, singular, taken)
         advice = (
-            f" For example, set id={candidate!r} on the component."
+            f" For example, set id={candidate!r} on the component, or publish it under a different "
+            f"tool name via as_tool(name={candidate!r})."
             if candidate
-            else " Set an id on the component using letters, digits, hyphens, or underscores, starting with a letter or underscore."
+            else " Set an id on the component using letters, digits, hyphens, or underscores, starting with a letter or underscore -- or publish it under a valid tool name via as_tool(name=...)."
         )
         raise ValueError(
-            f"MCPConfig cannot expose {singular} id {component_id!r}{origin}: exposed tool names use "
-            "the component id verbatim, and tool names must start with a letter or underscore and "
-            "contain only letters, digits, hyphens, and underscores (Gemini rejects a leading digit, "
-            f"and one invalid name fails every tool in the request).{advice} Note: changing the id of "
-            "a component that already has sessions is a migration -- sessions and memories are keyed "
-            "by it."
+            f"MCPConfig cannot expose {singular} id {value!r}{origin}: a bare component's tool name is "
+            f"its id verbatim, and {shape_rule}.{advice} Note: changing the id of a component that "
+            "already has sessions is a migration -- sessions and memories are keyed by it."
         )
-    if len(component_id) > _TOOL_NAME_MAX_LENGTH:
+    if len(value) > _TOOL_NAME_MAX_LENGTH:
+        where = "as_tool(name=...)" if source == "as_tool" else f"{singular} id"
         raise ValueError(
-            f'MCP tool name "{component_id}" (from {singular} id) is {len(component_id)} characters; '
-            f"the LLM providers MCP clients bridge tools into cap tool names at {_TOOL_NAME_MAX_LENGTH} "
-            "characters (OpenAI, Anthropic, and Gemini all reject longer). Set a shorter id on the "
-            "component."
+            f'MCP tool name "{value}" (from {where}) is {len(value)} characters; the LLM providers '
+            f"MCP clients bridge tools into cap tool names at {_TOOL_NAME_MAX_LENGTH} characters "
+            "(OpenAI, Anthropic, and Gemini all reject longer). Use a shorter name."
         )
-    return component_id
+    return value
 
 
-def _resolve_exposed_entry(entry: Any, kind: str, os: "AgentOS") -> Any:
-    """Resolve one ``MCPConfig.agents/teams/workflows`` entry against the AgentOS roster.
+def _locate_component(entry: Any, os: "AgentOS") -> "tuple[str, Any]":
+    """``(kind, component)`` for an exposure entry, derived from roster membership.
 
     Exposure is a view on the deployment, not a second registration path: sessions,
     config, REST, and MCP must agree on what exists, so every exposed component must be
-    part of the roster. Instances match by identity first, then by id (so an equal copy
-    of a roster component still resolves); id strings match by id.
+    part of the roster -- and the roster a component lives in IS its kind (``Remote*``
+    classes are not subclasses of Agent/Team, so isinstance cannot tell kinds apart).
+    Identity match first; then id equality, so an equal copy of a roster component
+    still resolves -- but an id present in more than one roster is ambiguous and
+    errors, because publishing the wrong same-id component under another kind's scopes
+    is exactly the silent failure this check exists to prevent.
+    """
+    for kind in ("agents", "teams", "workflows"):
+        for component in getattr(os, kind, None) or []:
+            if component is entry:
+                return kind, component
+    entry_id = getattr(entry, "id", None)
+    if entry_id is not None:
+        matches = []
+        for kind in ("agents", "teams", "workflows"):
+            for component in getattr(os, kind, None) or []:
+                if getattr(component, "id", None) == entry_id:
+                    matches.append((kind, component))
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            kinds = " and ".join(kind for kind, _ in matches)
+            raise ValueError(
+                f"MCPConfig.tools entry with id {entry_id!r} matches components in more than one "
+                f"AgentOS roster ({kinds}); pass the roster instance itself so the kind is unambiguous."
+            )
+    name, _ = _safe_component_metadata(entry)
+    label = name or entry_id or type(entry).__name__
+    raise ValueError(
+        f"MCPConfig.tools contains {label!r} which is not part of the AgentOS roster; add it to "
+        f"AgentOS(agents=[...]/teams=[...]/workflows=[...]) or remove it from MCPConfig.tools."
+    )
+
+
+def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tuple[List[Any], List[tuple]]":
+    """Classify ``MCPConfig.tools`` into custom-tool entries and component exposures.
+
+    Exposures come back as ``(kind, component, name_override, description_override)``.
+    A bare Agent/Team/Workflow that is not in the roster is a hard error here (it would
+    otherwise fall through to the custom-tool TypeError, which names the type but not
+    the fix); non-component callables pass through untouched.
     """
     from agno.agent.agent import Agent
     from agno.team.team import Team
+    from agno.tools.component_tool import ComponentTool
     from agno.workflow.workflow import Workflow
 
-    roster = list(getattr(os, kind, None) or [])
-    if isinstance(entry, str):
-        for component in roster:
-            if getattr(component, "id", None) == entry:
-                return component
-        # The wrong-kind check matters MOST here: an id string carries no type
-        # information, so a team id in MCPConfig.agents is the likeliest mix-up.
-        for other_kind in ("agents", "teams", "workflows"):
-            if other_kind == kind:
-                continue
-            for component in getattr(os, other_kind, None) or []:
-                if getattr(component, "id", None) == entry:
-                    raise ValueError(
-                        f"MCPConfig.{kind} contains id {entry!r}, which is one of this AgentOS's "
-                        f"{other_kind}; move it to MCPConfig.{other_kind}."
-                    )
-        raise ValueError(
-            f"MCPConfig.{kind} contains id {entry!r} which is not part of the AgentOS roster; "
-            f"add the component to AgentOS({kind}=[...]) or remove it from MCPConfig.{kind}."
-        )
-    for component in roster:
-        if component is entry:
-            return component
-
-    entry_id = getattr(entry, "id", None)
-    label = getattr(entry, "name", None) or entry_id or repr(entry)
-
-    def _wrong_kind_error(other_kind: str) -> ValueError:
-        # A wrong-kind entry (e.g. a Team in MCPConfig.agents) must not be advised into
-        # AgentOS(agents=[...]) -- AgentOS would accept it silently and the tool would
-        # then be gated on the wrong scope family.
-        return ValueError(
-            f"MCPConfig.{kind} contains {label!r}, which is one of this AgentOS's "
-            f"{other_kind}; move it to MCPConfig.{other_kind}."
-        )
-
-    # Wrong-kind checks run BEFORE the id fallback: AgentOS permits an Agent and a Team
-    # to share an id, so a Team entry in MCPConfig.agents would otherwise id-match the
-    # same-id Agent and silently publish a different component of a different kind.
-    # First by identity against the other rosters, then by concrete class (which also
-    # catches copies of wrong-kind components that are in no roster).
-    for other_kind in ("agents", "teams", "workflows"):
-        if other_kind == kind:
+    customs: List[Any] = []
+    exposures: List[tuple] = []
+    for entry in getattr(mcp_config, "tools", None) or []:
+        if isinstance(entry, ComponentTool):
+            kind, component = _locate_component(entry.component, os)
+            exposures.append((kind, component, entry.name, entry.description))
             continue
-        for component in getattr(os, other_kind, None) or []:
-            if component is entry:
-                raise _wrong_kind_error(other_kind)
-    concrete_kind = {Agent: "agents", Team: "teams", Workflow: "workflows"}
-    for cls, cls_kind in concrete_kind.items():
-        if cls_kind != kind and isinstance(entry, cls):
-            raise _wrong_kind_error(cls_kind)
-
-    # Id fallback, so an equal copy of a roster component still resolves.
-    if entry_id is not None:
-        for component in roster:
-            if getattr(component, "id", None) == entry_id:
-                return component
-        for other_kind in ("agents", "teams", "workflows"):
-            if other_kind == kind:
+        if isinstance(entry, str):
+            raise TypeError(
+                f"MCPConfig.tools got the string {entry!r}; pass the component instance itself "
+                "(or a callable/Agno tool)."
+            )
+        if isinstance(entry, (Agent, Team, Workflow)):
+            kind, component = _locate_component(entry, os)
+            exposures.append((kind, component, None, None))
+            continue
+        # Remote components and protocol implementations are not concrete subclasses;
+        # roster membership is what identifies them as components.
+        if not callable(getattr(entry, "entrypoint", None)) and not callable(entry):
+            if getattr(entry, "id", None) is not None and hasattr(entry, "arun"):
+                kind, component = _locate_component(entry, os)
+                exposures.append((kind, component, None, None))
                 continue
-            for component in getattr(os, other_kind, None) or []:
-                if getattr(component, "id", None) == entry_id:
-                    raise _wrong_kind_error(other_kind)
-    raise ValueError(
-        f"MCPConfig.{kind} contains {label!r} which is not part of the AgentOS roster; "
-        f"add it to AgentOS({kind}=[...]) or remove it from MCPConfig.{kind}."
-    )
+        customs.append(entry)
+    return customs, exposures
 
 
 def _make_exposed_run_tool(
@@ -1051,13 +1060,18 @@ def _register_exposed_components(
     mcp_config: "Optional[MCPConfig]",
     result_mode: str,
     custom_tool_names: "Optional[Dict[str, str]]" = None,
+    exposure_entries: "Optional[List[tuple]]" = None,
 ) -> None:
-    """Register the components named in ``MCPConfig.agents/teams/workflows`` as tools.
+    """Register the component entries from ``MCPConfig.tools`` as named tools.
 
-    Names are component ids verbatim (validated, never sanitized -- the id is the
-    handle for continue_run and the per-resource scope segment, so the visible tool
-    name must equal it); collisions with the enabled default tools, custom tools, or
-    other exposed components are a hard error at build.
+    ``exposure_entries`` come from ``_split_tool_entries``:
+    ``(kind, component, name_override, description_override)`` -- a bare component gets
+    its id as the tool name and its own description; an ``as_tool(...)`` marker carries
+    explicit model-facing overrides. Names are validated verbatim, never sanitized;
+    collisions with the enabled default tools, custom tools, or other exposed
+    components are a hard error at build. The component id (not the tool name) remains
+    the continue_run handle -- carried in the result's structuredContent -- and the
+    per-resource scope segment.
 
     The registered tool list is deliberately static and identical for every caller:
     exposure is a hand-typed publication list, so listing a tool's name and description
@@ -1065,7 +1079,7 @@ def _register_exposed_components(
     scope checks the generic run tools apply. (The MCP spec does permit per-caller
     tool lists; serving one is a possible future refinement, not a spec constraint.)
     """
-    if mcp_config is None or not (mcp_config.agents or mcp_config.teams or mcp_config.workflows):
+    if not exposure_entries:
         return
 
     # Names already claimed by the default tools that will actually register, and by
@@ -1077,58 +1091,56 @@ def _register_exposed_components(
     }
     taken.update(custom_tool_names or {})
 
-    exposures: List[tuple] = [
-        ("agents", mcp_config.agents or [], "agent"),
-        ("teams", mcp_config.teams or [], "team"),
-        ("workflows", mcp_config.workflows or [], "workflow"),
-    ]
     # With the core tag scoped out (or default_tools off) there is no continue_run on
     # this server; the paused-result text then points the caller at REST instead of at a
     # tool that does not exist.
     continue_run_available = "core" in enabled_tags
+    singulars = {"agents": "agent", "teams": "team", "workflows": "workflow"}
 
-    for kind, entries, singular in exposures:
-        for entry in entries:
-            component = _resolve_exposed_entry(entry, kind, os)
-            # AgentOS mints ids for roster components at construction (name-derived when
-            # named, generated otherwise), so the id is normally always set here; the
-            # error is defense for exotic components that dodge that path.
-            component_id = getattr(component, "id", None)
-            component_name, component_description = _safe_component_metadata(component)
-            if not component_id:
-                label = component_name or repr(component)
-                raise ValueError(
-                    f"MCPConfig.{kind} contains {label!r} which has no id; set id= on the "
-                    f"component so its MCP tool has a stable name."
-                )
+    for kind, component, name_override, description_override in exposure_entries:
+        singular = singulars[kind]
+        # AgentOS mints ids for roster components at construction (name-derived when
+        # named, generated otherwise), so the id is normally always set here; the
+        # error is defense for exotic components that dodge that path.
+        component_id = getattr(component, "id", None)
+        component_name, component_description = _safe_component_metadata(component)
+        if not component_id:
+            label = component_name or repr(component)
+            raise ValueError(
+                f"MCPConfig.tools contains {label!r} which has no id; set id= on the "
+                f"component so its MCP tool has a stable name."
+            )
+        if name_override is not None:
+            tool_name = _validate_exposed_tool_name(name_override, singular, None, taken, source="as_tool")
+        else:
             tool_name = _validate_exposed_tool_name(component_id, singular, component_name, taken)
-            if tool_name in taken:
-                raise ValueError(
-                    f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") collides with '
-                    f"{taken[tool_name]}. Rename the component id, or adjust default_tools/tools/"
-                    "the exposed components so each tool name is unique."
-                )
-            taken[tool_name] = f'exposed {singular} "{component_id}"'
+        if tool_name in taken:
+            raise ValueError(
+                f'MCP tool name "{tool_name}" (from {singular} id "{component_id}") collides with '
+                f"{taken[tool_name]}. Rename the tool (as_tool(name=...)) or the component id, or "
+                "adjust default_tools/tools so each tool name is unique."
+            )
+        taken[tool_name] = f'exposed {singular} "{component_id}"'
 
-            display_name = component_name or component_id
-            # strip() BEFORE the fallback test: a whitespace-only description is truthy
-            # but would rstrip to nothing, yielding a description that starts with ".".
-            base_description = (component_description or "").strip()
-            if not base_description:
-                base_description = f"Run the {display_name} {singular} with a message."
-            if not base_description.endswith((".", "!", "?")):
-                base_description += "."
-            description = f"{base_description} {_EXPOSED_SESSION_SENTENCE}"
+        display_name = component_name or component_id
+        # strip() BEFORE the fallback test: a whitespace-only description is truthy
+        # but would rstrip to nothing, yielding a description that starts with ".".
+        base_description = (description_override or "").strip() or (component_description or "").strip()
+        if not base_description:
+            base_description = f"Run the {display_name} {singular} with a message."
+        if not base_description.endswith((".", "!", "?")):
+            base_description += "."
+        description = f"{base_description} {_EXPOSED_SESSION_SENTENCE}"
 
-            if kind == "workflows":
-                fn = _make_exposed_workflow_tool(os, component_id, result_mode, continue_run_available)
-            else:
-                fn = _make_exposed_run_tool(os, kind, component_id, result_mode, continue_run_available)  # type: ignore[arg-type]
-            mcp.tool(
-                name=tool_name,
-                description=description,
-                annotations={"readOnlyHint": False, "openWorldHint": True},
-            )(fn)
+        if kind == "workflows":
+            fn = _make_exposed_workflow_tool(os, component_id, result_mode, continue_run_available)
+        else:
+            fn = _make_exposed_run_tool(os, kind, component_id, result_mode, continue_run_available)  # type: ignore[arg-type]
+        mcp.tool(
+            name=tool_name,
+            description=description,
+            annotations={"readOnlyHint": False, "openWorldHint": True},
+        )(fn)
 
 
 def build_mcp_server(
@@ -1566,11 +1578,12 @@ def build_mcp_server(
 
     # Register any user-provided custom tools. These share the same server, mount (/mcp),
     # lifespan, and JWT middleware as the built-in tools.
-    custom_tool_names = _register_custom_tools(mcp, mcp_config)
+    custom_entries, exposure_entries = _split_tool_entries(mcp_config, os)
+    custom_tool_names = _register_custom_tools(mcp, custom_entries)
 
     # Expose the components named in the config as individual tools ("chief", not
     # run_agent(agent_id="chief")). Last, so collision checks see the full surface.
-    _register_exposed_components(mcp, os, mcp_config, result_mode, custom_tool_names)
+    _register_exposed_components(mcp, os, mcp_config, result_mode, custom_tool_names, exposure_entries)
 
     return mcp
 

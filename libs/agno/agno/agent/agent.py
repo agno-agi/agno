@@ -41,6 +41,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
+    from agno.tools.component_tool import ComponentTool
 
 from agno.media import Audio, File, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -760,6 +761,20 @@ class Agent:
     # ---------------------------------------------------------------
     # _init module delegates
     # ---------------------------------------------------------------
+
+    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
+        """Publish this agent as a tool with its own model-facing name and description.
+
+        Returns a declarative :class:`~agno.tools.component_tool.ComponentTool` marker
+        for surfaces that turn components into tools -- today the AgentOS MCP server:
+        ``MCPConfig(tools=[chief.as_tool(name="ask_chief", description=...)])``. Both
+        overrides are optional; the tool name must be a valid tool identifier (start
+        with a letter or underscore, then letters/digits/hyphens/underscores). The
+        agent id remains the continue_run handle and the scope segment.
+        """
+        from agno.tools.component_tool import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description)
 
     def set_id(self) -> None:
         return _init.set_id(self)
