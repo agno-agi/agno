@@ -599,6 +599,37 @@ def test_wrong_kind_as_tool_entry_raises_too():
         build_mcp_server(os)
 
 
+def test_wrong_kind_remote_entry_raises_too():
+    """Remote* classes name their kind just like the concrete ones: a non-roster
+    RemoteAgent must not resolve to a same-id roster TEAM. Only truly kindless
+    duck-typed protocol objects keep the all-roster scan."""
+    from agno.agent.remote import RemoteAgent
+
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    stray_remote = RemoteAgent(base_url="http://127.0.0.1:9", agent_id="shared")
+    os = AgentOS(agents=[_agent()], teams=[team], mcp=MCPConfig(default_tools=False, tools=[stray_remote]))
+    with pytest.raises(ValueError, match="different kind"):
+        build_mcp_server(os)
+
+
+async def test_roster_factory_in_tools_exposes_as_named_tool():
+    """A component factory registered on the roster is a component entry: passed bare
+    in tools=, it exposes under its id instead of dying in Tool.from_function (a
+    BaseFactory is neither callable nor arun-shaped)."""
+    from agno.agent.factory import AgentFactory
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    factory = AgentFactory(
+        id="made-to-order",
+        db=InMemoryDb(),
+        factory=lambda ctx: _agent(id="made-to-order"),
+        description="Built per request.",
+    )
+    os = AgentOS(agents=[factory], mcp=MCPConfig(default_tools=False, tools=[factory]))
+    names = await _tool_names(os)
+    assert "made-to-order" in names
+
+
 def test_roster_instance_wins_by_identity_even_with_shared_id():
     """The actual roster Team resolves by identity, shared id or not."""
     agent = _agent(id="shared", name="The Agent")
@@ -1172,6 +1203,26 @@ async def test_custom_tool_named_like_default_tool_raises_on_default_surface():
     os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[run_agent]))
     with pytest.raises(ValueError, match='custom tool name "run_agent"'):
         build_mcp_server(os)
+
+
+async def test_duplicate_custom_tool_names_raise():
+    """Two custom tools registering under the same name hard-error like every other
+    collision on the server -- FastMCP would otherwise warn-and-replace, and the
+    first tool would silently vanish from tools/list."""
+
+    def helper() -> str:
+        """First helper."""
+        return "one"
+
+    def helper2() -> str:
+        """Second helper."""
+        return "two"
+
+    helper2.__name__ = "helper"
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, tools=[helper, helper2]))
+    with pytest.raises(ValueError, match='custom tool name "helper"') as exc_info:
+        build_mcp_server(os)
+    assert 'custom tool "helper"' in str(exc_info.value)
 
 
 async def test_custom_tool_may_claim_a_scoped_out_builtin_name():

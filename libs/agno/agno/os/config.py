@@ -22,7 +22,8 @@ def _apply_legacy_enable_builtin_tools(data: Dict[str, Any]) -> Dict[str, Any]:
     """Map the deprecated ``enable_builtin_tools`` key onto ``default_tools`` in a dict
     copy (the caller's mapping is never mutated). Both keys with different values is a
     contradiction, never a guess -- raise. Shared by the construction validator and
-    ``model_copy`` so every dict-shaped entry point maps the alias the same way."""
+    ``model_copy``; pydantic's deprecated ``.copy(update=...)`` bypasses both and
+    still drops the legacy key."""
     data = dict(data)
     legacy = data.pop("enable_builtin_tools")
     if "default_tools" in data and data["default_tools"] != legacy:
@@ -90,8 +91,9 @@ class MCPConfig(BaseModel):
     # The tool list is fixed when the app is built: components added to a live
     # deployment (resync) are immediately runnable through the generic run tools where
     # those are served, but appear as named tools only after a restart (with
-    # ``default_tools=False`` there are no generic run tools, so a component added
-    # after boot is unreachable over MCP until then). Listing here is publishing: every
+    # ``default_tools=False`` there are no generic run tools, so no MCP tool can start
+    # a run on a post-boot component until then -- the riding lifecycle pair still
+    # reaches its existing runs at call time). Listing here is publishing: every
     # caller who can reach tools/list sees the names and descriptions (invocation is
     # still gated by scopes at call time). HITL works out of the box: whenever
     # components are exposed, ``continue_run`` and ``cancel_run`` register alongside

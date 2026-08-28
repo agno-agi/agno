@@ -132,19 +132,23 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
     rather than a re-derivation.
 
     A custom tool named like a default tool that will register (its tags intersect
-    ``enabled_tags``) is a hard error, matching the exposure path: FastMCP would
-    otherwise warn-and-REPLACE, so a custom ``continue_run`` would silently shadow the
-    riding builtin while paused results keep steering callers to the builtin's schema.
+    ``enabled_tags``), or like an earlier custom tool, is a hard error, matching the
+    exposure path: FastMCP would otherwise warn-and-REPLACE, so a custom
+    ``continue_run`` would silently shadow the riding builtin (while paused results
+    keep steering callers to the builtin's schema), and a duplicate custom name would
+    silently swallow the first tool.
     """
-    enabled_builtin_names = {
+    taken = {
         builtin: f'the default tool "{builtin}"'
         for builtin, tags in _BUILTIN_TOOL_NAMES.items()
         if tags & (enabled_tags or set())
     }
     names: Dict[str, str] = {}
     for tool in entries:
-        name = _register_custom_tool(mcp, tool, taken=enabled_builtin_names)
-        names[name] = f'custom tool "{name}"'
+        name = _register_custom_tool(mcp, tool, taken=taken)
+        label = f'custom tool "{name}"'
+        names[name] = label
+        taken[name] = label
     return names
 
 
@@ -172,11 +176,14 @@ def _register_custom_tool(mcp: FastMCP, tool: Any, taken: "Optional[Dict[str, st
         )
 
     if taken and tool_obj.name in taken:
-        raise ValueError(
-            f'MCP custom tool name "{tool_obj.name}" collides with {taken[tool_obj.name]}. '
+        claimant = taken[tool_obj.name]
+        advice = (
             "Rename the custom tool, or scope the default tool out via "
             "default_tools/include_tags/exclude_tags so each tool name is unique."
+            if claimant.startswith("the default tool")
+            else "Rename one of them so each tool name is unique."
         )
+        raise ValueError(f'MCP custom tool name "{tool_obj.name}" collides with {claimant}. {advice}')
     mcp.add_tool(tool_obj)
     return tool_obj.name
 
@@ -930,11 +937,12 @@ def _locate_component(entry: Any, os: "AgentOS", expected_kind: "Optional[str]" 
     errors, because publishing the wrong same-id component under another kind's scopes
     is exactly the silent failure this check exists to prevent.
 
-    ``expected_kind`` restricts the id fallback for entries whose concrete class
-    already names their kind: a non-roster ``Agent`` entry must never resolve to a
-    same-id roster ``Team`` -- that would run the team under the agent entry's name
-    and description, gated by the other kind's scopes. Duck-typed entries (``Remote*``)
-    carry no kind on their class, so they keep the all-roster scan.
+    ``expected_kind`` restricts the id fallback for entries whose class already names
+    their kind (concrete components, ``Remote*``, factories): a non-roster ``Agent``
+    or ``RemoteAgent`` entry must never resolve to a same-id roster ``Team`` -- that
+    would run the team under the agent entry's name and description, gated by the
+    other kind's scopes. Only a truly kindless duck-typed protocol object keeps the
+    all-roster scan.
     """
     for kind in ("agents", "teams", "workflows"):
         for component in getattr(os, kind, None) or []:
@@ -964,8 +972,9 @@ def _locate_component(entry: Any, os: "AgentOS", expected_kind: "Optional[str]" 
             ]
             if other_kinds:
                 singular = {"agents": "agent", "teams": "team", "workflows": "workflow"}[expected_kind]
+                article = "an" if singular == "agent" else "a"
                 raise ValueError(
-                    f"MCPConfig.tools contains a {singular} with id {entry_id!r} that is not in "
+                    f"MCPConfig.tools contains {article} {singular} with id {entry_id!r} that is not in "
                     f"AgentOS({expected_kind}=[...]); the roster component with that id is of a different "
                     f"kind ({' and '.join(other_kinds)}). If you meant that component, pass the roster "
                     "instance itself -- exposing it through a same-id entry of another kind would swap "
@@ -993,10 +1002,30 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
     from agno.workflow.workflow import Workflow
 
     def _concrete_kind(obj: Any) -> "Optional[str]":
-        # The concrete class names the intended kind, so _locate_component can refuse a
-        # same-id roster component of another kind instead of silently publishing it.
-        # Remote*/duck-typed components return None (kind comes from the roster alone).
-        for cls, kind in ((Agent, "agents"), (Team, "teams"), (Workflow, "workflows")):
+        # The class names the intended kind, so _locate_component can refuse a same-id
+        # roster component of another kind instead of silently publishing it. Remote*
+        # and factory classes name their kind just as the concrete components do; only
+        # a truly kindless duck-typed protocol object returns None (kind comes from
+        # the roster alone).
+        from agno.agent.factory import AgentFactory
+        from agno.agent.remote import RemoteAgent
+        from agno.team.factory import TeamFactory
+        from agno.team.remote import RemoteTeam
+        from agno.workflow.factory import WorkflowFactory
+        from agno.workflow.remote import RemoteWorkflow
+
+        kinds: "tuple[tuple[type, str], ...]" = (
+            (Agent, "agents"),
+            (RemoteAgent, "agents"),
+            (AgentFactory, "agents"),
+            (Team, "teams"),
+            (RemoteTeam, "teams"),
+            (TeamFactory, "teams"),
+            (Workflow, "workflows"),
+            (RemoteWorkflow, "workflows"),
+            (WorkflowFactory, "workflows"),
+        )
+        for cls, kind in kinds:
             if isinstance(obj, cls):
                 return kind
         return None
@@ -1022,20 +1051,23 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
             kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
             exposures.append((kind, component, None, None))
             continue
-        # Remote components and protocol implementations are not concrete subclasses;
-        # roster membership is what identifies them as components. Callables are checked
-        # for roster identity too: a component FACTORY registered on the roster is a
-        # component entry, not a custom tool (Tool.from_function on a factory would
-        # register a tool that returns an Agent object).
-        if callable(getattr(entry, "entrypoint", None)) or callable(entry):
-            if _roster_member(entry):
-                kind, component = _locate_component(entry, os)
-                exposures.append((kind, component, None, None))
-                continue
-        elif getattr(entry, "id", None) is not None and hasattr(entry, "arun"):
-            kind, component = _locate_component(entry, os)
+        # Anything that lives on the roster is a component entry, whatever its shape:
+        # Remote* instances, component factories (BaseFactory has no arun and is not
+        # callable), and duck-typed protocol implementations. Classifying a roster
+        # factory as a custom tool would hand Tool.from_function an object that is not
+        # a tool at all.
+        if _roster_member(entry):
+            kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
             exposures.append((kind, component, None, None))
             continue
+        # Off-roster component-shaped entries (id + arun, not a callable tool) resolve
+        # through the roster too -- reaching an equal-id roster component, the
+        # wrong-kind error, or the not-in-roster error, never the custom-tool TypeError.
+        if not callable(getattr(entry, "entrypoint", None)) and not callable(entry):
+            if getattr(entry, "id", None) is not None and hasattr(entry, "arun"):
+                kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
+                exposures.append((kind, component, None, None))
+                continue
         customs.append(entry)
     return customs, exposures
 

@@ -97,8 +97,9 @@ memories are keyed by the id, so changing it later is a migration. The exposed
 tool list is fixed at startup: components added to a live deployment (resync)
 are immediately runnable through the generic run tools where those are served,
 but appear as named tools only after a restart -- and with
-`default_tools=False` there are no generic run tools, so a component added
-after boot is not reachable over MCP at all until the restart.
+`default_tools=False` there are no generic run tools, so no MCP tool can start
+a run on a component added after boot until the restart (the riding
+`continue_run`/`cancel_run` still reach its existing runs at call time).
 
 HITL works out of the box: whenever components are exposed, `continue_run` and
 `cancel_run` ride along -- even with `default_tools=False` -- so a run that

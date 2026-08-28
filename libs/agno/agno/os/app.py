@@ -621,7 +621,9 @@ class AgentOS:
         # construction are runnable through them without a rebuild. EXPOSED tools
         # (MCPConfig.tools) are registered on the FastMCP server when the app is built:
         # an exposure added after boot appears in tools/list only after a restart --
-        # and under default_tools=False it is not reachable over MCP at all until then.
+        # and under default_tools=False there is no tool that can START a run on it
+        # until then (the riding continue_run/cancel_run are builtins, so they still
+        # reach its existing runs at call time).
         # Building a fresh app here cannot fix that: it would mount one whose
         # StreamableHTTP lifespan never runs, so every /mcp request would 500.
         if self.mcp and self._mcp_app is None:
