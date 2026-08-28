@@ -172,14 +172,17 @@ class CohereEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         try:
             response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
-            if isinstance(response, EmbeddingsFloatsEmbedResponse):
-                return response.embeddings[0]
-            elif isinstance(response, EmbeddingsByTypeEmbedResponse):
-                if response.embeddings.float_:
-                    return response.embeddings.float_[0]
-            raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Cohere")
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Cohere")
+
+        # Checked outside the try so this deliberate raise is not caught by the
+        # handler meant for provider failures.
+        if isinstance(response, EmbeddingsFloatsEmbedResponse):
+            return response.embeddings[0]
+        elif isinstance(response, EmbeddingsByTypeEmbedResponse):
+            if response.embeddings.float_:
+                return response.embeddings.float_[0]
+        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Cohere")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)

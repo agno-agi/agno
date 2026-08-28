@@ -108,3 +108,82 @@ class TestEmbedderRaisesOnFailure:
                     delattr(owner, attr)
                 else:
                     setattr(owner, attr, original)
+
+
+class TestBatchFallbackKeepsGoodChunks:
+    """One bad text must not discard the chunks that embedded successfully."""
+
+    def _embedder(self, bad_marker="OVERSIZED"):
+        from agno.knowledge.embedder.openai import OpenAIEmbedder
+
+        embedder = OpenAIEmbedder(id="text-embedding-3-small", api_key="test", enable_batch=True, batch_size=10)
+
+        async def one_at_a_time(text):
+            if bad_marker in text:
+                raise EmbeddingError("maximum context length is 8191 tokens", 400, provider="OpenAI")
+            return [0.1, 0.2], {"total_tokens": 1}
+
+        embedder.async_get_embedding_and_usage = one_at_a_time
+
+        class FailingClient:
+            class embeddings:
+                @staticmethod
+                async def create(**kwargs):
+                    raise RuntimeError("maximum context length is 8191 tokens")
+
+        embedder.async_client = FailingClient()
+        return embedder
+
+    @pytest.mark.asyncio
+    async def test_one_oversized_chunk_does_not_discard_the_batch(self):
+        embedder = self._embedder()
+        texts = ["fine one", "fine two", "OVERSIZED", "fine three"]
+
+        embeddings, _ = await embedder.async_get_embeddings_batch_and_usage(texts)
+
+        assert len(embeddings) == len(texts), "every text keeps its position"
+        assert sum(1 for e in embeddings if e) == 3
+        assert embeddings[2] == [], "the failed chunk is the empty one"
+
+    @pytest.mark.asyncio
+    async def test_every_chunk_failing_still_raises(self):
+        """With nothing to preserve there is no partial result worth returning."""
+        embedder = self._embedder(bad_marker="")  # matches every text
+
+        with pytest.raises(EmbeddingError) as excinfo:
+            await embedder.async_get_embeddings_batch_and_usage(["a", "b"])
+
+        assert "All 2 chunks failed" in str(excinfo.value)
+
+
+class TestEmptyResponseIsReported:
+    """A well-formed response carrying no embedding must still raise.
+
+    This pins the outcome, not the control flow: ``raise_embedding_error`` re-raises an
+    ``EmbeddingError`` unchanged, so the message survives even when the check sits inside
+    the provider-error handler. Keeping the check outside that handler is a structural
+    choice this test cannot observe.
+    """
+
+    @pytest.mark.parametrize(
+        "module_path,class_name",
+        [
+            ("agno.knowledge.embedder.google", "GeminiEmbedder"),
+            ("agno.knowledge.embedder.mistral", "MistralEmbedder"),
+            ("agno.knowledge.embedder.cohere", "CohereEmbedder"),
+        ],
+    )
+    def test_empty_response_reports_the_shape_problem(self, module_path, class_name):
+        embedder = load(module_path, class_name, {"api_key": "test"})
+
+        empty = MagicMock()
+        empty.embeddings = []
+        empty.data = []
+        for attr in ("response", "_response"):
+            if hasattr(embedder, attr):
+                setattr(embedder, attr, MagicMock(return_value=empty))
+
+        with pytest.raises(EmbeddingError) as excinfo:
+            embedder.get_embedding("hello world")
+
+        assert "No embeddings found in response" in str(excinfo.value)

@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_warning, logger
 
 try:
@@ -204,10 +204,10 @@ class AzureOpenAIEmbedder(Embedder):
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fall back to individual calls: a whole-batch failure is often transient
-                # (or caused by a single bad text), so retry per text before giving up.
-                for text in batch_texts:
-                    embedding, usage = await self.async_get_embedding_and_usage(text)
-                    all_embeddings.append(embedding)
-                    all_usage.append(usage)
+                # (or caused by a single bad text). Successes are kept so one bad chunk
+                # does not discard the rest of the batch.
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage

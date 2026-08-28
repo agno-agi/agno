@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_info, log_warning
 
 try:
@@ -62,11 +62,14 @@ class MistralEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         try:
             response: EmbeddingResponse = self._response(text=text)
-            if response.data and response.data[0].embedding:
-                return response.data[0].embedding
-            raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
+
+        # Checked outside the try so this deliberate raise is not caught by the
+        # handler meant for provider failures.
+        if response.data and response.data[0].embedding:
+            return response.data[0].embedding
+        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         try:
@@ -99,11 +102,14 @@ class MistralEmbedder(Embedder):
                     ),
                 )
 
-            if response.data and response.data[0].embedding:
-                return response.data[0].embedding
-            raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
+
+        # Checked outside the try so this deliberate raise is not caught by the
+        # handler meant for provider failures.
+        if response.data and response.data[0].embedding:
+            return response.data[0].embedding
+        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         """Async version of get_embedding_and_usage."""
@@ -195,10 +201,10 @@ class MistralEmbedder(Embedder):
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fall back to individual calls: a whole-batch failure is often transient
-                # (or caused by a single bad text), so retry per text before giving up.
-                for text in batch_texts:
-                    embedding, usage = await self.async_get_embedding_and_usage(text)
-                    all_embeddings.append(embedding)
-                    all_usage.append(usage)
+                # (or caused by a single bad text). Successes are kept so one bad chunk
+                # does not discard the rest of the batch.
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
 from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -87,13 +87,16 @@ class GeminiEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         try:
             response = self._response(text=text)
-            if response.embeddings and len(response.embeddings) > 0:
-                values = response.embeddings[0].values
-                if values is not None:
-                    return values
-            raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Google")
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
+
+        # Checked outside the try so this deliberate raise is not caught by the
+        # handler meant for provider failures.
+        if response.embeddings and len(response.embeddings) > 0:
+            values = response.embeddings[0].values
+            if values is not None:
+                return values
+        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Google")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response = self._response(text=text)
@@ -245,12 +248,10 @@ class GeminiEmbedder(Embedder):
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {str(e)}")
                 # Fall back to individual calls: a whole-batch failure is often transient
-                # (or caused by a single bad text), so retry per text before giving up.
-                for text in batch_texts:
-                    text_embedding: List[float]
-                    text_usage: Optional[Dict[str, Any]]
-                    text_embedding, text_usage = await self.async_get_embedding_and_usage(text)
-                    all_embeddings.append(text_embedding)
-                    all_usage.append(text_usage)
+                # (or caused by a single bad text). Successes are kept so one bad chunk
+                # does not discard the rest of the batch.
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage
