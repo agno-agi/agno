@@ -54,6 +54,24 @@ def _agent() -> Agent:
     return Agent(id="demo-agent", name="Demo Agent")
 
 
+def _bind_ownership(component, component_id, session_id, run_id):
+    """Feed the run-ownership gate a matching agent session so it passes for real (the
+    gate logic still runs; rejection is covered in test_mcp_exposed_components.py)."""
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    sess = AgentSession(
+        session_id=session_id,
+        agent_id=component_id,
+        runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id)],
+    )
+
+    async def _fake_aget_session(session_id=None, user_id=None, **kw):
+        return sess
+
+    component.aget_session = _fake_aget_session
+
+
 async def _tool_names(os: AgentOS) -> set:
     async with Client(build_mcp_server(os)) as client:
         return {t.name for t in await client.list_tools()}
@@ -627,6 +645,7 @@ async def test_continue_run_targets_the_given_session_and_never_mints(monkeypatc
         return RunOutput(run_id=run_id, session_id=session_id, content="resumed")
 
     agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    _bind_ownership(agent, "demo-agent", "orig-sess", "run-1")
     os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_tool(os, "continue_run", {"run_id": "run-1", "session_id": "orig-sess", "agent_id": agent.id})

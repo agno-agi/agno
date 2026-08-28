@@ -127,6 +127,30 @@ def _request_with_bearer(token, scopes=("agents:run", "teams:run", "workflows:ru
     return req
 
 
+def _seed_agent_run(agent, session_id, run_id, user_id=None):
+    """Persist a real AgentSession containing a run belonging to ``agent`` (via the
+    agent's own db), so the run-ownership gate reads a genuine session, not a stub."""
+    from agno.session.agent import AgentSession
+
+    agent.db.upsert_session(AgentSession(session_id=session_id, agent_id=agent.id, user_id=user_id))
+    agent.db.upsert_run(
+        RunOutput(run_id=run_id, agent_id=agent.id, session_id=session_id),
+        session_id=session_id,
+        user_id=user_id,
+    )
+
+
+def _seed_team_run(team, session_id, run_id, user_id=None):
+    from agno.session.team import TeamSession
+
+    team.db.upsert_session(TeamSession(session_id=session_id, team_id=team.id, user_id=user_id))
+    team.db.upsert_run(
+        TeamRunOutput(run_id=run_id, team_id=team.id, session_id=session_id),
+        session_id=session_id,
+        user_id=user_id,
+    )
+
+
 # ==================== Exposure surface ====================
 
 
@@ -1327,11 +1351,13 @@ async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
     """The full HITL loop with default_tools=False: the exposed tool pauses with the
     component id + requirements in structuredContent, and the riding continue_run
     resumes that exact run."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
     from agno.models.response import ToolExecution
     from agno.run.requirement import RunRequirement
 
     monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
     agent = _agent()
+    agent.db = InMemoryDb()
     paused = RunOutput(
         agent_id="chief",
         run_id="run-hitl",
@@ -1341,6 +1367,9 @@ async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
         requirements=[RunRequirement(tool_execution=ToolExecution(tool_name="send_email", requires_confirmation=True))],
     )
     _stub_arun(agent, paused)
+    # A paused run is persisted before continue_run is called (as production does),
+    # so the run-ownership binding can locate it.
+    _seed_agent_run(agent, session_id="sess-hitl", run_id="run-hitl")
 
     continued: dict = {}
 
@@ -1426,28 +1455,47 @@ async def test_riding_pair_refuses_unpublished_components(monkeypatch):
     assert "published components" in str(cancelled.content)
 
 
-async def test_riding_pair_gate_is_keyed_by_kind():
+async def test_riding_pair_gate_is_keyed_by_kind(monkeypatch):
     """A published agent id does not unlock a same-id team: the gate matches
-    (kind, id), never the bare id."""
+    (kind, id), never the bare id. The published agent's OWN run still cancels."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
     agent = _agent(id="shared")
+    agent.db = InMemoryDb()
+    _seed_agent_run(agent, session_id="s1", run_id="r1")
     team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
     os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[agent]))
 
-    refused = await _call_tool(os, "cancel_run", {"team_id": "shared", "run_id": "r1"}, raise_on_error=False)
+    refused = await _call_tool(
+        os, "cancel_run", {"team_id": "shared", "run_id": "r1", "session_id": "s1"}, raise_on_error=False
+    )
     assert refused.is_error
     assert "published components" in str(refused.content)
 
-    allowed = await _call_tool(os, "cancel_run", {"agent_id": "shared", "run_id": "r1"}, raise_on_error=False)
+    allowed = await _call_tool(
+        os, "cancel_run", {"agent_id": "shared", "run_id": "r1", "session_id": "s1"}, raise_on_error=False
+    )
     assert not allowed.is_error
+    assert reached == ["r1"]
 
 
 async def test_pair_reaches_roster_when_core_is_served(monkeypatch):
     """With the default surface on, the pair keeps REST parity: run_agent reaches the
     whole roster, so continue_run/cancel_run do too -- the publication bound applies
     only when the pair exists purely via the ride-along."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
     monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
     exposed = _agent(id="exposed-agent")
     unexposed = _agent(id="unexposed-agent")
+    unexposed.db = InMemoryDb()
+    _seed_agent_run(unexposed, session_id="s9", run_id="r9")
     resumed: list = []
 
     async def fake_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
@@ -1470,9 +1518,13 @@ async def test_pair_reaches_roster_when_core_is_served(monkeypatch):
 async def test_explicit_lifecycle_include_is_roster_wide(monkeypatch):
     """include_tags={'lifecycle'} under the default surface is the deployer explicitly
     choosing a roster-wide resume surface; adding exposures does not narrow it."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
     monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
     exposed = _agent(id="exposed-agent")
     unexposed = _agent(id="unexposed-agent")
+    unexposed.db = InMemoryDb()
+    _seed_agent_run(unexposed, session_id="s7", run_id="r7")
     resumed: list = []
 
     async def fake_acontinue_run(*, run_id, session_id, user_id, requirements, stream=False):
@@ -1650,6 +1702,156 @@ def test_component_tool_in_agent_or_team_tools_raises():
     # The deep guard on the processing chain (covers per-run tools= paths).
     with pytest.raises(ValueError, match="MCPConfig"):
         agent_tools_mod.parse_tools(boss, [marker], model=NS(supports_native_structured_outputs=False))
+
+
+# ==================== Cancellation is bound to the run, not just the named component ====================
+
+
+async def test_cancel_refuses_a_run_of_an_unpublished_component(monkeypatch):
+    """The publication bound governs which component a caller may NAME; the run-ownership
+    gate governs which RUN they may act on. Naming a published agent must not let a
+    caller cancel a run that belongs to an unpublished team -- even on the default
+    (non-isolated) deployment, and even sharing one db. Runs the real gate (no stub of
+    _make_run_ownership_verifier)."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    db = InMemoryDb()
+    public = _agent(id="public-agent", name="Public")
+    public.db = db
+    hidden = Team(id="hidden-team", name="Hidden", members=[_agent(id="m1")])
+    hidden.db = db
+    _seed_team_run(hidden, session_id="hidden-sess", run_id="hidden-run")
+
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    os = AgentOS(agents=[public], teams=[hidden], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "public-agent", "run_id": "hidden-run", "session_id": "hidden-sess"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "Run not found" in str(result.content)
+    # The hidden run was neither cancelled nor queue-tombstoned: the gate refused before
+    # cancel_component_run (which does both) could run.
+    assert reached == []
+
+
+async def test_cancel_of_the_named_components_own_run_succeeds(monkeypatch):
+    """The legitimate path still works: a run that genuinely belongs to the published
+    component passes the binding and reaches cancellation."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    public = _agent(id="public-agent", name="Public")
+    public.db = InMemoryDb()
+    _seed_agent_run(public, session_id="own-sess", run_id="own-run")
+
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "public-agent", "run_id": "own-run", "session_id": "own-sess"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert reached == ["own-run"]
+
+
+async def test_cancel_cross_kind_same_id_is_rejected(monkeypatch):
+    """AgentOS allows an agent and a team to share an id. Naming the published AGENT must
+    not reach a run that lives under the same-id TEAM's session."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    db = InMemoryDb()
+    agent = _agent(id="shared", name="The Agent")
+    agent.db = db
+    team = Team(id="shared", name="The Team", members=[_agent(id="m1")])
+    team.db = db
+    _seed_team_run(team, session_id="team-sess", run_id="team-run")
+
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    # Expose only the agent; the team is unpublished.
+    os = AgentOS(agents=[agent], teams=[team], mcp=MCPConfig(default_tools=False, tools=[agent]))
+
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "shared", "run_id": "team-run", "session_id": "team-sess"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "Run not found" in str(result.content)
+    assert reached == []
+
+
+async def test_cancel_requires_session_id_to_bind_the_run(monkeypatch):
+    """run_id alone is insufficient: without session_id the run cannot be bound to the
+    component, so the gate fails closed rather than recording a global intent."""
+    public = _agent(id="public-agent", name="Public")
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    result = await _call_tool(
+        os, "cancel_run", {"agent_id": "public-agent", "run_id": "some-run"}, raise_on_error=False
+    )
+    assert result.is_error
+    assert "session_id is required" in str(result.content)
+    assert reached == []
+
+
+async def test_continue_run_refuses_a_run_of_an_unpublished_component():
+    """continue_run gets the same binding as cancel: naming a published agent must not
+    resume a run that belongs to an unpublished team."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    db = InMemoryDb()
+    public = _agent(id="public-agent", name="Public")
+    public.db = db
+    hidden = Team(id="hidden-team", name="Hidden", members=[_agent(id="m1")])
+    hidden.db = db
+    _seed_team_run(hidden, session_id="hidden-sess", run_id="hidden-run")
+
+    resumed: list = []
+
+    async def fake_acontinue_run(**kwargs):
+        resumed.append(kwargs.get("run_id"))
+        return RunOutput(agent_id="public-agent", content="resumed")
+
+    public.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    os = AgentOS(agents=[public], teams=[hidden], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    result = await _call_tool(
+        os,
+        "continue_run",
+        {"agent_id": "public-agent", "run_id": "hidden-run", "session_id": "hidden-sess"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "Run not found" in str(result.content)
+    assert resumed == []
 
 
 async def test_riding_lifecycle_pair_is_scope_gated(monkeypatch):

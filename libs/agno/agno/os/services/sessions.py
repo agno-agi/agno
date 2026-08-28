@@ -40,11 +40,18 @@ async def verify_run_ownership(
     *,
     session_id: str,
     run_id: str,
-    user_id: str,
+    user_id: Optional[str],
     component_type: Literal["agents", "teams", "workflows"],
     component_id: str,
 ) -> None:
-    """Fail closed unless ``run_id`` lives in a ``user_id``-owned session for this component.
+    """Fail closed unless ``run_id`` lives in a session for this component.
+
+    Two bindings, both fail-closed: the session and the run must each carry this
+    ``component_type``/``component_id`` (a run that lives under a different component is
+    rejected even when the caller named a component they may reach). ``user_id`` adds
+    per-user session ownership on top: a real id pins the fetch to that user's session;
+    ``None`` (admin or a non-isolated deployment) checks only the component binding, so
+    the run_id alone is never sufficient to act on another component's run.
 
     Surface-agnostic twin of the REST ``verify_run_in_session`` (which raises
     ``HTTPException``); raises :class:`RunOwnershipError` so the MCP layer can present

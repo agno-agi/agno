@@ -785,9 +785,12 @@ async def _resolve_run_component(
 def _make_run_ownership_verifier(os: "AgentOS"):
     """Bind the run-lifecycle ownership verifier to an AgentOS.
 
-    continue_run and cancel_run must, for a scoped (non-admin) caller, prove the run lives
-    in a session they own -- the same gate the REST cancel/continue endpoints enforce
-    before touching a run.
+    continue_run and cancel_run must prove the run belongs to the named component before
+    acting on it -- the run_id alone is never sufficient, so naming a component the
+    caller may reach cannot let them cancel or resume a run that lives under a different
+    component. On top of that binding, a scoped (non-admin) caller must own the session,
+    the same gate the REST cancel/continue endpoints enforce. session_id is required for
+    local components (it locates the run to bind).
     """
 
     async def verify(
@@ -800,17 +803,24 @@ def _make_run_ownership_verifier(os: "AgentOS"):
         if component is None:
             raise Exception(f"Component {component_id} not found")
         scoped_user_id = _scoped_caller_user_id()
-        if scoped_user_id is None:
-            return
         if isinstance(component, BaseRemote):
             # Remote components keep their sessions on the remote OS: there is no local
-            # session to prove ownership against (BaseRemote has no aget_session), and
+            # session to prove the binding against (BaseRemote has no aget_session), and
             # the forwarded call would not carry this caller's identity for the remote
-            # to check either. Fail closed rather than let a scoped caller act on
-            # another user's run; admins (scoped_user_id None) pass through above.
-            raise Exception(
-                "Run ownership cannot be verified for remote components; an administrator can act on this run."
-            )
+            # to check either. A scoped caller fails closed; an admin / non-isolated
+            # deployment proceeds and the downstream OS owns the run.
+            if scoped_user_id is not None:
+                raise Exception(
+                    "Run ownership cannot be verified for remote components; an administrator can act on this run."
+                )
+            return
+        # Local component: prove the run belongs to (component_type, component_id) BEFORE
+        # any cancellation intent or queue tombstone, regardless of user isolation. The
+        # publication bound and per-resource scopes govern which component a caller may
+        # NAME; this governs which RUN they may act on -- run_id alone must never be
+        # enough to reach another component's run by naming a component the caller can
+        # reach. session_id locates the run; user_id=None (admin / non-isolated) checks
+        # only the component binding, a scoped id also enforces per-user ownership.
         if not session_id:
             raise Exception("session_id is required to act on this run")
         try:
