@@ -39,7 +39,7 @@ class MCPConfig(BaseModel):
     REST surface; anything else can be registered as a custom tool via ``tools``.
     """
 
-    # extra="forbid": a typo like ``agent=`` (for ``agents=``) must fail at construction,
+    # extra="forbid": a typo like ``tool=`` (for ``tools=``) must fail at construction,
     # not silently serve a different tool surface. The deprecated ``enable_builtin_tools``
     # spelling is unaffected -- the before-validator maps it away before this check runs.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
@@ -72,8 +72,10 @@ class MCPConfig(BaseModel):
     #   - names must not collide across default tools, custom tools, and exposures.
     #
     # The tool list is fixed when the app is built: components added to a live
-    # deployment (resync) are runnable through the generic run tools immediately, but
-    # appear as named tools only after a restart. Listing here is publishing: every
+    # deployment (resync) are immediately runnable through the generic run tools where
+    # those are served, but appear as named tools only after a restart (with
+    # ``default_tools=False`` there are no generic run tools, so a component added
+    # after boot is unreachable over MCP until then). Listing here is publishing: every
     # caller who can reach tools/list sees the names and descriptions (invocation is
     # still gated by scopes at call time). HITL works out of the box: whenever
     # components are exposed, ``continue_run`` and ``cancel_run`` register alongside

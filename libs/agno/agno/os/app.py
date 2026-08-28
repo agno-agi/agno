@@ -336,10 +336,10 @@ class AgentOS:
             lifespan: Optional lifespan context manager for the FastAPI app
             mcp: Serve the OS over MCP (Model Context Protocol) at ``/mcp``. Pass
                 ``True`` for the default surface (all default tools), or an
-                ``MCPConfig`` to expose agents/teams/workflows as individual tools
-                (``agents=[...]`` / ``teams=[...]`` / ``workflows=[...]``), register
-                custom tools via ``tools=[...]``, and/or scope the default tools via
-                ``default_tools`` / ``include_tags`` / ``exclude_tags``.
+                ``MCPConfig`` to expose agents/teams/workflows as individual tools:
+                its ``tools=[...]`` takes components, ``component.as_tool(name=...,
+                description=...)`` markers, and custom callables; ``default_tools``
+                and ``include_tags``/``exclude_tags`` scope the default surface.
             mcp_server: Deprecated alias for ``mcp``, still accepted; passing both with
                 different values is an error.
             mcp_auth: An ``AuthProvider`` object that owns authentication for the MCP
@@ -426,11 +426,7 @@ class AgentOS:
         self.tracing = tracing
 
         self.mcp_config: Optional[MCPConfig] = None
-        # ``mcp_server`` is the deprecated alias; both set with different values is a
-        # contradiction, never a guess. ``None`` means unset for both, so an explicit
-        # ``mcp=False`` is distinguishable from the default.
-        # No value reprs in the message: an MCPConfig can hold component instances whose
-        # repr may carry credentials (e.g. a model api_key).
+        # ``mcp_server`` is the deprecated alias for ``mcp``.
         if mcp is not None and mcp_server is not None and mcp != mcp_server:
             raise ValueError(
                 "AgentOS() got both mcp= and its deprecated alias mcp_server= with different values; pass only mcp=."
@@ -620,10 +616,14 @@ class AgentOS:
         # Track MCP tools declared on the registry
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
 
-        # Reuse the already-started MCP app: its tools close over this AgentOS instance,
-        # so components added since construction are visible without a rebuild. Building
-        # a fresh app here would mount one whose StreamableHTTP lifespan never runs --
-        # every subsequent /mcp request would 500 until restart.
+        # Reuse the already-started MCP app. Its BUILTIN tools close over this AgentOS
+        # instance and resolve component ids at call time, so components added since
+        # construction are runnable through them without a rebuild. EXPOSED tools
+        # (MCPConfig.tools) are registered on the FastMCP server when the app is built:
+        # an exposure added after boot appears in tools/list only after a restart --
+        # and under default_tools=False it is not reachable over MCP at all until then.
+        # Building a fresh app here cannot fix that: it would mount one whose
+        # StreamableHTTP lifespan never runs, so every /mcp request would 500.
         if self.mcp and self._mcp_app is None:
             try:
                 from agno.os.mcp import get_mcp_server

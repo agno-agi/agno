@@ -39,6 +39,7 @@ Plain `mcp=True` exposes eight tools:
 |---|---|
 | `core` | `get_agentos_config`, `run_agent`, `run_team`, `run_workflow`, `continue_run`, `cancel_run` |
 | `session` | `get_sessions`, `get_session_runs` |
+| `lifecycle` | `continue_run`, `cancel_run` (also tagged `core`) -- the pair rides along whenever components are exposed; include the tag explicitly to serve just the pair |
 
 Run the server and client in separate terminals:
 
@@ -72,7 +73,8 @@ agent_os = AgentOS(
 )
 ```
 
-`tools/list` then shows `chief` and `deep_research`. A bare component is named
+`tools/list` then shows `chief` and `deep_research`, plus the riding
+`continue_run`/`cancel_run` pair (see the HITL section). A bare component is named
 after its id and described by its own description; `as_tool(name=...,
 description=...)` publishes it under a model-facing name and pitch instead --
 a tool description is a prompt for the calling model, so it often wants to be
@@ -92,9 +94,11 @@ clean one; auto-derived ids from names like "Research & Writing Team" are the
 usual trip.
 Pick MCP-safe ids before a deployment accumulates sessions: sessions and
 memories are keyed by the id, so changing it later is a migration. The exposed
-tool list is fixed at startup -- components added to a live deployment are
-runnable through the generic run tools immediately, but appear as named tools
-after a restart.
+tool list is fixed at startup: components added to a live deployment (resync)
+are immediately runnable through the generic run tools where those are served,
+but appear as named tools only after a restart -- and with
+`default_tools=False` there are no generic run tools, so a component added
+after boot is not reachable over MCP at all until the restart.
 
 HITL works out of the box: whenever components are exposed, `continue_run` and
 `cancel_run` ride along -- even with `default_tools=False` -- so a run that
