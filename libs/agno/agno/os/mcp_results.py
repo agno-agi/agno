@@ -77,10 +77,14 @@ def _json_safe(data: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
+    # Include content in structuredContent to match official MCP server patterns
+    # (filesystem, memory, etc.). Claude Code displays structuredContent instead
+    # of content (known bug), so this ensures the answer is visible.
     structured: Dict[str, Any] = {
         "run_id": run_output.run_id,
         "session_id": run_output.session_id,
         "status": run_status_string(run_output),
+        "content": _content_text(run_output),
     }
     requirements = serialized_paused_requirements(run_output)
     if requirements is not None:

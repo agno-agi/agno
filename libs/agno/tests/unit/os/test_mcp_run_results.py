@@ -100,10 +100,13 @@ async def test_trimmed_result_carries_answer_and_ids_only():
     result = await _call_run_agent(os)
 
     assert result.content[0].text == "the answer"
+    # content duplicated in structuredContent — workaround for Claude Code reading
+    # structuredContent instead of content (known bug)
     assert result.structured_content == {
         "run_id": "run-1",
         "session_id": "sess-1",
         "status": "COMPLETED",
+        "content": "the answer",
     }
 
 
