@@ -15,7 +15,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, is_rate_limit_error
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -464,11 +464,8 @@ class LanceDb(VectorDb):
                         doc.embedding = embeddings[j]
                         doc.usage = usages[j] if j < len(usages) else None
             except Exception as e:
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
@@ -545,11 +542,8 @@ class LanceDb(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                 except Exception as e:
-                    error_str = str(e).lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
                     if is_rate_limit:
                         raise e
                     else:
@@ -557,7 +551,7 @@ class LanceDb(VectorDb):
 
                         embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                         results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-                        # Log any embedding failures (they will be re-tried in sync upsert)
+                            # Log any embedding failures (they will be re-tried in sync upsert)
                         for i, result in enumerate(results):
                             if isinstance(result, Exception):
                                 log_warning(
@@ -566,7 +560,7 @@ class LanceDb(VectorDb):
             else:
                 embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                 results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-                # Log any embedding failures (they will be re-tried in sync upsert)
+                    # Log any embedding failures (they will be re-tried in sync upsert)
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
                         log_warning(f"Async embedding failed for document {i}, will retry in sync upsert")

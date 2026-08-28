@@ -26,12 +26,13 @@ try:
 except ImportError:
     raise ImportError("`pgvector` not installed. Please install using `pip install pgvector`")
 
+from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
@@ -396,6 +397,11 @@ class PgVector(VectorDb):
                         for doc in batch_docs:
                             try:
                                 batch_records.append(self._get_document_record(doc, filters, content_hash, user_id))
+                            except EmbeddingError:
+                                # A chunk that did not embed is unretrievable. Dropping it here
+                                # would commit the rest of the batch and report success, so the
+                                # failure is raised for ingestion to retry and record.
+                                raise
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
@@ -542,6 +548,11 @@ class PgVector(VectorDb):
                                 record = self._get_document_record(doc, filters, content_hash, user_id)
                                 # Use the generated record ID (which includes content_hash) for deduplication
                                 batch_records_dict[record["id"]] = record
+                            except EmbeddingError:
+                                # A chunk that did not embed is unretrievable. Dropping it here
+                                # would commit the rest of the batch and report success, so the
+                                # failure is raised for ingestion to retry and record.
+                                raise
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
@@ -627,6 +638,7 @@ class PgVector(VectorDb):
             record["user_id"] = user_id
         return record
 
+
     async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
         """
         Embed a batch of documents using either batch embedding or individual embedding.
@@ -654,11 +666,12 @@ class PgVector(VectorDb):
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                if isinstance(e, EmbeddingError):
+                    # The embedder already classified this; prefer that over matching text.
+                    is_rate_limit = e.reason == "rate_limit"
+                else:
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -668,50 +681,12 @@ class PgVector(VectorDb):
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-                    # Check for exceptions and handle them
-                    for i, result in enumerate(results):
-                        if isinstance(result, Exception):
-                            error_msg = str(result)
-                            # If it's an event loop closure error, log it but don't fail
-                            if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
-                                log_warning(
-                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}: {e}",
-                                )
-
-                            else:
-                                log_error(f"Error embedding document {i}: {result}: {str(e)}")
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-            # Re-raise on rate limits to avoid writing NULL embeddings.
-            rate_limit_error: Optional[Exception] = None
-
-            # Check for exceptions and handle them
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    error_msg = str(result)
-
-                    error_str = error_msg.lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
-                    if is_rate_limit and rate_limit_error is None:
-                        rate_limit_error = result
-
-                    # If it's an event loop closure error, log it but don't fail
-                    if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
-                        log_warning(
-                            f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
-                        )
-                    else:
-                        log_error(f"Error embedding document {i}: {result}")
-
-            if rate_limit_error is not None:
-                raise rate_limit_error
+            raise_embedding_failures(results)
 
     async def async_upsert(
         self,

@@ -1,9 +1,43 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
-from agno.utils.log import log_warning
+from agno.utils.log import log_error, log_warning
 from agno.utils.string import generate_id
+
+
+def raise_embedding_failures(results: List[Any]) -> None:
+    """Re-raise the first real embedding failure among gathered per-document results."""
+    first_error: Optional[BaseException] = None
+
+    for i, result in enumerate(results):
+        if not isinstance(result, BaseException):
+            continue
+
+        if "Event loop is closed" in str(result):
+            log_warning(
+                f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
+            )
+            continue
+
+        log_error(f"Error embedding document {i}: {result}")
+        if first_error is None:
+            first_error = result
+
+    if first_error is not None:
+        raise first_error
+
+
+def is_rate_limit_error(error: BaseException) -> bool:
+    """Whether ``error`` is a provider throttle, which must not fall back to per-item calls."""
+    if isinstance(error, EmbeddingError):
+        # The embedder already classified this; prefer that over matching text.
+        return error.reason == "rate_limit"
+    error_str = str(error).lower()
+    return any(
+        phrase in error_str for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
+    )
 
 
 class VectorDb(ABC):

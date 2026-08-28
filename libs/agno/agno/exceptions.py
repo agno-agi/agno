@@ -238,11 +238,15 @@ class EmbeddingError(AgnoError):
     def __init__(
         self,
         message: str,
-        status_code: int = 502,
+        status_code: Optional[int] = None,
         model_id: Optional[str] = None,
         provider: Optional[str] = None,
     ):
-        super().__init__(message, status_code)
+        # ``status_code`` is None when the provider reported no HTTP status. The attribute
+        # still exposes 502 so the API surface always has a code, but classification keys
+        # off ``provider_status_code`` so a synthesized default never outranks the message.
+        self.provider_status_code = status_code
+        super().__init__(message, status_code if status_code is not None else 502)
         self.model_id = model_id
         self.provider = provider
 
@@ -256,10 +260,25 @@ class EmbeddingError(AgnoError):
         One of: ``authentication``, ``rate_limit``, ``content_too_large``, ``unknown``.
         """
         message = str(self.message).lower()
-        if self.status_code in {401, 403} or any(p in message for p in self._AUTH_PATTERNS):
-            return "authentication"
-        if self.status_code == 429 or any(p in message for p in self._RATE_LIMIT_PATTERNS):
+
+        # A status code the provider actually reported outranks the message text. Providers
+        # routinely name the credential in a throttling message ("rate limit exceeded for
+        # your api key"), and matching that text first would report a retryable 429 as a
+        # permanent auth failure. A synthesized default is not the provider's word, so it
+        # is left out of this check and classification falls through to the text below.
+        status_code = self.provider_status_code
+        if status_code == 429:
             return "rate_limit"
+        if status_code in {401, 403}:
+            return "authentication"
+        # A server-side fault is transient regardless of what the body happens to mention.
+        if status_code is not None and 500 <= status_code < 600:
+            return "unknown"
+
+        if any(p in message for p in self._RATE_LIMIT_PATTERNS):
+            return "rate_limit"
+        if any(p in message for p in self._AUTH_PATTERNS):
+            return "authentication"
         if any(p in message for p in self._TOO_LARGE_PATTERNS):
             return "content_too_large"
         return "unknown"

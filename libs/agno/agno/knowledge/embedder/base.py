@@ -5,9 +5,7 @@ from agno.exceptions import EmbeddingError
 from agno.utils.log import log_warning
 
 
-def raise_embedding_error(
-    error: Exception, model_id: Optional[str] = None, provider: Optional[str] = None
-) -> NoReturn:
+def raise_embedding_error(error: Exception, model_id: Optional[str] = None, provider: Optional[str] = None) -> NoReturn:
     """Re-raise a provider exception as an ``EmbeddingError``, preserving its status code."""
     if isinstance(error, EmbeddingError):
         raise error
@@ -16,12 +14,12 @@ def raise_embedding_error(
     if not isinstance(status_code, int):
         # Some SDKs expose the HTTP status on a nested response object instead
         status_code = getattr(getattr(error, "response", None), "status_code", None)
-    if not isinstance(status_code, int):
-        status_code = 502
 
     raise EmbeddingError(
         f"Failed to generate embedding: {error}",
-        status_code=status_code,
+        # None when the provider reported no HTTP status, so classification falls back to
+        # the message text rather than reading a synthesized code as the provider's word.
+        status_code=status_code if isinstance(status_code, int) else None,
         model_id=model_id,
         provider=provider,
     ) from error
@@ -90,17 +88,14 @@ async def aembed_texts_individually(
             # Nothing survived, so there is no partial result worth returning.
             raise EmbeddingError(
                 f"All {len(texts)} chunks failed to embed: {first}",
-                status_code=first.status_code,
+                status_code=first.provider_status_code,
                 model_id=first.model_id,
                 provider=first.provider,
             )
         # Some chunks embedded. They are returned so they reach the vector store, and
         # the failures are logged with their positions: the caller sees the shortfall as
         # PARTIAL, and the log names which chunks to fix.
-        log_warning(
-            f"{len(failures)} of {len(texts)} chunks failed to embed at position(s) "
-            f"{positions}{more}: {first}"
-        )
+        log_warning(f"{len(failures)} of {len(texts)} chunks failed to embed at position(s) {positions}{more}: {first}")
 
     return embeddings, usages
 

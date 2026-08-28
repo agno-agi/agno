@@ -2,7 +2,12 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
 from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -231,9 +236,7 @@ class GeminiEmbedder(Embedder):
                     "Google",
                 )
                 if len(batch_embeddings) < len(batch_texts):
-                    log_warning(
-                        f"Batch response returned {len(batch_embeddings)} of {len(batch_texts)} embeddings"
-                    )
+                    log_warning(f"Batch response returned {len(batch_embeddings)} of {len(batch_texts)} embeddings")
                     batch_embeddings.extend([[]] * (len(batch_texts) - len(batch_embeddings)))
                 all_embeddings.extend(batch_embeddings)
 

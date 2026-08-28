@@ -20,7 +20,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.distance import Distance
 
 
@@ -679,12 +679,8 @@ class SingleStore(VectorDb):
                         log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -693,11 +689,13 @@ class SingleStore(VectorDb):
                     log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         with self.Session.begin() as sess:
             counter = 0
@@ -775,12 +773,8 @@ class SingleStore(VectorDb):
                         log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -789,11 +783,13 @@ class SingleStore(VectorDb):
                     log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         with self.Session.begin() as sess:
             counter = 0

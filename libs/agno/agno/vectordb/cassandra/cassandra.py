@@ -6,7 +6,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
 # The owner lives in a reserved metadata key. cassio filters metadata by equality only, so
@@ -261,12 +261,8 @@ class Cassandra(VectorDb):
                         log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -277,7 +273,8 @@ class Cassandra(VectorDb):
                     for doc in documents:
                         try:
                             embed_tasks = [doc.async_embed(embedder=self.embedder)]
-                            await asyncio.gather(*embed_tasks, return_exceptions=True)
+                            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                            raise_embedding_failures(results)
                         except Exception as e:
                             log_error(f"Error processing document '{doc.name}': {str(e)}")
         else:
@@ -285,7 +282,8 @@ class Cassandra(VectorDb):
             for doc in documents:
                 try:
                     embed_tasks = [doc.async_embed(embedder=self.embedder)]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
                 except Exception as e:
                     log_error(f"Error processing document '{doc.name}': {str(e)}")
 

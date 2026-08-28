@@ -3,7 +3,13 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder, first_embedding, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    first_embedding,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
 from agno.utils.log import log_info, log_warning
 
 try:

@@ -3,7 +3,12 @@ from dataclasses import dataclass
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
 from agno.utils.log import log_warning, logger
 
 try:
