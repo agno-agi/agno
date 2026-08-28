@@ -15,7 +15,7 @@ Requirements:
 - For GitHub App auth: ``pip install PyJWT cryptography``
 
 Run this cookbook:
-    python cookbook/07_knowledge/cloud/github.py
+    python cookbook/07_knowledge/09_archive/cloud/github.py
 """
 
 from os import getenv

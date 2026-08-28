@@ -23,15 +23,18 @@ Quick start:
 import asyncio
 import json
 import os
+import posixpath
 import re
 import subprocess
+import sys
+import unicodedata
 from fnmatch import fnmatch
 from pathlib import Path
 from typing import Dict, List, Optional, Set, Tuple, Union
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
-from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, path_matches_exclude
+from agno.tools._local_file_utils import DEFAULT_EXCLUDE_PATTERNS, EXEMPT_PREFIX, compile_exclude_patterns
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.path_safety import safe_join_relative_path
 
@@ -53,6 +56,12 @@ TEXT_EXTENSIONS = {
     ".ini",
     ".env",
     ".editorconfig",
+    # Committed template suffixes: `.env.example` has suffix `.example`, so without
+    # these search_content skips the very files the exclude exemptions make readable.
+    ".example",
+    ".sample",
+    ".template",
+    ".dist",
     # Python
     ".py",
     ".pyi",
@@ -184,6 +193,90 @@ def _format_with_line_numbers(text: str, start_line: int = 1) -> str:
     return "\n".join(f"{i + start_line:6d}\t{line}" for i, line in enumerate(lines))
 
 
+def _validate_exclude_patterns(exclude_patterns: Optional[List[str]]) -> List[str]:
+    """Return ``exclude_patterns`` as a list, or the defaults when ``None``.
+
+    Raises ``ValueError`` for a pattern containing a path separator: patterns are matched
+    against single path components, so such a pattern can never match. Also raises for a
+    bare ``!``, which names no pattern to exempt.
+    """
+    patterns = list(exclude_patterns) if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
+    for pattern in patterns:
+        if pattern == EXEMPT_PREFIX:
+            raise ValueError(
+                "exclude_patterns entry '!' names no pattern. A leading '!' exempts the rest of the "
+                "entry from exclusion, for example '!.env.example'."
+            )
+        if "/" in pattern or "\\" in pattern:
+            raise ValueError(
+                f"exclude_patterns entry {pattern!r} contains a path separator. Patterns are matched against "
+                "single path components and cannot name a path; use the component name instead."
+            )
+    return patterns
+
+
+def _resolve_allow_paths(root: Path, allow_paths: Optional[List[str]]) -> List[Tuple[Path, Path]]:
+    """Validate ``allow_paths`` for a workspace rooted at ``root``.
+
+    Returns one ``(as_written, resolved)`` pair per entry, both absolute under ``root``.
+    Raises ``TypeError`` when ``allow_paths`` is not a list, and ``ValueError`` when an entry
+    is not a relative path inside ``root`` or names ``root`` itself.
+    """
+    if allow_paths is None:
+        return []
+    if not isinstance(allow_paths, (list, tuple)):
+        raise TypeError(
+            f"`allow_paths` must be a list of workspace-relative paths, got {type(allow_paths).__name__}: {allow_paths!r}"
+        )
+    pairs: List[Tuple[Path, Path]] = []
+    for raw in allow_paths:
+        try:
+            entry = os.fspath(raw)
+            resolved = safe_join_relative_path(root, entry)
+        except (TypeError, PathSecurityError, OSError) as e:
+            raise ValueError(f"allow_paths entry {raw!r} is not a valid path inside the workspace root: {e}")
+        if resolved == root:
+            raise ValueError(
+                f"allow_paths entry {raw!r} names the workspace root; pass exclude_patterns=[] to disable exclusion"
+            )
+        pairs.append((_lexical_join(root, entry), resolved))
+    return pairs
+
+
+def _lexical_join(root: Path, path: str) -> Path:
+    """Join ``path`` under ``root`` as written: no symlink resolution, ``.`` and ``..`` collapsed lexically."""
+    normalized = posixpath.normpath(unicodedata.normalize("NFKC", path).replace("\\", "/"))
+    parts = [part for part in normalized.split("/") if part not in ("", ".", "..")]
+    return root.joinpath(*parts)
+
+
+def _is_case_insensitive_fs(root: Path) -> bool:
+    """Return True when the filesystem holding ``root`` treats names differing only by case as one entry.
+
+    Probes a lettered entry inside ``root``, then ``root`` itself. When nothing can be probed,
+    macOS and Windows are assumed case-insensitive and other platforms case-sensitive.
+    """
+    candidates: List[Path] = []
+    try:
+        with os.scandir(root) as entries:
+            for entry in entries:
+                if entry.name.swapcase() != entry.name:
+                    candidates.append(Path(entry.path))
+                    break
+    except OSError:
+        pass
+    if root.name.swapcase() != root.name:
+        candidates.append(root)
+    for candidate in candidates:
+        try:
+            return os.path.samefile(candidate, candidate.with_name(candidate.name.swapcase()))
+        except FileNotFoundError:
+            return False
+        except OSError:
+            continue
+    return sys.platform in ("darwin", "win32")
+
+
 class Workspace(Toolkit):
     """Local-machine toolkit for read/write/edit/search/shell access to a directory tree.
 
@@ -224,10 +317,46 @@ class Workspace(Toolkit):
     - When only one is set: the other defaults to ``[]`` — you've taken control,
       and the surface is exactly what you specified.
 
-    Listing results from ``list_files`` and ``search_content`` skip common noise directories
-    (``.venv``, ``.venvs``, ``.context``, ``.git``, ``__pycache__``,
-    ``node_modules``, etc.) by default. Pass ``exclude_patterns=[]`` to disable,
-    or ``exclude_patterns=[...]`` to override.
+    ``exclude_patterns`` is an access boundary for every path the agent names. A path is
+    excluded when any component of the path as written, or of the file it resolves to,
+    matches a pattern. Excluded paths are hidden from ``list_files`` and ``search_content``
+    and are refused by ``read_file``, ``write_file``, ``edit_file``, ``move_file`` (source
+    and destination), and ``delete_file`` with
+    ``Error: <argument> is excluded from this workspace: <path>``. Naming an excluded
+    directory in ``list_files`` or ``search_content`` is refused the same way. On a
+    case-insensitive filesystem (macOS and Windows defaults) patterns match
+    case-insensitively, so ``.ENV`` is refused there and a file stored as ``BUILD``
+    matches the pattern ``build``. Each pattern matches one path component; a pattern
+    containing a path separator raises ``ValueError``. Hard links to an excluded file are
+    not detected. The default set covers common noise directories
+    (``.venv``, ``.venvs``, ``.context``, ``.git``, ``__pycache__``, ``node_modules``,
+    etc.), env files (``.env*``, ``*.env``) and the credential files a repository or a
+    home directory conventionally holds — private keys and keystores (``*.pem``,
+    ``*.key``, ``id_rsa*``), credential directories (``.ssh``, ``.aws``, ``.kube``),
+    registry and host tokens (``.npmrc``, ``.netrc``, ``.git-credentials``), credential
+    data files (``credentials.json``, ``secrets.yaml``, ``service_account*.json``) and
+    Terraform inputs (``*.tfvars``). Deliberately absent are ``credentials.*`` and
+    ``secrets.*``, which would also refuse ordinary source such as ``credentials.py``.
+    Pass ``exclude_patterns=[...]`` to override, or ``exclude_patterns=[]`` to disable.
+
+    An entry prefixed with ``!`` is an exemption: a component matching it is never
+    excluded, whatever else it matches. The defaults use this to keep committed env
+    templates readable (``!.env.example``, ``!.env.sample``, ``!.env.template``,
+    ``!.env.dist``, ``!example.env``, ``!env.example``) while real env files stay
+    refused. Exemptions are order-independent and always win; a bare ``!`` raises
+    ``ValueError``. To drop them, filter the defaults:
+    ``[p for p in DEFAULT_EXCLUDE_PATTERNS if not p.startswith("!")]``.
+
+    ``allow_paths`` names workspace-relative files or directories that stay visible and
+    reachable even when they match an exclude pattern, for example ``[".env.example"]``.
+    Entries are literal paths, not patterns. A directory entry covers the files beneath
+    it, and exclude patterns still apply to names beneath the entry:
+    ``allow_paths=["build"]`` reaches ``build/index.html`` but not ``build/.env``. An
+    allowed path beneath an excluded directory is reachable by name; recursive listings
+    still prune the excluded directory.
+
+    ``run_command`` runs a process with ``cwd=root`` and is outside the path and exclude
+    checks; gate it with ``confirm``.
 
     Optional ``require_read_before_write=True`` blocks ``write_file`` / ``edit_file`` /
     ``move_file`` / ``delete_file`` on existing files until the agent has read them in
@@ -259,6 +388,7 @@ class Workspace(Toolkit):
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
         exclude_patterns: Optional[List[str]] = None,
+        allow_paths: Optional[List[str]] = None,
         **kwargs,
     ):
         # Resolve root to an absolute path once — never re-read cwd later (reload-safe).
@@ -270,9 +400,14 @@ class Workspace(Toolkit):
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
         self.require_read_before_write = require_read_before_write
-        self.exclude_patterns: List[str] = (
-            exclude_patterns if exclude_patterns is not None else list(DEFAULT_EXCLUDE_PATTERNS)
-        )
+        self.exclude_patterns: List[str] = _validate_exclude_patterns(exclude_patterns)
+        _resolve_allow_paths(self.root, allow_paths)
+        self.allow_paths: List[str] = list(allow_paths) if allow_paths else []
+        # Components below root of each allow_paths entry, as written and resolved; rebuilt when allow_paths changes.
+        self._allow_snapshot: Optional[Tuple[str, ...]] = None
+        self._allowed_parts: List[Tuple[str, ...]] = []
+        # Whether names that differ only by case are the same entry on root's filesystem.
+        self._fold_case: Optional[bool] = None
         # Tracks which paths have been read this session — used by require_read_before_write.
         # Resolved absolute paths so move/rename interactions are unambiguous.
         self._read_paths: Set[Path] = set()
@@ -371,9 +506,117 @@ class Workspace(Toolkit):
             )
         return list(allowed), list(confirm)
 
+    def _resolved_allow_parts(self) -> List[Tuple[str, ...]]:
+        """Components below ``root`` of every ``allow_paths`` entry, as written and resolved."""
+        snapshot = tuple(self.allow_paths)
+        if snapshot != self._allow_snapshot:
+            parts: List[Tuple[str, ...]] = []
+            for pair in _resolve_allow_paths(self.root, list(snapshot)):
+                for allowed in pair:
+                    allowed_parts = self._relative_parts(allowed)
+                    if allowed_parts and allowed_parts not in parts:
+                        parts.append(allowed_parts)
+            self._allowed_parts = parts
+            self._allow_snapshot = snapshot
+        return self._allowed_parts
+
+    def _case_insensitive(self) -> bool:
+        """Whether ``root`` sits on a case-insensitive filesystem; probed once the root exists."""
+        if self._fold_case is None:
+            if not self.root.exists():
+                return sys.platform in ("darwin", "win32")
+            self._fold_case = _is_case_insensitive_fs(self.root)
+        return self._fold_case
+
+    def _component_excluded(self, part: str) -> bool:
+        """Whether one path component is excluded: it matches a deny pattern and no exemption.
+
+        The patterns are compiled once per (list, case rule) rather than matched one at a
+        time, because this runs for every entry of every listing and tree walk.
+        """
+        fold = "casefold" if self._case_insensitive() else "none"
+        deny, exempt = compile_exclude_patterns(tuple(self.exclude_patterns), fold)
+        if deny is None:
+            return False
+        folded = part.casefold() if fold == "casefold" else part
+        return deny.match(folded) is not None and (exempt is None or exempt.match(folded) is None)
+
+    def _relative_parts(self, path: Path) -> Optional[Tuple[str, ...]]:
+        """Components of ``path`` below ``root``, or ``None`` when ``path`` is not under ``root``."""
+        try:
+            return path.relative_to(self.root).parts
+        except ValueError:
+            return None
+
+    def _same_name(self, a: str, b: str) -> bool:
+        return a.casefold() == b.casefold() if self._case_insensitive() else a == b
+
+    def _allowed_depth(self, parts: Tuple[str, ...]) -> int:
+        """Number of leading ``parts`` covered by the deepest ``allow_paths`` entry, or 0."""
+        depth = 0
+        for allowed_parts in self._resolved_allow_parts():
+            if len(allowed_parts) > len(parts) or len(allowed_parts) <= depth:
+                continue
+            if all(self._same_name(a, b) for a, b in zip(allowed_parts, parts)):
+                depth = len(allowed_parts)
+        return depth
+
     def _is_excluded(self, path: Path) -> bool:
-        """Return True if any component of ``path`` (relative to ``root``) matches an exclude pattern."""
-        return path_matches_exclude(path, self.root, self.exclude_patterns)
+        """Return True if a component of ``path`` below ``root`` matches an exclude pattern.
+
+        A component matching a ``!``-prefixed entry is exempt and never excluded.
+        Components at or above an ``allow_paths`` entry covering ``path`` are not tested;
+        components beneath a directory entry still are. On a case-insensitive filesystem
+        patterns and ``allow_paths`` match case-insensitively.
+        """
+        parts = self._relative_parts(path)
+        if not parts or not self.exclude_patterns:
+            return False
+        if not any(self._component_excluded(part) for part in parts):
+            return False
+        depth = self._allowed_depth(parts)
+        if depth == 0:
+            return True
+        return any(self._component_excluded(part) for part in parts[depth:])
+
+    def _hidden(self, entry: Path) -> bool:
+        """Return True if a listing or search must skip ``entry``.
+
+        An entry is hidden when it escapes ``root``, when its own path is excluded, or when
+        a symlink in its path leads to an excluded target.
+        """
+        try:
+            target = safe_join_relative_path(self.root, entry.relative_to(self.root).as_posix())
+        except (PathSecurityError, ValueError):
+            return True
+        if self._is_excluded(entry):
+            return True
+        return target != entry and self._is_excluded(target)
+
+    def _resolve(self, path: str, what: str = "path") -> Tuple[Optional[str], Path]:
+        """Resolve a caller-supplied path inside ``root`` and apply the exclude boundary.
+
+        Returns ``(error, resolved)``. ``error`` is ``None`` when the path may be used;
+        otherwise it is the message to return to the caller. ``what`` names the argument
+        in the message (``path``, ``directory``, ``src``, ``dst``). Root escapes and
+        exclusions return distinct messages. The exclusion check tests the resolved target
+        and, unless an ``allow_paths`` entry covers that target, the path as written. It
+        runs before any existence check, so a refusal does not reveal whether the path
+        exists.
+        """
+        safe, resolved = self._check_path(path, self.root)
+        if not safe:
+            log_error(f"Path escapes workspace: {path}")
+            return f"Error: {what} escapes workspace root", resolved
+        excluded = self._is_excluded(resolved)
+        if not excluded:
+            resolved_parts = self._relative_parts(resolved)
+            covered = resolved_parts is not None and self._allowed_depth(resolved_parts) > 0
+            excluded = not covered and self._is_excluded(_lexical_join(self.root, path))
+        if excluded:
+            log_warning(f"Refused excluded path: {path}")
+            return f"Error: {what} is excluded from this workspace: {path}", resolved
+        return None, resolved
 
     def _check_read_before_write(self, file_path: Path, op: str) -> Optional[str]:
         """If require_read_before_write is on, verify the file was read this session.
@@ -422,10 +665,9 @@ class Workspace(Toolkit):
         """
         try:
             log_debug(f"read_file: {path}")
-            safe, file_path = self._check_path(path, self.root)
-            if not safe:
-                log_error(f"Path escapes workspace: {path}")
-                return "Error: path escapes workspace root"
+            err, file_path = self._resolve(path)
+            if err:
+                return err
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             contents = file_path.read_text(encoding=encoding)
@@ -470,8 +712,9 @@ class Workspace(Toolkit):
         ``size`` is a human-readable string for files and ``null`` for directories.
 
         For tree-style exploration of a project use ``recursive=True`` (defaults to
-        depth 3). Default-excluded directories (``.venv``, ``.venvs``,
-        ``.context``, ``.git``, ``node_modules``, etc.) are always pruned.
+        depth 3). Excluded directories (``.venv``, ``.venvs``, ``.context``, ``.git``,
+        ``node_modules``, etc.) are pruned unless covered by ``allow_paths``; naming one
+        directly returns an error.
 
         :param directory: Subdirectory relative to the workspace root (default ".").
         :param pattern: Optional glob pattern to filter by (e.g. ``"*.py"``). When
@@ -483,9 +726,9 @@ class Workspace(Toolkit):
             ``files`` (list of entry objects).
         """
         try:
-            safe, d = self._check_path(directory, self.root)
-            if not safe:
-                return "Error: directory escapes workspace root"
+            err, d = self._resolve(directory, what="directory")
+            if err:
+                return err
             if not d.is_dir():
                 return f"Error: not a directory: {directory}"
 
@@ -506,33 +749,15 @@ class Workspace(Toolkit):
                         visible_dirs = list(dirnames)
                     for name in filenames + visible_dirs:
                         full = Path(dirpath) / name
-                        try:
-                            safe_join_relative_path(self.root, full.relative_to(self.root).as_posix())
-                        except PathSecurityError:
-                            continue
-                        if self._is_excluded(full):
+                        if self._hidden(full):
                             continue
                         if pattern and not fnmatch(name, pattern):
                             continue
                         entries.append(full)
             elif pattern:
-                entries = []
-                for p in d.glob(pattern):
-                    try:
-                        safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
-                    except PathSecurityError:
-                        continue
-                    if not self._is_excluded(p):
-                        entries.append(p)
+                entries = [p for p in d.glob(pattern) if not self._hidden(p)]
             else:
-                entries = []
-                for p in d.iterdir():
-                    try:
-                        safe_join_relative_path(self.root, p.relative_to(self.root).as_posix())
-                    except PathSecurityError:
-                        continue
-                    if not self._is_excluded(p):
-                        entries.append(p)
+                entries = [p for p in d.iterdir() if not self._hidden(p)]
 
             files = []
             for p in sorted(entries):
@@ -578,9 +803,9 @@ class Workspace(Toolkit):
         try:
             if not query or not query.strip():
                 return "Error: query cannot be empty"
-            safe, search_dir = self._check_path(directory, self.root)
-            if not safe:
-                return "Error: directory escapes workspace root"
+            err, search_dir = self._resolve(directory, what="directory")
+            if err:
+                return err
             if not search_dir.is_dir():
                 return f"Error: not a directory: {directory}"
 
@@ -598,11 +823,7 @@ class Workspace(Toolkit):
                         walk_done = True
                         break
                     file_path = Path(dirpath) / filename
-                    try:
-                        safe_join_relative_path(self.root, file_path.relative_to(self.root).as_posix())
-                    except PathSecurityError:
-                        continue
-                    if self._is_excluded(file_path):
+                    if self._hidden(file_path):
                         continue
                     if file_path.suffix.lower() not in TEXT_EXTENSIONS:
                         continue
@@ -646,10 +867,9 @@ class Workspace(Toolkit):
         :return: Success message including the path and byte count, or an error message.
         """
         try:
-            safe, file_path = self._check_path(path, self.root)
-            if not safe:
-                log_error(f"Path escapes workspace: {path}")
-                return "Error: path escapes workspace root"
+            err, file_path = self._resolve(path)
+            if err:
+                return err
             if file_path.exists() and not overwrite:
                 return f"Error: file exists and overwrite=False: {path}"
             check_err = self._check_read_before_write(file_path, op="write")
@@ -698,9 +918,9 @@ class Workspace(Toolkit):
         try:
             if not old_str:
                 return "Error: old_str cannot be empty"
-            safe, file_path = self._check_path(path, self.root)
-            if not safe:
-                return "Error: path escapes workspace root"
+            err, file_path = self._resolve(path)
+            if err:
+                return err
             if not file_path.is_file():
                 return f"Error: file not found: {path}"
             check_err = self._check_read_before_write(file_path, op="edit")
@@ -742,12 +962,12 @@ class Workspace(Toolkit):
             or dst exists and overwrite is False.
         """
         try:
-            safe_src, src_path = self._check_path(src, self.root)
-            if not safe_src:
-                return "Error: src escapes workspace root"
-            safe_dst, dst_path = self._check_path(dst, self.root)
-            if not safe_dst:
-                return "Error: dst escapes workspace root"
+            err, src_path = self._resolve(src, what="src")
+            if err:
+                return err
+            err, dst_path = self._resolve(dst, what="dst")
+            if err:
+                return err
             if not src_path.exists():
                 return f"Error: src not found: {src}"
             if src_path.is_dir():
@@ -776,9 +996,9 @@ class Workspace(Toolkit):
         :return: Success message, or an error if the path doesn't exist or is a directory.
         """
         try:
-            safe, file_path = self._check_path(path, self.root)
-            if not safe:
-                return "Error: path escapes workspace root"
+            err, file_path = self._resolve(path)
+            if err:
+                return err
             if not file_path.exists():
                 return f"Error: file not found: {path}"
             if file_path.is_dir():
