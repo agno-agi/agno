@@ -20,7 +20,6 @@ if TYPE_CHECKING:
     from agno.client import AgentOSClient
     from agno.client.a2a import A2AClient
     from agno.client.a2a.schemas import AgentCard
-    from agno.tools.component_tool import ComponentTool
     from agno.os.routers.evals.schemas import EvalSchema
     from agno.os.routers.knowledge.schemas import (
         ConfigResponseSchema,
@@ -47,6 +46,7 @@ if TYPE_CHECKING:
         WorkflowRunSchema,
         WorkflowSessionDetailSchema,
     )
+    from agno.tools.component_tool import ComponentTool
 
 
 @dataclass

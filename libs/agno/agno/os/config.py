@@ -18,6 +18,22 @@ MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "lifecycle"})
 MCPBuiltinTag = Literal["core", "session", "lifecycle"]
 
 
+def _apply_legacy_enable_builtin_tools(data: Dict[str, Any]) -> Dict[str, Any]:
+    """Map the deprecated ``enable_builtin_tools`` key onto ``default_tools`` in a dict
+    copy (the caller's mapping is never mutated). Both keys with different values is a
+    contradiction, never a guess -- raise. Shared by the construction validator and
+    ``model_copy`` so every dict-shaped entry point maps the alias the same way."""
+    data = dict(data)
+    legacy = data.pop("enable_builtin_tools")
+    if "default_tools" in data and data["default_tools"] != legacy:
+        raise ValueError(
+            "MCPConfig got both default_tools and its deprecated alias enable_builtin_tools "
+            f"with different values ({data['default_tools']!r} vs {legacy!r}); pass only default_tools."
+        )
+    data.setdefault("default_tools", legacy)
+    return data
+
+
 class MCPConfig(BaseModel):
     """Configuration for the AgentOS MCP server (served at ``/mcp``).
 
@@ -176,15 +192,7 @@ class MCPConfig(BaseModel):
         # Mapping, not just dict: pydantic accepts any mapping (UserDict etc.), and a
         # missed match here would silently drop the key and serve all default tools.
         if isinstance(data, collections.abc.Mapping) and "enable_builtin_tools" in data:
-            # Copy before popping: model_validate may hand us the caller's own mapping.
-            data = dict(data)
-            legacy = data.pop("enable_builtin_tools")
-            if "default_tools" in data and data["default_tools"] != legacy:
-                raise ValueError(
-                    "MCPConfig got both default_tools and its deprecated alias enable_builtin_tools "
-                    f"with different values ({data['default_tools']!r} vs {legacy!r}); pass only default_tools."
-                )
-            data.setdefault("default_tools", legacy)
+            data = _apply_legacy_enable_builtin_tools(dict(data))
         return data
 
     @property
@@ -205,7 +213,7 @@ class MCPConfig(BaseModel):
         # ``model_copy(update={"enable_builtin_tools": False})`` used to work). Route the
         # legacy key through the same mapping the constructor uses.
         if update and "enable_builtin_tools" in update:
-            update = self._map_deprecated_enable_builtin_tools(update)
+            update = _apply_legacy_enable_builtin_tools(update)
         return super().model_copy(update=update, deep=deep)
 
     @model_validator(mode="after")

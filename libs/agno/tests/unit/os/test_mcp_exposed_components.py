@@ -1051,9 +1051,7 @@ def test_remote_components_have_as_tool_too():
     from agno.agent.remote import RemoteAgent
     from agno.tools import ComponentTool
 
-    marker = RemoteAgent(base_url="http://localhost:9", agent_id="far-away").as_tool(
-        name="ask_remote", description="d"
-    )
+    marker = RemoteAgent(base_url="http://localhost:9", agent_id="far-away").as_tool(name="ask_remote", description="d")
     assert isinstance(marker, ComponentTool)
     assert marker.name == "ask_remote"
     assert marker.description == "d"

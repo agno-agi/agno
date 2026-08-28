@@ -1003,9 +1003,7 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
 
     def _roster_member(obj: Any) -> bool:
         return any(
-            obj is component
-            for kind in ("agents", "teams", "workflows")
-            for component in getattr(os, kind, None) or []
+            obj is component for kind in ("agents", "teams", "workflows") for component in getattr(os, kind, None) or []
         )
 
     customs: List[Any] = []
