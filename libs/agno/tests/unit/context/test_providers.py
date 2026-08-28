@@ -726,8 +726,9 @@ async def test_slack_uses_bot_read_without_action_token(monkeypatch):
 def test_slack_tools_mode_uses_bot_read_surface():
     p = SlackContextProvider(token="xoxb-x", mode=ContextMode.tools)
     tools = p.get_tools()[0]
-    assert "search_workspace" not in tools.functions
-    assert "get_channel_history" in tools.functions
+    # In mode=tools, function names are prefixed with provider id to avoid collisions
+    assert "slack_search_workspace" not in tools.functions
+    assert "slack_get_channel_history" in tools.functions
 
 
 def test_slack_default_instructions_advertise_query_and_update():
