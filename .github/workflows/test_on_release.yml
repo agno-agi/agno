@@ -9,7 +9,6 @@ on:
       - "release/*" # Run on release/1.2.3 branch format
       - "feat/v3.0"
       - "perf/tool-schema-cache"
-      - "handle-embedding-failures"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:

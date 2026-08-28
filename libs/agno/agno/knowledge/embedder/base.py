@@ -13,7 +13,11 @@ def raise_embedding_error(error: Exception, model_id: Optional[str] = None, prov
     status_code = getattr(error, "status_code", None)
     if not isinstance(status_code, int):
         # Some SDKs expose the HTTP status on a nested response object instead
-        status_code = getattr(getattr(error, "response", None), "status_code", None)
+        response = getattr(error, "response", None)
+        status_code = getattr(response, "status_code", None)
+        if not isinstance(status_code, int) and isinstance(response, dict):
+            # botocore reports it under a response metadata dict
+            status_code = response.get("ResponseMetadata", {}).get("HTTPStatusCode")
 
     raise EmbeddingError(
         f"Failed to generate embedding: {error}",
