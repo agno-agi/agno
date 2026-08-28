@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
 from agno.utils.gemini import inject_agno_client_header
 from agno.utils.log import log_error, log_info, log_warning
 
@@ -90,13 +90,15 @@ class GeminiEmbedder(Embedder):
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Google")
 
-        # Checked outside the try so this deliberate raise is not caught by the
-        # handler meant for provider failures.
+        # A 200 carrying no embedding is a valid provider response, not a failure, so it
+        # is reported as an empty vector. Ingestion counts unembedded chunks and reports
+        # the shortfall as PARTIAL; raising here would fail callers that tolerate it.
         if response.embeddings and len(response.embeddings) > 0:
             values = response.embeddings[0].values
             if values is not None:
                 return values
-        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Google")
+        log_warning("No embeddings found in response")
+        return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response = self._response(text=text)
@@ -220,22 +222,20 @@ class GeminiEmbedder(Embedder):
             try:
                 response = await self.aclient.aio.models.embed_content(**_request_params)
 
-                # Extract embeddings from batch response
-                if response.embeddings:
-                    batch_embeddings = []
-                    for embedding in response.embeddings:
-                        if embedding.values is None:
-                            raise_embedding_error(
-                                ValueError("No embedding values in batch response"),
-                                model_id=self.id,
-                                provider="Google",
-                            )
-                        batch_embeddings.append(embedding.values)
-                    all_embeddings.extend(batch_embeddings)
-                else:
-                    raise_embedding_error(
-                        ValueError("No embeddings in batch response"), model_id=self.id, provider="Google"
+                # A batch that comes back short or empty is reported per text, not raised:
+                # an empty embedding is a valid response, and the caller counts unembedded
+                # chunks. Missing entries become empty vectors so positions stay aligned.
+                batch_embeddings = pad_batch_embeddings(
+                    [e.values if e.values is not None else [] for e in (response.embeddings or [])],
+                    batch_texts,
+                    "Google",
+                )
+                if len(batch_embeddings) < len(batch_texts):
+                    log_warning(
+                        f"Batch response returned {len(batch_embeddings)} of {len(batch_texts)} embeddings"
                     )
+                    batch_embeddings.extend([[]] * (len(batch_texts) - len(batch_embeddings)))
+                all_embeddings.extend(batch_embeddings)
 
                 # Extract usage information
                 usage_dict = None

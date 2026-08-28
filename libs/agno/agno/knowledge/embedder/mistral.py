@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_info, log_warning
 
 try:
@@ -65,11 +65,12 @@ class MistralEmbedder(Embedder):
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
 
-        # Checked outside the try so this deliberate raise is not caught by the
-        # handler meant for provider failures.
+        # A 200 carrying no embedding is a valid provider response, not a failure (see
+        # the note in GeminiEmbedder.get_embedding).
         if response.data and response.data[0].embedding:
             return response.data[0].embedding
-        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
+        log_warning("No embeddings found in response")
+        return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         try:
@@ -105,11 +106,12 @@ class MistralEmbedder(Embedder):
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Mistral")
 
-        # Checked outside the try so this deliberate raise is not caught by the
-        # handler meant for provider failures.
+        # A 200 carrying no embedding is a valid provider response, not a failure (see
+        # the note in GeminiEmbedder.get_embedding).
         if response.data and response.data[0].embedding:
             return response.data[0].embedding
-        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Mistral")
+        log_warning("No embeddings found in response")
+        return []
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Dict[str, Any]]:
         """Async version of get_embedding_and_usage."""
@@ -178,20 +180,19 @@ class MistralEmbedder(Embedder):
                         None, lambda: self.client.embeddings.create(**_request_params)
                     )
 
-                # Extract embeddings from batch response
-                if response.data:
-                    batch_embeddings = [data.embedding for data in response.data if data.embedding]
-                    if len(batch_embeddings) != len(batch_texts):
-                        raise_embedding_error(
-                            ValueError("Batch response is missing embeddings"),
-                            model_id=self.id,
-                            provider="Mistral",
-                        )
-                    all_embeddings.extend(batch_embeddings)
-                else:
-                    raise_embedding_error(
-                        ValueError("No embeddings in batch response"), model_id=self.id, provider="Mistral"
+                # A batch that comes back short or empty is reported per text, not raised:
+                # an empty embedding is a valid response, and the caller counts unembedded
+                # chunks. Entries are kept in place (rather than filtered out) so a missing
+                # embedding does not shift every later text onto the wrong vector.
+                batch_embeddings = pad_batch_embeddings(
+                    [data.embedding or [] for data in (response.data or [])], batch_texts, "Mistral"
+                )
+                if len(batch_embeddings) < len(batch_texts):
+                    log_warning(
+                        f"Batch response returned {len(batch_embeddings)} of {len(batch_texts)} embeddings"
                     )
+                    batch_embeddings.extend([[]] * (len(batch_texts) - len(batch_embeddings)))
+                all_embeddings.extend(batch_embeddings)
 
                 # Extract usage information
                 usage_dict = response.usage.model_dump() if response.usage else None

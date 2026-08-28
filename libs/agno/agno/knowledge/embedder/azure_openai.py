@@ -4,7 +4,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, first_embedding, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_warning, logger
 
 try:
@@ -113,7 +113,8 @@ class AzureOpenAIEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         try:
             response: CreateEmbeddingResponse = self._response(text=text)
-            return response.data[0].embedding
+            entry = first_embedding(response.data, "AzureOpenAI")
+            return entry.embedding if entry else []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
@@ -121,9 +122,10 @@ class AzureOpenAIEmbedder(Embedder):
         try:
             response: CreateEmbeddingResponse = self._response(text=text)
 
-            embedding = response.data[0].embedding
+            entry = first_embedding(response.data, "AzureOpenAI")
+            embedding = entry.embedding if entry else []
             usage = response.usage
-            return embedding, usage.model_dump()
+            return embedding, usage.model_dump() if usage else None
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
@@ -147,7 +149,8 @@ class AzureOpenAIEmbedder(Embedder):
         """Async version of get_embedding using the native Azure OpenAI async client."""
         try:
             response: CreateEmbeddingResponse = await self._aresponse(text=text)
-            return response.data[0].embedding
+            entry = first_embedding(response.data, "AzureOpenAI")
+            return entry.embedding if entry else []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
@@ -156,9 +159,10 @@ class AzureOpenAIEmbedder(Embedder):
         try:
             response: CreateEmbeddingResponse = await self._aresponse(text=text)
 
-            embedding = response.data[0].embedding
+            entry = first_embedding(response.data, "AzureOpenAI")
+            embedding = entry.embedding if entry else []
             usage = response.usage
-            return embedding, usage.model_dump()
+            return embedding, usage.model_dump() if usage else None
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AzureOpenAI")
 
@@ -195,7 +199,9 @@ class AzureOpenAIEmbedder(Embedder):
 
             try:
                 response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
-                batch_embeddings = [data.embedding for data in response.data]
+                batch_embeddings = pad_batch_embeddings(
+                    [data.embedding for data in response.data], batch_texts, "AzureOpenAI"
+                )
                 all_embeddings.extend(batch_embeddings)
 
                 # For each embedding in the batch, add the same usage information

@@ -3,7 +3,7 @@ from dataclasses import dataclass
 from os import getenv
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_warning, logger
 
 try:
@@ -233,7 +233,9 @@ class VLLMEmbedder(Embedder):
                     req.update(self.request_params)
                 try:
                     response: "CreateEmbeddingResponse" = await self._get_async_remote_client().embeddings.create(**req)
-                    batch_embeddings = [data.embedding for data in response.data]
+                    batch_embeddings = pad_batch_embeddings(
+                        [data.embedding for data in response.data], batch_texts, "vLLM"
+                    )
                     all_embeddings.extend(batch_embeddings)
 
                     # For each embedding in the batch, add the same usage information

@@ -3,7 +3,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 from typing_extensions import Literal
 
-from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, first_embedding, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_info, log_warning
 
 try:
@@ -81,7 +81,8 @@ class OpenAIEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         try:
             response: CreateEmbeddingResponse = self.response(text=text)
-            return response.data[0].embedding
+            entry = first_embedding(response.data, "OpenAI")
+            return entry.embedding if entry else []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
 
@@ -89,7 +90,8 @@ class OpenAIEmbedder(Embedder):
         try:
             response: CreateEmbeddingResponse = self.response(text=text)
 
-            embedding = response.data[0].embedding
+            entry = first_embedding(response.data, "OpenAI")
+            embedding = entry.embedding if entry else []
             usage = response.usage
             if usage:
                 return embedding, usage.model_dump()
@@ -113,7 +115,8 @@ class OpenAIEmbedder(Embedder):
 
         try:
             response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
-            return response.data[0].embedding
+            entry = first_embedding(response.data, "OpenAI")
+            return entry.embedding if entry else []
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="OpenAI")
 
@@ -133,7 +136,8 @@ class OpenAIEmbedder(Embedder):
 
         try:
             response = await self.aclient.embeddings.create(**req)
-            embedding = response.data[0].embedding
+            entry = first_embedding(response.data, "OpenAI")
+            embedding = entry.embedding if entry else []
             usage = response.usage
             return embedding, usage.model_dump() if usage else None
         except Exception as e:
@@ -173,7 +177,9 @@ class OpenAIEmbedder(Embedder):
 
             try:
                 response: CreateEmbeddingResponse = await self.aclient.embeddings.create(**req)
-                batch_embeddings = [data.embedding for data in response.data]
+                batch_embeddings = pad_batch_embeddings(
+                    [data.embedding for data in response.data], batch_texts, "OpenAI"
+                )
                 all_embeddings.extend(batch_embeddings)
 
                 # For each embedding in the batch, add the same usage information

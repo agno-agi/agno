@@ -2,7 +2,12 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -136,6 +141,7 @@ class CohereEmbedder(Embedder):
                 else:
                     log_warning("No embeddings found in response")
                     batch_embeddings = []
+                batch_embeddings = pad_batch_embeddings(batch_embeddings, texts, "Cohere")
 
                 # Extract usage information
                 usage = response.meta.billed_units if response.meta else None
@@ -175,14 +181,15 @@ class CohereEmbedder(Embedder):
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
-        # Checked outside the try so this deliberate raise is not caught by the
-        # handler meant for provider failures.
+        # A 200 carrying no embedding is a valid provider response, not a failure (see
+        # the note in GeminiEmbedder.get_embedding).
         if isinstance(response, EmbeddingsFloatsEmbedResponse):
             return response.embeddings[0]
         elif isinstance(response, EmbeddingsByTypeEmbedResponse):
             if response.embeddings.float_:
                 return response.embeddings.float_[0]
-        raise_embedding_error(ValueError("No embeddings found in response"), model_id=self.id, provider="Cohere")
+        log_warning("No embeddings found in response")
+        return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
         response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)

@@ -1,7 +1,7 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, first_embedding, pad_batch_embeddings, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_warning, logger
 
 try:
@@ -71,7 +71,7 @@ class VoyageAIEmbedder(Embedder):
     def get_embedding(self, text: str) -> List[float]:
         try:
             response: EmbeddingsObject = self._response(text=text)
-            embedding = response.embeddings[0]
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
@@ -80,7 +80,7 @@ class VoyageAIEmbedder(Embedder):
         try:
             response: EmbeddingsObject = self._response(text=text)
 
-            embedding = response.embeddings[0]
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
             usage = {"total_tokens": response.total_tokens}
             return [float(x) for x in embedding], usage
         except Exception as e:
@@ -100,7 +100,7 @@ class VoyageAIEmbedder(Embedder):
         """Async version of get_embedding."""
         try:
             response: EmbeddingsObject = await self._async_response(text=text)
-            embedding = response.embeddings[0]
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
@@ -109,7 +109,7 @@ class VoyageAIEmbedder(Embedder):
         """Async version of get_embedding_and_usage."""
         try:
             response: EmbeddingsObject = await self._async_response(text=text)
-            embedding = response.embeddings[0]
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
             usage = {"total_tokens": response.total_tokens}
             return [float(x) for x in embedding], usage
         except Exception as e:
@@ -143,7 +143,9 @@ class VoyageAIEmbedder(Embedder):
 
             try:
                 response: EmbeddingsObject = await self.aclient.embed(**req)
-                batch_embeddings = [[float(x) for x in emb] for emb in response.embeddings]
+                batch_embeddings = pad_batch_embeddings(
+                    [[float(x) for x in emb] for emb in response.embeddings], batch_texts, "VoyageAI"
+                )
                 all_embeddings.extend(batch_embeddings)
 
                 # For each embedding in the batch, add the same usage information

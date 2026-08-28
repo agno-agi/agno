@@ -111,6 +111,40 @@ class TestEmbedderRaisesOnFailure:
                     setattr(owner, attr, original)
 
 
+class TestEmptyResponseIsNotAnError:
+    """A 200 carrying no embedding is a valid provider response, not a failure.
+
+    Ingestion counts unembedded chunks and reports the shortfall, so raising here would
+    fail callers that legitimately tolerate an empty result.
+    """
+
+    @pytest.mark.parametrize(
+        "module_path,class_name",
+        [
+            ("agno.knowledge.embedder.google", "GeminiEmbedder"),
+            ("agno.knowledge.embedder.mistral", "MistralEmbedder"),
+            ("agno.knowledge.embedder.cohere", "CohereEmbedder"),
+            ("agno.knowledge.embedder.openai", "OpenAIEmbedder"),
+            ("agno.knowledge.embedder.azure_openai", "AzureOpenAIEmbedder"),
+            ("agno.knowledge.embedder.voyageai", "VoyageAIEmbedder"),
+        ],
+    )
+    def test_empty_response_returns_empty_without_raising(self, module_path, class_name):
+        embedder = load(module_path, class_name, {"api_key": "test"})
+
+        empty = MagicMock()
+        empty.embeddings = []
+        empty.data = []
+        empty.usage = None
+        empty.meta = None
+        for attr in ("response", "_response"):
+            if hasattr(embedder, attr):
+                setattr(embedder, attr, MagicMock(return_value=empty))
+
+        assert embedder.get_embedding("hello world") == []
+        embedder.get_embedding_and_usage("hello world")  # must not raise either
+
+
 class TestBatchFallbackKeepsGoodChunks:
     """One bad text must not discard the chunks that embedded successfully."""
 
@@ -157,39 +191,6 @@ class TestBatchFallbackKeepsGoodChunks:
         assert "All 2 chunks failed" in str(excinfo.value)
 
 
-class TestEmptyResponseIsReported:
-    """A well-formed response carrying no embedding must still raise.
-
-    This pins the outcome, not the control flow: ``raise_embedding_error`` re-raises an
-    ``EmbeddingError`` unchanged, so the message survives even when the check sits inside
-    the provider-error handler. Keeping the check outside that handler is a structural
-    choice this test cannot observe.
-    """
-
-    @pytest.mark.parametrize(
-        "module_path,class_name",
-        [
-            ("agno.knowledge.embedder.google", "GeminiEmbedder"),
-            ("agno.knowledge.embedder.mistral", "MistralEmbedder"),
-            ("agno.knowledge.embedder.cohere", "CohereEmbedder"),
-        ],
-    )
-    def test_empty_response_reports_the_shape_problem(self, module_path, class_name):
-        embedder = load(module_path, class_name, {"api_key": "test"})
-
-        empty = MagicMock()
-        empty.embeddings = []
-        empty.data = []
-        for attr in ("response", "_response"):
-            if hasattr(embedder, attr):
-                setattr(embedder, attr, MagicMock(return_value=empty))
-
-        with pytest.raises(EmbeddingError) as excinfo:
-            embedder.get_embedding("hello world")
-
-        assert "No embeddings found in response" in str(excinfo.value)
-
-
 class TestEveryBatchingEmbedderKeepsGoodChunks:
     """Every embedder with a batch path must preserve chunks that did embed.
 
@@ -223,3 +224,54 @@ class TestEveryBatchingEmbedderKeepsGoodChunks:
             f"{module_path} falls back per text without the shared helper, so the first "
             "failing chunk would discard every chunk that embedded successfully"
         )
+
+
+class TestShortBatchKeepsPositions:
+    """A batch returning fewer embeddings than texts must not shift later texts.
+
+    Callers pair embeddings with documents by position, so an unpadded short response
+    would silently give a document the wrong vector.
+    """
+
+    @pytest.mark.parametrize(
+        "module_path",
+        [
+            "agno.knowledge.embedder.openai",
+            "agno.knowledge.embedder.azure_openai",
+            "agno.knowledge.embedder.google",
+            "agno.knowledge.embedder.cohere",
+            "agno.knowledge.embedder.mistral",
+            "agno.knowledge.embedder.jina",
+            "agno.knowledge.embedder.voyageai",
+            "agno.knowledge.embedder.vllm",
+        ],
+        ids=lambda m: m.rsplit(".", 1)[-1],
+    )
+    def test_batch_extraction_is_padded(self, module_path):
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            pytest.skip(f"{module_path} unavailable: {e}")
+
+        source = inspect.getsource(module)
+        if "batch_and_usage" not in source:
+            pytest.skip(f"{module_path} has no batch path")
+
+        assert "pad_batch_embeddings" in source, (
+            f"{module_path} builds batch embeddings without padding, so a short response "
+            "would shift every later text onto the wrong vector"
+        )
+
+    def test_padding_helper_fills_missing_slots(self):
+        from agno.knowledge.embedder.base import pad_batch_embeddings
+
+        padded = pad_batch_embeddings([[0.1], [0.2]], ["a", "b", "c"], "Test")
+
+        assert padded == [[0.1], [0.2], []]
+
+    def test_padding_helper_leaves_complete_batches_alone(self):
+        from agno.knowledge.embedder.base import pad_batch_embeddings
+
+        full = [[0.1], [0.2]]
+
+        assert pad_batch_embeddings(full, ["a", "b"], "Test") == full

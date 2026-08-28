@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from typing import Dict, List, NoReturn, Optional, Tuple
+from typing import Any, Dict, List, NoReturn, Optional, Tuple
 
 from agno.exceptions import EmbeddingError
 from agno.utils.log import log_warning
@@ -25,6 +25,38 @@ def raise_embedding_error(
         model_id=model_id,
         provider=provider,
     ) from error
+
+
+def first_embedding(entries: Optional[List[Any]], provider: Optional[str] = None) -> Optional[Any]:
+    """Return the first entry of an embedding response, or ``None`` when there is none.
+
+    A response carrying no embedding is valid, so it must not surface as an IndexError
+    that then gets reported as a provider failure.
+    """
+    if not entries:
+        log_warning(f"{provider or 'Embedder'} returned no embeddings for this request")
+        return None
+    return entries[0]
+
+
+def pad_batch_embeddings(
+    embeddings: List[List[float]],
+    batch_texts: List[str],
+    provider: Optional[str] = None,
+) -> List[List[float]]:
+    """Pad a short batch response so every text keeps its own slot.
+
+    Callers pair embeddings with documents by position, so a response carrying fewer
+    embeddings than texts would shift every later text onto the wrong vector. Missing
+    entries become empty vectors, which ingestion counts and reports as a shortfall.
+    """
+    if len(embeddings) >= len(batch_texts):
+        return embeddings
+    log_warning(
+        f"{provider or 'Embedder'} batch response returned {len(embeddings)} of "
+        f"{len(batch_texts)} embeddings; the rest are recorded as unembedded"
+    )
+    return list(embeddings) + [[]] * (len(batch_texts) - len(embeddings))
 
 
 async def aembed_texts_individually(
