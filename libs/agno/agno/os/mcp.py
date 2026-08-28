@@ -122,7 +122,7 @@ def _builtin_tool_registrar(mcp: FastMCP, enabled_tags: set):
     return register
 
 
-def _register_custom_tools(mcp: FastMCP, entries: List[Any]) -> Dict[str, str]:
+def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Optional[set]" = None) -> Dict[str, str]:
     """Register the custom-tool entries (callables and Agno tools) on the MCP server.
 
     Entries are pre-classified by ``_split_tool_entries`` -- components and
@@ -130,18 +130,30 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any]) -> Dict[str, str]:
     registered under (FastMCP's own naming, e.g. ``functools.partial`` objects register
     as "partial"), so the exposure collision check downstream sees the real registry
     rather than a re-derivation.
+
+    A custom tool named like a default tool that will register (its tags intersect
+    ``enabled_tags``) is a hard error, matching the exposure path: FastMCP would
+    otherwise warn-and-REPLACE, so a custom ``continue_run`` would silently shadow the
+    riding builtin while paused results keep steering callers to the builtin's schema.
     """
+    enabled_builtin_names = {
+        builtin: f'the default tool "{builtin}"'
+        for builtin, tags in _BUILTIN_TOOL_NAMES.items()
+        if tags & (enabled_tags or set())
+    }
     names: Dict[str, str] = {}
     for tool in entries:
-        name = _register_custom_tool(mcp, tool)
+        name = _register_custom_tool(mcp, tool, taken=enabled_builtin_names)
         names[name] = f'custom tool "{name}"'
     return names
 
 
-def _register_custom_tool(mcp: FastMCP, tool: Any) -> str:
+def _register_custom_tool(mcp: FastMCP, tool: Any, taken: "Optional[Dict[str, str]]" = None) -> str:
     """Register a single custom tool, supporting plain callables and Agno tools/Functions.
 
-    Returns the name the tool registered under.
+    Returns the name the tool registered under. ``taken`` holds names already claimed
+    on this server (checked before registration -- FastMCP replaces on duplicates
+    rather than raising).
     """
     from fastmcp.tools import Tool
 
@@ -151,18 +163,22 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> str:
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
         tool_obj = Tool.from_function(_inject_user_id(entrypoint), name=name, description=description)
-        mcp.add_tool(tool_obj)
-        return tool_obj.name
-
-    # Plain callable: name/description inferred from ``__name__``/docstring.
-    if callable(tool):
+    elif callable(tool):
+        # Plain callable: name/description inferred from ``__name__``/docstring.
         tool_obj = Tool.from_function(_inject_user_id(tool))
-        mcp.add_tool(tool_obj)
-        return tool_obj.name
+    else:
+        raise TypeError(
+            f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
+        )
 
-    raise TypeError(
-        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
-    )
+    if taken and tool_obj.name in taken:
+        raise ValueError(
+            f'MCP custom tool name "{tool_obj.name}" collides with {taken[tool_obj.name]}. '
+            "Rename the custom tool, or scope the default tool out via "
+            "default_tools/include_tags/exclude_tags so each tool name is unique."
+        )
+    mcp.add_tool(tool_obj)
+    return tool_obj.name
 
 
 def _inject_user_id(fn: Callable) -> Callable:
@@ -1643,7 +1659,7 @@ def build_mcp_server(
 
     # Register any user-provided custom tools. These share the same server, mount (/mcp),
     # lifespan, and JWT middleware as the built-in tools.
-    custom_tool_names = _register_custom_tools(mcp, custom_entries)
+    custom_tool_names = _register_custom_tools(mcp, custom_entries, enabled_tags)
 
     # Expose the components named in the config as individual tools ("chief", not
     # run_agent(agent_id="chief")). Last, so collision checks see the full surface.

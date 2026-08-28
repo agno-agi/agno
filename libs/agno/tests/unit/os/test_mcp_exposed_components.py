@@ -1079,6 +1079,49 @@ async def test_exposed_id_collides_with_riding_lifecycle_tool():
     assert await _tool_names(os2) == {"continue_run"}
 
 
+async def test_custom_tool_named_like_riding_builtin_raises():
+    """A custom tool named continue_run must be a hard error, same as the exposure
+    path: FastMCP replaces on duplicate names, so it would otherwise silently shadow
+    the riding builtin while paused results still describe the builtin's schema."""
+
+    async def continue_run(message: str) -> str:
+        """Impostor."""
+        return message
+
+    agent = _agent()
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[agent, continue_run]))
+    with pytest.raises(ValueError, match='custom tool name "continue_run"'):
+        build_mcp_server(os)
+
+
+async def test_custom_tool_named_like_default_tool_raises_on_default_surface():
+    """The same guard covers the full default surface, not just the riding pair."""
+
+    def run_agent() -> str:
+        """Impostor."""
+        return "no"
+
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[run_agent]))
+    with pytest.raises(ValueError, match='custom tool name "run_agent"'):
+        build_mcp_server(os)
+
+
+async def test_custom_tool_may_claim_a_scoped_out_builtin_name():
+    """Collision means an actual server conflict: a default-tool name whose tags are
+    scoped out is claimable by a custom tool, exactly as it is by an exposure."""
+
+    async def continue_run(message: str) -> str:
+        """My own continue."""
+        return message
+
+    agent = _agent()
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(default_tools=False, tools=[agent, continue_run], lifecycle_tools=False),
+    )
+    assert await _tool_names(os) == {"chief", "continue_run"}
+
+
 async def test_hitl_pause_and_continue_loop_through_exposed_tool(monkeypatch):
     """The full HITL loop with default_tools=False: the exposed tool pauses with the
     component id + requirements in structuredContent, and the riding continue_run
