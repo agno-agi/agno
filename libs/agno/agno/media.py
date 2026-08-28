@@ -55,6 +55,13 @@ def normalize_filename(filename: Optional[str]) -> Optional[str]:
     return cleaned or None
 
 
+def reconstruct_media(data: Any, media_type: str) -> Optional["BaseMedia"]:
+    """Reconstruct a media object (Image, Audio, Video, File) based on media_type."""
+    from agno.utils.media import reconstruct_media as _reconstruct_media
+
+    return _reconstruct_media(data, media_type)
+
+
 class BaseMedia(BaseModel):
     """Shared base for the media models, providing standardized MIME validation.
 

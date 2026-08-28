@@ -89,3 +89,16 @@ def test_normalize_filename_all_illegal_keeps_underscores():
 def test_normalize_filename_empty_returns_none():
     assert normalize_filename("") is None
     assert normalize_filename("   ") is None
+
+
+def test_utils_media_exports_normalization_helpers():
+    from agno.utils.media import (
+        normalize_filename as utils_normalize_filename,
+    )
+    from agno.utils.media import (
+        normalize_mime_type as utils_normalize_mime_type,
+    )
+
+    assert utils_normalize_mime_type("IMAGE/JPEG; charset=utf-8") == "image/jpeg"
+    assert utils_normalize_filename('"test<file>.txt"') == "test_file_.txt"
+

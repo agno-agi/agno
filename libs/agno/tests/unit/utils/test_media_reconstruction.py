@@ -11,6 +11,7 @@ from agno.utils.media import (
     reconstruct_files,
     reconstruct_image_from_dict,
     reconstruct_images,
+    reconstruct_media,
     reconstruct_response_audio,
     reconstruct_video_from_dict,
     reconstruct_videos,
@@ -452,3 +453,43 @@ def test_file_text_roundtrip_through_message():
 
     assert restored.files is not None
     assert restored.files[0].content == original
+
+
+def test_reconstruct_media_generic_dispatcher():
+    """Test reconstruct_media properly delegates across all media modalities."""
+    # Image
+    img = reconstruct_media({"url": "https://example.com/pic.png", "mime_type": "image/png"}, "image")
+    assert isinstance(img, Image)
+    assert img.url == "https://example.com/pic.png"
+
+    # Audio
+    aud = reconstruct_media({"url": "https://example.com/song.mp3", "mime_type": "audio/mp3"}, "audio")
+    assert isinstance(aud, Audio)
+    assert aud.url == "https://example.com/song.mp3"
+
+    # Video
+    vid = reconstruct_media({"url": "https://example.com/clip.mp4", "mime_type": "video/mp4"}, "video")
+    assert isinstance(vid, Video)
+    assert vid.url == "https://example.com/clip.mp4"
+
+    # File / Document
+    f_doc = reconstruct_media({"url": "https://example.com/doc.pdf", "mime_type": "application/pdf"}, "file")
+    assert isinstance(f_doc, File)
+    assert f_doc.url == "https://example.com/doc.pdf"
+
+    # Document alias
+    doc_alias = reconstruct_media({"url": "https://example.com/doc.pdf", "mime_type": "application/pdf"}, "document")
+    assert isinstance(doc_alias, File)
+
+    # Plural aliases
+    assert isinstance(reconstruct_media({"url": "https://example.com/pic.png"}, "images"), Image)
+    assert isinstance(reconstruct_media({"url": "https://example.com/song.mp3"}, "audios"), Audio)
+    assert isinstance(reconstruct_media({"url": "https://example.com/clip.mp4"}, "videos"), Video)
+    assert isinstance(reconstruct_media({"url": "https://example.com/doc.pdf"}, "files"), File)
+    assert isinstance(reconstruct_media({"url": "https://example.com/doc.pdf"}, "documents"), File)
+
+    # None / unknown handling
+    assert reconstruct_media(None, "image") is None
+    assert reconstruct_media({"url": "https://example.com/pic.png"}, "") is None
+    assert reconstruct_media({"url": "https://example.com/pic.png"}, "unknown") is None
+
