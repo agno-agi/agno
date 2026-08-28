@@ -20,7 +20,7 @@ accepted aliases).
 listed tools, checked the generated schemas and descriptions, ran `chief`
 twice -- once sessionless, once continuing the returned session.
 
-**Result:** `tools/list` returned exactly `chief` and `deep_research`. The
+**Result:** `tools/list` returned `chief`, `deep_research`, and the riding lifecycle pair (`continue_run`, `cancel_run`). The
 `chief` tool carried the agent's own description plus the session sentence;
 `deep_research` carried the as_tool override pitch. The client-facing schema
 was `message` (required), `session_id`, `user_id`; structuredContent carried
