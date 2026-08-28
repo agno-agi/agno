@@ -75,11 +75,7 @@ class GithubTools(Toolkit):
         super().__init__(name="github", tools=tools, **kwargs)
 
     def authenticate(self) -> Github:
-        """Connect to GitHub, optionally with authentication.
-
-        If access_token is provided, authenticates for 5,000 requests/hour and private repo access.
-        Without a token, connects unauthenticated for public repos only (60 requests/hour).
-        """
+        """Authenticate with GitHub using the provided access token."""
         auth = Auth.Token(self.access_token) if self.access_token else None
 
         if self.base_url:
