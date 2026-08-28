@@ -225,11 +225,58 @@ class ScheduleManager:
     def list(
         self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
     ) -> List[Schedule]:
-        """List schedules. ``user_id`` scopes the listing to one owner."""
+        """List a single page of schedules (DB errors yield an empty list).
+
+        Use list_all() to enumerate every schedule and surface DB errors.
+        ``user_id`` scopes the listing to one owner.
+        """
         result = self._call("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
+
+    def list_all(
+        self, enabled: Optional[bool] = None, user_id: Optional[str] = None, *, raise_on_error: bool = True
+    ) -> List[Schedule]:
+        """List every schedule, paging through the full catalog.
+
+        With raise_on_error=True (the default) the DB re-raises failures and
+        raises when the schedules table is unavailable (database error or table
+        never created), instead of masquerading as an empty catalog.
+
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            user_id: Scopes the listing to one owner.
+            raise_on_error: Forwarded to the DB. When False, DB errors yield
+                an empty or partial result, matching list().
+        """
+        schedules: List[Schedule] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = self._call(
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
+            )
+            if not isinstance(result, tuple):
+                # Legacy third-party Dbs may return a bare list: treat it as complete
+                return self._to_schedule_list(result)
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
+            schedules.extend(self._to_schedule_list(rows))
+            # Stop on a short page; totals can shift mid-sweep, so total_count is
+            # not reconciled against the row count
+            if len(rows) < page_size:
+                return schedules
+            page += 1
 
     def get(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Get a schedule by ID."""
@@ -392,11 +439,58 @@ class ScheduleManager:
     async def alist(
         self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
     ) -> List[Schedule]:
-        """Async list schedules. ``user_id`` scopes the listing to one owner."""
+        """Async list a single page of schedules (DB errors yield an empty list).
+
+        Use alist_all() to enumerate every schedule and surface DB errors.
+        ``user_id`` scopes the listing to one owner.
+        """
         result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
+
+    async def alist_all(
+        self, enabled: Optional[bool] = None, user_id: Optional[str] = None, *, raise_on_error: bool = True
+    ) -> List[Schedule]:
+        """Async list every schedule, paging through the full catalog.
+
+        With raise_on_error=True (the default) the DB re-raises failures and
+        raises when the schedules table is unavailable (database error or table
+        never created), instead of masquerading as an empty catalog.
+
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            user_id: Scopes the listing to one owner.
+            raise_on_error: Forwarded to the DB. When False, DB errors yield
+                an empty or partial result, matching alist().
+        """
+        schedules: List[Schedule] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = await self._acall(
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
+            )
+            if not isinstance(result, tuple):
+                # Legacy third-party Dbs may return a bare list: treat it as complete
+                return self._to_schedule_list(result)
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
+            schedules.extend(self._to_schedule_list(rows))
+            # Stop on a short page; totals can shift mid-sweep, so total_count is
+            # not reconciled against the row count
+            if len(rows) < page_size:
+                return schedules
+            page += 1
 
     async def aget(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async get a schedule by ID."""
