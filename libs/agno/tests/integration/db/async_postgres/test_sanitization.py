@@ -24,7 +24,7 @@ async def cleanup_all_tables(async_postgres_db_real: AsyncPostgresDb):
 
     try:
         # Clean up all tables
-        for table_type in ["memories", "sessions", "knowledge", "evals", "traces", "spans", "culture"]:
+        for table_type in ["memories", "sessions", "knowledge", "evals", "traces", "spans"]:
             try:
                 table = await async_postgres_db_real._get_table(table_type)
                 async with async_postgres_db_real.async_session_factory() as session:
@@ -334,7 +334,29 @@ async def test_span_upsert_sanitizes_fields(async_postgres_db_real: AsyncPostgre
     """Test that null bytes in span fields are sanitized."""
     from datetime import datetime, timezone
 
-    from agno.tracing.schemas import Span
+    from agno.tracing.schemas import Span, Trace
+
+    # Spans carry a NOT NULL foreign key to their trace, and the exporter always
+    # upserts the trace before that trace's spans, so create the parent first.
+    await async_postgres_db_real.upsert_trace(
+        Trace(
+            trace_id="test_trace_null",
+            name="Trace\x00Name",
+            status="OK",
+            start_time=datetime.now(timezone.utc),
+            end_time=datetime.now(timezone.utc),
+            duration_ms=100,
+            total_spans=1,
+            error_count=0,
+            run_id=None,
+            session_id=None,
+            user_id=None,
+            agent_id=None,
+            team_id=None,
+            workflow_id=None,
+            created_at=datetime.now(timezone.utc),
+        )
+    )
 
     span = Span(
         span_id="test_span_null",
@@ -395,42 +417,6 @@ async def test_eval_upsert_sanitizes_fields(async_postgres_db_real: AsyncPostgre
     assert "\x00" not in retrieved.evaluated_component_name
     assert "\x00" not in str(retrieved.eval_data)
     assert "\x00" not in str(retrieved.eval_input)
-
-
-# =============================================================================
-# Cultural Knowledge Sanitization Tests
-# =============================================================================
-
-
-@pytest.mark.asyncio
-async def test_cultural_knowledge_upsert_sanitizes_fields(async_postgres_db_real: AsyncPostgresDb):
-    """Test that null bytes in cultural knowledge fields are sanitized."""
-    from agno.db.schemas.culture import CulturalKnowledge
-
-    cultural_knowledge = CulturalKnowledge(
-        id="test_culture_null",
-        name="Culture\x00Name",
-        summary="Summary\x00with\x00nulls",
-        input="Input\x00value",
-        content="Content\x00with\x00nulls",
-        metadata={"meta": "meta\x00value", "nested": {"inner": "inner\x00value"}},
-    )
-
-    result = await async_postgres_db_real.upsert_cultural_knowledge(cultural_knowledge)
-
-    assert result is not None
-    assert "\x00" not in result.name
-    assert "\x00" not in result.summary
-    assert "\x00" not in result.input
-    assert "\x00" not in result.content
-    assert "\x00" not in str(result.metadata)
-
-    # Verify stored values
-    retrieved = await async_postgres_db_real.get_cultural_knowledge("test_culture_null")
-    assert retrieved is not None
-    assert "\x00" not in retrieved.name
-    assert "\x00" not in retrieved.content
-    assert "\x00" not in str(retrieved.metadata)
 
 
 # =============================================================================

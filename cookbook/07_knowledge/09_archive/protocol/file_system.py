@@ -9,7 +9,7 @@ three tools to the agent:
 - list_files: List files matching a glob pattern
 - get_file: Read the full contents of a specific file
 
-Run: `python cookbook/07_knowledge/protocol/file_system.py`
+Run: `python cookbook/07_knowledge/09_archive/protocol/file_system.py`
 """
 
 from agno.agent import Agent
@@ -31,7 +31,7 @@ if __name__ == "__main__":
     # Plus context explaining how to use them
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         knowledge=fs_knowledge,
         search_knowledge=True,
         instructions=(
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     )
 
     docs_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         knowledge=docs_knowledge,
         search_knowledge=True,
         instructions="You are a helpful assistant that answers questions from documents.",

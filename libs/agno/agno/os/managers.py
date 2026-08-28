@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from time import time
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from starlette.websockets import WebSocket
+from starlette.websockets import WebSocket, WebSocketDisconnect
 
 from agno.run.agent import RunOutputEvent
 from agno.run.base import RunStatus
@@ -82,9 +82,20 @@ class WebSocketHandler:
 
             await self.websocket.send_text(self.format_sse_event(json.dumps(data, default=json_serializer)))
 
+        except WebSocketDisconnect:
+            # The send raced the client's disconnect: same treatment as a
+            # closed socket - disarm and go quiet
+            log_debug("WebSocket disconnected, event delivery disabled for this handler")
+            self.websocket = None
         except RuntimeError as e:
-            if "websocket.close" in str(e).lower() or "already completed" in str(e).lower():
-                log_debug("WebSocket closed, event not sent (expected during disconnection)")
+            msg = str(e).lower()
+            if "websocket.close" in msg or "already completed" in msg or "close message has been sent" in msg:
+                # Expected during disconnection. Disarm the handler so the
+                # producer stops attempting a send per remaining event - a
+                # refreshed client otherwise floods the log with one warning
+                # per event for the rest of the run.
+                log_debug("WebSocket closed, event delivery disabled for this handler")
+                self.websocket = None
             else:
                 log_warning(f"Failed to handle WebSocket event: {str(e)}")
         except Exception as e:
@@ -226,12 +237,21 @@ class EventsBuffer:
 
         if run_id not in self.events:
             self.events[run_id] = []
-            self._next_index[run_id] = 0
+            # A reclaimed paused run keeps its index; a continuation must not
+            # recycle event indices a client has already seen.
+            self._next_index.setdefault(run_id, 0)
             self.run_metadata[run_id] = {
                 "status": RunStatus.running,
                 "created_at": current_time,
                 "last_updated": current_time,
             }
+        elif self.run_metadata.get(run_id, {}).get("status") == RunStatus.paused:
+            # A continue reuses the paused run's id, so an event arriving on a
+            # paused entry means a new producer took the run over. The pause's
+            # status and completed_at would let the cleanup pass reclaim a live
+            # run and would route /resume to replay instead of subscribing.
+            self.run_metadata[run_id]["status"] = RunStatus.running
+            self.run_metadata[run_id].pop("completed_at", None)
 
         self.events[run_id].append(event)
         self.run_metadata[run_id]["last_updated"] = current_time
@@ -303,6 +323,29 @@ class EventsBuffer:
             return -1
         return next_idx - 1
 
+    def register_run(self, run_id: str, status: RunStatus = RunStatus.pending) -> None:
+        """Pre-register a run so its status is visible before any event is buffered.
+
+        Used by background streaming runs waiting for a concurrency slot: the run
+        exists (PENDING) but has produced no events yet, and reconnecting clients
+        must be able to attach and wait rather than get a not-found error.
+        """
+        if run_id not in self.run_metadata:
+            current_time = time()
+            self.events.setdefault(run_id, [])
+            self._next_index.setdefault(run_id, 0)
+            self.run_metadata[run_id] = {
+                "status": status,
+                "created_at": current_time,
+                "last_updated": current_time,
+            }
+
+    def set_run_status(self, run_id: str, status: RunStatus) -> None:
+        """Update the status of a registered run (e.g. PENDING -> RUNNING on slot acquire)."""
+        if run_id in self.run_metadata:
+            self.run_metadata[run_id]["status"] = status
+            self.run_metadata[run_id]["last_updated"] = time()
+
     def set_run_completed(self, run_id: str, status: RunStatus) -> None:
         """Mark a run as completed/cancelled/error for future cleanup"""
         if run_id in self.run_metadata:
@@ -313,11 +356,54 @@ class EventsBuffer:
         # Trigger cleanup of old completed runs
         self.cleanup_runs()
 
+    def reopen_run(self, run_id: str, include_error: bool = False, floor: Optional[int] = None) -> bool:
+        """Atomically reopen a PAUSED run for a continuation leg.
+
+        Synchronous on purpose: the check-and-flip must not yield to the
+        event loop between reading and writing the status, or a racing
+        worker's terminal write could be overwritten with PENDING. Also
+        clears completed_at - the pause stamped it, and a reopened run left
+        carrying it would be reaped by cleanup_runs mid-continuation.
+        include_error is the worker-redrive variant (see BaseEventStream).
+        floor seeds the index counter to at least floor+1 (never regressing
+        a live counter): after a restart the buffer comes up empty, and a
+        continue whose indices restart at 0 is deduped away by resuming
+        clients holding the pause-event index.
+        """
+        # PENDING and MISSING are reopenable alongside PAUSED: the guard
+        # exists to never overwrite a NEWER state (RUNNING or a terminal),
+        # and both are pre-execution states where the flip is idempotent.
+        # This matters for the expired-state path: register_run re-creates
+        # PENDING before the reopen, and declining there would drop the
+        # counter seed (Redis parity - its missing-key case reopens too).
+        reopenable = (
+            (RunStatus.paused, RunStatus.error, RunStatus.pending)
+            if include_error
+            else (RunStatus.paused, RunStatus.pending)
+        )
+        metadata = self.run_metadata.get(run_id)
+        if metadata is None:
+            # State expired/lost (restart): re-create it, pre-execution
+            self.register_run(run_id, RunStatus.pending)
+            metadata = self.run_metadata[run_id]
+        elif metadata.get("status") not in reopenable:
+            return False
+        metadata["status"] = RunStatus.pending
+        metadata["last_updated"] = time()
+        metadata.pop("completed_at", None)
+        if floor is not None:
+            self._next_index[run_id] = max(self._next_index.get(run_id, 0), floor + 1)
+        return True
+
     def cleanup_run(self, run_id: str) -> None:
         """Remove buffer for a completed run (called after retention period)"""
         if run_id in self.events:
             del self.events[run_id]
-        self._next_index.pop(run_id, None)
+        # A paused run can be continued later under the same id: its monotonic
+        # index survives the reclaim, so the continuation's event indices keep
+        # ascending past every index a client has already seen.
+        if (self.run_metadata.get(run_id) or {}).get("status") != RunStatus.paused:
+            self._next_index.pop(run_id, None)
         if run_id in self.run_metadata:
             del self.run_metadata[run_id]
         log_debug(f"Cleaned up event buffer for run {run_id}")
@@ -328,10 +414,23 @@ class EventsBuffer:
         runs_to_cleanup = []
 
         for run_id, metadata in self.run_metadata.items():
-            # Only cleanup completed runs
-            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled]:
+            # Terminal runs, plus paused runs: a pause can wait on an approval
+            # forever, and a reclaimed paused entry is rebuilt by add_event
+            # when the run is eventually continued.
+            if metadata["status"] in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
                 completed_at = metadata.get("completed_at", metadata["last_updated"])
                 if current_time - completed_at > self.cleanup_interval:
+                    runs_to_cleanup.append(run_id)
+            elif metadata["status"] == RunStatus.pending:
+                # Accept-side registrations whose runs execute on ANOTHER
+                # replica never advance past PENDING here and used to
+                # accumulate forever (that config is warned against at
+                # worker startup, but the warning must not mean a leak).
+                # Stale-pending reap is safe in-process too: a long-queued
+                # local run's stream state is rebuilt at claim time, and a
+                # tail of a reaped registration gets the honest
+                # stream_expired close while the ticket still vouches.
+                if current_time - metadata.get("last_updated", current_time) > self.cleanup_interval:
                     runs_to_cleanup.append(run_id)
 
         for run_id in runs_to_cleanup:
