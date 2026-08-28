@@ -479,7 +479,7 @@ class AsyncMySQLDb(AsyncBaseDb):
         table = await self._get_table(table_type="versions", create_table_if_not_found=True)
         if table is None:
             return
-        current_datetime = datetime.now().isoformat()
+        current_datetime = current_datetime_utc().isoformat()
         async with self.async_session_factory() as sess, sess.begin():
             stmt = mysql.insert(table).values(  # type: ignore
                 table_name=table_name,
