@@ -182,8 +182,10 @@ class WikiContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
+            # Tool names are prefixed with provider id when mode=tools
+            prefix = f"{self.id}_"
             return (
-                f"`{self.name}`: read-only `read_file` / `list_files` / `search_content` over the wiki "
+                f"`{self.name}`: read-only `{prefix}read_file` / `{prefix}list_files` / `{prefix}search_content` over the wiki "
                 f"at {self.backend.path}. Writes require mode=default (two-tool surface)."
             )
         if self.mode == ContextMode.agent:

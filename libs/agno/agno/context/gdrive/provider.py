@@ -120,11 +120,12 @@ class GoogleDriveContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
+            # Tool names are prefixed with provider id when mode=tools
+            prefix = f"{self.id}_"
             return (
-                f"`{self.name}`: `search_files(query)` or `list_files(query)` with Drive query syntax "
+                f"`{self.name}`: `{prefix}search_files(query)` or `{prefix}list_files(query)` with Drive query syntax "
                 "(e.g. `name contains 'roadmap'`, `mimeType = 'application/vnd.google-apps.document'`). "
-                "Then `read_file(file_id)` to read contents. Read-only. Note: these share tool names "
-                "with other providers — mode=tools only works in isolation."
+                f"Then `{prefix}read_file(file_id)` to read contents. Read-only."
             )
         return (
             f"`{self.name}`: call `{self.query_tool_name}(question)` to query Google Drive — "

@@ -170,9 +170,10 @@ class MCPContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
+            # Tool names are prefixed with provider id when mode=tools
             return (
                 f"`{self.name}` (MCP): call the server's tools directly. "
-                "mode=tools only works in isolation — tool names vary by server."
+                f"Tool names are prefixed with `{self.id}_` to avoid collisions."
             )
         return (
             f"`{self.name}` (MCP): call `{self.query_tool_name}(question)` to query "
@@ -245,6 +246,12 @@ class MCPContextProvider(ContextProvider):
                     kwargs["server_params"] = SSEClientParams(url=self.url or "", headers=self.headers)
                 else:
                     kwargs["server_params"] = StreamableHTTPClientParams(url=self.url or "", headers=self.headers)
+
+        # In mode=tools, prefix tool names with provider id to avoid collisions
+        # when multiple MCP servers expose the same tool names (e.g. "search").
+        # User can override via mcp_kwargs["tool_name_prefix"].
+        if self.mode == ContextMode.tools:
+            kwargs["tool_name_prefix"] = self.id
 
         # Escape hatch: anything accepted by ``agno.tools.mcp.MCPTools``.
         # User-provided keys override anything the provider set.

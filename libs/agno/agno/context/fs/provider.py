@@ -72,9 +72,11 @@ class FilesystemContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
+            # Tool names are prefixed with provider id when mode=tools
+            prefix = f"{self.id}_"
             return (
-                f"`{self.name}`: browse files under {self.root}. Use `list_files` / `search_files` "
-                "(glob) / `search_content` (text search) / `read_file` / `read_file_chunk`. "
+                f"`{self.name}`: browse files under {self.root}. Use `{prefix}list_files` / `{prefix}search_files` "
+                f"(glob) / `{prefix}search_content` (text search) / `{prefix}read_file` / `{prefix}read_file_chunk`. "
                 "Paths are relative to the root."
             )
         return f"`{self.name}`: call `{self.query_tool_name}(question)` to query files under {self.root}."

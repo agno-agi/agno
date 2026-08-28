@@ -136,9 +136,11 @@ class SlackContextProvider(ContextProvider):
         default — both query and update tools via sub-agents
         """
         if self.mode == ContextMode.tools:
+            # Tool names are prefixed with provider id when mode=tools
+            prefix = f"{self.id}_"
             return (
-                f"`{self.name}`: `get_channel_history(channel)` for latest messages in a known channel; "
-                "`get_thread(channel, ts)` to expand a thread; `get_channel_info` / `get_user_info` "
+                f"`{self.name}`: `{prefix}get_channel_history(channel)` for latest messages in a known channel; "
+                f"`{prefix}get_thread(channel, ts)` to expand a thread; `{prefix}get_channel_info` / `{prefix}get_user_info` "
                 "to resolve names. Pass channel names like `#agents` directly."
             )
         if self.mode == ContextMode.agent:
