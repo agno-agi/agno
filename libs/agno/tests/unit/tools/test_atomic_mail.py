@@ -1,5 +1,6 @@
 import asyncio
 import base64
+import hashlib
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -705,3 +706,434 @@ async def test_alist_inbox_unexpected_jmap_body_returns_error(mock_client_class,
 
     assert "error" in result
     assert "AtomicMail request failed" in result["error"]
+
+
+# -- sent-mail filtering, auth reuse, parallel proof-of-work --------------------------
+
+EMPTY_INBOX_RESPONSE = _response(
+    json_data={"methodResponses": [["Email/query", {"ids": []}, "q0"], ["Email/get", {"list": []}, "g0"]]}
+)
+# A capability token with a known lifetime, so a test can move the clock past it.
+SHORT_LIVED_CAPABILITY_JWT = _fake_jwt(
+    {"inboxId": "agno-agent", "allowedFromDomain": "atomicmail.ai", "iat": 1_000_000, "exp": 1_000_120}
+)
+SHORT_LIVED_CAPABILITY_RESPONSE = _response(headers={"Authorization": f"Bearer {SHORT_LIVED_CAPABILITY_JWT}"})
+
+
+def _write_credentials(tmp_path):
+    (tmp_path / "credentials.json").write_text(
+        json.dumps({"api_key": "atomic-api-key", "inbox": "agno-agent@atomicmail.ai", "account_id": "account-1"})
+    )
+
+
+def _posted_urls(client) -> list:
+    return [call.args[0] for call in client.post.call_args_list]
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_list_inbox_query_excludes_drafts_on_the_wire(mock_client_class, tmp_path):
+    """send_email files the outgoing message in the inbox mailbox with `$draft` set, so
+    the inbox query must exclude that keyword or sent mail reads back as received."""
+    _write_credentials(tmp_path)
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    tools.list_inbox(limit=5)
+
+    jmap_body = client.post.call_args_list[-1].kwargs["json"]
+    query = next(call for call in jmap_body["methodCalls"] if call[0] == "Email/query")
+    get = next(call for call in jmap_body["methodCalls"] if call[0] == "Email/get")
+    assert query[1]["filter"]["notKeyword"] == "$draft"
+    assert query[1]["filter"]["inMailbox"] == "mailbox-inbox"
+    assert "keywords" in get[1]["properties"]
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_list_inbox_drops_draft_messages_from_result(mock_client_class, tmp_path):
+    """A message carrying `$draft` is our own outgoing mail, never a received one."""
+    _write_credentials(tmp_path)
+    received = {
+        "id": "email-received",
+        "from": [{"email": "someone@example.com"}],
+        "to": [{"email": "agno-agent@atomicmail.ai"}],
+        "subject": "Hi",
+        "receivedAt": "2026-07-23T00:00:00Z",
+        "preview": "Hello there",
+        "keywords": {},
+    }
+    sent = {
+        "id": "email-sent",
+        "from": [{"email": "agno-agent@atomicmail.ai"}],
+        "to": [{"email": "third-party@example.com"}],
+        "subject": "Outgoing",
+        "receivedAt": "2026-07-23T00:01:00Z",
+        "preview": "Sent by us",
+        "keywords": {"$draft": True},
+    }
+    inbox_response = _response(
+        json_data={
+            "methodResponses": [
+                ["Email/query", {"ids": ["email-sent", "email-received"]}, "q0"],
+                ["Email/get", {"list": [sent, received]}, "g0"],
+            ]
+        }
+    )
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        inbox_response,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = tools.list_inbox(limit=5)
+
+    assert result["count"] == 1
+    assert [email["id"] for email in result["emails"]] == ["email-received"]
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_list_inbox_reuses_auth_within_token_window(mock_client_class, tmp_path):
+    """The capability token lives 120s and the JMAP topology is stable per inbox, so a
+    second call inside that window must issue only the JMAP request, no handshake."""
+    _write_credentials(tmp_path)
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    first = tools.list_inbox(limit=5)
+    second = tools.list_inbox(limit=5)
+
+    assert first == second == {"inbox": "agno-agent@atomicmail.ai", "count": 0, "emails": []}
+    urls = _posted_urls(client)
+    assert urls.count("https://auth.atomicmail.ai/api/v1/challenge") == 1
+    assert len(urls) == 6
+    assert client.get.call_count == 1
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_list_inbox_reauthenticates_after_token_expiry(mock_client_class, tmp_path):
+    _write_credentials(tmp_path)
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        SHORT_LIVED_CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+        EMPTY_INBOX_RESPONSE,  # second call inside the window: no handshake
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        SHORT_LIVED_CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    with patch("agno.tools.atomic_mail.time.monotonic") as clock:
+        clock.return_value = 1000.0
+        tools.list_inbox(limit=5)
+        clock.return_value = 1000.0 + 10.0
+        tools.list_inbox(limit=5)
+        assert _posted_urls(client).count("https://auth.atomicmail.ai/api/v1/challenge") == 1
+        clock.return_value = 1000.0 + 200.0  # well past the 120s token lifetime
+        result = tools.list_inbox(limit=5)
+
+    assert result == {"inbox": "agno-agent@atomicmail.ai", "count": 0, "emails": []}
+    assert _posted_urls(client).count("https://auth.atomicmail.ai/api/v1/challenge") == 2
+
+
+@pytest.mark.asyncio
+@patch("agno.tools.atomic_mail.httpx.AsyncClient")
+async def test_alist_inbox_reuses_auth_within_token_window(mock_client_class, tmp_path):
+    """The async twin is a hand-maintained duplicate; it must reuse the token too."""
+    _write_credentials(tmp_path)
+    client = mock_client_class.return_value.__aenter__.return_value
+    client.post = AsyncMock(
+        side_effect=[
+            CHALLENGE_RESPONSE,
+            SESSION_RESPONSE,
+            CAPABILITY_RESPONSE,
+            MAILBOX_QUERY_RESPONSE,
+            EMPTY_INBOX_RESPONSE,
+            EMPTY_INBOX_RESPONSE,
+        ]
+    )
+    client.get = AsyncMock(return_value=WELL_KNOWN_RESPONSE)
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    first = await tools.alist_inbox(limit=5)
+    second = await tools.alist_inbox(limit=5)
+
+    assert first == second == {"inbox": "agno-agent@atomicmail.ai", "count": 0, "emails": []}
+    urls = _posted_urls(client)
+    assert urls.count("https://auth.atomicmail.ai/api/v1/challenge") == 1
+    assert len(urls) == 6
+
+
+def _sequential_pow(challenge: str, difficulty: int) -> dict:
+    """The solve as shipped in #9130: nonces 0, 1, 2, ... on one thread."""
+    from agno.tools.atomic_mail import POW_HASH_BYTES, POW_SCRYPT_N, POW_SCRYPT_P, POW_SCRYPT_R, POW_SCRYPT_SALT
+
+    nonce = 0
+    while True:
+        digest = hashlib.scrypt(
+            f"{challenge}:{nonce}".encode(),
+            salt=POW_SCRYPT_SALT.encode(),
+            n=POW_SCRYPT_N,
+            r=POW_SCRYPT_R,
+            p=POW_SCRYPT_P,
+            dklen=POW_HASH_BYTES,
+        )
+        if AtomicMailTools._has_leading_zero_bits(digest, difficulty):
+            return {"powHex": digest.hex(), "nonce": str(nonce)}
+        nonce += 1
+
+
+def test_solve_pow_single_worker_matches_sequential_search():
+    assert AtomicMailTools._solve_pow("challenge-123", 4, None, workers=1) == _sequential_pow("challenge-123", 4)
+
+
+def test_solve_pow_parallel_returns_a_valid_proof():
+    """The server recomputes scrypt(challenge:nonce) and checks the leading bits, so the
+    nonce/digest pair returned by the pool must be genuine, not just well-formed."""
+    from agno.tools.atomic_mail import POW_HASH_BYTES, POW_SCRYPT_N, POW_SCRYPT_P, POW_SCRYPT_R, POW_SCRYPT_SALT
+
+    solved = AtomicMailTools._solve_pow("challenge-123", 4, None, workers=4)
+
+    digest = hashlib.scrypt(
+        f"challenge-123:{solved['nonce']}".encode(),
+        salt=POW_SCRYPT_SALT.encode(),
+        n=POW_SCRYPT_N,
+        r=POW_SCRYPT_R,
+        p=POW_SCRYPT_P,
+        dklen=POW_HASH_BYTES,
+    )
+    assert digest.hex() == solved["powHex"]
+    assert AtomicMailTools._has_leading_zero_bits(digest, 4)
+
+
+def test_solve_pow_parallel_is_bounded_by_pow_timeout():
+    with pytest.raises(ValueError, match="did not converge"):
+        AtomicMailTools._solve_pow("challenge", difficulty=255, max_seconds=0.0, workers=4)
+
+
+def test_pow_workers_defaults_bounded_and_reaches_the_solve(tmp_path):
+    """Default stays well under cpu_count so the solve cannot starve the host; the
+    configured value is what the handshake actually hands to `_solve_pow`."""
+    import os
+
+    assert AtomicMailTools(credentials_dir=str(tmp_path)).pow_workers == min(4, os.cpu_count() or 1)
+
+    tools = AtomicMailTools(credentials_dir=str(tmp_path), pow_workers=1)
+    assert tools.pow_workers == 1
+    with patch("agno.tools.atomic_mail.httpx.Client") as mock_client_class:
+        client = mock_client_class.return_value.__enter__.return_value
+        client.post.side_effect = [CHALLENGE_RESPONSE, SESSION_RESPONSE, CAPABILITY_RESPONSE]
+        client.get.return_value = WELL_KNOWN_RESPONSE
+        with patch.object(AtomicMailTools, "_solve_pow", wraps=AtomicMailTools._solve_pow) as solve_spy:
+            tools.register_inbox("agno-agent")
+
+    assert solve_spy.call_args.args[-1] == 1 or solve_spy.call_args.kwargs.get("workers") == 1
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_forced_register_drops_cached_auth_of_replaced_inbox(mock_client_class, tmp_path):
+    """After `forced=True` swaps the credentials, the next call must authenticate the new
+    inbox rather than keep sending to the old one's cached token."""
+    _write_credentials(tmp_path)
+    new_capability = _fake_jwt({"inboxId": "new-agent", "allowedFromDomain": "atomicmail.ai", "exp": 9999999999})
+    new_capability_response = _response(headers={"Authorization": f"Bearer {new_capability}"})
+    new_session_response = _response(
+        headers={"Authorization": f"Bearer {SESSION_JWT}"},
+        json_data={"apiKey": "new-api-key"},
+        text='{"apiKey": "new-api-key"}',
+    )
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+        EMPTY_INBOX_RESPONSE,  # second call: served from the cache
+        # register_inbox(forced=True) for a different inbox
+        CHALLENGE_RESPONSE,
+        new_session_response,
+        new_capability_response,
+        # list_inbox must authenticate again, with the new key
+        CHALLENGE_RESPONSE,
+        new_session_response,
+        new_capability_response,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    tools.list_inbox(limit=5)
+    tools.list_inbox(limit=5)
+    assert _posted_urls(client).count("https://auth.atomicmail.ai/api/v1/challenge") == 1
+    assert tools.register_inbox("new-agent", forced=True)["inbox"] == "new-agent@atomicmail.ai"
+    result = tools.list_inbox(limit=5)
+
+    assert result["inbox"] == "new-agent@atomicmail.ai"
+    session_payloads = [
+        call.kwargs["json"]
+        for call in client.post.call_args_list
+        if call.args[0] == "https://auth.atomicmail.ai/api/v1/session"
+    ]
+    assert [payload.get("apiKey") for payload in session_payloads] == ["atomic-api-key", None, "new-api-key"]
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_capability_token_without_numeric_exp_is_not_cached(mock_client_class, tmp_path):
+    """`exp`/`iat` are server-supplied; a null or missing `exp` must mean "do not reuse",
+    never a TypeError escaping the tool."""
+    _write_credentials(tmp_path)
+    no_exp = _fake_jwt({"inboxId": "agno-agent", "allowedFromDomain": "atomicmail.ai", "exp": None})
+    no_exp_response = _response(headers={"Authorization": f"Bearer {no_exp}"})
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        no_exp_response,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        no_exp_response,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    first = tools.list_inbox(limit=5)
+    second = tools.list_inbox(limit=5)
+
+    assert first == second == {"inbox": "agno-agent@atomicmail.ai", "count": 0, "emails": []}
+    assert _posted_urls(client).count("https://auth.atomicmail.ai/api/v1/challenge") == 2
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_list_inbox_reports_rejected_query_as_error(mock_client_class, tmp_path):
+    """A server that rejects the query (e.g. `unsupportedFilter`) answers with method-level
+    errors and no Email/get list. That must surface as an error, not as an empty inbox."""
+    _write_credentials(tmp_path)
+    rejected = _response(
+        json_data={
+            "methodResponses": [
+                ["error", {"type": "unsupportedFilter"}, "q0"],
+                ["error", {"type": "invalidResultReference"}, "g0"],
+            ]
+        }
+    )
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        rejected,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    result = tools.list_inbox(limit=5)
+
+    assert "error" in result
+    assert "count" not in result
+
+
+@patch("agno.tools.atomic_mail.httpx.Client")
+def test_cached_auth_is_dropped_when_credentials_change_on_disk(mock_client_class, tmp_path):
+    """Another instance or process can replace credentials.json (forced re-registration).
+    A cached context belongs to the key it was minted from; a call after the swap must
+    authenticate the new key, exactly as every call did before the cache existed."""
+    _write_credentials(tmp_path)
+    new_capability = _fake_jwt({"inboxId": "new-agent", "allowedFromDomain": "atomicmail.ai", "exp": 9999999999})
+    client = mock_client_class.return_value.__enter__.return_value
+    client.post.side_effect = [
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        CAPABILITY_RESPONSE,
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+        EMPTY_INBOX_RESPONSE,  # second call: served from the cache
+        CHALLENGE_RESPONSE,
+        SESSION_RESPONSE,
+        _response(headers={"Authorization": f"Bearer {new_capability}"}),
+        MAILBOX_QUERY_RESPONSE,
+        EMPTY_INBOX_RESPONSE,
+    ]
+    client.get.return_value = WELL_KNOWN_RESPONSE
+    tools = AtomicMailTools(credentials_dir=str(tmp_path))
+
+    tools.list_inbox(limit=5)
+    tools.list_inbox(limit=5)
+    assert _posted_urls(client).count("https://auth.atomicmail.ai/api/v1/challenge") == 1
+    (tmp_path / "credentials.json").write_text(
+        json.dumps({"api_key": "new-api-key", "inbox": "new-agent@atomicmail.ai", "account_id": "account-2"})
+    )
+    result = tools.list_inbox(limit=5)
+
+    assert result["inbox"] == "new-agent@atomicmail.ai"
+    session_payloads = [
+        call.kwargs["json"]
+        for call in client.post.call_args_list
+        if call.args[0] == "https://auth.atomicmail.ai/api/v1/session"
+    ]
+    assert [payload["apiKey"] for payload in session_payloads] == ["atomic-api-key", "new-api-key"]
+
+
+def test_solve_pow_prefers_a_solution_over_a_concurrent_timeout():
+    """One worker can cross the deadline while another is mid-way through the winning
+    hash. The proof it returns is valid and must win over the timeout."""
+    import threading
+
+    worker_1_hashing = threading.Event()
+    release_worker_1 = threading.Event()
+    clock_calls = 0
+
+    def clock():
+        nonlocal clock_calls
+        clock_calls += 1
+        return 0.0 if clock_calls == 1 else 2.0  # deadline computed at 0, every later check is past it
+
+    def scrypt(data, **kwargs):
+        nonce = int(data.decode().rsplit(":", 1)[1])
+        if nonce == 0:
+            # worker 0: no proof, and it trips the deadline only once worker 1 is mid-hash
+            worker_1_hashing.wait(1)
+            threading.Timer(0.05, release_worker_1.set).start()
+            return b"\xff"
+        worker_1_hashing.set()
+        release_worker_1.wait(1)
+        return b"\x00"  # worker 1: a valid proof, finished after worker 0 timed out
+
+    with patch("agno.tools.atomic_mail.time.monotonic", side_effect=clock):
+        with patch("agno.tools.atomic_mail.hashlib.scrypt", side_effect=scrypt):
+            solved = AtomicMailTools._solve_pow("challenge", difficulty=1, max_seconds=1.0, workers=2)
+
+    assert solved == {"powHex": "00", "nonce": "1"}
