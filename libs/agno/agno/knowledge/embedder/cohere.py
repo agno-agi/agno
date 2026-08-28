@@ -2,7 +2,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple, Union
 
-from agno.knowledge.embedder.base import Embedder, raise_embedding_error
+from agno.knowledge.embedder.base import Embedder, aembed_texts_individually, raise_embedding_error
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 try:
@@ -308,11 +308,11 @@ class CohereEmbedder(Embedder):
                         # Single item already failed, surface the error instead of a silent empty vector
                         raise_embedding_error(e, model_id=self.id, provider="Cohere")
                 else:
-                    # For non-rate-limit errors, fall back to individual calls
+                    # For non-rate-limit errors, fall back to individual calls. Successes
+                    # are kept so one bad chunk does not discard the rest of the batch.
                     log_debug("Non-rate-limit error, falling back to individual calls")
-                    for text in batch_texts:
-                        embedding, usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
+                    batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                    all_embeddings.extend(batch_embeddings)
+                    all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage

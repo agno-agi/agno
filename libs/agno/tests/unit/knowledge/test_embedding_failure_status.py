@@ -442,6 +442,34 @@ class TestReingestGuidance:
         assert "not retained" in content.status_message
         assert "upload it again" in content.status_message
 
+    @pytest.mark.parametrize(
+        "content,expected",
+        [
+            (Content(name="q3.pdf", path="/data/q3.pdf"), "/data/q3.pdf"),
+            (Content(name="d", url="https://example.com/a.txt"), "https://example.com/a.txt"),
+        ],
+    )
+    def test_a_reachable_source_is_named_instead_of_asking_for_a_re_upload(self, content, expected):
+        """A file still on disk or a URL can be re-ingested without the caller resupplying it."""
+        knowledge = make_knowledge()
+        error = EmbeddingError("Service unavailable", status_code=503)
+
+        knowledge._set_embedding_failure_status(content, error, make_documents(0, 3), "insert")
+
+        assert expected in content.status_message
+        assert "not retained" not in content.status_message
+
+    def test_remote_source_is_not_told_to_re_upload(self):
+        knowledge = make_knowledge()
+        content = Content(name="q3.pdf", remote_content=object())
+
+        knowledge._set_embedding_failure_status(
+            content, EmbeddingError("Service unavailable", status_code=503), make_documents(0, 3), "insert"
+        )
+
+        assert "remote source" in content.status_message
+        assert "not retained" not in content.status_message
+
     def test_url_source_is_told_which_url_to_re_ingest(self):
         knowledge = make_knowledge()
         content = Content(name="agno docs", metadata={"_agno": {"source_url": "https://docs.agno.com/intro"}})

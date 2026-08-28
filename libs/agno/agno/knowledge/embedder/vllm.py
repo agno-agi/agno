@@ -247,10 +247,11 @@ class VLLMEmbedder(Embedder):
                     batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
                     all_embeddings.extend(batch_embeddings)
                     all_usage.extend(batch_usage)
-                # Local mode: process individually using thread executor
-                for text in batch_texts:
-                    embedding, usage = await self.async_get_embedding_and_usage(text)
-                    all_embeddings.append(embedding)
-                    all_usage.append(usage)
+            else:
+                # Local mode: process individually. Successes are kept so one bad chunk
+                # does not discard the rest of the batch.
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage

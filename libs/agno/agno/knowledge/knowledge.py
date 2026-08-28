@@ -2861,12 +2861,16 @@ class Knowledge(RemoteKnowledge):
     def _reingest_instruction(content: Content) -> str:
         """State how to re-run ingestion for this content.
 
-        Only URL-sourced content records its origin; uploaded files and pasted text
-        are not retained, so the caller has to supply them again.
+        The instruction depends on whether the source can still be reached. Uploaded
+        bytes are never persisted, so for those the caller has to supply the file again.
         """
-        source_url = get_agno_metadata(content.metadata, "source_url")
+        source_url = get_agno_metadata(content.metadata, "source_url") or content.url
         if source_url:
             return f"Re-ingest {source_url} once the cause is resolved."
+        if content.path:
+            return f"Re-ingest {content.path} once the cause is resolved."
+        if content.remote_content is not None:
+            return "Re-ingest this content from its remote source once the cause is resolved."
         return "The original file is not retained, so upload it again once the cause is resolved."
 
     def _set_embedding_failure_status(

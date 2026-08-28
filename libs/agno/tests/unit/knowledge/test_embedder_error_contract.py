@@ -7,6 +7,7 @@ one that returns a well-formed but empty response.
 """
 
 import importlib
+import inspect
 from unittest.mock import MagicMock
 
 import pytest
@@ -187,3 +188,38 @@ class TestEmptyResponseIsReported:
             embedder.get_embedding("hello world")
 
         assert "No embeddings found in response" in str(excinfo.value)
+
+
+class TestEveryBatchingEmbedderKeepsGoodChunks:
+    """Every embedder with a batch path must preserve chunks that did embed.
+
+    Guards against a fallback loop being added or reverted in one embedder only.
+    """
+
+    BATCHING = [
+        "agno.knowledge.embedder.openai",
+        "agno.knowledge.embedder.azure_openai",
+        "agno.knowledge.embedder.google",
+        "agno.knowledge.embedder.cohere",
+        "agno.knowledge.embedder.mistral",
+        "agno.knowledge.embedder.jina",
+        "agno.knowledge.embedder.voyageai",
+        "agno.knowledge.embedder.vllm",
+    ]
+
+    @pytest.mark.parametrize("module_path", BATCHING, ids=[m.rsplit(".", 1)[-1] for m in BATCHING])
+    def test_batch_fallback_uses_the_shared_helper(self, module_path):
+        """The per-text fallback must collect failures rather than abort on the first."""
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            pytest.skip(f"{module_path} unavailable: {e}")
+
+        source = inspect.getsource(module)
+        if "batch_and_usage" not in source:
+            pytest.skip(f"{module_path} has no batch path")
+
+        assert "aembed_texts_individually" in source, (
+            f"{module_path} falls back per text without the shared helper, so the first "
+            "failing chunk would discard every chunk that embedded successfully"
+        )
