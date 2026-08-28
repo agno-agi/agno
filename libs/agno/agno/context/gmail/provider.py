@@ -184,7 +184,12 @@ class GmailContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
-            return f"`{self.name}`: raw Gmail tools (read-only). Tool names may collide with other providers."
+            # Tool names are prefixed with provider id when mode=tools
+            prefix = f"{self.id}_"
+            return (
+                f"`{self.name}`: read-only Gmail tools. Use `{prefix}search_emails`, `{prefix}get_email`, "
+                f"`{prefix}list_labels` to explore the inbox."
+            )
         tools = [self.query_tool_name]
         if self.write:
             tools.append(self.update_tool_name)

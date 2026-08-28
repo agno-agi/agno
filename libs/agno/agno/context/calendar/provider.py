@@ -169,7 +169,12 @@ class GoogleCalendarContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
-            return f"`{self.name}`: raw Calendar tools (read-only). Tool names may collide with other providers."
+            # Tool names are prefixed with provider id when mode=tools
+            prefix = f"{self.id}_"
+            return (
+                f"`{self.name}`: read-only Calendar tools. Use `{prefix}list_calendars`, `{prefix}get_events`, "
+                f"`{prefix}search_events` to explore calendars."
+            )
         tools = [self.query_tool_name]
         if self.write:
             tools.append(self.update_tool_name)
