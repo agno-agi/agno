@@ -861,7 +861,6 @@ class Workspace(Toolkit):
         self,
         pattern: str,
         directory: str = ".",
-        ignore_case: bool = False,
         context_lines: int = 0,
         files_only: bool = False,
         limit: int = 100,
@@ -870,10 +869,10 @@ class Workspace(Toolkit):
 
         Returns matches in ``path:line:text`` format, grouped by file with context lines.
         Use ``files_only=True`` for a quick list of matching files without content.
+        Matching is always case-insensitive.
 
         :param pattern: Regex pattern to search for.
         :param directory: Subdirectory to scope the search to (default ".").
-        :param ignore_case: Case-insensitive matching (default False).
         :param context_lines: Lines of context before and after each match (default 0).
         :param files_only: Return only file paths, not matching lines (default False).
         :param limit: Maximum number of matches to return (default 100, capped by max_grep_matches).
@@ -886,10 +885,9 @@ class Workspace(Toolkit):
             # Clamp limit to constructor-defined max
             limit = min(limit, self.max_grep_matches)
 
-            # 1. Compile regex
-            flags = re.IGNORECASE if ignore_case else 0
+            # 1. Compile regex (always case-insensitive)
             try:
-                rx = re.compile(pattern, flags)
+                rx = re.compile(pattern, re.IGNORECASE)
             except re.error as exc:
                 return f"Error: invalid regex pattern: {exc}"
 
@@ -1218,14 +1216,13 @@ class Workspace(Toolkit):
         self,
         pattern: str,
         directory: str = ".",
-        ignore_case: bool = False,
         context_lines: int = 0,
         files_only: bool = False,
         limit: int = 100,
     ) -> str:
         """Async variant of ``grep_content``."""
         return await asyncio.to_thread(
-            self.grep_content, pattern, directory, ignore_case, context_lines, files_only, limit
+            self.grep_content, pattern, directory, context_lines, files_only, limit
         )
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
