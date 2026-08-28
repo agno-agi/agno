@@ -6,6 +6,7 @@ agent can never retrieve. Each embedder is driven with a client that fails, and 
 one that returns a well-formed but empty response.
 """
 
+import asyncio
 import importlib
 import inspect
 from unittest.mock import MagicMock
@@ -89,20 +90,35 @@ class TestEmbedderRaisesOnFailure:
             if not patched:
                 pytest.skip(f"no known provider boundary to fail on {class_name}")
 
-            try:
-                result = embedder.get_embedding("hello world")
-            except EmbeddingError:
-                return  # the contract
-            except NotImplementedError:
-                pytest.skip(f"{class_name} does not implement get_embedding")
-            except Exception as e:
-                pytest.fail(f"{class_name} raised {type(e).__name__} instead of EmbeddingError: {e}")
+            # Every public entry point must honour the contract, not just get_embedding.
+            # ``Document.embed`` calls get_embedding_and_usage, and enable_batch defaults
+            # to False, so that pair is the default ingestion path.
+            for method_name in (
+                "get_embedding",
+                "get_embedding_and_usage",
+                "async_get_embedding",
+                "async_get_embedding_and_usage",
+            ):
+                method = getattr(embedder, method_name, None)
+                if method is None:
+                    continue
+                try:
+                    result = method("hello world")
+                    if inspect.isawaitable(result):
+                        result = asyncio.get_event_loop_policy().new_event_loop().run_until_complete(result)
+                except EmbeddingError:
+                    continue  # the contract
+                except NotImplementedError:
+                    continue
+                except Exception as e:
+                    if "not installed" in str(e):
+                        continue  # optional async dependency absent in this environment
+                    pytest.fail(f"{class_name}.{method_name} raised {type(e).__name__} instead of EmbeddingError: {e}")
 
-            pytest.fail(
-                f"{class_name}.get_embedding returned a value instead of raising "
-                f"(len={len(result) if hasattr(result, '__len__') else 'n/a'}). "
-                "An empty or stale vector is reported as a successful embedding downstream."
-            )
+                pytest.fail(
+                    f"{class_name}.{method_name} returned a value instead of raising. "
+                    "An empty or stale vector is reported as a successful embedding downstream."
+                )
         finally:
             for owner, attr, original in patched_types:
                 if original is _MISSING:

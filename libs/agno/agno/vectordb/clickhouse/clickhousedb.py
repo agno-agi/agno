@@ -15,7 +15,13 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -494,6 +500,9 @@ class Clickhouse(VectorDb):
         self._validate_user_id(user_id)
         # Raise early on a scoped upsert against an unmigrated table.
         self._require_owner_column(user_id)
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -534,6 +543,9 @@ class Clickhouse(VectorDb):
         self._validate_user_id(user_id)
         # Raise early on a scoped upsert against an unmigrated table.
         self._require_owner_column(user_id)
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         await self._async_upsert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)

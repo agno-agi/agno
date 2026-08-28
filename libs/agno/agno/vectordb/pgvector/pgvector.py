@@ -32,7 +32,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures, retrievable_documents
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
@@ -405,6 +405,10 @@ class PgVector(VectorDb):
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records if r.get("embedding")]
+
                         # Insert the batch of records
                         insert_stmt = postgresql.insert(self.table)
                         sess.execute(insert_stmt, batch_records)
@@ -439,6 +443,9 @@ class PgVector(VectorDb):
                     try:
                         # Embed all documents in the batch
                         await self._async_embed_documents(batch_docs)
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_docs = retrievable_documents(batch_docs)
 
                         # Prepare documents for insertion
                         batch_records = []
@@ -470,6 +477,10 @@ class PgVector(VectorDb):
                                 batch_records.append(record)
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records if r.get("embedding")]
 
                         # Insert the batch of records
                         if batch_records:
@@ -557,7 +568,9 @@ class PgVector(VectorDb):
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
                         # Convert dict to list for upsert
-                        batch_records = list(batch_records_dict.values())
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records_dict.values() if r.get("embedding")]
                         if not batch_records:
                             log_info("No valid records to upsert in this batch.")
                             continue
@@ -733,6 +746,9 @@ class PgVector(VectorDb):
                     try:
                         # Embed all documents in the batch
                         await self._async_embed_documents(batch_docs)
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_docs = retrievable_documents(batch_docs)
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID
@@ -773,7 +789,9 @@ class PgVector(VectorDb):
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
                         # Convert dict to list for upsert
-                        batch_records = list(batch_records_dict.values())
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records_dict.values() if r.get("embedding")]
                         if not batch_records:
                             log_info("No valid records to upsert in this batch.")
                             continue

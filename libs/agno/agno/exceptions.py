@@ -10,7 +10,13 @@ from agno.models.message import Message
 _SECRET_PATTERNS = [
     # Key-shaped tokens. Asterisks and bullets are included because some providers
     # echo a partially masked key, which should still be normalised to [redacted].
-    re.compile(r"\b(?:sk|pk|rk|ghp|gho|xoxb|xoxp|AIza)[-_][A-Za-z0-9\-_*•]{8,}", re.IGNORECASE),
+    # Prefixes that are followed by a separator (sk-..., xoxb-...).
+    re.compile(r"\b(?:sk|pk|rk|ghp|gho|xoxb|xoxp|pa)[-_][A-Za-z0-9\-_*•]{8,}", re.IGNORECASE),
+    # Prefixes that run straight into the key body: Google (AIzaSy...), HuggingFace (hf_...),
+    # Jina (jina_...) and AWS access key ids (AKIA/ASIA + 16 uppercase alphanumerics).
+    re.compile(r"\bAIza[A-Za-z0-9\-_*•]{10,}"),
+    re.compile(r"\b(?:hf|jina)_[A-Za-z0-9\-_*•]{8,}", re.IGNORECASE),
+    re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[A-Z0-9]{12,}\b"),
     re.compile(r"\bBearer\s+[A-Za-z0-9\-._~+/]{8,}=*", re.IGNORECASE),
     re.compile(r"\b(api[-_]?key|access[-_]?token|secret)\s*[=:]\s*\S+", re.IGNORECASE),
     # Long hex runs only when labelled as a credential: bare 32-char hex is also the
@@ -21,9 +27,14 @@ _SECRET_PATTERNS = [
     ),
 ]
 
+# Credentials embedded in a URL (scheme://user:secret@host). Kept apart from
+# ``_SECRET_PATTERNS`` because only the password is replaced, not the whole match.
+_URL_CREDENTIAL_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]+):[^\s@]+@")
+
 
 def redact_secrets(text: str) -> str:
     """Replace credential-like fragments in ``text`` with ``[redacted]``."""
+    text = _URL_CREDENTIAL_PATTERN.sub(r"\1:[redacted]@", text)
     for pattern in _SECRET_PATTERNS:
         text = pattern.sub(
             lambda m: f"{m.group(1)}=[redacted]" if m.re.groups and m.group(1) else "[redacted]",
@@ -298,11 +309,12 @@ class EmbeddingError(AgnoError):
     def is_retryable(self) -> bool:
         """Whether re-sending the same request could plausibly succeed.
 
-        An authentication failure is deterministic: the same credential is rejected
-        on every attempt, so retrying only delays the report. Every other category
-        may be transient, and losing a chunk costs more than a wasted attempt.
+        Authentication and oversized-input failures are deterministic: the same credential
+        is rejected, and the same chunk is too large, on every attempt, so retrying only
+        delays the report. Every other category may be transient, and losing a chunk costs
+        more than a wasted attempt.
         """
-        return self.reason != "authentication"
+        return self.reason not in ("authentication", "content_too_large")
 
     @property
     def safe_message(self) -> str:

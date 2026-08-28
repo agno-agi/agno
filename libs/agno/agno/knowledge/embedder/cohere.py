@@ -192,7 +192,10 @@ class CohereEmbedder(Embedder):
         return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+        try:
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = self.response(text=text)
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
         embedding: List[float] = []
         if isinstance(response, EmbeddingsFloatsEmbedResponse):
@@ -243,9 +246,12 @@ class CohereEmbedder(Embedder):
         if self.request_params:
             request_params.update(self.request_params)
 
-        response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = await self.aclient.embed(
-            texts=[text], **request_params
-        )
+        try:
+            response: Union[EmbeddingsFloatsEmbedResponse, EmbeddingsByTypeEmbedResponse] = await self.aclient.embed(
+                texts=[text], **request_params
+            )
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="Cohere")
 
         embedding: List[float] = []
         if isinstance(response, EmbeddingsFloatsEmbedResponse):

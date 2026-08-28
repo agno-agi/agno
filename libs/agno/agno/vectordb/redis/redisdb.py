@@ -19,7 +19,7 @@ from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -532,6 +532,9 @@ class RedisDb(VectorDb):
         """
         self._validate_user_id(user_id)
         scope_to_owner = self._require_owner_field(user_id)
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         try:
             # Find and delete existing docs for this content_hash in the caller's bucket.
             # A pre-v3 index has no owner field, so it dedupes by content_hash alone.
@@ -572,6 +575,9 @@ class RedisDb(VectorDb):
         # Inspects the live schema over the sync client, so it goes to a worker thread
         # rather than stalling the event loop on a cold cache.
         scope_to_owner = await asyncio.to_thread(self._require_owner_field, user_id)
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         try:
             async_index = await self._get_async_index()
 

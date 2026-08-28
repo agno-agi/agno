@@ -106,7 +106,10 @@ class GeminiEmbedder(Embedder):
         return []
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict[str, Any]]]:
-        response = self._response(text=text)
+        try:
+            response = self._response(text=text)
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="Google")
         usage = None
         if response.metadata and hasattr(response.metadata, "billable_character_count"):
             usage = {"billable_character_count": response.metadata.billable_character_count}

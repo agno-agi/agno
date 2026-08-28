@@ -73,7 +73,10 @@ class HuggingfaceCustomEmbedder(Embedder):
 
     async def async_get_embedding(self, text: str) -> List[float]:
         """Async version of get_embedding using AsyncInferenceClient."""
-        response = await self.aclient.feature_extraction(text=text, model=self.id)
+        try:
+            response = await self.aclient.feature_extraction(text=text, model=self.id)
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="HuggingFace")
         try:
             # If already a list, return directly
             if isinstance(response, list):

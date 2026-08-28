@@ -15,7 +15,13 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 
 DEFAULT_NAMESPACE = ""
 
@@ -313,6 +319,9 @@ class UpstashVectorDb(VectorDb):
         _namespace = self.namespace if namespace is None else namespace
 
         # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -630,6 +639,9 @@ class UpstashVectorDb(VectorDb):
         _namespace = self.namespace if namespace is None else namespace
 
         # Scoped dedup: re-upserting replaces this owner's chunks and leaves other owners' alone
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
 
@@ -799,21 +811,32 @@ class UpstashVectorDb(VectorDb):
         # Ownership is set at write time; a caller must not reassign it via metadata.
         metadata = {k: v for k, v in metadata.items() if k != self.USER_ID_KEY}
         try:
-            # Query for vectors with the given content_id
-            query_response = self.index.query(
-                filter=f'content_id = "{content_id}"',
-                top_k=1000,  # Get all matching vectors
-                include_metadata=True,
-                namespace=self.namespace,
-            )
+            # Walk the namespace with range() rather than query(): a query needs a vector or
+            # data, and upstash-vector >= 0.7.0 rejects one carrying only a filter, which
+            # would fail every ingest that updates metadata. Matching is done client-side.
+            matches = []
+            cursor = ""
+            while True:
+                page = self.index.range(
+                    cursor=cursor,
+                    limit=1000,
+                    include_metadata=True,
+                    namespace=self.namespace,
+                )
+                for vector in getattr(page, "vectors", []) or []:
+                    if (getattr(vector, "metadata", None) or {}).get("content_id") == content_id:
+                        matches.append(vector)
+                cursor = getattr(page, "next_cursor", "") or ""
+                if not cursor:
+                    break
 
-            if not query_response or not hasattr(query_response, "__iter__"):
+            if not matches:
                 logger.debug(f"No documents found with content_id: {content_id}")
                 return
 
             # Update each matching vector
             updated_count = 0
-            for result in query_response:
+            for result in matches:
                 if hasattr(result, "id") and hasattr(result, "metadata"):
                     vector_id = result.id
                     current_metadata = result.metadata or {}

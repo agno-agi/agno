@@ -20,7 +20,13 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+)
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -567,6 +573,9 @@ class ChromaDb(VectorDb):
             user_id (Optional[str]): See ``insert``.
         """
         try:
+            # Embed before the delete below: clearing the old chunks first would destroy
+            # retrievable content if the embedder then fails.
+            embed_before_replace(documents, self.embedder)
             if self.content_hash_exists(content_hash, user_id=user_id):
                 self._delete_by_content_hash(content_hash, user_id=user_id)
             self._upsert(content_hash, documents, filters, user_id=user_id)
@@ -760,6 +769,9 @@ class ChromaDb(VectorDb):
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
         try:
+            # Embed before the delete below: clearing the old chunks first would destroy
+            # retrievable content if the embedder then fails.
+            await aembed_before_replace(documents, self.embedder)
             if self.content_hash_exists(content_hash, user_id=user_id):
                 self._delete_by_content_hash(content_hash, user_id=user_id)
             await self._async_upsert(content_hash, documents, filters, user_id=user_id)

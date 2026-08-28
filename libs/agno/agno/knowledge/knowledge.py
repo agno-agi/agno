@@ -626,6 +626,10 @@ class Knowledge(RemoteKnowledge):
         except ValueError:
             # The adapters raise these outside their own catch-alls on purpose.
             raise
+        except EmbeddingError as e:
+            # The provider's raw text can echo the credential; log the redacted form.
+            log_error(f"Error searching for documents: {e.safe_message}")
+            return []
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -676,6 +680,10 @@ class Knowledge(RemoteKnowledge):
         except ValueError:
             # See the matching comment in ``search``.
             raise
+        except EmbeddingError as e:
+            # The provider's raw text can echo the credential; log the redacted form.
+            log_error(f"Error searching for documents: {e.safe_message}")
+            return []
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []

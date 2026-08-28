@@ -376,7 +376,10 @@ class AwsBedrockEmbedder(Embedder):
         Returns:
             Tuple[List[float], Optional[Dict[str, Any]]]: The embedding vector and usage information.
         """
-        response = self.response(text=text)
+        try:
+            response = self.response(text=text)
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="AWSBedrock")
         embedding = self._extract_embeddings(response)
         usage = response.get("usage")
         return embedding, usage

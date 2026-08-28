@@ -29,6 +29,47 @@ def raise_embedding_failures(results: List[Any]) -> None:
         raise first_error
 
 
+def embed_before_replace(documents: List[Document], embedder: Any) -> None:
+    """Embed ``documents`` in place before an upsert deletes the chunks they replace."""
+    if embedder is None:
+        return
+    for document in documents:
+        if document.embedding is None:
+            document.embed(embedder=embedder)
+
+
+async def aembed_before_replace(documents: List[Document], embedder: Any) -> None:
+    """Asynchronous twin of ``embed_before_replace``."""
+    import asyncio
+
+    if embedder is None:
+        return
+    pending = [d for d in documents if d.embedding is None]
+    if not pending:
+        return
+    results = await asyncio.gather(*[d.async_embed(embedder=embedder) for d in pending], return_exceptions=True)
+    raise_embedding_failures(results)
+
+
+def retrievable_documents(documents: List[Document]) -> List[Document]:
+    """Drop documents that carry no embedding, so the rest of the batch can still be written.
+
+    A vector store rejects an empty vector outright ("vector must have at least 1
+    dimension"), which fails the whole write and discards the chunks that did embed.
+    Skipping the unembedded ones lets the good chunks land; ingestion counts the
+    shortfall and reports it as PARTIAL.
+    """
+    keep, dropped = [], 0
+    for document in documents:
+        if document.embedding is None or len(document.embedding) == 0:
+            dropped += 1
+            continue
+        keep.append(document)
+    if dropped:
+        log_warning(f"Skipping {dropped} of {len(documents)} chunks with no embedding; they are not retrievable")
+    return keep
+
+
 def is_rate_limit_error(error: BaseException) -> bool:
     """Whether ``error`` is a provider throttle, which must not fall back to per-item calls."""
     if isinstance(error, EmbeddingError):

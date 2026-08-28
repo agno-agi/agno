@@ -779,9 +779,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                 "value": {
                                     "status": "failed",
                                     "status_message": (
-                                        "Could not insert embedding: Rate limit reached. "
-                                        "The embedding provider rate-limited this request. "
-                                        "Retry ingestion, or lower the embedder batch size."
+                                        'Embedding failed for "handbook.pdf" (0 of 12 chunks embedded). '
+                                        "Embedder: OpenAI text-embedding-3-small. "
+                                        "Reason: rate_limit (HTTP 429). "
+                                        "Provider said: Rate limit reached for text-embedding-3-small. "
+                                        "Retrying did not succeed after 4 attempts. "
+                                        "The embedding provider rate-limited this request; wait for the "
+                                        "limit to reset, or lower the embedder batch size. "
+                                        "Re-ingest /docs/handbook.pdf once the cause is resolved."
                                     ),
                                 },
                             },
@@ -809,11 +814,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             content_id=content_id, user_id=scoped_user_id
         )
 
-        # Handle the case where content is not found
+        # Missing or non-owned content is a 404, as this route documents and as the
+        # sibling single-content route returns; a 200 saying "failed" is indistinguishable
+        # from content that was found and genuinely failed to ingest.
         if knowledge_status is None:
-            return ContentStatusResponse(
-                id=content_id, status=ContentStatus.FAILED, status_message=status_message or "Content not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
         # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
         if hasattr(knowledge_status, "value"):
