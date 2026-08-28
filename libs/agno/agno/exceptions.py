@@ -13,7 +13,12 @@ _SECRET_PATTERNS = [
     re.compile(r"\b(?:sk|pk|rk|ghp|gho|xoxb|xoxp|AIza)[-_][A-Za-z0-9\-_*•]{8,}", re.IGNORECASE),
     re.compile(r"\bBearer\s+[A-Za-z0-9\-._~+/]{8,}=*", re.IGNORECASE),
     re.compile(r"\b(api[-_]?key|access[-_]?token|secret)\s*[=:]\s*\S+", re.IGNORECASE),
-    re.compile(r"\b[A-Fa-f0-9]{32,}\b"),
+    # Long hex runs only when labelled as a credential: bare 32-char hex is also the
+    # shape of md5 content hashes and chunk ids, which are useful diagnostics.
+    re.compile(
+        r"\b(?:token|secret|key|password|signature|credential)\b[^A-Za-z0-9]{0,3}[A-Fa-f0-9]{32,}\b",
+        re.IGNORECASE,
+    ),
 ]
 
 

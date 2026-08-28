@@ -528,3 +528,103 @@ class TestIncompleteContentIsNotSkipped:
         knowledge = self._knowledge()
 
         assert knowledge._should_skip("hash", skip_if_exists=False, prior_status=ContentStatus.COMPLETED) is False
+
+
+class TestRetryConfigEdgeCases:
+    def _knowledge(self, retries, backoff):
+        knowledge = Knowledge.__new__(Knowledge)
+        vector_db = MagicMock()
+        vector_db.embedder = MagicMock()
+        vector_db.upsert_available.return_value = False
+        vector_db.insert.side_effect = lambda *a, **kw: (_ for _ in ()).throw(
+            EmbeddingError("Rate limit reached", status_code=429, provider="OpenAI")
+        )
+        knowledge.vector_db = vector_db
+        knowledge.contents_db = None
+        knowledge._update_content = MagicMock()
+        knowledge.max_embedding_retries = retries
+        knowledge.embedding_retry_backoff = backoff
+        return knowledge
+
+    def test_negative_backoff_does_not_break_the_retry_loop(self):
+        """A negative delay would make sleep raise, losing the retries and the reason."""
+        knowledge = self._knowledge(retries=2, backoff=-1.0)
+        content = Content(name="doc")
+
+        knowledge._handle_vector_db_insert(content, make_documents(0, 3), upsert=False)
+
+        assert content.status == ContentStatus.FAILED
+        assert "rate_limit" in content.status_message, "the real reason must survive"
+
+    @pytest.mark.parametrize("retries", [-5, 0, None])
+    def test_non_positive_retries_mean_a_single_attempt(self, retries):
+        knowledge = self._knowledge(retries=retries, backoff=0.0)
+
+        assert knowledge._retry_attempts() == 1
+
+    def test_delay_is_never_negative(self):
+        knowledge = self._knowledge(retries=3, backoff=-2.0)
+
+        assert all(knowledge._retry_delay(i) >= 0 for i in range(4))
+
+
+class TestPriorStatusIsDefensive:
+    """A contents-db problem must degrade to 'unknown', never break ingestion."""
+
+    def test_missing_contents_db_returns_none(self):
+        knowledge = Knowledge.__new__(Knowledge)
+        knowledge.contents_db = None
+
+        assert knowledge._prior_status("cid") is None
+
+    def test_db_read_failure_returns_none(self):
+        knowledge = Knowledge.__new__(Knowledge)
+        failing = MagicMock()
+        failing.get_knowledge_content.side_effect = RuntimeError("db down")
+        knowledge.contents_db = failing
+
+        assert knowledge._prior_status("cid") is None
+
+    def test_async_db_is_skipped_by_the_sync_helper(self):
+        from agno.db.base import AsyncBaseDb
+
+        knowledge = Knowledge.__new__(Knowledge)
+        knowledge.contents_db = MagicMock(spec=AsyncBaseDb)
+
+        assert knowledge._prior_status("cid") is None
+
+
+class TestRedactionKeepsDiagnostics:
+    """Redaction must not destroy the identifiers needed to debug a failure."""
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            # md5 content hashes and chunk ids are 32 hex characters
+            "Chunk 0123456789abcdef0123456789abcdef could not be parsed",
+            "Document a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4 failed",
+            "maximum context length is 8191 tokens, however you requested 9000",
+            "Model text-embedding-3-small returned 400",
+        ],
+    )
+    def test_diagnostic_identifiers_survive(self, text):
+        from agno.exceptions import redact_secrets
+
+        assert redact_secrets(text) == text
+
+    @pytest.mark.parametrize(
+        "text,leak",
+        [
+            ("Incorrect API key provided: sk-abc123XYZdef456", "sk-abc123XYZdef456"),
+            ("Authorization: Bearer eyJhbGciOiJIUzI1NiJ9abcdef", "eyJhbGciOiJIUzI1NiJ9abcdef"),
+            ("invalid api_key=supersecretvalue123", "supersecretvalue123"),
+            ("token 0123456789abcdef0123456789abcdef", "0123456789abcdef0123456789abcdef"),
+        ],
+    )
+    def test_credentials_are_still_redacted(self, text, leak):
+        from agno.exceptions import redact_secrets
+
+        cleaned = redact_secrets(text)
+
+        assert leak not in cleaned
+        assert "[redacted]" in cleaned

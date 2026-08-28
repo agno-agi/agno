@@ -2806,8 +2806,12 @@ class Knowledge(RemoteKnowledge):
         return max(0, int(self.max_embedding_retries or 0)) + 1
 
     def _retry_delay(self, attempt: int) -> float:
-        """Seconds to wait before the attempt after ``attempt`` (0-based), doubling each time."""
-        return float(self.embedding_retry_backoff or 0.0) * (2**attempt)
+        """Seconds to wait before the attempt after ``attempt`` (0-based), doubling each time.
+
+        Clamped at zero: a negative backoff would make the sleep raise and lose both the
+        remaining retries and the real embedding error.
+        """
+        return max(0.0, float(self.embedding_retry_backoff or 0.0)) * (2**attempt)
 
     async def _aretry_vector_write(self, write, content: Content) -> Tuple[Optional[EmbeddingError], int]:
         """Run ``write`` with retries, returning the final error (if any) and attempts used.
