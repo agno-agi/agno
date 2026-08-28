@@ -638,7 +638,6 @@ class PgVector(VectorDb):
             record["user_id"] = user_id
         return record
 
-
     async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
         """
         Embed a batch of documents using either batch embedding or individual embedding.

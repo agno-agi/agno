@@ -551,7 +551,7 @@ class LanceDb(VectorDb):
 
                         embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                         results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-                            # Log any embedding failures (they will be re-tried in sync upsert)
+                        # Log any embedding failures (they will be re-tried in sync upsert)
                         for i, result in enumerate(results):
                             if isinstance(result, Exception):
                                 log_warning(
@@ -560,7 +560,7 @@ class LanceDb(VectorDb):
             else:
                 embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
                 results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-                    # Log any embedding failures (they will be re-tried in sync upsert)
+                # Log any embedding failures (they will be re-tried in sync upsert)
                 for i, result in enumerate(results):
                     if isinstance(result, Exception):
                         log_warning(f"Async embedding failed for document {i}, will retry in sync upsert")
