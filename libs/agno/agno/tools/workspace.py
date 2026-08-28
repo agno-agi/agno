@@ -20,7 +20,6 @@ Quick start:
     )
 """
 
-import ast
 import asyncio
 import json
 import os
@@ -366,7 +365,7 @@ class Workspace(Toolkit):
     this session. Catches the "agent hallucinated the file's contents" bug class.
     """
 
-    READ_TOOLS: List[str] = ["read", "list", "search", "grep", "outline"]
+    READ_TOOLS: List[str] = ["read", "list", "search", "grep"]
     WRITE_TOOLS: List[str] = ["write", "edit", "move", "delete", "shell"]
     ALL_TOOLS: List[str] = READ_TOOLS + WRITE_TOOLS
 
@@ -376,7 +375,6 @@ class Workspace(Toolkit):
         "list": "list_files",
         "search": "search_content",
         "grep": "grep_content",
-        "outline": "get_outline",
         "write": "write_file",
         "edit": "edit_file",
         "move": "move_file",
@@ -991,67 +989,6 @@ class Workspace(Toolkit):
             log_error(f"grep_content failed: {e}")
             return f"Error in grep: {e}"
 
-    def get_outline(self, path: str) -> str:
-        """Get a structural outline of a Python file showing classes and functions.
-
-        Returns class and function definitions with line numbers, letting you understand
-        a file's structure without reading the entire contents. Use this before reading
-        large files to identify which sections are relevant.
-
-        :param path: File path relative to the workspace root.
-        :return: Outline showing classes/functions with line numbers, or error string.
-        """
-        try:
-            err, resolved = self._resolve(path, what="path")
-            if err:
-                return err
-            if not resolved.is_file():
-                return f"Error: not a file: {path}"
-            if resolved.suffix != ".py":
-                return f"Error: get_outline only supports Python files, got: {resolved.suffix}"
-
-            content = resolved.read_text(encoding="utf-8", errors="ignore")
-            try:
-                tree = ast.parse(content)
-            except SyntaxError as e:
-                return f"Error: syntax error in {path}: {e}"
-
-            lines: List[str] = []
-
-            def process_node(node: ast.AST, indent: int = 0) -> None:
-                prefix = "  " * indent
-                if isinstance(node, ast.ClassDef):
-                    # Get first line of docstring if present
-                    docstring = ast.get_docstring(node)
-                    doc_preview = docstring.split("\n")[0][:60] if docstring else ""
-                    lines.append(f"{prefix}class {node.name} (line {node.lineno})")
-                    if doc_preview:
-                        lines.append(f"{prefix}  # {doc_preview}")
-                    for child in node.body:
-                        process_node(child, indent + 1)
-                elif isinstance(node, ast.FunctionDef) or isinstance(node, ast.AsyncFunctionDef):
-                    # Extract parameter names (skip self)
-                    args = [a.arg for a in node.args.args if a.arg != "self"][:4]
-                    args_str = ", ".join(args)
-                    if len(node.args.args) > 5:
-                        args_str += ", ..."
-                    async_prefix = "async " if isinstance(node, ast.AsyncFunctionDef) else ""
-                    lines.append(f"{prefix}{async_prefix}def {node.name}({args_str}) line {node.lineno}")
-
-            for node in ast.iter_child_nodes(tree):
-                process_node(node, indent=0)
-
-            if not lines:
-                return f"No classes or functions found in {path}"
-
-            rel_path = resolved.relative_to(self.root).as_posix()
-            header = f"# Outline of {rel_path} ({len(content)} chars, {len(content.splitlines())} lines)\n"
-            return header + "\n".join(lines)
-
-        except Exception as e:
-            log_error(f"get_outline failed: {e}")
-            return f"Error getting outline: {e}"
-
     # ------------------------------------------------------------------
     # Write operations (require confirmation by default)
     # ------------------------------------------------------------------
@@ -1291,10 +1228,6 @@ class Workspace(Toolkit):
         return await asyncio.to_thread(
             self.grep_content, pattern, directory, ignore_case, context_lines, files_only, limit
         )
-
-    async def aget_outline(self, path: str) -> str:
-        """Async variant of ``get_outline``."""
-        return await asyncio.to_thread(self.get_outline, path)
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Async variant of ``write_file``."""
