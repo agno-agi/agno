@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import json
 from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union
 from uuid import uuid4
@@ -16,7 +17,8 @@ from fastapi import (
 )
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from agno.db.base import BaseDb
+from agno.db.base import BaseDb, SessionType
+from agno.db.schemas.jobs import QueuedJob
 from agno.exceptions import (
     ComponentRehydrationError,
     InputCheckError,
@@ -27,16 +29,30 @@ from agno.exceptions import (
 from agno.media import Audio, Image, Video
 from agno.media import File as FileMedia
 from agno.os.auth import (
+    INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
     require_approval_resolved,
     require_resource_access,
 )
 from agno.os.checkpoints import build_run_checkpoint_snapshot, list_run_checkpoints
-from agno.os.managers import event_buffer, sse_subscriber_manager
+from agno.os.event_streams import get_event_stream
+from agno.os.job_queue import (
+    acontinue_via_queue,
+    aprepare_accepted_or_abort,
+    araise_if_ticket_owns_continue,
+    aticket_poll_fallback,
+    ensure_duplicate_matches_component,
+    normalize_idempotency_key,
+    payload_is_queueable,
+    ticket_status_to_api,
+    validate_seam_input,
+)
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     assert_session_matches_component,
+    assert_session_writable,
+    caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
     verify_run_in_session,
@@ -52,16 +68,26 @@ from agno.os.schema import (
 )
 from agno.os.settings import AgnoAPISettings
 from agno.os.utils import (
+    afinalize_continue_stream,
+    allow_draft_preview,
+    amark_continue_stream_running,
     classify_upload_file,
+    draft_preview_identity,
     find_factory_by_id,
     format_sse_event,
     get_request_kwargs,
     get_team_by_id,
+    parse_files_metadata,
     process_audio,
     process_document,
     process_image,
     process_video,
+    queued_run_tail_streamer,
+    replayed_payload_to_sse,
     resolve_team,
+    sse_error_frame,
+    stamp_component_version,
+    stamped_component_version,
 )
 from agno.registry import Registry
 from agno.run.agent import RunOutput
@@ -71,8 +97,7 @@ from agno.run.team import TeamRunOutput
 from agno.team.factory import TeamFactory
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
-from agno.utils.log import log_debug, log_warning, logger
-from agno.utils.serialize import json_serializer
+from agno.utils.log import log_debug, log_error, log_warning, logger
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
@@ -235,7 +260,16 @@ async def _resume_stream_generator(
     2. Run completed (in buffer): replay all events since last_event_index
     3. Not in buffer: fall back to database replay
     """
-    buffer_status = event_buffer.get_run_status(run_id)
+    event_stream = get_event_stream()
+    try:
+        buffer_status = await event_stream.get_run_status(run_id)
+    except Exception as e:
+        # Network-backed streams can fail here; headers are already sent, so
+        # the only honest signal is an SSE error frame (never a silent close,
+        # and never a quiet fall-through to the DB path)
+        log_error(f"Resume: event stream status probe failed for run {run_id}: {e}")
+        yield sse_error_frame(f"event stream unavailable: {str(e)[:200]}")
+        return
 
     if buffer_status is None:
         # PATH 3: Not in buffer -- fall back to database
@@ -247,28 +281,18 @@ async def _resume_stream_generator(
                 yield f"event: error\ndata: {json.dumps(error)}\n\n"
                 return
             if run_output and run_output.events:
-                meta: dict = {
-                    "event": "replay",
-                    "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
-                    "total_events": len(run_output.events),
-                    "message": "Run completed. Replaying all events from database.",
-                }
-                yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
+                from agno.os.utils import stored_event_replay_frames
 
-                for idx, event in enumerate(run_output.events):
-                    event_dict = event.to_dict()
-                    event_dict["event_index"] = idx
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+                for frame in stored_event_replay_frames(run_output, run_id, last_event_index):
+                    yield frame
                 return
             elif run_output:
                 meta = {
                     "event": "replay",
                     "run_id": run_id,
-                    "status": run_output.status.value if run_output.status else "unknown",
+                    "status": run_output.status.value
+                    if hasattr(run_output.status, "value")
+                    else (run_output.status or "unknown"),
                     "total_events": 0,
                     "message": "Run completed but no events stored.",
                 }
@@ -281,9 +305,9 @@ async def _resume_stream_generator(
         return
 
     if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
-        # PATH 2: Run finished -- replay missed events from buffer
-        total_buffered = event_buffer.get_event_count(run_id)
-        missed_events = event_buffer.get_events(run_id, last_event_index=last_event_index)
+        # PATH 2: Run finished -- replay missed events from the event stream
+        total_buffered = await event_stream.get_event_count(run_id)
+        missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
         log_debug(
             f"Resume PATH 2: run_id={run_id}, status={buffer_status.value}, "
             f"last_event_index={last_event_index}, total_buffered={total_buffered}, "
@@ -301,108 +325,85 @@ async def _resume_stream_generator(
         }
         yield f"event: replay\ndata: {json.dumps(meta)}\n\n"
 
-        for ev_index, buffered_event in missed_events:
-            event_dict = buffered_event.to_dict()
-            event_dict["event_index"] = ev_index
-            if "run_id" not in event_dict:
-                event_dict["run_id"] = run_id
-            event_type = event_dict.get("event", "message")
-            yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
         return
 
-    # PATH 1: Run still active -- subscribe FIRST (to avoid race condition), then replay missed events
-    queue = sse_subscriber_manager.subscribe(run_id)
+    # PATH 1: Run still active (RUNNING, or PENDING while queued for a
+    # concurrency slot) -- replay missed events, then tail live events. The
+    # event stream's tail() owns the replay/subscribe race, dedup by
+    # event_index, and terminal detection (including a producer that died
+    # without writing a sentinel).
+    missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)
+    current_count = await event_stream.get_event_count(run_id)
 
-    try:
-        missed_events = event_buffer.get_events(run_id, last_event_index)
-        current_count = event_buffer.get_event_count(run_id)
+    last_replayed_index = last_event_index if last_event_index is not None else -1
 
-        # Track the highest replayed event_index for dedup against queue events
-        last_replayed_index = last_event_index if last_event_index is not None else -1
-
-        if missed_events:
-            meta = {
-                "event": "catch_up",
-                "run_id": run_id,
-                "status": "running",
-                "missed_events": len(missed_events),
-                "current_event_count": current_count,
-                "message": f"Catching up on {len(missed_events)} missed events.",
-            }
-            yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
-
-            for ev_index, buffered_event in missed_events:
-                event_dict = buffered_event.to_dict()
-                event_dict["event_index"] = ev_index
-                if "run_id" not in event_dict:
-                    event_dict["run_id"] = run_id
-                event_type = event_dict.get("event", "message")
-                yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                last_replayed_index = ev_index
-
-        # Re-check buffer status after subscribing: the run may have completed
-        # between our initial status check and now. If so, replay remaining events
-        # from buffer instead of waiting on the queue (the sentinel was already pushed
-        # before our subscription existed).
-        updated_status = event_buffer.get_run_status(run_id)
-        if updated_status is not None and updated_status != RunStatus.running:
-            # Run completed while we were catching up -- replay remaining from buffer
-            remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-            if remaining:
-                for ev_index, buffered_event in remaining:
-                    event_dict = buffered_event.to_dict()
-                    event_dict["event_index"] = ev_index
-                    if "run_id" not in event_dict:
-                        event_dict["run_id"] = run_id
-                    event_type = event_dict.get("event", "message")
-                    yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-            return
-
-        # Confirm subscription for live events
-        subscribed = {
-            "event": "subscribed",
+    if missed_events:
+        meta = {
+            "event": "catch_up",
             "run_id": run_id,
             "status": "running",
+            "missed_events": len(missed_events),
             "current_event_count": current_count,
-            "message": "Subscribed to team run. Receiving live events.",
+            "message": f"Catching up on {len(missed_events)} missed events.",
         }
-        yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+        yield f"event: catch_up\ndata: {json.dumps(meta)}\n\n"
 
-        log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
+        for ev_index, payload in missed_events:
+            yield replayed_payload_to_sse(payload, ev_index, run_id)
+            last_replayed_index = max(last_replayed_index, ev_index)
 
-        # Read from queue, dedup events already replayed by event_index
+    # Confirm subscription for live events
+    subscribed = {
+        "event": "subscribed",
+        "run_id": run_id,
+        "status": "running",
+        "current_event_count": current_count,
+        "message": "Subscribed to team run. Receiving live events.",
+    }
+    yield f"event: subscribed\ndata: {json.dumps(subscribed)}\n\n"
+
+    log_debug(f"SSE client subscribed to team run {run_id} (last_event_index: {last_event_index})")
+
+    # Pump the tail through a queue so we can heartbeat on idle without
+    # cancelling the tail generator (cancelling its __anext__ would kill it).
+    tail_queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump_tail() -> None:
+        try:
+            async for tail_item in event_stream.tail(run_id, last_event_index=last_replayed_index):
+                await tail_queue.put(tail_item)
+        except Exception as e:
+            # A tail that DIES must not look like a tail that FINISHED: emit an
+            # error frame so the client can distinguish and reconnect
+            log_error(f"Resume tail failed for run {run_id}: {e}")
+            with contextlib.suppress(Exception):
+                await tail_queue.put((-1, sse_error_frame(f"stream tail failed: {str(e)[:200]}")))
+        finally:
+            await tail_queue.put(None)
+
+    pump_task = asyncio.create_task(_pump_tail())
+    try:
         while True:
             try:
-                item = await asyncio.wait_for(queue.get(), timeout=30.0)
+                item = await asyncio.wait_for(tail_queue.get(), timeout=30.0)
             except asyncio.TimeoutError:
-                # Check if run ended without sending sentinel
-                status = event_buffer.get_run_status(run_id)
-                if status is None or status != RunStatus.running:
-                    # Run ended - replay any remaining events from buffer
-                    remaining = event_buffer.get_events(run_id, last_event_index=last_replayed_index)
-                    for ev_index, buffered_event in remaining:
-                        event_dict = buffered_event.to_dict()
-                        event_dict["event_index"] = ev_index
-                        if "run_id" not in event_dict:
-                            event_dict["run_id"] = run_id
-                        event_type = event_dict.get("event", "message")
-                        yield f"event: {event_type}\ndata: {json.dumps(event_dict, separators=(',', ':'), default=json_serializer, ensure_ascii=False)}\n\n"
-                    break
-                # Still running - send heartbeat to keep connection alive
+                # Tail is idle (queued or silent run) - keep the connection alive
                 yield ": heartbeat\n\n"
                 continue
             if item is None:
-                # Sentinel: run completed
+                # Tail finished: run reached a terminal state
                 break
-            ev_idx, sse_data = item
-            # Dedup: skip events already replayed during catch-up
-            if ev_idx >= 0 and ev_idx <= last_replayed_index:
-                continue
-            if ev_idx >= 0:
-                last_replayed_index = ev_idx
+            _ev_index, sse_data = item
             yield sse_data
     finally:
-        sse_subscriber_manager.unsubscribe(run_id, queue)
+        pump_task.cancel()
+        # Suppress everything, not just CancelledError: an exception re-raised
+        # here reaches the ASGI layer on a response whose headers are already
+        # sent (the pump has already surfaced it as an error frame)
+        with contextlib.suppress(BaseException):
+            await pump_task
 
 
 async def team_continue_response_streamer(
@@ -413,6 +414,7 @@ async def team_continue_response_streamer(
     user_id: Optional[str] = None,
     background_tasks: Optional[BackgroundTasks] = None,
     auth_token: Optional[str] = None,
+    queue_worker: Optional[Any] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
     """Continue a paused team run and yield streaming response."""
@@ -435,10 +437,43 @@ async def team_continue_response_streamer(
             background_tasks=background_tasks,
             **kwargs,
         )
-        async for run_response_chunk in continue_response:
-            if _is_run_output_accumulator(run_response_chunk):
-                continue
-            yield format_sse_event(run_response_chunk)  # type: ignore
+
+        # Post-approval events must reach the event stream too (workflow
+        # continue-streamer parity): this response is otherwise their only
+        # copy - after an inline continue of a formerly-queued/streamed run,
+        # /resume would replay just the pre-pause prefix and the stream
+        # status would stay PAUSED forever. Skipped for remote teams (the
+        # remote OS owns that run's stream) and for fork/regenerate (they
+        # mint a NEW run_id; publishing under the original would corrupt
+        # it). fork/regenerate ride **kwargs here - the streamer has no
+        # typed params for them (agent-streamer parity gate).
+        _sync_stream = not isinstance(team, RemoteTeam) and not kwargs.get("fork") and not kwargs.get("regenerate")
+        if _sync_stream:
+            await amark_continue_stream_running(run_id, component=team, session_id=session_id, user_id=user_id)
+        try:
+            async for run_response_chunk in continue_response:
+                if _is_run_output_accumulator(run_response_chunk):
+                    continue
+                if _sync_stream and not isinstance(run_response_chunk, TeamRunOutput):
+                    with contextlib.suppress(Exception):
+                        await get_event_stream().add_event(run_id, run_response_chunk)
+                yield format_sse_event(run_response_chunk)  # type: ignore
+        finally:
+            if _sync_stream:
+                # Stream close + paused-ticket settle as one cancellation-
+                # proof unit; under cancellation the final status is KNOWN -
+                # see the agents twin for both hazards
+                import sys
+
+                _exc = sys.exc_info()[0]
+                _cancelled = _exc is not None and issubclass(_exc, (asyncio.CancelledError, GeneratorExit))
+                await afinalize_continue_stream(
+                    team,
+                    run_id,
+                    session_id,
+                    queue_worker=queue_worker,
+                    final_status=RunStatus.cancelled if _cancelled else None,
+                )
     except (InputCheckError, OutputCheckError) as e:
         error_response = TeamRunErrorEvent(
             content=str(e),
@@ -448,6 +483,10 @@ async def team_continue_response_streamer(
         )
         yield format_sse_event(error_response)
 
+    except asyncio.CancelledError:
+        # Sibling-streamer parity: every other streamer ends quietly on
+        # client disconnect (the finalizer above already settled the stream)
+        return
     except Exception as e:
         import traceback
 
@@ -586,6 +625,9 @@ def get_team_router(
         files: Optional[List[UploadFile]] = File(
             None, description="Files to upload (images, audio, video, or documents)"
         ),
+        files_metadata: Optional[str] = Form(
+            None, description="JSON array of per-file metadata objects, matched to files[] by position"
+        ),
         version: Optional[int] = Form(None, description="Team version to use for this run"),
         background: bool = Form(
             False, description="Run in background and return immediately with run metadata (requires database)"
@@ -597,15 +639,22 @@ def get_team_router(
     ):
         kwargs = await get_request_kwargs(request, create_team_run)
 
+        files_metadata_list = parse_files_metadata(files_metadata)
+
         # Scoped non-admin callers always get their JWT sub as user_id.
         # Admins and unscoped callers fall through to middleware/form values.
         scoped_user_id = get_scoped_user_id(request)
+        state_user_id = getattr(request.state, "user_id", None)
         if scoped_user_id is not None:
             user_id = scoped_user_id
-        elif hasattr(request.state, "user_id") and request.state.user_id is not None:
-            if user_id and user_id != request.state.user_id:
+        elif state_user_id == INTERNAL_SCHEDULER_USER_ID:
+            # Scheduler executor: the sentinel is the caller, not the owner. Keep the form-field
+            # ``user_id``, which the executor leaves unset for an unowned schedule.
+            pass
+        elif state_user_id is not None:
+            if user_id and user_id != state_user_id:
                 log_warning("User ID parameter passed in both request state and kwargs, using request state")
-            user_id = request.state.user_id
+            user_id = state_user_id
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")
@@ -626,7 +675,12 @@ def get_team_router(
                 log_warning("Metadata parameter passed in both request state and kwargs, using request state")
             kwargs["metadata"] = metadata
 
-        logger.debug(f"Creating team run: {message=} {session_id=} {monitor=} {user_id=} {team_id=} {files=} {kwargs=}")
+        # No raw message content in logs: user input can carry PII/secrets
+        # and belongs in the run record, not the log stream
+        logger.debug(
+            f"Creating team run: {session_id=} {monitor=} {user_id=} {team_id=} "
+            f"files={len(files) if files else 0} message_len={len(message) if message else 0}"
+        )
 
         team = await resolve_team(
             team_id,
@@ -640,10 +694,29 @@ def get_team_router(
             factory_input=factory_input,
         )
 
+        # Version-stable preview: an explicitly pinned version is recorded on
+        # the run itself (run metadata), so the lifecycle routes can reload
+        # the SAME version later instead of whatever is current by then.
+        stamp_component_version(kwargs, version)
+
         # Member HITL needs member runs embedded on the team run (member_responses).
         # Without this, API continue cannot reliably reload member tool state from the DB.
         if not isinstance(team, RemoteTeam):
             team.store_member_responses = True
+
+        # A run must not enter a session owned by someone else: the runs table has no
+        # ownership predicate, so an unguarded write is replayed into the owner's history.
+        # ``effective_user_id`` is what will actually stamp the session row - the route's
+        # user_id, else the component's own default. Passing the raw ``user_id`` here would
+        # 404 every second run of a component that sets one.
+        effective_user_id = user_id or getattr(team, "user_id", None)
+        await assert_session_writable(
+            getattr(team, "db", None) or os.db,
+            session_id,
+            effective_user_id,
+            session_type=SessionType.TEAM,
+            is_admin=caller_is_admin(request),
+        )
 
         if session_id is not None and session_id != "":
             logger.debug(f"Continuing session: {session_id}")
@@ -657,43 +730,62 @@ def get_team_router(
         document_files: List[FileMedia] = []
 
         if files:
-            for file in files:
+            for idx, file in enumerate(files):
+                file_meta = files_metadata_list[idx] if idx < len(files_metadata_list) else None
                 file_category = classify_upload_file(file)
                 if file_category == "image":
                     try:
-                        base64_image = process_image(file)
+                        base64_image = process_image(file, metadata=file_meta)
                         base64_images.append(base64_image)
                     except Exception:
                         logger.exception(f"Error processing image {file.filename}")
                         continue
                 elif file_category == "audio":
                     try:
-                        base64_audio = process_audio(file)
+                        base64_audio = process_audio(file, metadata=file_meta)
                         base64_audios.append(base64_audio)
                     except Exception:
                         logger.exception(f"Error processing audio {file.filename}")
                         continue
                 elif file_category == "video":
                     try:
-                        base64_video = process_video(file)
+                        base64_video = process_video(file, metadata=file_meta)
                         base64_videos.append(base64_video)
                     except Exception:
                         logger.exception(f"Error processing video {file.filename}")
                         continue
                 elif file_category == "document":
-                    document_file = process_document(file)
-                    if document_file is not None:
-                        document_files.append(document_file)
+                    # Agents parity: one unparseable document must not 500
+                    # the whole submission - skip it, loudly
+                    try:
+                        document_file = process_document(file, metadata=file_meta)
+                        if document_file is not None:
+                            document_files.append(document_file)
+                    except Exception as e:
+                        logger.error(f"Error processing file {file.filename}: {str(e)}")
+                        continue
                 else:
                     raise HTTPException(status_code=400, detail="Unsupported file type")
 
         # Merge media passed as JSON form fields (sent by AgnoClient, e.g. when this team
         # is used as a remote member) with media from uploaded files.
         # Popped from kwargs since they are passed explicitly to the run methods below.
-        base64_images.extend(kwargs.pop("images", None) or [])
-        base64_audios.extend(kwargs.pop("audio", None) or [])
-        base64_videos.extend(kwargs.pop("videos", None) or [])
-        document_files.extend(kwargs.pop("files", None) or [])
+        for field, target in (
+            ("images", base64_images),
+            ("audio", base64_audios),
+            ("videos", base64_videos),
+            ("files", document_files),
+        ):
+            value = kwargs.pop(field, None)
+            # Falsy means "not sent": a FormData builder emits an empty part for an unset field.
+            if not value:
+                continue
+            if not isinstance(value, (list, tuple)):
+                raise HTTPException(
+                    status_code=422,
+                    detail=f"'{field}' must be a JSON array. Upload binary content via 'files'",
+                )
+            target.extend(value)
 
         # Extract auth token for remote teams
         auth_token = get_auth_token_from_request(request)
@@ -702,8 +794,102 @@ def get_team_router(
         if background:
             if isinstance(team, RemoteTeam):
                 raise HTTPException(status_code=400, detail="Background execution is not supported for remote teams")
+            # The db requirement gates BOTH shapes here: the non-stream
+            # branch always 400ed, while the stream branch used to enter the
+            # detached streamer and let arun(background=True) raise - the
+            # same misconfiguration answered 200 + SSE error frame,
+            # indistinguishable from a runtime failure.
+            if not team.db:
+                raise HTTPException(
+                    status_code=400, detail="Background execution requires a database to be configured on the team"
+                )
 
             if stream:
+                # Durable queued streaming: the queue row is the acceptance,
+                # execution happens on whichever worker claims it, and this
+                # response tails the event stream. Durability attaches to the
+                # RUN (complete output guaranteed via the run row); the live
+                # stream is the best-effort view.
+                queue_worker = getattr(request.app.state, "queue_worker", None)
+                queued_stream_payload = {"input": message, "kwargs": kwargs, "stream": True}
+                stream_queueable = (
+                    queue_worker is not None
+                    and getattr(team, "db", None) is not None
+                    and payload_is_queueable(queued_stream_payload)
+                    and version is None
+                    and not (base64_images or base64_audios or base64_videos or document_files)
+                    and any(
+                        getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
+                        for candidate in (os.teams or [])
+                    )
+                )
+                if stream_queueable:
+                    # 202/stream-accept must honor input_schema like the inline path (400)
+                    validate_seam_input(team, message)
+                    assert queue_worker is not None  # narrowed by stream_queueable
+                    queued_run_id = str(uuid4())
+                    queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                    job = QueuedJob(
+                        id=queued_run_id,
+                        component_type="team",
+                        component_id=getattr(team, "id", None) or team_id,
+                        session_id=queued_session_id,
+                        user_id=user_id,
+                        payload=queued_stream_payload,
+                        max_attempts=queue_worker.config.max_attempts,
+                        deployment_id=queue_worker.config.deployment_id,
+                        idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                    ).to_dict()
+                    enqueue_result = await queue_worker.store.enqueue_job(
+                        job, max_depth=queue_worker.config.max_queue_depth
+                    )
+                    if enqueue_result["reason"] == "queue_full":
+                        raise HTTPException(status_code=429, detail="Job queue is full")
+                    if enqueue_result["reason"] == "duplicate":
+                        existing = enqueue_result["job"]
+                        if existing is None:
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was already used but the original run could not be retrieved",
+                            )
+                        ensure_duplicate_matches_component(existing, "team", job["component_id"])
+                        if not (existing.get("payload") or {}).get("stream"):
+                            # The key was used by a NON-stream submission: its
+                            # run never registers in the event stream, so a
+                            # tail would close instantly and silently. Refuse
+                            # honestly instead.
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Idempotency-Key was used by a non-streaming submission; "
+                                f"poll run {existing['id']} instead of attaching a stream",
+                            )
+                        # Attach to the ORIGINAL run's stream. A terminal
+                        # original (or one whose stream keys already expired)
+                        # gets the full resume path - buffer or DB replay -
+                        # instead of a blind tail that would close silently
+                        # with zero events.
+                        if existing.get("status") in ("queued", "running"):
+                            return StreamingResponse(
+                                queued_run_tail_streamer(existing["id"]), media_type="text/event-stream"
+                            )
+                        return StreamingResponse(
+                            _resume_stream_generator(team, existing["id"], None, existing.get("session_id"), user_id),
+                            media_type="text/event-stream",
+                        )
+                    with contextlib.suppress(Exception):
+                        # Fail-open: the queue row is already committed - a Redis blip
+                        # must not 500 an accepted submission (tails degrade gracefully)
+                        await get_event_stream().register_run(queued_run_id, RunStatus.pending)
+                    await aprepare_accepted_or_abort(
+                        queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
+                    )
+                    return StreamingResponse(queued_run_tail_streamer(queued_run_id), media_type="text/event-stream")
+                if queue_worker is not None:
+                    log_warning(
+                        "Streaming background run bypasses the durable queue (remote/factory/"
+                        "version-pinned/media submissions are not queueable): bounded and "
+                        "observable, but NOT durable."
+                    )
                 # background=True, stream=True: resumable SSE streaming
                 # Team runs in a detached asyncio.Task that survives client disconnections.
                 # Events are buffered for reconnection via /resume endpoint.
@@ -724,24 +910,134 @@ def get_team_router(
                     media_type="text/event-stream",
                 )
 
-            # background=True, stream=False: return 202 immediately with run metadata
-            if not team.db:
-                raise HTTPException(
-                    status_code=400, detail="Background execution requires a database to be configured on the team"
-                )
-
-            run_response = await team.arun(  # type: ignore[misc]
-                input=message,
-                session_id=session_id,
-                user_id=user_id,
-                images=base64_images if base64_images else None,
-                audio=base64_audios if base64_audios else None,
-                videos=base64_videos if base64_videos else None,
-                files=document_files if document_files else None,
-                stream=False,
-                background=True,
-                **kwargs,
+            # background=True, stream=False: return 202 immediately with run
+            # metadata (the db requirement was enforced at the top of the
+            # background branch, for both shapes)
+            # Durable queue path: acceptance is a committed row; whichever
+            # replica's worker claims the job executes it, surviving crashes
+            # and deploys. Client contract identical: 202 + poll.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            # Queueable only if this is a plain registry instance: the worker
+            # resolves from the registry, so factory-backed or off-registry
+            # (db-resolved / version-pinned) components would be accepted here
+            # and then fail or run differently in the worker.
+            component_is_queueable = any(
+                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
+                for candidate in (os.teams or [])
             )
+            queued_payload = {"input": message, "kwargs": kwargs}
+            if (
+                queue_worker is not None
+                and component_is_queueable
+                and version is None  # version-pinned resolution differs from the worker's registry instance
+                and payload_is_queueable(queued_payload)
+                # Media cannot ride the queue payload yet: fall back to the
+                # bounded in-process path (parity with the stream seam)
+                and not (base64_images or base64_audios or base64_videos or document_files)
+            ):
+                # 202 must honor input_schema exactly like the inline path (400)
+                validate_seam_input(team, message)
+                queued_run_id = str(uuid4())
+                queued_session_id = session_id  # non-empty: defaulted at the top of the endpoint
+                job = QueuedJob(
+                    id=queued_run_id,
+                    component_type="team",
+                    component_id=getattr(team, "id", None) or team_id,
+                    session_id=queued_session_id,
+                    user_id=user_id,
+                    payload=queued_payload,
+                    max_attempts=queue_worker.config.max_attempts,
+                    deployment_id=queue_worker.config.deployment_id,
+                    idempotency_key=normalize_idempotency_key(request.headers.get("idempotency-key")),
+                ).to_dict()
+
+                # Enqueue FIRST: the committed queue row is the acceptance.
+                # Rejected or duplicate submissions must leave no phantom
+                # PENDING run behind in the session.
+                enqueue_result = await queue_worker.store.enqueue_job(
+                    job, max_depth=queue_worker.config.max_queue_depth
+                )
+                if enqueue_result["reason"] == "queue_full":
+                    raise HTTPException(status_code=429, detail="Job queue is full")
+                if enqueue_result["reason"] == "duplicate" and enqueue_result["job"] is not None:
+                    existing = enqueue_result["job"]
+                    ensure_duplicate_matches_component(existing, "team", job["component_id"])
+                    return JSONResponse(
+                        status_code=202,
+                        content={
+                            "run_id": existing["id"],
+                            "session_id": existing["session_id"],
+                            # Same vocabulary as the run poll: a duplicate of a
+                            # failed run says ERROR (not an invented "FAILED"),
+                            # and a running one says RUNNING (not PENDING).
+                            "status": ticket_status_to_api(existing["status"]) or existing["status"].upper(),
+                        },
+                    )
+                if enqueue_result["reason"] == "duplicate":
+                    # Duplicate but the original row could not be retrieved:
+                    # NEVER fall through to a 202 for a run that was not
+                    # enqueued - that acceptance would be a lie
+                    raise HTTPException(
+                        status_code=409,
+                        detail="Idempotency-Key was already used but the original run could not be retrieved",
+                    )
+                # Accepted: persist the PENDING run row so pollers find it.
+                # Idempotent - a worker that already claimed the job wins.
+                await aprepare_accepted_or_abort(
+                    queue_worker, team, "team", queued_run_id, queued_session_id, user_id, message
+                )
+                return JSONResponse(
+                    status_code=202,
+                    content={"run_id": queued_run_id, "session_id": queued_session_id, "status": "PENDING"},
+                )
+            elif queue_worker is not None:
+                # EVERY bypass reason warns - a client gets its 202 either way
+                # and must never silently believe acceptance was durable.
+                if (
+                    not payload_is_queueable(queued_payload)
+                    or base64_images
+                    or base64_audios
+                    or base64_videos
+                    or document_files
+                ):
+                    log_warning(
+                        "Background run bypasses the durable queue: the submission carries media "
+                        "uploads or values plain JSON cannot store (e.g. output_schema classes). "
+                        "Executing on the accepting replica instead - bounded and observable, but NOT durable."
+                    )
+                else:
+                    # Off-registry, factory-backed, or version-pinned: the
+                    # worker resolves from the registry, so these cannot ride
+                    # the queue - previously this dropped to the non-durable
+                    # path with no log line at all.
+                    log_warning(
+                        "Background run bypasses the durable queue: the team is not a plain "
+                        "registry instance (remote, factory-backed, db-resolved, or version-pinned "
+                        "resolution differs from the worker's registry instance). Executing on the "
+                        "accepting replica instead - bounded and observable, but NOT durable."
+                    )
+
+            # Same input-error contract as the inline path: schema violations
+            # are refused up front (the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500), and guardrail
+            # refusals from the dispatch answer 400.
+            validate_seam_input(team, message)
+            try:
+                run_response = await team.arun(  # type: ignore[misc]
+                    input=message,
+                    session_id=session_id,
+                    user_id=user_id,
+                    images=base64_images if base64_images else None,
+                    audio=base64_audios if base64_audios else None,
+                    videos=base64_videos if base64_videos else None,
+                    files=document_files if document_files else None,
+                    stream=False,
+                    background=True,
+                    **kwargs,
+                )
+            except InputCheckError as e:
+                raise HTTPException(status_code=400, detail=str(e))
             return JSONResponse(
                 status_code=202,
                 content={
@@ -773,6 +1069,11 @@ def get_team_router(
             if auth_token and isinstance(team, RemoteTeam):
                 kwargs["auth_token"] = auth_token
 
+            # Schema violations are refused up front with the seams' shared
+            # check: the dispatch's own schema ValueError is
+            # indistinguishable from an internal one, so it is not caught -
+            # internal failures keep their generic 500.
+            validate_seam_input(team, message)
             try:
                 run_response = await team.arun(  # type: ignore[misc]
                     input=message,
@@ -838,16 +1139,30 @@ def get_team_router(
                     component_id=team_id,
                 )
 
+            # Tombstone a still-queued durable ticket first: intent alone
+            # does not stop a job no task is executing yet
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            if queue_worker is not None:
+                await queue_worker.acancel_queued(run_id)
             await acancel_run(run_id)
             return JSONResponse(content={}, status_code=200)
 
         try:
             team = get_team_by_id(
-                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
             )  # type: ignore[assignment]
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -868,6 +1183,11 @@ def get_team_router(
 
         # cancel_run always stores cancellation intent (even for not-yet-registered runs
         # in cancel-before-start scenarios), so we always return success.
+        # Tombstone a still-queued durable ticket first: intent alone
+        # does not stop a job no task is executing yet
+        queue_worker = getattr(request.app.state, "queue_worker", None)
+        if queue_worker is not None:
+            await queue_worker.acancel_queued(run_id)
         await team.acancel_run(run_id=run_id)
         return JSONResponse(content={}, status_code=200)
 
@@ -930,7 +1250,14 @@ def get_team_router(
             )
 
         team = get_team_by_id(
-            team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+            team_id=team_id,
+            teams=os.teams,
+            db=os.db,
+            registry=registry,
+            create_fresh=True,
+            user_id=get_scoped_user_id(request),
+            strict=False,
+            published_only=False,
         )
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
@@ -985,7 +1312,12 @@ def get_team_router(
             403: {"description": "Run has a pending admin approval and cannot be continued by the user yet."},
             404: {"description": "Team not found", "model": NotFoundResponse},
             409: {
-                "description": "Run is not paused (e.g. run is already running, continued, or errored). Only PAUSED runs can be continued.",
+                "description": (
+                    "Continuation conflict: a durable queue ticket owns this run's continuation "
+                    "(continue it with background=true), or a continuation is already queued or "
+                    "executing. Runs in any state can be continued - a COMPLETED run forks into "
+                    "a follow-up; RUNNING/ERROR runs resume."
+                ),
             },
         },
         dependencies=[
@@ -1046,15 +1378,26 @@ def get_team_router(
                 request=request,
                 user_id=user_id,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
-                team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+                team = get_team_by_id(
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    published_only=False,
+                )  # type: ignore[assignment]
             except ComponentRehydrationError as rehydration_error:
                 raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1080,6 +1423,45 @@ def get_team_router(
                 component_id=team_id,
             )
 
+        # Version-stable continuation: a run started with an explicitly pinned
+        # version (draft preview) recorded it in its run metadata; continue on
+        # THAT version, not whatever is published/current now. No stamp
+        # (legacy or unpinned runs) keeps today's resolution. Factories build
+        # per-request and remote teams resolve remotely, so both are exempt.
+        if not factory and not isinstance(team, RemoteTeam):
+            stamped_run = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+            stamped_version = stamped_component_version(stamped_run)
+            if stamped_version is not None:
+                # Re-run the run-start preview gate before trusting the stamp:
+                # a stamp naming a draft version this caller may not preview
+                # must not resolve (defense against a forged/leaked stamp).
+                # Same 404 the run-start route raises, so a denial is
+                # indistinguishable from the component being absent.
+                if not allow_draft_preview(os.db, team_id, stamped_version, *draft_preview_identity(request)):
+                    raise HTTPException(status_code=404, detail="Team not found")
+                try:
+                    stamped_team = get_team_by_id(
+                        team_id=team_id,
+                        teams=os.teams,
+                        db=os.db,
+                        registry=registry,
+                        version=stamped_version,
+                        create_fresh=True,
+                        user_id=scoped_user_id,
+                        published_only=False,
+                    )
+                except ComponentRehydrationError as rehydration_error:
+                    raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+                if stamped_team is None or isinstance(stamped_team, RemoteTeam):
+                    raise HTTPException(
+                        status_code=404,
+                        detail=f"Team version {stamped_version} recorded on run {run_id} is no longer available",
+                    )
+                # Member HITL needs member runs embedded on the team run,
+                # exactly like the pre-stamp handle resolved above.
+                stamped_team.store_member_responses = True
+                team = stamped_team
+
         # Convert requirements dict to RunRequirement objects if provided
         updated_requirements = None
         if requirements_data:
@@ -1104,6 +1486,105 @@ def get_team_router(
             raise HTTPException(
                 status_code=400,
                 detail="Invalid continue_from. Use 'end', 'last_user', or a numeric message index.",
+            )
+
+        if background:
+            # Durable continue: CAS the run's EXISTING paused ticket back to
+            # queued (same row, same run_id) so the continuation leg survives
+            # crashes and executes on whichever worker claims it. Scope: plain
+            # paused-HITL continues only - fork/regenerate mint a NEW run_id
+            # inside acontinue_run (unknowable at 202 time) and runs that
+            # never rode the queue have no ticket to transition; both keep
+            # the detached path below.
+            queue_worker = getattr(request.app.state, "queue_worker", None)
+            continue_payload = {
+                "requirements": requirements_data,
+                "input": input,
+                "continue_from": continue_from_value,
+                "kwargs": kwargs,
+            }
+            team_is_queueable = any(
+                getattr(candidate, "id", None) == team_id and not isinstance(candidate, TeamFactory)
+                for candidate in (os.teams or [])
+            )
+            if (
+                queue_worker is not None
+                # LIVE, unlike the submit gates' dead twin: the teams continue
+                # endpoint has no up-front remote rejection, so this is what
+                # routes remote teams past the durable branch (and narrows
+                # the union for the row read below)
+                and not isinstance(team, RemoteTeam)
+                and team_is_queueable
+                and not fork
+                and not regenerate
+                and payload_is_queueable(continue_payload)
+            ):
+                run_row = await team.aget_run_output(run_id, session_id=session_id, user_id=user_id)
+                if run_row is not None and getattr(run_row, "status", None) == RunStatus.paused:
+                    continue_outcome = await acontinue_via_queue(
+                        queue_worker,
+                        run_id,
+                        continue_payload,
+                        stream_requested=stream,
+                        component_type="team",
+                        component_id=getattr(team, "id", None) or team_id,
+                    )
+                    if continue_outcome is not None:
+                        outcome, ticket = continue_outcome["outcome"], continue_outcome.get("job")
+                        if outcome == "stream_mismatch":
+                            # Pre-CAS refusal: nothing was accepted behind
+                            # this 409 (submit-seam duplicate parity)
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Run was submitted non-streaming; "
+                                f"poll run {run_id} instead of attaching a stream",
+                            )
+                        if outcome == "settling":
+                            raise HTTPException(
+                                status_code=409,
+                                detail="Run is settling between execution legs; retry in a moment",
+                                headers={"Retry-After": "1"},
+                            )
+                        if outcome == "conflict":
+                            ticket_status = (ticket or {}).get("status", "unknown")
+                            raise HTTPException(
+                                status_code=409,
+                                detail=f"Run is not continuable (ticket status: {ticket_status})",
+                            )
+                        # queued (accepted) or attach (double-click): same
+                        # response shape as the submit seam
+                        if stream:
+                            # Tail from the PRE-ACCEPT index (captured by the
+                            # helper before the CAS): the continue response
+                            # carries post-approval events only, exactly like
+                            # the detached continue streamer; earlier history
+                            # belongs to /resume
+                            return StreamingResponse(
+                                queued_run_tail_streamer(run_id, from_index=continue_outcome.get("tail_from")),
+                                media_type="text/event-stream",
+                            )
+                        return JSONResponse(
+                            status_code=202,
+                            content={"run_id": run_id, "session_id": session_id, "status": "PENDING"},
+                        )
+                    log_warning(
+                        "Background continue bypasses the durable queue (no paused ticket for "
+                        "this run): executing on the accepting replica instead - bounded and "
+                        "observable, but NOT durable."
+                    )
+
+        if not fork and not regenerate:
+            # Inline-door admission gate: a paused/queued/running durable
+            # ticket OWNS this run's continuation - every non-queue door
+            # (inline sync, inline SSE, detached-resumable fallback) must
+            # refuse, or the cross-door double-execution race reopens.
+            # fork/regenerate are exempt: they mint a NEW run and never
+            # touch the ticket. 409/503 raise from the helper.
+            await araise_if_ticket_owns_continue(
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                component_type="team",
+                component_id=getattr(team, "id", None) or team_id,
             )
 
         if stream and background:
@@ -1147,11 +1628,21 @@ def get_team_router(
                     user_id=user_id,
                     background_tasks=background_tasks,
                     auth_token=auth_token,
+                    queue_worker=getattr(request.app.state, "queue_worker", None),
                     **kwargs,
                 ),
                 media_type="text/event-stream",
             )
         else:
+            if background:
+                # background=true + stream=false reached the NON-durable path:
+                # legacy inline-blocking fallthrough kept for back-compat -
+                # see the agent twin for the full rationale
+                log_warning(
+                    f"background=true continue for run {run_id} has no durable ticket: executing "
+                    "INLINE-BLOCKING on this replica (legacy behavior; does not survive client "
+                    "disconnect). Enable QueueConfig(durable=True) for durable background continuation."
+                )
             # Build extra kwargs for remote team auth
             extra_kwargs: dict = {}
             if auth_token and isinstance(team, RemoteTeam):
@@ -1174,6 +1665,23 @@ def get_team_router(
                     **extra_kwargs,
                     **kwargs,
                 )
+                # Status-only stream sync (deliberate scope): a non-stream
+                # continue has no events to publish, but a formerly-queued/
+                # streamed run's stream view must stop saying PAUSED once the
+                # continue settles - only_if_tracked leaves never-streamed
+                # runs alone. Skipped for remote teams and fork/regenerate
+                # (they mint a NEW run_id).
+                if not isinstance(team, RemoteTeam) and not fork and not regenerate:
+                    # Stream close + paused-ticket settle as one
+                    # cancellation-proof unit (see the streaming twin)
+                    await afinalize_continue_stream(
+                        team,
+                        run_id,
+                        session_id,
+                        queue_worker=getattr(request.app.state, "queue_worker", None),
+                        only_if_tracked=True,
+                        final_status=getattr(run_response_obj, "status", None),
+                    )
                 return run_response_obj.to_dict()
 
             except RunNotFoundError as e:
@@ -1214,11 +1722,20 @@ def get_team_router(
 
         try:
             team = get_team_by_id(
-                team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
             )
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1354,12 +1871,26 @@ def get_team_router(
         if os.db and isinstance(os.db, BaseDb):
             from agno.team.team import get_teams
 
-            # Exclude teams whose IDs are owned by the registry
-            exclude_ids = registry.get_team_ids() if registry else None
-            db_teams = get_teams(db=os.db, registry=registry, exclude_component_ids=exclude_ids or None)
-            for db_team in db_teams:
-                team_response = await TeamResponse.from_team(team=db_team, is_component=True)
-                teams.append(team_response)
+            # Exclude the ids this OS serves, which is what the code half
+            # above renders. The registry is a superset - it also carries
+            # rehydration context this route never lists - so subtracting it
+            # would drop a stored team with nothing left to list it back.
+            exclude_ids = {tid for t in os.teams or [] if (tid := getattr(t, "id", None)) is not None}
+            db_teams = get_teams(
+                db=os.db,
+                registry=registry,
+                exclude_component_ids=exclude_ids or None,
+                user_id=get_scoped_user_id(request),
+            )
+            if db_teams:
+                # Apply the same RBAC filtering to DB-loaded teams: without
+                # it, a caller whose scope excludes a team still saw its
+                # config here (the agents endpoint already filters)
+                if getattr(request.state, "authorization_enabled", False):
+                    db_teams = filter_resources_by_access(request, db_teams, "teams")
+                for db_team in db_teams:
+                    team_response = await TeamResponse.from_team(team=db_team, is_component=True)
+                    teams.append(team_response)
 
         return teams
 
@@ -1455,12 +1986,22 @@ def get_team_router(
             return TeamResponse.from_factory(factory)
 
         try:
-            team = get_team_by_id(team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True)  # type: ignore[assignment]
+            team = get_team_by_id(
+                team_id=team_id,
+                teams=os.teams,
+                db=os.db,
+                registry=registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                published_only=False,
+            )  # type: ignore[assignment]
         except ComponentRehydrationError as rehydration_error:
             raise HTTPException(status_code=rehydration_error.status_code, detail=str(rehydration_error))
+        except HTTPException:
+            raise
         except Exception as e:
             logger.error(f"Error resolving team '{team_id}': {e}")
-            raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
         if team is None:
             raise HTTPException(status_code=404, detail="Team not found")
 
@@ -1498,15 +2039,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -1519,11 +2070,37 @@ def get_team_router(
         if hasattr(team, "aget_session"):
             session = await team.aget_session(session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
             if session is None:
+                # The acceptance is the committed ticket; the run row (and on
+                # a fresh session, the session row) lands a beat later. A 404
+                # inside that beat reports an accepted run as nonexistent -
+                # answer from the ticket instead, tenant-checked, fail-closed.
+                ticket_view = await aticket_poll_fallback(
+                    getattr(request.app.state, "queue_worker", None),
+                    run_id,
+                    session_id,
+                    "team",
+                    team_id,
+                    user_id,
+                    user_scoped=user_id is not None,
+                )
+                if ticket_view is not None:
+                    return ticket_view
                 raise HTTPException(status_code=404, detail="Run not found")
             assert_session_matches_component(session, "teams", team_id, not_found_detail="Run not found")
 
         run_output = await team.aget_run_output(run_id=run_id, session_id=session_id, user_id=user_id)  # type: ignore[union-attr]
         if run_output is None:
+            ticket_view = await aticket_poll_fallback(
+                getattr(request.app.state, "queue_worker", None),
+                run_id,
+                session_id,
+                "team",
+                team_id,
+                user_id,
+                user_scoped=user_id is not None,
+            )
+            if ticket_view is not None:
+                return ticket_view
             raise HTTPException(status_code=404, detail="Run not found")
 
         # Per-resource RBAC: the run must explicitly belong to the path team.
@@ -1563,15 +2140,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -1624,15 +2211,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):
@@ -1685,15 +2282,25 @@ def get_team_router(
                 os.teams,
                 factory.db,
                 session_id=session_id,
+                published_only=False,
             )
         else:
             try:
                 team = get_team_by_id(
-                    team_id=team_id, teams=os.teams, db=os.db, registry=registry, create_fresh=True, strict=False
+                    team_id=team_id,
+                    teams=os.teams,
+                    db=os.db,
+                    registry=registry,
+                    create_fresh=True,
+                    user_id=get_scoped_user_id(request),
+                    strict=False,
+                    published_only=False,
                 )  # type: ignore[assignment]
+            except HTTPException:
+                raise
             except Exception as e:
                 logger.error(f"Error resolving team '{team_id}': {e}")
-                raise HTTPException(status_code=500, detail=f"Error resolving team: {e}")
+                raise HTTPException(status_code=500, detail="Internal server error")
             if team is None:
                 raise HTTPException(status_code=404, detail="Team not found")
             if isinstance(team, RemoteTeam):

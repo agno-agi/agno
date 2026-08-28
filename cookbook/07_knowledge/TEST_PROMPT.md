@@ -48,7 +48,7 @@ export OPENAI_API_KEY=your-key
 After testing, verify:
 - All PASS files ran without errors
 - TEST_LOG.md is updated with results
-- No deprecated API usage (add_content, add_content_async)
+- No deprecated API usage (removed in v3.0: add_content, add_content_async; use insert/ainsert)
 
 ## Response Format
 

@@ -16,6 +16,7 @@ from agno.run.workflow import WorkflowRunOutput
 from agno.workflow import OnReject
 from agno.workflow.step import Step
 from agno.workflow.types import (
+    HumanReview,
     StepInput,
     StepOutput,
     StepRequirement,
@@ -40,12 +41,14 @@ class TestOnRejectRetry:
         step = Step(
             name="test_step",
             executor=dummy_fn,
-            requires_output_review=True,
-            on_reject=OnReject.retry,
-            hitl_max_retries=3,
+            human_review=HumanReview(
+                requires_output_review=True,
+                on_reject=OnReject.retry,
+                max_retries=3,
+            ),
         )
-        assert step.on_reject == OnReject.retry
-        assert step.hitl_max_retries == 3
+        assert step.human_review.on_reject == OnReject.retry
+        assert step.human_review.max_retries == 3
 
 
 # =============================================================================
@@ -279,10 +282,12 @@ class TestStepOutputReviewRequirement:
         step = Step(
             name="test_step",
             executor=dummy_fn,
-            requires_output_review=True,
-            output_review_message="Review this step",
-            on_reject=OnReject.retry,
-            hitl_max_retries=3,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review this step",
+                on_reject=OnReject.retry,
+                max_retries=3,
+            ),
         )
 
         step_input = StepInput(input="test input")
@@ -312,9 +317,11 @@ class TestStepOutputReviewRequirement:
         step = Step(
             name="test_step",
             executor=dummy_fn,
-            requires_output_review=True,
-            hitl_timeout=30,
-            on_timeout="approve",
+            human_review=HumanReview(
+                requires_output_review=True,
+                timeout=30,
+                on_timeout="approve",
+            ),
         )
 
         step_input = StepInput(input="test input")
@@ -465,10 +472,12 @@ def _make_router_review_workflow(session_id: str):
                     Step(name="quick", description="Fast", executor=_quick_fn),
                     Step(name="deep", description="Thorough", executor=_deep_fn),
                 ],
-                requires_output_review=True,
-                output_review_message="Approve the analysis?",
-                on_reject=OnReject.retry,
-                hitl_max_retries=2,
+                human_review=HumanReview(
+                    requires_output_review=True,
+                    output_review_message="Approve the analysis?",
+                    on_reject=OnReject.retry,
+                    max_retries=2,
+                ),
             ),
             Step(name="report", executor=_report_fn),
         ],
@@ -482,9 +491,9 @@ class TestRouterOutputReviewFields:
         from agno.workflow.router import Router
 
         router = Router(name="test", choices=[Step(name="a", executor=_quick_fn)])
-        assert router.requires_output_review is False
-        assert router.output_review_message is None
-        assert router.hitl_max_retries == 3
+        assert router.human_review.requires_output_review is False
+        assert router.human_review.output_review_message is None
+        assert router.human_review.max_retries == 3
 
     def test_router_output_review_set(self):
         from agno.workflow.router import Router
@@ -492,15 +501,17 @@ class TestRouterOutputReviewFields:
         router = Router(
             name="test",
             choices=[Step(name="a", executor=_quick_fn)],
-            requires_output_review=True,
-            output_review_message="Review?",
-            on_reject=OnReject.retry,
-            hitl_max_retries=5,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review?",
+                on_reject=OnReject.retry,
+                max_retries=5,
+            ),
         )
-        assert router.requires_output_review is True
-        assert router.output_review_message == "Review?"
-        assert router.on_reject == OnReject.retry
-        assert router.hitl_max_retries == 5
+        assert router.human_review.requires_output_review is True
+        assert router.human_review.output_review_message == "Review?"
+        assert router.human_review.on_reject == OnReject.retry
+        assert router.human_review.max_retries == 5
 
     def test_router_to_dict_includes_review_fields(self):
         from agno.workflow.router import Router
@@ -508,9 +519,11 @@ class TestRouterOutputReviewFields:
         router = Router(
             name="test",
             choices=[Step(name="a", executor=_quick_fn)],
-            requires_output_review=True,
-            output_review_message="Review?",
-            hitl_max_retries=5,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review?",
+                max_retries=5,
+            ),
         )
         d = router.to_dict()
         assert "human_review" in d
@@ -532,10 +545,12 @@ class TestRouterCreateOutputReviewRequirement:
                 Step(name="quick", executor=_quick_fn),
                 Step(name="deep", executor=_deep_fn),
             ],
-            requires_output_review=True,
-            output_review_message="Review this?",
-            on_reject=OnReject.retry,
-            hitl_max_retries=3,
+            human_review=HumanReview(
+                requires_output_review=True,
+                output_review_message="Review this?",
+                on_reject=OnReject.retry,
+                max_retries=3,
+            ),
         )
         step_input = StepInput(input="test")
         step_output = StepOutput(step_name="my_router", content="Router completed")
@@ -687,10 +702,12 @@ def _make_async_router_review_workflow(session_id: str):
                     Step(name="quick", description="Fast", executor=_quick_fn),
                     Step(name="deep", description="Thorough", executor=_deep_fn),
                 ],
-                requires_output_review=True,
-                output_review_message="Approve the analysis?",
-                on_reject=OnReject.retry,
-                hitl_max_retries=2,
+                human_review=HumanReview(
+                    requires_output_review=True,
+                    output_review_message="Approve the analysis?",
+                    on_reject=OnReject.retry,
+                    max_retries=2,
+                ),
             ),
             Step(name="report", executor=_report_fn),
         ],

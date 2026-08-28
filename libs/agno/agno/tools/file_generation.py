@@ -21,7 +21,9 @@ try:
     PDF_AVAILABLE = True
 except ImportError as e:
     PDF_AVAILABLE = False
-    log_warning(
+    # Missing optional deps only matter if PDF generation is requested — the
+    # constructor warns then. At import time this is expected, so debug only.
+    log_debug(
         f"reportlab not installed. PDF generation will not be available. Install with: pip install reportlab: {str(e)}"
     )
 
@@ -31,7 +33,7 @@ try:
     DOCX_AVAILABLE = True
 except ImportError as e:
     DOCX_AVAILABLE = False
-    log_warning(
+    log_debug(
         f"python-docx not installed. DOCX generation will not be available. Install with: pip install python-docx: {str(e)}"
     )
 

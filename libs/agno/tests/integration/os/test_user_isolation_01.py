@@ -20,6 +20,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from agno.agent.agent import Agent
+from agno.models.base import Model
+from agno.models.message import MessageMetrics
+from agno.models.response import ModelResponse
 from agno.os import AgentOS
 from agno.os.config import AuthorizationConfig
 from agno.team.team import Team
@@ -525,3 +528,244 @@ class TestListingEndpointRbacByAction:
         assert resp.status_code == 200, resp.text
         ids = [a.get("id") for a in resp.json()]
         assert "test-agent" in ids
+
+
+# ----------------------------------------------------------------------
+# A run must not enter a session owned by another user
+# ----------------------------------------------------------------------
+
+
+class ScriptedModel(Model):
+    """A model that answers without a provider call.
+
+    The shared ``test_agent`` fixture has no model and no history replay, neither
+    of which is enough to observe a cross-user replay.
+    """
+
+    def __init__(self, model_id: str, reply: str):
+        super().__init__(id=model_id, name=model_id, provider="test")
+        self._reply = reply
+
+    def _resp(self) -> ModelResponse:
+        return ModelResponse(content=self._reply, role="assistant", response_usage=MessageMetrics())
+
+    def invoke(self, *args, **kwargs):
+        return self._resp()
+
+    async def ainvoke(self, *args, **kwargs):
+        return self._resp()
+
+    def invoke_stream(self, *args, **kwargs):
+        yield self._resp()
+
+    async def ainvoke_stream(self, *args, **kwargs):
+        yield self._resp()
+
+    def parse_args(self, *args, **kwargs):
+        return {}
+
+    def _parse_provider_response(self, response, **kwargs):
+        return self._resp()
+
+    def _parse_provider_response_delta(self, response):
+        return self._resp()
+
+
+SECRET = "wire-transfer PIN GRIMSBY-8807"
+
+
+@pytest.fixture
+def history_agent(shared_db):
+    """Replays history and needs no provider."""
+    return Agent(
+        id="history-agent",
+        name="history-agent",
+        db=shared_db,
+        model=ScriptedModel("scripted-1", "ok"),
+        add_history_to_context=True,
+        num_history_runs=5,
+    )
+
+
+def _isolation_client(history_agent, *, user_isolation: bool) -> TestClient:
+    agent_os = AgentOS(
+        id=TEST_OS_ID,
+        agents=[history_agent],
+        db=history_agent.db,
+        telemetry=False,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[JWT_SECRET], algorithm="HS256", user_isolation=user_isolation
+        ),
+    )
+    return TestClient(agent_os.get_app())
+
+
+def _run(client, message, token, session_id):
+    return client.post(
+        "/agents/history-agent/runs",
+        data={"message": message, "stream": "false", "session_id": session_id},
+        headers=auth_header(token),
+    )
+
+
+class TestSessionWriteOwnership:
+    """A run posted to another user's session_id must be refused, and must never
+    reach the owner's history.
+
+    Both isolation states are exercised on purpose: the defect reproduced under
+    ``user_isolation=True`` as well, because the missing check is on session_id,
+    not on user_id.
+    """
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_non_owner_run_into_foreign_session_is_refused(self, history_agent, isolation):
+        client = _isolation_client(history_agent, user_isolation=isolation)
+        sid = f"owned-by-c-refused-{isolation}"
+        assert _run(client, "opened by C", create_token("user-c"), sid).status_code == 200
+
+        resp = _run(client, f"My private {SECRET}", create_token("user-d"), sid)
+        assert resp.status_code == 404, resp.text
+        assert resp.json()["detail"] == "Session not found"
+        assert "user-c" not in resp.text
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_owner_history_never_carries_a_foreign_turn(self, history_agent, isolation):
+        client = _isolation_client(history_agent, user_isolation=isolation)
+        sid = f"owned-by-c-history-{isolation}"
+        _run(client, "opened by C", create_token("user-c"), sid)
+        _run(client, f"My private {SECRET}", create_token("user-d"), sid)
+
+        resp = _run(client, "what did I say?", create_token("user-c"), sid)
+        assert resp.status_code == 200, resp.text
+        history = [m for m in resp.json()["messages"] if m.get("from_history")]
+        assert history, "owner must still replay their own history"
+        assert not any(SECRET in str(m.get("content")) for m in history)
+
+    @pytest.mark.parametrize("isolation", [True, False])
+    def test_no_foreign_run_row_reaches_the_session(self, history_agent, isolation):
+        """The refusal must happen before upsert_run, not only before the history read."""
+        client = _isolation_client(history_agent, user_isolation=isolation)
+        sid = f"owned-by-c-rows-{isolation}"
+        _run(client, "opened by C", create_token("user-c"), sid)
+        _run(client, f"My private {SECRET}", create_token("user-d"), sid)
+
+        runs = history_agent.db.get_runs(session_id=sid, deserialize=False)
+        rows = runs[0] if isinstance(runs, tuple) else runs
+        assert {r["user_id"] for r in rows} == {"user-c"}
+
+    def test_owner_can_still_continue_their_own_session(self, history_agent):
+        """Regression guard: the common path must not become a 404."""
+        client = _isolation_client(history_agent, user_isolation=True)
+        sid = "owned-by-c-continue"
+        token = create_token("user-c")
+        assert _run(client, "one", token, sid).status_code == 200
+        resp = _run(client, "two", token, sid)
+        assert resp.status_code == 200
+        assert any("one" in str(m.get("content")) for m in resp.json()["messages"] if m.get("from_history"))
+
+    def test_new_session_id_is_created_not_refused(self, history_agent):
+        """A session id nobody owns must 200 and create."""
+        client = _isolation_client(history_agent, user_isolation=True)
+        resp = _run(client, "hello", create_token("user-c"), "brand-new-id")
+        assert resp.status_code == 200, resp.text
+
+    def test_admin_may_run_into_any_session(self, history_agent):
+        """Admins bypass scoping everywhere else on this surface; keep it true here."""
+        client = _isolation_client(history_agent, user_isolation=True)
+        sid = "owned-by-c-admin"
+        _run(client, "opened by C", create_token("user-c"), sid)
+        resp = _run(client, "admin here", create_admin_token(), sid)
+        assert resp.status_code == 200, resp.text
+
+
+class TestInterfaceSessionWriteOwnership:
+    """A2A and AGUI bypass the REST run routes entirely, calling ``arun()`` directly
+    with a client-supplied session id (``contextId`` / ``threadId``). They need the
+    same ownership guard, or the leak simply moves to a different door.
+    """
+
+    def _interface_client(self, history_agent, interface):
+        agent_os = AgentOS(
+            id=TEST_OS_ID,
+            agents=[history_agent],
+            db=history_agent.db,
+            telemetry=False,
+            interfaces=[interface],
+        )
+        return TestClient(agent_os.get_app())
+
+    def _a2a_send(self, client, text, user_id, context_id):
+        return client.post(
+            f"/a2a/agents/{history_agent_id()}/v1/message:send",
+            json={
+                "jsonrpc": "2.0",
+                "id": "1",
+                "method": "message/send",
+                "params": {
+                    "message": {
+                        "role": "user",
+                        "messageId": "m1",
+                        "contextId": context_id,
+                        "parts": [{"kind": "text", "text": text}],
+                        "metadata": {"userId": user_id},
+                    },
+                    "configuration": {"blocking": True},
+                },
+            },
+            headers={"X-User-ID": user_id},
+        )
+
+    def test_a2a_refuses_a_foreign_context_id(self, history_agent):
+        from agno.os.interfaces.a2a import A2A
+
+        client = self._interface_client(history_agent, A2A(agents=[history_agent]))
+        ctx = "a2a-owned-by-c"
+        assert self._a2a_send(client, "opened by C", "userC", ctx).status_code == 200
+
+        resp = self._a2a_send(client, f"My private {SECRET}", "userD", ctx)
+        assert resp.status_code == 404, resp.text
+
+        runs = history_agent.db.get_runs(session_id=ctx, deserialize=False)
+        rows = runs[0] if isinstance(runs, tuple) else runs
+        assert {r["user_id"] for r in rows} == {"userC"}
+
+    def test_a2a_owner_can_still_continue(self, history_agent):
+        from agno.os.interfaces.a2a import A2A
+
+        client = self._interface_client(history_agent, A2A(agents=[history_agent]))
+        ctx = "a2a-owner-continues"
+        assert self._a2a_send(client, "one", "userC", ctx).status_code == 200
+        assert self._a2a_send(client, "two", "userC", ctx).status_code == 200
+
+    def test_agui_refuses_a_foreign_thread_id(self, history_agent):
+        from agno.os.interfaces.agui import AGUI
+
+        client = self._interface_client(history_agent, AGUI(agent=history_agent))
+        thread = "agui-owned-by-c"
+
+        def send(text, user_id, i):
+            return client.post(
+                "/agui",
+                json={
+                    "threadId": thread,
+                    "runId": f"run-{i}",
+                    "messages": [{"id": f"m{i}", "role": "user", "content": text}],
+                    "forwardedProps": {"user_id": user_id},
+                    "state": {},
+                    "tools": [],
+                    "context": [],
+                },
+            )
+
+        assert send("opened by C", "userC", 1).status_code == 200
+        assert send(f"My private {SECRET}", "userD", 2).status_code == 404
+        assert send("still mine", "userC", 3).status_code == 200
+
+        runs = history_agent.db.get_runs(session_id=thread, deserialize=False)
+        rows = runs[0] if isinstance(runs, tuple) else runs
+        assert {r["user_id"] for r in rows} == {"userC"}
+
+
+def history_agent_id() -> str:
+    return "history-agent"

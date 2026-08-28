@@ -611,7 +611,7 @@ class TestNormalizeToolMessages:
 
     def test_preserves_metrics_on_first(self):
         """Metrics from combined message should be preserved on first split message only."""
-        from agno.models.metrics import MessageMetrics
+        from agno.metrics import MessageMetrics
 
         metrics = MessageMetrics(input_tokens=100)
         combined = Message(
