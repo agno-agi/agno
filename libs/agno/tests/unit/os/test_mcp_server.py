@@ -96,7 +96,7 @@ def _resolve_by_identity(monkeypatch):
     by test_mcp_resolution.py.
     """
 
-    async def _resolve(os, kind, component_id, *, user_id, session_id):
+    async def _resolve(os, kind, component_id, *, user_id, session_id, strict=True, version=None, published_only=True):
         pool = {"agents": os.agents, "teams": os.teams, "workflows": os.workflows}.get(kind) or []
         for component in pool:
             if getattr(component, "id", None) == component_id:
@@ -180,6 +180,64 @@ def test_disabling_builtins_with_no_custom_tools_is_rejected_at_construction():
     """
     with pytest.raises(ValueError, match="zero tools"):
         MCPServerConfig(enable_builtin_tools=False)
+
+
+def _noop_tool() -> str:
+    """Return ok."""
+    return "ok"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"include_tags": set()}, id="empty-include-tags"),
+        pytest.param({"exclude_tags": {"core", "session"}}, id="exclude-every-tag"),
+        pytest.param({"include_tags": {"core"}, "exclude_tags": {"core"}}, id="exclude-cancels-include"),
+    ],
+)
+def test_tag_scoping_to_zero_builtins_without_custom_tools_warns(monkeypatch, kwargs):
+    """The tags reach the same zero-tool server the check above rejects.
+
+    ``enable_builtin_tools`` is still True in each of these, so the ``zero tools`` branch
+    never fires and the config is accepted -- then ``/mcp`` lists nothing. Warned rather
+    than raised because, unlike ``enable_builtin_tools=False``, this shape is accepted
+    today and callers may be relying on it.
+    """
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPServerConfig(**kwargs)
+
+    assert len(warnings) == 1
+    assert "resolves to zero tools" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="defaults"),
+        pytest.param({"include_tags": {"core"}}, id="scoped-to-core"),
+        pytest.param({"exclude_tags": {"session"}}, id="drops-session"),
+        pytest.param({"include_tags": set(), "tools": [_noop_tool]}, id="no-builtins-but-custom-tools"),
+        pytest.param({"tools": [_noop_tool], "enable_builtin_tools": False}, id="custom-tools-only"),
+    ],
+)
+def test_configs_that_still_register_a_tool_do_not_warn(monkeypatch, kwargs):
+    """Anything that ends up with at least one tool stays silent -- no behavior change."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPServerConfig(**kwargs)
+
+    assert warnings == []
+
+
+async def test_zero_tool_tag_scoping_still_builds_an_empty_server(monkeypatch):
+    """The warning is advisory: the resolved surface is unchanged (still empty)."""
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: None)
+
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session"}))
+    assert await _tool_names(os) == set()
 
 
 async def test_include_tags_scopes_builtins_to_core():
@@ -1081,89 +1139,7 @@ def test_mounted_mcp_middleware_layer_position():
     assert positions == sorted(positions), f"unexpected middleware order: {names}"
 
 
-# ==================== Deprecated aliases (enable_mcp_server / mcp_config) ====================
-
-
-def test_enable_mcp_server_alias_still_enables_and_warns():
-    with pytest.warns(DeprecationWarning, match="enable_mcp_server") as rec:
-        os = AgentOS(agents=[_agent()], enable_mcp_server=True)
-    assert os.mcp_server is True
-    assert os.enable_mcp_server is True
-    # stacklevel=2 must attribute the warning to the caller, not agno internals
-    deprecations = [w for w in rec.list if "enable_mcp_server" in str(w.message)]
-    assert deprecations and deprecations[0].filename == __file__
-
-
-def test_enable_mcp_server_alias_false_stays_disabled():
-    with pytest.warns(DeprecationWarning, match="enable_mcp_server"):
-        os = AgentOS(agents=[_agent()], enable_mcp_server=False)
-    assert os.mcp_server is False
-
-
-async def test_mcp_config_alias_is_honored_and_warns():
-    def ping() -> str:
-        """Return pong."""
-        return "pong"
-
-    with pytest.warns(DeprecationWarning, match="mcp_config"):
-        os = AgentOS(
-            agents=[_agent()],
-            mcp_server=True,
-            mcp_config=MCPServerConfig(tools=[ping], enable_builtin_tools=False),
-        )
-    assert await _tool_names(os) == {"ping"}
-
-
-def test_mcp_server_config_wins_over_mcp_config_alias():
-    with pytest.warns(DeprecationWarning, match="mcp_config"):
-        os = AgentOS(
-            agents=[_agent()],
-            mcp_server=MCPServerConfig(include_tags={"core"}),
-            mcp_config=MCPServerConfig(include_tags={"session"}),
-        )
-    assert os.mcp_config is not None
-    assert os.mcp_config.include_tags == {"core"}
-
-
-def test_mcp_server_wins_over_enable_mcp_server_alias():
-    with pytest.warns(DeprecationWarning, match="enable_mcp_server"):
-        os = AgentOS(agents=[_agent()], mcp_server=True, enable_mcp_server=False)
-    assert os.mcp_server is True
-
-
-def test_explicit_mcp_server_false_cannot_override_enable_mcp_server_true():
-    """Documented edge: mcp_server=False is indistinguishable from the default, so an
-    explicit False cannot suppress an enable_mcp_server=True alias -- the alias still
-    enables the server."""
-    with pytest.warns(DeprecationWarning, match="enable_mcp_server") as rec:
-        os = AgentOS(agents=[_agent()], mcp_server=False, enable_mcp_server=True)
-    assert os.mcp_server is True
-    # The single-alias deprecation warning fires (not the both-provided variant), because
-    # False is treated as the default sentinel and there is no way to distinguish it.
-    messages = [str(w.message) for w in rec.list]
-    assert any("enable_mcp_server=...) is deprecated" in m for m in messages)
-    assert not any("Both mcp_server and enable_mcp_server are provided" in m for m in messages)
-
-
-def test_mcp_server_config_wins_over_enable_mcp_server_false():
-    with pytest.warns(DeprecationWarning, match="enable_mcp_server"):
-        os = AgentOS(
-            agents=[_agent()],
-            mcp_server=MCPServerConfig(include_tags={"core"}),
-            enable_mcp_server=False,
-        )
-    assert os.mcp_server is True
-    assert os.mcp_config is not None
-    assert os.mcp_config.include_tags == {"core"}
-
-
-def test_enable_mcp_server_attribute_read_and_write():
-    os = AgentOS(agents=[_agent()], mcp_server=True)
-    assert os.enable_mcp_server is True
-    os.enable_mcp_server = False
-    assert os.mcp_server is False
-    os.enable_mcp_server = True
-    assert os.mcp_server is True
+# ==================== mcp_server property ====================
 
 
 async def test_assigning_config_to_mcp_server_attribute_applies_config():

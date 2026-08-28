@@ -6,9 +6,9 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 
 from pydantic import BaseModel
 
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function

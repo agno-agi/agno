@@ -38,7 +38,7 @@ Generated: 2026-02-08 16:39:09
 
 **Description:** Executed with `.venvs/demo/bin/python` (mode: normal, timeout: 35s).
 
-**Result:** Timed out after 35s. DEBUG Creating new async OpenAI client for model gpt-4o
+**Result:** Timed out after 35s. DEBUG Creating new async OpenAI client for model gpt-5.6-luna
 
 ---
 
