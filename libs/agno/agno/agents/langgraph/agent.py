@@ -2,6 +2,8 @@ from dataclasses import dataclass, field
 from typing import Any, AsyncIterator, Dict, List, Optional
 from uuid import uuid4
 
+from pydantic import BaseModel
+
 from agno.agents.base import BaseExternalAgent
 from agno.agents.langgraph.utils import build_messages_with_history
 from agno.models.response import ToolExecution
@@ -82,11 +84,17 @@ class LangGraphAgent(BaseExternalAgent):
 
         result = await self.graph.ainvoke(graph_input, config=config)
 
-        # Extract content from the last AI message
-        messages = result.get(self.output_key, [])
-        for msg in reversed(messages):
-            if isinstance(msg, AIMessage):
-                return msg.content
+        extracted = result.get(self.output_key)
+        # A node using .with_structured_output places a model instance at its state
+        # key rather than an AIMessage. Point output_key at that key and it flows
+        # through untouched, so a run-level output_schema validates against it.
+        if isinstance(extracted, BaseModel):
+            return extracted
+        # Otherwise output_key holds the message channel: return the last AI message.
+        if isinstance(extracted, list):
+            for msg in reversed(extracted):
+                if isinstance(msg, AIMessage):
+                    return msg.content
         return str(result)
 
     async def _arun_adapter_stream(

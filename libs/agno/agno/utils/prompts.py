@@ -6,7 +6,7 @@ from pydantic import BaseModel
 from agno.utils.log import log_warning
 
 
-def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel]) -> str:
+def get_json_output_prompt(output_schema: Union[str, list, dict, BaseModel, Type[BaseModel]]) -> str:
     """Return the JSON output prompt for the Agent.
 
     This is added to the system prompt when the output_schema is set and structured_outputs is False.

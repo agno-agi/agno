@@ -1,6 +1,9 @@
+import json
 from dataclasses import dataclass, field
-from typing import Any, AsyncIterator, Dict, List, Optional
+from typing import Any, AsyncIterator, Dict, List, Optional, Type
 from uuid import uuid4
+
+from pydantic import BaseModel
 
 from agno.agents.base import BaseExternalAgent
 from agno.models.response import ToolExecution
@@ -79,11 +82,27 @@ class ClaudeAgent(BaseExternalAgent):
     # Maps Agno session_id -> SDK session id. Keyed per session to avoid cross-session bleed.
     _sdk_session_ids: Dict[str, str] = field(default_factory=dict, init=False, repr=False)
 
-    def _build_options(self, *, streaming: bool = False, **kwargs: Any) -> Any:
+    # The Claude Agent SDK enforces schemas natively
+    uses_prompted_output_schema: bool = field(default=False, init=False, repr=False)
+
+    def _apply_output_schema(self, input: Any, output_schema: Optional[Type[BaseModel]]) -> Any:
+        """Native structured output: don't inject anything into the prompt.
+
+        The schema is set on ClaudeAgentOptions in _build_options and the validated
+        result is read from ResultMessage.structured_output in the adapter hooks.
+        """
+        return input
+
+    def _build_options(
+        self, *, streaming: bool = False, output_schema: Optional[Type[BaseModel]] = None, **kwargs: Any
+    ) -> Any:
         """Build ClaudeAgentOptions from agent config."""
         sdk = _sdk()
 
         opts: Dict[str, Any] = {}
+
+        if output_schema is not None:
+            opts["output_format"] = {"type": "json_schema", "schema": output_schema.model_json_schema()}
 
         if self.system_prompt:
             opts["system_prompt"] = self.system_prompt
@@ -135,14 +154,20 @@ class ClaudeAgent(BaseExternalAgent):
             )
             raise RuntimeError(f"Claude SDK error (is_error={is_error}, subtype={subtype}): {detail}")
 
-    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> str:
-        """Non-streaming: collect all messages and return final content."""
+    async def _arun_adapter(self, input: Any, *, history: Optional[List[Dict[str, Any]]] = None, **kwargs: Any) -> Any:
+        """Non-streaming: collect all messages and return final content.
+
+        With an output_schema, the SDK validates natively and the model instance is
+        returned directly; the base class leaves non-str content untouched.
+        """
         sdk = _sdk()
 
+        output_schema: Optional[Type[BaseModel]] = kwargs.get("output_schema")
         options = self._build_options(**kwargs)
         agno_session_id = kwargs.get("session_id")
         assistant_text = ""
         final_result = ""
+        structured: Optional[BaseModel] = None
 
         async for message in sdk.query(prompt=str(input), options=options):
             if isinstance(message, sdk.SystemMessage):
@@ -162,9 +187,15 @@ class ClaudeAgent(BaseExternalAgent):
                 self._check_result_message(sdk, message)
                 if hasattr(message, "session_id") and message.session_id and agno_session_id:
                     self._sdk_session_ids[agno_session_id] = message.session_id
+                if output_schema is not None:
+                    validated = getattr(message, "structured_output", None)
+                    if validated is not None:
+                        structured = output_schema.model_validate(validated)
                 if hasattr(message, "result") and message.result:
                     final_result = str(message.result)
 
+        if structured is not None:
+            return structured
         # Prefer ResultMessage.result, fall back to accumulated assistant text
         return final_result or assistant_text
 
@@ -183,7 +214,14 @@ class ClaudeAgent(BaseExternalAgent):
 
         run_id = kwargs.get("run_id", str(uuid4()))
         agno_session_id = kwargs.get("session_id")
+        output_schema: Optional[Type[BaseModel]] = kwargs.get("output_schema")
         options = self._build_options(streaming=True, **kwargs)
+
+        # With a schema, the streamed text is the model's narration; the validated
+        # object only arrives on the final ResultMessage. Suppressing text deltas
+        # keeps them out of the base class's accumulated content, so the single
+        # JSON RunContentEvent emitted at the end parses cleanly against the schema.
+        emit_text = output_schema is None
 
         # Track whether we got any StreamEvents (token-level streaming)
         got_stream_events = False
@@ -202,7 +240,7 @@ class ClaudeAgent(BaseExternalAgent):
                     delta = event.get("delta", {})
                     delta_type = delta.get("type", "")
 
-                    if delta_type == "text_delta":
+                    if delta_type == "text_delta" and emit_text:
                         # Token-level text streaming
                         text = delta.get("text", "")
                         if text:
@@ -225,7 +263,7 @@ class ClaudeAgent(BaseExternalAgent):
                 # (has full name + args). For text, only use if no StreamEvents.
                 for block in message.content:
                     if isinstance(block, sdk.TextBlock):
-                        if not got_stream_events and block.text:
+                        if emit_text and not got_stream_events and block.text:
                             yield RunContentEvent(
                                 run_id=run_id,
                                 agent_id=self.get_id(),
@@ -281,3 +319,14 @@ class ClaudeAgent(BaseExternalAgent):
                 self._check_result_message(sdk, message)
                 if hasattr(message, "session_id") and message.session_id and agno_session_id:
                     self._sdk_session_ids[agno_session_id] = message.session_id
+                if output_schema is not None:
+                    validated = getattr(message, "structured_output", None)
+                    if validated is not None:
+                        # Emit the validated object as JSON so the base class's
+                        # accumulated content parses back into the schema.
+                        yield RunContentEvent(
+                            run_id=run_id,
+                            agent_id=self.get_id(),
+                            agent_name=self.name or "",
+                            content=json.dumps(validated),
+                        )
