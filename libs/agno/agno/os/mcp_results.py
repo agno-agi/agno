@@ -109,8 +109,10 @@ def build_run_tool_result(
     """Build the MCP ``ToolResult`` for a completed (or paused) run.
 
     ``trimmed`` (default): answer text + generated media as MCP content blocks,
-    with ``structuredContent`` limited to run_id / session_id / status and, when
-    paused, the unresolved requirements a continue call must address.
+    with ``structuredContent`` carrying run_id / session_id / status, the answer
+    mirrored under ``content``, the owning component id (``agent_id``/``team_id``/
+    ``workflow_id`` — the continue_run handle), and, when paused, the unresolved
+    requirements a continue call must address.
 
     ``full``: text content with ``structuredContent`` set to the run's complete
     ``to_dict()`` (media base64-encoded there — no separate media blocks, so large
@@ -123,12 +125,15 @@ def build_run_tool_result(
         requirements = serialized_paused_requirements(run_output) or []
         text = f"Run paused: {len(requirements)} requirement(s) awaiting resolution."
     if getattr(run_output, "is_paused", False) and not continue_run_available:
-        # An exposed-only server (default_tools=False) has no continue_run tool, so a
-        # paused run is a dead end over MCP -- say so at the moment it happens instead
-        # of letting the client hunt for a tool that is not registered.
+        # continue_run rides along with exposures by default, so this fires only when
+        # the deployer opted out (lifecycle_tools=False / exclude_tags={"lifecycle"},
+        # or tag scoping that drops both core and lifecycle). The paused run is then a
+        # dead end over MCP -- say so at the moment it happens instead of letting the
+        # client hunt for a tool that is not registered.
         text = (
             f"{text} The continue_run tool is not registered on this server; resume this run over "
-            "the REST API, or serve the core default tools alongside the exposed components."
+            "the REST API, or re-enable the run-lifecycle tools (lifecycle_tools=True, and do not "
+            'exclude the "lifecycle" tag).'
         ).strip()
 
     content: List[ContentBlock] = [TextContent(type="text", text=text)]

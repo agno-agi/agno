@@ -1311,6 +1311,42 @@ async def test_custom_tool_named_like_default_tool_raises_on_default_surface():
         build_mcp_server(os)
 
 
+async def test_lifecycle_collision_advice_matches_how_the_name_was_claimed():
+    """continue_run/cancel_run are tagged BOTH core and lifecycle. The collision advice
+    must key on HOW the name is on the server, not on the tag set: when the pair rode in
+    via an exposure (core off) the lifecycle switches free it; when core is enabled the
+    pair is a core default and lifecycle_tools=False does nothing, so the advice must not
+    prescribe it."""
+
+    async def continue_run(message: str) -> str:
+        """Impostor."""
+        return message
+
+    # Exposure-only surface: the pair rides along, core is off -> lifecycle advice.
+    ride_only = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, tools=[_agent(), continue_run]))
+    with pytest.raises(ValueError) as exc_ride:
+        build_mcp_server(ride_only)
+    assert "lifecycle_tools=False" in str(exc_ride.value)
+
+    # Default surface: the pair is core-registered; lifecycle_tools=False can't free it.
+    core_on = AgentOS(agents=[_agent()], mcp=MCPConfig(tools=[continue_run]))
+    with pytest.raises(ValueError) as exc_core:
+        build_mcp_server(core_on)
+    assert "lifecycle_tools=False" not in str(exc_core.value)
+    assert "default_tools" in str(exc_core.value)
+
+
+async def test_exposed_id_collision_advice_is_lifecycle_aware_on_core_surface():
+    """The exposed-component collision site gets the same correct advice: an exposed id
+    that collides with the core-registered lifecycle pair must not be told to flip the
+    lifecycle switches (they don't free a core-served name)."""
+    agent = _agent(id="cancel_run")
+    core_on = AgentOS(agents=[agent], mcp=MCPConfig(tools=[agent]))
+    with pytest.raises(ValueError) as exc:
+        build_mcp_server(core_on)
+    assert "lifecycle_tools=False" not in str(exc.value)
+
+
 async def test_duplicate_custom_tool_names_raise():
     """Two custom tools registering under the same name hard-error like every other
     collision on the server -- FastMCP would otherwise warn-and-replace, and the
@@ -1594,9 +1630,12 @@ def test_team_in_agents_roster_is_refused_by_kind_mismatch():
         build_mcp_server(os)
 
 
-async def test_remote_exposure_forwards_the_caller_bearer_token(monkeypatch):
-    """A protected downstream AgentOS 401s without the token: the exposed run tool
-    forwards the caller's bearer token to a Remote* component, as the REST routers do."""
+async def test_remote_run_propagates_the_caller_bearer_token_to_arun(monkeypatch):
+    """Pins ARGUMENT PROPAGATION only: the exposed run tool passes the caller's bearer
+    to Remote*.arun. The session-writability preflight is stubbed out because it
+    dereferences the remote's network-backed ``db`` property before the token is used --
+    end-to-end protected-remote runs do not work yet and are documented as unsupported
+    (see the PR's protected-remote deferral note)."""
     from agno.agent.remote import RemoteAgent
 
     async def _gate(*args, **kwargs):
@@ -1620,9 +1659,11 @@ async def test_remote_exposure_forwards_the_caller_bearer_token(monkeypatch):
     assert captured["auth_token"] == "tok-123"
 
 
-async def test_remote_cancel_forwards_the_caller_bearer_token(monkeypatch):
-    """cancel_run on a remote exposure forwards the token too -- a protected downstream
-    would otherwise reject the proxied cancel."""
+async def test_remote_cancel_propagates_the_caller_bearer_token(monkeypatch):
+    """Pins ARGUMENT PROPAGATION only: cancel_run passes the caller's bearer to
+    Remote*.acancel_run. The ownership verifier is stubbed out because a bearer-scoped
+    caller fails closed on remote components today -- scoped remote cancellation is
+    documented as unsupported (see the PR's protected-remote deferral note)."""
     from agno.agent.remote import RemoteAgent
 
     monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
@@ -1646,6 +1687,102 @@ async def test_remote_cancel_forwards_the_caller_bearer_token(monkeypatch):
     result = await _call_tool(os, "cancel_run", {"agent_id": "downstream", "run_id": "r1"}, raise_on_error=False)
     assert not result.is_error
     assert captured["auth_token"] == "tok-cancel"
+
+
+async def test_remote_cancel_never_touches_the_local_queue(monkeypatch):
+    """A published Remote* must not become a handle on the LOCAL queue: the tombstone is
+    keyed on run_id alone, so firing it for a remote cancel would tombstone an unrelated
+    local run (a hidden component's queued ticket) whose id the caller passed. Runs the
+    real gate and the real cancel service -- only the HTTP hop is faked."""
+    import agno.os.job_queue as job_queue_mod
+    from agno.agent.remote import RemoteAgent
+
+    tombstoned: list = []
+
+    class FakeWorker:
+        async def acancel_queued(self, run_id):
+            tombstoned.append(run_id)
+
+    monkeypatch.setattr(job_queue_mod, "get_active_queue_worker", lambda: FakeWorker())
+
+    remote = RemoteAgent(base_url="http://127.0.0.1:9", agent_id="published-remote")
+    forwarded: list = []
+
+    async def fake_acancel_run(run_id, auth_token=None, **kwargs):
+        forwarded.append(run_id)
+        return True
+
+    remote.acancel_run = fake_acancel_run  # type: ignore[method-assign]
+    os = AgentOS(agents=[remote], mcp=MCPConfig(default_tools=False, tools=[remote]))
+
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "published-remote", "run_id": "hidden-local-ticket"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    # The cancel reached ONLY the downstream OS; the local queue was untouched.
+    assert forwarded == ["hidden-local-ticket"]
+    assert tombstoned == []
+
+
+async def test_local_cancel_still_tombstones_the_queued_ticket(monkeypatch):
+    """The counterpart pin: for a LOCAL component the queue tombstone must keep firing
+    before the cancellation intent, or a waiting ticket gets claimed and burns an
+    attempt before its first cancellation checkpoint."""
+    import agno.os.job_queue as job_queue_mod
+    from agno.os.services import runs as runs_service
+
+    tombstoned: list = []
+
+    class FakeWorker:
+        async def acancel_queued(self, run_id):
+            tombstoned.append(run_id)
+
+    monkeypatch.setattr(job_queue_mod, "get_active_queue_worker", lambda: FakeWorker())
+
+    agent = _agent(id="local-agent")
+    cancelled: list = []
+
+    async def fake_acancel_run(run_id, **kwargs):
+        cancelled.append(run_id)
+        return True
+
+    agent.acancel_run = fake_acancel_run  # type: ignore[method-assign]
+    await runs_service.cancel_component_run(agent, "queued-run")
+    assert tombstoned == ["queued-run"]
+    assert cancelled == ["queued-run"]
+
+
+async def test_remote_workflow_run_propagates_the_caller_bearer_token(monkeypatch):
+    """Pins ARGUMENT PROPAGATION only, for BOTH RemoteWorkflow.arun call sites: the
+    exposed workflow tool and the generic run_workflow builtin each have their own
+    branch, so each forward is pinned separately. Preflight stubbed as in the
+    agent-side pin; end-to-end protected-remote runs are documented as unsupported."""
+    from agno.workflow.remote import RemoteWorkflow
+
+    async def _gate(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(mcp_mod, "_assert_session_writable_mcp", _gate)
+    monkeypatch.setattr(mcp_mod, "_resolve_user_id", lambda caller: None)
+
+    remote = RemoteWorkflow(base_url="http://127.0.0.1:9", workflow_id="far-flow")
+    captured: list = []
+
+    async def fake_arun(message, **kwargs):
+        captured.append(kwargs.get("auth_token"))
+        return WorkflowRunOutput(workflow_id="far-flow", content="ok", status=RunStatus.completed)
+
+    remote.arun = fake_arun  # type: ignore[method-assign]
+    # default_tools on so the generic run_workflow registers alongside the exposure.
+    os = AgentOS(workflows=[remote], mcp=MCPConfig(tools=[remote]))
+
+    _patch_request(monkeypatch, _request_with_bearer("tok-wf"))
+    await _call_tool(os, "far-flow", {"message": "go"})
+    await _call_tool(os, "run_workflow", {"workflow_id": "far-flow", "message": "go"})
+    assert captured == ["tok-wf", "tok-wf"]
 
 
 def test_wrong_kind_external_adapter_entry_raises_too():
@@ -1686,6 +1823,13 @@ def test_component_tool_in_agent_or_team_tools_raises():
     from agno.agent import _tools as agent_tools_mod
 
     marker = _agent(id="helper").as_tool(name="ask_helper")
+
+    # The construction boundary itself: Agent(tools=[marker]) must raise, not
+    # construct silently and defer the failure to set_tools or the first run.
+    with pytest.raises(ValueError, match="MCPConfig"):
+        Agent(id="boss", name="Boss", tools=[marker])
+    with pytest.raises(ValueError, match="MCPConfig"):
+        Team(id="squad", name="Squad", members=[_agent(id="m1")], tools=[marker])
 
     boss = Agent(id="boss", name="Boss")
     with pytest.raises(ValueError, match="MCPConfig"):
@@ -1802,10 +1946,53 @@ async def test_cancel_cross_kind_same_id_is_rejected(monkeypatch):
     assert reached == []
 
 
-async def test_cancel_requires_session_id_to_bind_the_run(monkeypatch):
-    """run_id alone is insufficient: without session_id the run cannot be bound to the
-    component, so the gate fails closed rather than recording a global intent."""
+async def test_cancel_of_an_in_flight_run_succeeds_for_admin(monkeypatch):
+    """THE case cancellation exists for: a foreground run persists no row until it
+    pauses or finishes, so for the whole window where cancel is meaningful there is
+    nothing to bind. An admin / non-isolated caller must still cancel (REST parity) --
+    run_id-only, and mid-conversation where the session row exists but the current
+    run's row does not yet."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+    from agno.session.agent import AgentSession
+
     public = _agent(id="public-agent", name="Public")
+    public.db = InMemoryDb()
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    # Cancel-before-start / burst cancel: no session_id, no rows anywhere.
+    result = await _call_tool(
+        os, "cancel_run", {"agent_id": "public-agent", "run_id": "in-flight-1"}, raise_on_error=False
+    )
+    assert not result.is_error
+
+    # Mid-conversation: the session persisted on an earlier turn, the live run has no row.
+    public.db.upsert_session(AgentSession(session_id="live-sess", agent_id=public.id))
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "public-agent", "run_id": "in-flight-2", "session_id": "live-sess"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert reached == ["in-flight-1", "in-flight-2"]
+
+
+async def test_scoped_caller_cancel_requires_session_ownership(monkeypatch):
+    """A user-isolation-scoped caller must prove they own the session the run lives in
+    (the REST scoped rule): no session_id fails closed, and a session_id whose run row
+    is absent fails closed too -- never a global intent on someone else's run."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+    from agno.session.agent import AgentSession
+
+    _patch_request(monkeypatch, _request_with_bearer("tok-scoped", scopes=["agents:run"]))
+    public = _agent(id="public-agent", name="Public")
+    public.db = InMemoryDb()
     reached: list = []
 
     async def spy_cancel(component, run_id, auth_token=None):
@@ -1819,6 +2006,184 @@ async def test_cancel_requires_session_id_to_bind_the_run(monkeypatch):
     )
     assert result.is_error
     assert "session_id is required" in str(result.content)
+
+    # A session this caller does NOT own (no user_id stamp -> not theirs under isolation).
+    public.db.upsert_session(AgentSession(session_id="other-sess", agent_id=public.id))
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "public-agent", "run_id": "some-run", "session_id": "other-sess"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "Run not found" in str(result.content)
+    assert reached == []
+
+    # The legitimate scoped path: their own session holding the run passes the gate.
+    _seed_agent_run(public, session_id="own-sess", run_id="own-run", user_id="sa:bot")
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "public-agent", "run_id": "own-run", "session_id": "own-sess"},
+        raise_on_error=False,
+    )
+    assert not result.is_error
+    assert reached == ["own-run"]
+
+
+async def test_factory_run_cancels_statically_without_building_the_factory(monkeypatch):
+    """A factory component's run must be cancellable over MCP without invoking the
+    factory -- cancellation is a run_id-keyed global intent. Generic resolution would
+    build the factory (400ing a required-input factory), so cancel must take the static
+    path the REST factory-cancel routes use. Real gate, real static cancel."""
+    from pydantic import BaseModel, Field
+
+    from agno.agent.factory import AgentFactory
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    class RequiredInput(BaseModel):
+        topic: str = Field(...)
+
+    built: list = []
+
+    def _build(ctx):
+        built.append(ctx)  # must never run for a cancel
+        return _agent(id="made-to-order")
+
+    factory = AgentFactory(id="made-to-order", db=InMemoryDb(), factory=_build, input_schema=RequiredInput)
+
+    import agno.os.job_queue as job_queue_mod
+
+    tombstoned: list = []
+
+    class FakeWorker:
+        async def acancel_queued(self, run_id):
+            tombstoned.append(run_id)
+
+    monkeypatch.setattr(job_queue_mod, "get_active_queue_worker", lambda: FakeWorker())
+
+    import agno.agent._run as agent_run_mod
+
+    cancelled: list = []
+
+    async def fake_static_cancel(run_id):
+        cancelled.append(run_id)
+        return True
+
+    monkeypatch.setattr(agent_run_mod, "acancel_run", fake_static_cancel)
+
+    os = AgentOS(agents=[factory], mcp=MCPConfig(default_tools=False, tools=[factory]))
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "made-to-order", "run_id": "factory-run"},
+        raise_on_error=False,
+    )
+    assert not result.is_error, str(result.content)
+    assert built == [], "the factory was invoked during a cancel"
+    assert tombstoned == ["factory-run"]
+    assert cancelled == ["factory-run"]
+
+
+async def test_scoped_caller_cannot_cancel_another_users_run_in_a_matching_session(monkeypatch):
+    """The scoped tier pins per-USER ownership, not just the component binding: a run
+    that lives in a session belonging to a DIFFERENT user (same component) must be
+    refused. Without this, the user_id pin in verify_run_ownership is untested."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    _patch_request(monkeypatch, _request_with_bearer("tok-bob", scopes=["agents:run"]))
+    public = _agent(id="public-agent", name="Public")
+    public.db = InMemoryDb()
+    # A run owned by alice, in a session bound to the SAME component the caller names.
+    _seed_agent_run(public, session_id="alice-sess", run_id="alice-run", user_id="alice")
+
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    # Caller is sa:bot (from _request_with_bearer), not alice.
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "public-agent", "run_id": "alice-run", "session_id": "alice-sess"},
+        raise_on_error=False,
+    )
+    assert result.is_error
+    assert "Run not found" in str(result.content)
+    assert reached == []
+
+
+async def test_admin_binding_fails_open_when_the_db_read_raises(monkeypatch):
+    """verify_persisted_run_binding is deliberately fail-OPEN on a db read error: a
+    broken db must not make a live run uncancellable (REST admin does no db read at
+    all). Pin that direction so deleting the try/except is caught."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+    from agno.os.services import sessions as sessions_service
+
+    class ExplodingDb(InMemoryDb):
+        def get_run(self, run_id, deserialize=True):
+            raise RuntimeError("db is on fire")
+
+    public = _agent(id="public-agent", name="Public")
+    public.db = ExplodingDb()
+
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    os = AgentOS(agents=[public], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    # Admin / non-isolated caller (no scoped request patched): the read raises, but the
+    # cancel must still proceed rather than fail closed.
+    result = await _call_tool(
+        os,
+        "cancel_run",
+        {"agent_id": "public-agent", "run_id": "some-run", "session_id": "s1"},
+        raise_on_error=False,
+    )
+    assert not result.is_error, str(result.content)
+    assert reached == ["some-run"]
+
+    # And the helper itself proceeds (no RunOwnershipError) on a raising db.
+    await sessions_service.verify_persisted_run_binding(
+        ExplodingDb(), run_id="x", component_type="agents", component_id="public-agent"
+    )
+
+
+async def test_cancel_of_a_hidden_persisted_run_is_refused_regardless_of_session_id(monkeypatch):
+    """The admin-tier binding keys on the run row looked up by run_id -- the one value
+    the caller must supply truthfully. Omitting session_id or passing a bogus one must
+    not dodge the refusal the correct session_id gets."""
+    from agno.db.in_memory.in_memory_db import InMemoryDb
+
+    db = InMemoryDb()
+    public = _agent(id="public-agent", name="Public")
+    public.db = db
+    hidden = Team(id="hidden-team", name="Hidden", members=[_agent(id="m1")])
+    hidden.db = db
+    _seed_team_run(hidden, session_id="hidden-sess", run_id="hidden-run")
+
+    reached: list = []
+
+    async def spy_cancel(component, run_id, auth_token=None):
+        reached.append(run_id)
+
+    monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", spy_cancel)
+    os = AgentOS(agents=[public], teams=[hidden], mcp=MCPConfig(default_tools=False, tools=[public]))
+
+    for session_id in (None, "no-such-session", "hidden-sess"):
+        args = {"agent_id": "public-agent", "run_id": "hidden-run"}
+        if session_id is not None:
+            args["session_id"] = session_id
+        result = await _call_tool(os, "cancel_run", args, raise_on_error=False)
+        assert result.is_error, f"session_id={session_id!r} dodged the binding"
+        assert "Run not found" in str(result.content)
     assert reached == []
 
 

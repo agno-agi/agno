@@ -145,19 +145,39 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
     }
     names: Dict[str, str] = {}
     for tool in entries:
-        name = _register_custom_tool(mcp, tool, taken=taken)
+        name = _register_custom_tool(mcp, tool, taken=taken, enabled_tags=enabled_tags)
         label = f'custom tool "{name}"'
         names[name] = label
         taken[name] = label
     return names
 
 
-def _register_custom_tool(mcp: FastMCP, tool: Any, taken: "Optional[Dict[str, str]]" = None) -> str:
+def _collision_free_advice(colliding_name: str, enabled_tags: "Optional[set]") -> str:
+    """The action clause of a name-collision error: how to free ``colliding_name``.
+
+    The run-lifecycle pair (continue_run/cancel_run) is tagged BOTH "core" and
+    "lifecycle", and rides along with any exposure. So "is this a lifecycle tool" is
+    always true for it and cannot decide the advice -- what matters is HOW the name got
+    onto the server. When it was claimed solely via the ride-along ("core" not enabled),
+    only the lifecycle switches free it; when "core" is enabled the pair registers as a
+    core default and the lifecycle switches do nothing (core keeps re-adding it), so the
+    caller must drop core too.
+    """
+    tags = _BUILTIN_TOOL_NAMES.get(colliding_name) or frozenset()
+    if "lifecycle" in tags and "core" not in (enabled_tags or set()):
+        return 'or drop the run-lifecycle pair via lifecycle_tools=False or exclude_tags={"lifecycle"} '
+    return "or scope the default tool out via default_tools/include_tags/exclude_tags "
+
+
+def _register_custom_tool(
+    mcp: FastMCP, tool: Any, taken: "Optional[Dict[str, str]]" = None, enabled_tags: "Optional[set]" = None
+) -> str:
     """Register a single custom tool, supporting plain callables and Agno tools/Functions.
 
     Returns the name the tool registered under. ``taken`` holds names already claimed
     on this server (checked before registration -- FastMCP replaces on duplicates
-    rather than raising).
+    rather than raising). ``enabled_tags`` steers the collision advice toward the knob
+    that actually frees the name.
     """
     from fastmcp.tools import Tool
 
@@ -177,12 +197,10 @@ def _register_custom_tool(mcp: FastMCP, tool: Any, taken: "Optional[Dict[str, st
 
     if taken and tool_obj.name in taken:
         claimant = taken[tool_obj.name]
-        advice = (
-            "Rename the custom tool, or scope the default tool out via "
-            "default_tools/include_tags/exclude_tags so each tool name is unique."
-            if claimant.startswith("the default tool")
-            else "Rename one of them so each tool name is unique."
-        )
+        if claimant.startswith("the default tool"):
+            advice = f"Rename the custom tool, {_collision_free_advice(tool_obj.name, enabled_tags)}so each tool name is unique."
+        else:
+            advice = "Rename one of them so each tool name is unique."
         raise ValueError(f'MCP custom tool name "{tool_obj.name}" collides with {claimant}. {advice}')
     mcp.add_tool(tool_obj)
     return tool_obj.name
@@ -785,12 +803,20 @@ async def _resolve_run_component(
 def _make_run_ownership_verifier(os: "AgentOS"):
     """Bind the run-lifecycle ownership verifier to an AgentOS.
 
-    continue_run and cancel_run must prove the run belongs to the named component before
-    acting on it -- the run_id alone is never sufficient, so naming a component the
-    caller may reach cannot let them cancel or resume a run that lives under a different
-    component. On top of that binding, a scoped (non-admin) caller must own the session,
-    the same gate the REST cancel/continue endpoints enforce. session_id is required for
-    local components (it locates the run to bind).
+    continue_run and cancel_run must not let a caller reach a DIFFERENT component's run
+    by passing its run_id while naming a component they may reach. Two tiers, matching
+    the REST cancel/continue routes:
+
+    - A scoped (user-isolation) caller must own the session the run lives in:
+      session_id is required and an absent session or run row fails closed, exactly
+      the REST scoped-caller rule.
+    - An admin / non-isolated caller is gated by the persisted run row itself, looked
+      up by run_id alone (a caller-supplied session_id cannot steer the check): a row
+      bound to a different component is refused; an absent row proceeds, because an
+      in-flight or not-yet-started run has no row until it pauses or finishes and
+      cancellation intent exists precisely for those runs. REST admin callers get no
+      ownership check at all, so this tier is strictly harder than REST while keeping
+      every REST-cancellable run cancellable here too.
     """
 
     async def verify(
@@ -814,21 +840,29 @@ def _make_run_ownership_verifier(os: "AgentOS"):
                     "Run ownership cannot be verified for remote components; an administrator can act on this run."
                 )
             return
-        # Local component: prove the run belongs to (component_type, component_id) BEFORE
-        # any cancellation intent or queue tombstone, regardless of user isolation. The
-        # publication bound and per-resource scopes govern which component a caller may
-        # NAME; this governs which RUN they may act on -- run_id alone must never be
-        # enough to reach another component's run by naming a component the caller can
-        # reach. session_id locates the run; user_id=None (admin / non-isolated) checks
-        # only the component binding, a scoped id also enforces per-user ownership.
-        if not session_id:
-            raise Exception("session_id is required to act on this run")
+        if scoped_user_id is not None:
+            # Scoped caller: per-user session ownership, fail-closed (the REST rule).
+            if not session_id:
+                raise Exception("session_id is required to act on this run")
+            try:
+                await session_service.verify_run_ownership(
+                    component,
+                    session_id=session_id,
+                    run_id=run_id,
+                    user_id=scoped_user_id,
+                    component_type=component_type,
+                    component_id=component_id,
+                )
+            except session_service.RunOwnershipError as e:
+                raise Exception(str(e))
+            return
+        # Admin / non-isolated caller: refuse only a run row that provably belongs to a
+        # different component. The row lookup keys on run_id -- the one value the caller
+        # must supply truthfully, since it names the run they want to act on.
         try:
-            await session_service.verify_run_ownership(
-                component,
-                session_id=session_id,
+            await session_service.verify_persisted_run_binding(
+                getattr(component, "db", None) or os.db,
                 run_id=run_id,
-                user_id=scoped_user_id,
                 component_type=component_type,
                 component_id=component_id,
             )
@@ -836,6 +870,67 @@ def _make_run_ownership_verifier(os: "AgentOS"):
             raise Exception(str(e))
 
     return verify
+
+
+async def _verify_factory_run_ownership(
+    db: Any,
+    component_type: Literal["agents", "teams", "workflows"],
+    component_id: str,
+    session_id: Optional[str],
+    run_id: str,
+) -> None:
+    """The run-ownership gate for a FACTORY component, without building the factory.
+
+    A factory has no resolved instance (and no ``aget_session``), so the two tiers run
+    off its ``db`` directly -- the same shape the REST factory-cancel routes use. Scoped:
+    session ownership via ``verify_run_in_session_via_db``; admin / non-isolated: the
+    persisted-run binding by run_id. Mirrors ``_make_run_ownership_verifier``'s local
+    tiers exactly, only db-based.
+    """
+    from fastapi import HTTPException
+
+    from agno.os.middleware.user_scope import verify_run_in_session_via_db
+
+    scoped_user_id = _scoped_caller_user_id()
+    if scoped_user_id is not None:
+        if not session_id:
+            raise Exception("session_id is required to act on this run")
+        try:
+            await verify_run_in_session_via_db(
+                db, session_id, run_id, scoped_user_id, component_type=component_type, component_id=component_id
+            )
+        except HTTPException as e:
+            raise Exception(e.detail if isinstance(e.detail, str) else str(e.detail))
+        return
+    try:
+        await session_service.verify_persisted_run_binding(
+            db, run_id=run_id, component_type=component_type, component_id=component_id
+        )
+    except session_service.RunOwnershipError as e:
+        raise Exception(str(e))
+
+
+async def _static_cancel_factory_run(component_type: Literal["agents", "teams", "workflows"], run_id: str) -> None:
+    """Record cancellation intent for a factory run by run_id, building no component.
+
+    Cancellation is a global-registry intent keyed on run_id (plus a queue tombstone for
+    a still-queued ticket), so it never needs a component instance -- the REST
+    factory-cancel routes cancel statically for exactly this reason. Building the factory
+    here (as generic run resolution does) would 400 a required-input factory or a
+    request-less transport, making a live factory run uncancellable over MCP.
+    """
+    from agno.os.job_queue import get_active_queue_worker
+
+    queue_worker = get_active_queue_worker()
+    if queue_worker is not None:
+        await queue_worker.acancel_queued(run_id)
+    if component_type == "agents":
+        from agno.agent._run import acancel_run as _acancel
+    elif component_type == "teams":
+        from agno.team._run import acancel_run as _acancel
+    else:
+        from agno.run.cancel import acancel_run as _acancel
+    await _acancel(run_id)
 
 
 # ==================== Exposed components (agents/teams/workflows as tools) ====================
@@ -1294,10 +1389,16 @@ def _register_exposed_components(
                 if name_override is not None
                 else f'{singular} id "{component_id}"'
             )
+            # Advice must name a knob that actually frees the colliding name. The
+            # lifecycle pair is tagged both "core" and "lifecycle": when it rode in via
+            # the exposure (core not enabled) only the lifecycle switches free it, but
+            # when core is enabled those switches do nothing (core keeps re-adding it),
+            # so _collision_free_advice keys on HOW the name was claimed, not its tags.
+            free_advice = _collision_free_advice(tool_name, enabled_tags)
             raise ValueError(
                 f'MCP tool name "{tool_name}" (from {source_label}) collides with '
-                f"{taken[tool_name]}. Rename the tool (as_tool(name=...)) or the component id, or "
-                "adjust default_tools/tools so each tool name is unique."
+                f"{taken[tool_name]}. Rename the tool (as_tool(name=...)) or the component id, "
+                f"{free_advice}so each tool name is unique."
             )
         taken[tool_name] = f'exposed {singular} "{component_id}"'
 
@@ -1676,6 +1777,19 @@ def build_mcp_server(
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
         _require_published_component("cancel_run", component_type, component_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
+        # Factory components cancel STATICALLY (mirrors the REST factory-cancel routes):
+        # cancellation is a run_id-keyed global intent, so building the factory is both
+        # unnecessary and harmful -- generic resolution invokes it, which 400s a
+        # required-input factory or a request-less transport and would make a live
+        # factory run uncancellable over MCP.
+        roster = {"agents": os.agents, "teams": os.teams, "workflows": os.workflows}[component_type]
+        factory = find_factory_by_id(component_id, roster)
+        if factory is not None:
+            await _verify_factory_run_ownership(
+                getattr(factory, "db", None) or os.db, component_type, component_id, session_id, run_id
+            )
+            await _static_cancel_factory_run(component_type, run_id)
+            return f"Run {run_id} cancellation requested"
         # Lenient: cancel needs only a handle on the component, and a drifted
         # registry must never make a run uncancellable. Matches the REST route
         # (strict=False, published_only=False - a draft-only preview run must

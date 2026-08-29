@@ -302,7 +302,17 @@ def __init__(
     elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
         team.tools = tools  # type: ignore[assignment]
     else:
-        team.tools = list(tools) if tools else []  # type: ignore[arg-type]
+        # Same guard set_tools/add_tool apply: an as_tool() marker is an MCP
+        # publication declaration, not a runnable tool, and must fail here --
+        # at construction -- not at the first run.
+        from agno.tools.component import raise_if_component_tool
+
+        init_tools = list(tools) if tools else []  # type: ignore[arg-type]
+        for tool in init_tools:
+            raise_if_component_tool(
+                tool, "Team", "To let this team delegate to the component, add it to members=[...]."
+            )
+        team.tools = init_tools
     team.tool_choice = tool_choice
     team.tool_call_limit = tool_call_limit
     team.tool_hooks = tool_hooks

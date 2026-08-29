@@ -623,5 +623,8 @@ class BaseRemote:
         raise NotImplementedError("acontinue_run method must be implemented by the subclass")
 
     @abstractmethod
-    async def acancel_run(self, run_id: str) -> bool:
+    async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
+        """Cancel ``run_id`` on the remote OS; ``auth_token`` is the caller's bearer,
+        forwarded so a protected downstream accepts the call. Surfaces pass it as a
+        keyword, so implementations must accept the parameter."""
         raise NotImplementedError("cancel_run method must be implemented by the subclass")

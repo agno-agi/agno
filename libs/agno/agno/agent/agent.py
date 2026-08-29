@@ -591,7 +591,15 @@ class Agent:
         elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
             self.tools = tools  # type: ignore[assignment]
         else:
-            self.tools = list(tools)  # type: ignore[arg-type]
+            # Same guard set_tools/add_tool apply: an as_tool() marker is an MCP
+            # publication declaration, not a runnable tool, and must fail here --
+            # at construction -- not at the first run.
+            from agno.tools.component import raise_if_component_tool
+
+            concrete_tools = list(tools)  # type: ignore[arg-type]
+            for tool in concrete_tools:
+                raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
+            self.tools = concrete_tools
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
