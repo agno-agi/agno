@@ -970,3 +970,22 @@ def _disconnect_connectable_tools(team: "Team") -> None:
             except Exception as e:
                 log_warning(f"Error disconnecting tool: {str(e)}")
     team._connectable_tools_initialized_on_run = []
+
+
+async def _adisconnect_connectable_tools(team: "Team") -> None:
+    """Disconnect tools that require connection management (async path).
+
+    Prefers the async ``aclose()`` shutdown seam when the tool provides one,
+    falling back to ``close()`` for sync-only connectable tools, so async
+    shutdown work (e.g. CodeMode's final snapshot flush) is awaited rather
+    than scheduled on a loop that may already be torn down.
+    """
+    for tool in team._connectable_tools_initialized_on_run:  # type: ignore[union-attr]
+        try:
+            if hasattr(tool, "aclose"):
+                await tool.aclose()  # type: ignore
+            elif hasattr(tool, "close"):
+                tool.close()  # type: ignore
+        except Exception as e:
+            log_warning(f"Error disconnecting tool: {str(e)}")
+    team._connectable_tools_initialized_on_run = []  # type: ignore[union-attr]
