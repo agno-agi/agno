@@ -876,12 +876,48 @@ async def acli(
     # Connected here, after the --list and no-match early returns, so only an
     # actual run pays for (and has to tear down) live MCP sessions.
     connected_mcp_tools: List[Any] = []
-    for tool in mcp_tools or []:
-        try:
-            await tool.connect()
-            connected_mcp_tools.append(tool)
-        except Exception as exc:
-            console.print(f"[yellow]warning:[/yellow] failed to connect MCP tool: {escape(str(exc))}")
+
+    async def _close_connected_mcp_tools() -> None:
+        for tool in connected_mcp_tools:
+            try:
+                await tool.close()
+            except BaseException:
+                pass
+
+    try:
+        for tool in mcp_tools or []:
+            try:
+                await tool.connect()
+            except BaseException as exc:
+                # BaseException: the mcp client surfaces an unreachable server
+                # as CancelledError out of its cancel scopes, bypassing
+                # connect()'s own fail-soft handler. Unlike a private loop,
+                # this coroutine runs on the caller's loop where cancellation
+                # can also be genuine -- re-raise that so the host's cancel
+                # still lands (detectable on Python 3.11+; below that a
+                # genuine cancel during connect is absorbed like a failure).
+                if isinstance(exc, asyncio.CancelledError):
+                    task = asyncio.current_task()
+                    cancelling = getattr(task, "cancelling", None)
+                    if cancelling is not None and cancelling() > 0:
+                        raise
+                # A failed connect can leave partially-entered transport
+                # contexts that poison a later reconnect; connect()'s own
+                # cleanup was bypassed along with its handler.
+                safe_cleanup = getattr(tool, "_safe_cleanup", None)
+                if safe_cleanup is not None:
+                    try:
+                        maybe = safe_cleanup()
+                        if isawaitable(maybe):
+                            await maybe
+                    except BaseException:
+                        pass
+                console.print(f"[yellow]warning:[/yellow] failed to connect MCP tool: {escape(repr(exc))}")
+            else:
+                connected_mcp_tools.append(tool)
+    except BaseException:
+        await _close_connected_mcp_tools()
+        raise
 
     renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
     try:
@@ -897,11 +933,7 @@ async def acli(
     finally:
         # Restore the terminal (stop the spinner) even on error or Ctrl-C.
         renderer.close()
-        for tool in connected_mcp_tools:
-            try:
-                await tool.close()
-            except Exception:
-                pass
+        await _close_connected_mcp_tools()
 
     _print_summary(console, suite)
 

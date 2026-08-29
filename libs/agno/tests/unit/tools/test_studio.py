@@ -10,6 +10,7 @@ stable error codes, not on message prose.
 
 import asyncio
 import json
+import threading
 import time
 from datetime import datetime
 from importlib.util import find_spec
@@ -815,13 +816,24 @@ class MCPTools(Toolkit):
     on purpose -- Studio detects MCP toolkits by class name so the optional
     mcp extra is never imported."""
 
-    def __init__(self, name="agno_docs", connect_succeeds=True, tool_count=1, connect_error=None, **kwargs):
+    def __init__(
+        self,
+        name="agno_docs",
+        connect_succeeds=True,
+        tool_count=1,
+        connect_error=None,
+        connect_delay=0.0,
+        hang_after=None,
+        **kwargs,
+    ):
         super().__init__(name=name, **kwargs)
         self.timeout_seconds = 5
         self._initialized = False
         self._connect_succeeds = connect_succeeds
         self._tool_count = tool_count
         self._connect_error = connect_error
+        self._connect_delay = connect_delay
+        self._hang_after = hang_after
         self.connect_count = 0
         self.close_count = 0
         self.safe_cleanup_count = 0
@@ -834,11 +846,14 @@ class MCPTools(Toolkit):
         self.connect_count += 1
         if self._connect_error is not None:
             raise self._connect_error
+        if self._connect_delay:
+            await asyncio.sleep(self._connect_delay)
         if not self._connect_succeeds:
             # The real connect() is fail-soft for ordinary errors: it logs and
             # returns, leaving the toolkit empty.
             return
-        for index in range(self._tool_count):
+        register_count = self._tool_count if self._hang_after is None else self._hang_after
+        for index in range(register_count):
             suffix = "" if index == 0 else f"_{index}"
 
             async def call_proxy(**kwargs) -> str:
@@ -852,6 +867,10 @@ class MCPTools(Toolkit):
                 skip_entrypoint_processing=True,
             )
             self.functions[func.name] = func
+        if self._hang_after is not None:
+            # Models a transport that stops responding mid-handshake; only
+            # cancellation ends it.
+            await asyncio.Event().wait()
         self._initialized = True
 
     async def close(self) -> None:
@@ -1001,6 +1020,73 @@ class TestMCPToolkitOnDemandConnect:
         assert toolkit.close_count == 0
         assert toolkit.initialized
 
+    def test_hung_connect_is_bounded_and_refused(self, db, monkeypatch):
+        monkeypatch.setattr("agno.tools.studio._MCP_CONNECT_SLACK_SECONDS", 0.2)
+        toolkit = MCPTools(hang_after=0)
+        toolkit.timeout_seconds = 0.1
+        studio = self._studio(db, toolkit)
+
+        start = time.monotonic()
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        elapsed = time.monotonic() - start
+
+        assert error["code"] == "invalid_request"
+        assert elapsed < 5
+        assert toolkit.safe_cleanup_count == 1
+        assert db.get_component("docs-agent") is None
+
+    def test_partially_registered_hung_connect_is_refused(self, db, monkeypatch):
+        """A connect interrupted mid-registration may hold a partial function
+        list; it must be refused even though functions is non-empty."""
+        monkeypatch.setattr("agno.tools.studio._MCP_CONNECT_SLACK_SECONDS", 0.2)
+        toolkit = MCPTools(tool_count=2, hang_after=1)
+        toolkit.timeout_seconds = 0.1
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert error["code"] == "invalid_request"
+        assert "agno_docs" in error["message"]
+        assert toolkit.functions  # the partial registration happened...
+        assert db.get_component("docs-agent") is None  # ...and was not persisted
+
+    def test_toolkit_connected_elsewhere_with_no_tools_is_not_touched(self, db):
+        toolkit = MCPTools(tool_count=0)
+        asyncio.run(toolkit.connect())  # e.g. the AgentOS lifespan connected it
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert error["code"] == "invalid_request"
+        assert toolkit.connect_count == 1  # only the explicit connect above
+        # Its LIVE session, bound to another loop, must not be closed here.
+        assert toolkit.close_count == 0
+        assert toolkit.initialized
+
+    def test_concurrent_creates_connect_once(self, db):
+        """Parallel Studio tool calls each run in their own worker thread; the
+        shared toolkit must be connected by exactly one of them -- MCPTools
+        stages transport state on unlocked instance attributes, so concurrent
+        connects corrupt each other."""
+        toolkit = MCPTools(connect_delay=0.2)
+        studio = self._studio(db, toolkit)
+        barrier = threading.Barrier(2)
+        results: Dict[str, str] = {}
+
+        def create(name: str) -> None:
+            barrier.wait()
+            results[name] = studio.create_agent(name=name, instructions="i", tool_names=["agno_docs"])
+
+        threads = [threading.Thread(target=create, args=(f"racer-{i}",)) for i in range(2)]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join(timeout=30)
+
+        assert toolkit.connect_count == 1
+        for payload in results.values():
+            assert _loads(payload)["ok"] is True, payload
+
     def test_non_mcp_empty_toolkit_gets_no_connect_attempt(self, db):
         """The on-demand connect is scoped to MCP-shaped toolkits: a plain
         empty toolkit is refused as before, without Studio poking its
@@ -1033,6 +1119,31 @@ class TestMCPToolkitOnDemandConnect:
         persisted_tools = db.get_latest_config("docs-agent")["config"]["tools"]
         assert [t["name"] for t in persisted_tools] == ["search_docs"]
         assert toolkit.connect_count == 1
+
+
+class TestRealMCPToolsContract:
+    """Studio's on-demand connect duck-types the real MCPTools (by class name,
+    so the optional mcp extra is never imported). Pin the pieces it relies on
+    so drift in agno.tools.mcp surfaces here, not in a standalone process at
+    persist time."""
+
+    def test_real_mcp_tools_satisfies_the_on_demand_contract(self):
+        pytest.importorskip("mcp")
+        import inspect
+
+        from agno.tools.mcp import MCPTools as RealMCPTools
+        from agno.tools.studio import _is_mcp_toolkit
+
+        assert isinstance(inspect.getattr_static(RealMCPTools, "initialized"), property)
+        assert inspect.iscoroutinefunction(RealMCPTools.connect)
+        assert inspect.iscoroutinefunction(RealMCPTools.close)
+        assert inspect.iscoroutinefunction(RealMCPTools._safe_cleanup)
+
+        toolkit = RealMCPTools(url="https://docs.example.com/mcp")
+        assert _is_mcp_toolkit(toolkit)
+        assert isinstance(toolkit.timeout_seconds, (int, float)) and toolkit.timeout_seconds > 0
+        assert toolkit.initialized is False
+        assert not toolkit.functions
 
 
 class TestCreateTeam:

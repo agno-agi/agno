@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -1294,22 +1295,30 @@ def test_acli_help_returns_0(monkeypatch, capsys):
 
 class StubMCPTool:
     """Connectable stub for the mcp_tools runner affordance: records the
-    connect/close order and the loop each landed on."""
+    connect/close/cleanup order and the loop each landed on."""
 
-    def __init__(self, connect_error=None):
+    def __init__(self, connect_error=None, hang=False):
         self.events = []
         self.loops = []
+        self.started = asyncio.Event()
         self._connect_error = connect_error
+        self._hang = hang
 
     async def connect(self):
         self.loops.append(asyncio.get_running_loop())
+        self.started.set()
         if self._connect_error is not None:
             raise self._connect_error
+        if self._hang:
+            await asyncio.Event().wait()
         self.events.append("connect")
 
     async def close(self):
         self.loops.append(asyncio.get_running_loop())
         self.events.append("close")
+
+    async def _safe_cleanup(self):
+        self.events.append("safe_cleanup")
 
 
 def test_acli_connects_and_closes_mcp_tools_in_its_own_loop(monkeypatch):
@@ -1338,11 +1347,48 @@ def test_acli_mcp_tool_connect_failure_is_fail_soft(monkeypatch, capsys):
     exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[failing, working]))
 
     # The cases still run and decide the exit code; the tool that never
-    # connected is not closed.
+    # connected is not closed, but its partial transport state is cleaned so
+    # a later reconnect is not poisoned.
     assert exit_code == 0
-    assert failing.events == []
+    assert failing.events == ["safe_cleanup"]
     assert working.events == ["connect", "close"]
     assert "server unreachable" in capsys.readouterr().out
+
+
+def test_acli_cancelled_error_from_connect_is_fail_soft(monkeypatch, capsys):
+    # An unreachable server surfaces as CancelledError out of the mcp client's
+    # cancel scopes -- not an Exception. It must be contained like any other
+    # connect failure, not crash the whole eval run.
+    _install_fake_evals(monkeypatch)
+    failing = StubMCPTool(connect_error=asyncio.CancelledError())
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[failing, working]))
+
+    assert exit_code == 0
+    assert failing.events == ["safe_cleanup"]
+    assert working.events == ["connect", "close"]
+    assert "CancelledError" in capsys.readouterr().out
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_genuine_cancellation_still_propagates(monkeypatch):
+    # A host cancelling the acli task mid-connect must not be swallowed by the
+    # connect fail-soft; already-connected tools are still released.
+    _install_fake_evals(monkeypatch)
+    connected = StubMCPTool()
+    hanging = StubMCPTool(hang=True)
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[connected, hanging]))
+        await hanging.started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert connected.events == ["connect", "close"]
 
 
 def test_acli_closes_mcp_tools_when_the_run_raises(monkeypatch):

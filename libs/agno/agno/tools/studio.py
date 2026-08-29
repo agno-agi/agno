@@ -116,6 +116,16 @@ def _is_mcp_toolkit(tool: Any) -> bool:
     return any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
 
 
+# Extra headroom on top of a toolkit's own timeout_seconds for the on-demand
+# connect: covers transport setup/teardown around the timed client calls.
+_MCP_CONNECT_SLACK_SECONDS = 5.0
+
+# One connect pass at a time, process-wide: MCPTools instances stage transport
+# state on unlocked attributes, and a registry (and its toolkits) can be shared
+# across StudioTools instances, so this cannot be per-instance state.
+_MCP_CONNECT_LOCK = threading.Lock()
+
+
 def _version_or_latest(version: Optional[int]) -> Optional[int]:
     """Read a "which version" argument, treating 0 as omitted.
 
@@ -684,11 +694,15 @@ class StudioTools(Toolkit):
                 resolved.append(found)
         if missing:
             raise _ToolsNotFoundError(f"Tools not found in registry: {missing}")
-        self._connect_unconnected_mcp_toolkits(resolved)
+        failed_toolkit_ids = self._connect_unconnected_mcp_toolkits(resolved)
         # Persisting a component serializes each toolkit's functions; a toolkit
         # with none (e.g. an MCP toolkit whose on-demand connection failed)
-        # would be silently dropped from the config, permanently. Refuse instead.
-        empty_toolkits = [t.name for t in resolved if isinstance(t, Toolkit) and not t.functions]
+        # would be silently dropped from the config, permanently -- and a
+        # toolkit whose connect attempt failed or was abandoned may hold a
+        # PARTIAL function list. Refuse both instead.
+        empty_toolkits = [
+            t.name for t in resolved if isinstance(t, Toolkit) and (not t.functions or id(t) in failed_toolkit_ids)
+        ]
         if empty_toolkits:
             raise ValueError(
                 f"Toolkits have no functions and cannot be persisted: {empty_toolkits}. "
@@ -699,7 +713,7 @@ class StudioTools(Toolkit):
             )
         return resolved
 
-    def _connect_unconnected_mcp_toolkits(self, resolved: List[Any]) -> None:
+    def _connect_unconnected_mcp_toolkits(self, resolved: List[Any]) -> Set[int]:
         """Fetch the function list of registry MCP toolkits nothing has connected.
 
         A registry MCP toolkit has no functions until something connects it. Under
@@ -716,79 +730,123 @@ class StudioTools(Toolkit):
         The dedicated thread serves every caller shape at once: a sync Studio
         tool on a worker thread (no loop in this thread, but one running
         elsewhere), a plain sync call (no loop anywhere), and a direct call from
-        a coroutine (a loop running in THIS thread, which must not be blocked by
-        or re-entered for the connect).
+        a coroutine -- the caller's loop is never re-entered, though the join
+        below still blocks the calling thread for up to the summed connect
+        budget.
 
-        Fail-soft: connect errors are logged and swallowed, and a toolkit that
-        still has no functions afterwards is refused by the guard in
-        _resolve_tools -- never silently persisted empty.
+        Fail-soft: connect errors are logged and swallowed. Returns the ids of
+        toolkits whose connect attempt raised, timed out, or was abandoned at
+        the join deadline -- an interrupted connect may have registered only
+        part of the server's tools (or still be registering them), so the
+        guard in _resolve_tools must refuse those even when their functions
+        dict is non-empty. Toolkits that merely stay empty are refused by the
+        guard's own emptiness check -- never silently persisted empty.
         """
-        pending: List[Toolkit] = []
-        seen: Set[int] = set()
-        for tool in resolved:
-            if isinstance(tool, Toolkit) and not tool.functions and id(tool) not in seen and _is_mcp_toolkit(tool):
-                seen.add(id(tool))
-                pending.append(tool)
-        if not pending:
-            return
 
-        async def _call(method: Callable[[], Any]) -> None:
-            result = method()
-            if inspect.isawaitable(result):
-                await result
+        def _candidates() -> List[Toolkit]:
+            out: List[Toolkit] = []
+            seen: Set[int] = set()
+            for tool in resolved:
+                if (
+                    isinstance(tool, Toolkit)
+                    and not tool.functions
+                    # A connected toolkit with no functions (its server lists
+                    # zero tools) must not be touched: connect() would no-op
+                    # and the release below would close a LIVE session bound
+                    # to another loop. The guard refuses it on emptiness.
+                    and not getattr(tool, "initialized", False)
+                    and id(tool) not in seen
+                    and _is_mcp_toolkit(tool)
+                ):
+                    seen.add(id(tool))
+                    out.append(tool)
+            return out
 
-        async def _connect_and_release() -> None:
-            # BaseException, not Exception: the mcp client surfaces an
-            # unreachable server as CancelledError out of its cancel scopes,
-            # which would otherwise escape connect()'s own fail-soft handler,
-            # skip its cleanup, and kill this thread mid-list. Cancellation
-            # cannot mean anything else here -- this coroutine is the only
-            # thing this private loop ever runs.
-            for toolkit in pending:
+        if not _candidates():
+            return set()
+
+        # MCPTools stages its transport state on unlocked instance attributes,
+        # so two Studio calls (parallel tool calls each run sync entrypoints in
+        # their own worker thread) connecting the same registry toolkit from
+        # two private loops corrupt each other roughly half the time. Serialize
+        # the whole connect pass; the loser re-checks and finds the work done.
+        with _MCP_CONNECT_LOCK:
+            pending = _candidates()
+            if not pending:
+                return set()
+
+            budgets = {
+                id(toolkit): float(getattr(toolkit, "timeout_seconds", None) or 10) + _MCP_CONNECT_SLACK_SECONDS
+                for toolkit in pending
+            }
+            failed: Set[int] = set()
+            completed: Set[int] = set()
+
+            async def _call(method: Callable[[], Any]) -> None:
+                result = method()
+                if inspect.isawaitable(result):
+                    await result
+
+            async def _connect_and_release() -> None:
+                # BaseException, not Exception: the mcp client surfaces an
+                # unreachable server as CancelledError out of its cancel
+                # scopes, which would otherwise escape connect()'s own
+                # fail-soft handler, skip its cleanup, and kill this thread
+                # mid-list. Cancellation cannot mean anything else here --
+                # this coroutine is the only thing this private loop ever runs.
+                for toolkit in pending:
+                    try:
+                        # wait_for bounds a hung transport in-loop (some hangs,
+                        # e.g. an SSE stream that never sends its endpoint
+                        # event, are otherwise bounded only by the mcp SDK's
+                        # 300s read default), so cleanup runs on this same
+                        # loop and the thread reliably exits.
+                        await asyncio.wait_for(_call(toolkit.connect), timeout=budgets[id(toolkit)])
+                    except BaseException as exc:
+                        failed.add(id(toolkit))
+                        log_warning(f"Error connecting MCP toolkit '{toolkit.name}': {exc!r}")
+                    finally:
+                        try:
+                            if getattr(toolkit, "initialized", False):
+                                await _call(toolkit.close)
+                            else:
+                                # A failed connect can leave partially-entered
+                                # transport contexts on the toolkit (close()
+                                # skips uninitialized toolkits); left in place
+                                # they poison the next connect() attempt on a
+                                # live loop.
+                                safe_cleanup = getattr(toolkit, "_safe_cleanup", None)
+                                if safe_cleanup is not None:
+                                    await _call(safe_cleanup)
+                        except BaseException:
+                            pass
+                        completed.add(id(toolkit))
+
+            def _run() -> None:
+                loop = asyncio.new_event_loop()
+                # A failed connect can leave the mcp client's transport async
+                # generators mid-run; their aclose() errors during loop
+                # shutdown are unactionable stderr noise on this throwaway
+                # loop -- the failure itself is already logged per toolkit.
+                loop.set_exception_handler(lambda _loop, context: log_debug(f"MCP connect loop cleanup: {context}"))
                 try:
-                    await _call(toolkit.connect)
+                    loop.run_until_complete(_connect_and_release())
                 except BaseException as exc:
-                    log_warning(f"Error connecting MCP toolkit '{toolkit.name}': {exc!r}")
+                    log_warning(f"Error connecting MCP toolkits: {exc!r}")
                 finally:
                     try:
-                        if getattr(toolkit, "initialized", False):
-                            await _call(toolkit.close)
-                        else:
-                            # A failed connect can leave partially-entered
-                            # transport contexts on the toolkit (close() skips
-                            # uninitialized toolkits); left in place they poison
-                            # the next connect() attempt on a live loop.
-                            safe_cleanup = getattr(toolkit, "_safe_cleanup", None)
-                            if safe_cleanup is not None:
-                                await _call(safe_cleanup)
+                        loop.run_until_complete(loop.shutdown_asyncgens())
                     except BaseException:
                         pass
+                    loop.close()
 
-        def _run() -> None:
-            loop = asyncio.new_event_loop()
-            # A failed connect can leave the mcp client's transport async
-            # generators mid-run; their aclose() errors during loop shutdown
-            # are unactionable stderr noise on this throwaway loop -- the
-            # failure itself is already logged per toolkit above.
-            loop.set_exception_handler(lambda _loop, context: log_debug(f"MCP connect loop cleanup: {context}"))
-            try:
-                loop.run_until_complete(_connect_and_release())
-            except BaseException as exc:
-                log_warning(f"Error connecting MCP toolkits: {exc!r}")
-            finally:
-                try:
-                    loop.run_until_complete(loop.shutdown_asyncgens())
-                except BaseException:
-                    pass
-                loop.close()
-
-        # If the join times out, the guard in _resolve_tools reports the still-empty
-        # toolkits; a connect that completes late cleans itself up via the close()
-        # in _connect_and_release before its loop exits.
-        timeout = sum(float(getattr(toolkit, "timeout_seconds", None) or 10) for toolkit in pending) + 5.0
-        thread = threading.Thread(target=_run, name="studio-mcp-connect", daemon=True)
-        thread.start()
-        thread.join(timeout=timeout)
+            timeout = sum(budgets.values()) + _MCP_CONNECT_SLACK_SECONDS
+            thread = threading.Thread(target=_run, name="studio-mcp-connect", daemon=True)
+            thread.start()
+            thread.join(timeout=timeout)
+            # A toolkit the abandoned thread never finished counts as failed:
+            # its functions dict may still be mutating under the zombie loop.
+            return failed | {id(toolkit) for toolkit in pending if id(toolkit) not in completed}
 
     def _normalize_tool_names(self, names: List[str]) -> List[str]:
         """Collapse toolkit function names back to their toolkit name."""
