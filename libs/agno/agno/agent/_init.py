@@ -384,3 +384,22 @@ def disconnect_connectable_tools(agent: Agent) -> None:
             except Exception as e:
                 log_warning(f"Error disconnecting tool: {str(e)}")
     agent._connectable_tools_initialized_on_run = []
+
+
+async def adisconnect_connectable_tools(agent: Agent) -> None:
+    """Disconnect tools that require connection management (async path).
+
+    Prefers the async ``aclose()`` shutdown seam when the tool provides one,
+    falling back to ``close()`` for sync-only connectable tools, so async
+    shutdown work (e.g. CodeMode's final snapshot flush) is awaited rather
+    than scheduled on a loop that may already be torn down.
+    """
+    for tool in agent._connectable_tools_initialized_on_run:
+        try:
+            if hasattr(tool, "aclose"):
+                await tool.aclose()  # type: ignore
+            elif hasattr(tool, "close"):
+                tool.close()  # type: ignore
+        except Exception as e:
+            log_warning(f"Error disconnecting tool: {str(e)}")
+    agent._connectable_tools_initialized_on_run = []
