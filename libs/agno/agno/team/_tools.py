@@ -383,11 +383,10 @@ def _determine_tools_for_model(
     ):
         strict = True
 
-    from agno.tools.component import raise_if_component_tool
-
     for tool_index, tool in enumerate(_tools):
-        # A marker would otherwise fall off the end of this chain and register nothing.
-        raise_if_component_tool(tool, "Team", "To let this team delegate to the component, add it to members=[...].")
+        # ComponentTool markers are rejected at the API boundary (Team __init__ /
+        # set_tools / add_tool), so anything reaching here is already a real tool -- no
+        # per-run guard, which would tax every run to catch a case the entry points own.
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent

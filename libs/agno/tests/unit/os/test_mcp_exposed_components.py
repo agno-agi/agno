@@ -1816,12 +1816,10 @@ def test_factory_and_external_adapter_have_as_tool():
 
 def test_component_tool_in_agent_or_team_tools_raises():
     """as_tool() markers belong in MCPConfig.tools; the Agent/Team tool chains would
-    otherwise silently skip them (nothing registers). Both the construction boundary
-    and the run-time processing chain refuse them with a pointer to the right place."""
-    from types import SimpleNamespace as NS
-
-    from agno.agent import _tools as agent_tools_mod
-
+    otherwise silently skip them (nothing registers). The guard lives at the API
+    boundary -- every path that populates a concrete tools list (the constructor,
+    set_tools, add_tool) -- so the mistake fails loudly where it is made, with a pointer
+    to the right place, and the per-run tool loop stays guard-free."""
     marker = _agent(id="helper").as_tool(name="ask_helper")
 
     # The construction boundary itself: Agent(tools=[marker]) must raise, not
@@ -1842,10 +1840,6 @@ def test_component_tool_in_agent_or_team_tools_raises():
         team.set_tools([marker])
     with pytest.raises(ValueError, match="MCPConfig"):
         team.add_tool(marker)
-
-    # The deep guard on the processing chain (covers per-run tools= paths).
-    with pytest.raises(ValueError, match="MCPConfig"):
-        agent_tools_mod.parse_tools(boss, [marker], model=NS(supports_native_structured_outputs=False))
 
 
 # ==================== Cancellation is bound to the run, not just the named component ====================
