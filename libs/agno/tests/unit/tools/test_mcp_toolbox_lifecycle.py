@@ -116,6 +116,31 @@ def test_failed_filter_does_not_latch_and_reconnect_refilters(toolbox_env, monke
     assert list(toolbox.functions) == ["allowed_tool"]  # not the superset
 
 
+def test_cancelled_filter_does_not_latch(toolbox_env, monkeypatch):
+    """A hung filter cancelled from outside (Studio bounds each connect with
+    wait_for) surfaces as CancelledError, which the toolbox's own error
+    handling does not catch -- so no cleanup path runs. Only latching the flag
+    AFTER a successful filter keeps a later reconnect from skipping filtering."""
+    module, created = toolbox_env
+    from agno.tools.mcp import MCPTools
+
+    monkeypatch.setattr(MCPTools, "connect", _fake_base_connect(["allowed_tool", "admin_tool"]))
+
+    async def load_multiple_toolsets(self, toolset_names):
+        raise asyncio.CancelledError()
+
+    monkeypatch.setattr(module.MCPToolbox, "load_multiple_toolsets", load_multiple_toolsets)
+    toolbox = module.MCPToolbox(url="http://toolbox.local", toolsets=["allowed"])
+
+    async def scenario():
+        with pytest.raises(asyncio.CancelledError):
+            await toolbox.connect()
+
+    asyncio.run(scenario())
+
+    assert toolbox._core_client_initialized is False
+
+
 def test_close_resets_filter_state_so_reconnect_refilters(toolbox_env, monkeypatch):
     module, created = toolbox_env
     from agno.tools.mcp import MCPTools
