@@ -960,6 +960,28 @@ class TestMCPToolkitOnDemandConnect:
         assert toolkit.close_count == 0
         assert toolkit.initialized
 
+    def test_non_mcp_empty_toolkit_gets_no_connect_attempt(self, db):
+        """The on-demand connect is scoped to MCP-shaped toolkits: a plain
+        empty toolkit is refused as before, without Studio poking its
+        connect() (which on connectable toolkits opens real resources)."""
+
+        class RecordingToolkit(Toolkit):
+            def __init__(self):
+                super().__init__(name="agno_docs")
+                self.connect_count = 0
+
+            def connect(self) -> None:
+                self.connect_count += 1
+
+        toolkit = RecordingToolkit()
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert error["code"] == "invalid_request"
+        assert "agno_docs" in error["message"]
+        assert toolkit.connect_count == 0
+
     def test_edit_agent_connects_on_demand(self, db):
         toolkit = MCPTools()
         studio = self._studio(db, toolkit)
