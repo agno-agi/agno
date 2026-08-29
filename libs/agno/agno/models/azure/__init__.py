@@ -19,6 +19,15 @@ except ImportError:
 
 
 try:
+    from agno.models.azure.openai_responses import AzureOpenAIResponses
+except ImportError:
+
+    class AzureOpenAIResponses:  # type: ignore
+        def __init__(self, *args, **kwargs):
+            raise ImportError("`openai` not installed. Please install it via `pip install openai -U`")
+
+
+try:
     from agno.models.azure.claude import Claude as AzureFoundryClaude
 except ImportError:
 
