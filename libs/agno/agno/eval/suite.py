@@ -811,8 +811,16 @@ async def acli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
-    """Async variant of cli() for callers already inside an event loop."""
+    """Async variant of cli() for callers already inside an event loop.
+
+    mcp_tools: MCP toolkits (e.g. the case components' registry tools) to
+    connect in this loop before the cases run and close again afterwards --
+    what the AgentOS lifespan does for a server, for an eval process. Connect
+    failures are logged per tool and the cases still run; a tool that never
+    connected is not closed.
+    """
     import argparse
 
     from rich.console import Console
@@ -865,6 +873,16 @@ async def acli(
                 return 1
         return 0
 
+    # Connected here, after the --list and no-match early returns, so only an
+    # actual run pays for (and has to tear down) live MCP sessions.
+    connected_mcp_tools: List[Any] = []
+    for tool in mcp_tools or []:
+        try:
+            await tool.connect()
+            connected_mcp_tools.append(tool)
+        except Exception as exc:
+            console.print(f"[yellow]warning:[/yellow] failed to connect MCP tool: {escape(str(exc))}")
+
     renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
     try:
         suite = await arun_cases(
@@ -879,6 +897,11 @@ async def acli(
     finally:
         # Restore the terminal (stop the spinner) even on error or Ctrl-C.
         renderer.close()
+        for tool in connected_mcp_tools:
+            try:
+                await tool.close()
+            except Exception:
+                pass
 
     _print_summary(console, suite)
 
@@ -895,6 +918,7 @@ def cli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
     """Run an argparse CLI over the given cases and return the exit code.
 
@@ -902,6 +926,16 @@ def cli(
     --json-output write), 2 no cases matched the selector. Built purely on the
     public runner API - call it from a template's __main__.py with
     `sys.exit(cli(CASES, db=my_db))`. Inside an already-running event loop, use
-    `await acli(...)` instead.
+    `await acli(...)` instead. mcp_tools are connected in the run's loop before
+    the cases and closed afterwards (see acli).
     """
-    return asyncio.run(acli(cases, db=db, judge_model=judge_model, default_timeout=default_timeout, argv=argv))
+    return asyncio.run(
+        acli(
+            cases,
+            db=db,
+            judge_model=judge_model,
+            default_timeout=default_timeout,
+            argv=argv,
+            mcp_tools=mcp_tools,
+        )
+    )

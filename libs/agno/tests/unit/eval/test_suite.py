@@ -1292,6 +1292,95 @@ def test_acli_help_returns_0(monkeypatch, capsys):
     assert "--tag" in capsys.readouterr().out
 
 
+class StubMCPTool:
+    """Connectable stub for the mcp_tools runner affordance: records the
+    connect/close order and the loop each landed on."""
+
+    def __init__(self, connect_error=None):
+        self.events = []
+        self.loops = []
+        self._connect_error = connect_error
+
+    async def connect(self):
+        self.loops.append(asyncio.get_running_loop())
+        if self._connect_error is not None:
+            raise self._connect_error
+        self.events.append("connect")
+
+    async def close(self):
+        self.loops.append(asyncio.get_running_loop())
+        self.events.append("close")
+
+
+def test_acli_connects_and_closes_mcp_tools_in_its_own_loop(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+    agent = StubAgent()
+
+    async def main():
+        return await acli([_make_case(agent=agent)], argv=[], mcp_tools=[tool])
+
+    exit_code = asyncio.run(main())
+
+    assert exit_code == 0
+    assert tool.events == ["connect", "close"]
+    # Both calls must land on the loop the cases run in - a session connected
+    # on another loop is unusable from this one.
+    assert tool.loops[0] is agent.loops[0]
+    assert tool.loops[1] is agent.loops[0]
+
+
+def test_acli_mcp_tool_connect_failure_is_fail_soft(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    failing = StubMCPTool(connect_error=RuntimeError("server unreachable"))
+    working = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case()], argv=[], mcp_tools=[failing, working]))
+
+    # The cases still run and decide the exit code; the tool that never
+    # connected is not closed.
+    assert exit_code == 0
+    assert failing.events == []
+    assert working.events == ["connect", "close"]
+    assert "server unreachable" in capsys.readouterr().out
+
+
+def test_acli_closes_mcp_tools_when_the_run_raises(monkeypatch):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    async def boom(*args, **kwargs):
+        raise RuntimeError("runner exploded")
+
+    monkeypatch.setattr(suite, "arun_cases", boom)
+
+    with pytest.raises(RuntimeError, match="runner exploded"):
+        asyncio.run(acli([_make_case()], argv=[], mcp_tools=[tool]))
+
+    assert tool.events == ["connect", "close"]
+
+
+def test_acli_list_does_not_connect_mcp_tools(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    exit_code = asyncio.run(acli([_make_case(name="listed_case")], argv=["--list"], mcp_tools=[tool]))
+
+    assert exit_code == 0
+    assert "listed_case" in capsys.readouterr().out
+    assert tool.events == []
+
+
+def test_cli_forwards_mcp_tools(monkeypatch, capsys):
+    _install_fake_evals(monkeypatch)
+    tool = StubMCPTool()
+
+    exit_code = cli([_make_case()], argv=[], mcp_tools=[tool])
+
+    assert exit_code == 0
+    assert tool.events == ["connect", "close"]
+
+
 def test_cli_default_timeout_parameter(monkeypatch, capsys):
     _install_fake_evals(monkeypatch)
 

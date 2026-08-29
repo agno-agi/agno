@@ -8,6 +8,7 @@ error: {code, message, details, retryable}, warnings}. Tests branch on the
 stable error codes, not on message prose.
 """
 
+import asyncio
 import json
 import time
 from datetime import datetime
@@ -803,6 +804,172 @@ class TestMCPToolkitPersistence:
         assert "search_docs" in rehydrated
         assert rehydrated["search_docs"].entrypoint is func.entrypoint
         assert rehydrated["search_docs"].skip_entrypoint_processing is True
+
+
+class MCPTools(Toolkit):
+    """Stub carrying the contract Studio's on-demand connect depends on:
+    functions appear at connect() and survive close(), initialized flips with
+    the session, and a failed connect logs and returns instead of raising.
+    Named MCPTools on purpose -- Studio detects MCP toolkits by class name so
+    the optional mcp extra is never imported."""
+
+    def __init__(self, name="agno_docs", connect_succeeds=True, tool_count=1, **kwargs):
+        super().__init__(name=name, **kwargs)
+        self.timeout_seconds = 5
+        self._initialized = False
+        self._connect_succeeds = connect_succeeds
+        self._tool_count = tool_count
+        self.connect_count = 0
+        self.close_count = 0
+
+    @property
+    def initialized(self) -> bool:
+        return self._initialized
+
+    async def connect(self, force: bool = False) -> None:
+        self.connect_count += 1
+        if not self._connect_succeeds:
+            # The real connect() is fail-soft: it logs the error and returns,
+            # leaving the toolkit empty.
+            return
+        for index in range(self._tool_count):
+            suffix = "" if index == 0 else f"_{index}"
+
+            async def call_proxy(**kwargs) -> str:
+                return "docs result"
+
+            func = Function(
+                name=f"search_docs{suffix}",
+                description="Search the docs.",
+                parameters={"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+                entrypoint=call_proxy,
+                skip_entrypoint_processing=True,
+            )
+            self.functions[func.name] = func
+        self._initialized = True
+
+    async def close(self) -> None:
+        self.close_count += 1
+        self._initialized = False
+
+
+class TestMCPToolkitOnDemandConnect:
+    """A standalone process (no AgentOS lifespan) persists a registry MCP
+    toolkit: _resolve_tools connects an unconnected MCP toolkit on demand,
+    keeps the harvested functions, and releases the session so later runs
+    reconnect on their own loop."""
+
+    def _studio(self, db, toolkit):
+        registry = Registry(
+            name="MCP OnDemand Registry",
+            tools=[toolkit],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        return StudioTools(registry=registry, db=db)
+
+    def test_create_agent_connects_unconnected_mcp_toolkit(self, db):
+        toolkit = MCPTools()
+        studio = self._studio(db, toolkit)
+
+        out = _loads(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"], publish=True))
+
+        assert out["status"] == "created"
+        persisted_tools = db.get_config("docs-agent")["config"]["tools"]
+        assert [t["name"] for t in persisted_tools] == ["search_docs"]
+        assert toolkit.connect_count == 1
+
+    def test_toolkit_is_released_after_harvest(self, db):
+        toolkit = MCPTools()
+        studio = self._studio(db, toolkit)
+
+        _data(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        # The session must not stay bound to the private connect loop; the
+        # registered functions must survive the release so the persisted
+        # config and later per-run reconnects both have them.
+        assert toolkit.close_count == 1
+        assert not toolkit.initialized
+        assert "search_docs" in toolkit.functions
+
+    def test_persists_from_worker_thread_with_running_loop(self, db):
+        """The standalone-arun shape that used to fail: a sync Studio tool
+        executes via asyncio.to_thread while the agent's loop keeps running."""
+        toolkit = MCPTools()
+        studio = self._studio(db, toolkit)
+
+        async def main():
+            return await asyncio.to_thread(
+                studio.create_agent,
+                name="docs-agent",
+                instructions="i",
+                tool_names=["agno_docs"],
+                publish=True,
+            )
+
+        out = _loads(asyncio.run(main()))
+
+        assert out["ok"] is True, out
+        persisted_tools = db.get_config("docs-agent")["config"]["tools"]
+        assert [t["name"] for t in persisted_tools] == ["search_docs"]
+        assert not toolkit.initialized
+
+    def test_direct_call_on_running_loop_does_not_deadlock(self, db):
+        toolkit = MCPTools()
+        studio = self._studio(db, toolkit)
+
+        async def main():
+            return studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"])
+
+        out = _loads(asyncio.run(main()))
+
+        assert out["ok"] is True, out
+        assert toolkit.connect_count == 1
+
+    def test_failed_connect_still_refuses(self, db):
+        toolkit = MCPTools(connect_succeeds=False)
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert error["code"] == "invalid_request"
+        assert "agno_docs" in error["message"]
+        assert db.get_component("docs-agent") is None
+        assert toolkit.connect_count == 1
+
+    def test_connect_that_finds_no_tools_refuses_and_releases(self, db):
+        toolkit = MCPTools(tool_count=0)
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert error["code"] == "invalid_request"
+        # A successfully connected but toolless session must not stay bound to
+        # the private connect loop.
+        assert toolkit.close_count == 1
+        assert not toolkit.initialized
+
+    def test_already_connected_toolkit_is_left_alone(self, db):
+        toolkit = MCPTools()
+        asyncio.run(toolkit.connect())
+        studio = self._studio(db, toolkit)
+
+        _data(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+
+        assert toolkit.connect_count == 1  # only the explicit connect above
+        assert toolkit.close_count == 0
+        assert toolkit.initialized
+
+    def test_edit_agent_connects_on_demand(self, db):
+        toolkit = MCPTools()
+        studio = self._studio(db, toolkit)
+        studio.create_agent(name="docs-agent", instructions="i")
+
+        _data(studio.edit_agent(agent_id="docs-agent", tool_names=["agno_docs"]))
+
+        persisted_tools = db.get_latest_config("docs-agent")["config"]["tools"]
+        assert [t["name"] for t in persisted_tools] == ["search_docs"]
+        assert toolkit.connect_count == 1
 
 
 class TestCreateTeam:

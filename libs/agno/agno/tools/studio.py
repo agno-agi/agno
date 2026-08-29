@@ -72,8 +72,10 @@ Persistence:
 
 from __future__ import annotations
 
+import asyncio
 import inspect
 import json
+import threading
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Sequence, Set, Union
 
 from agno.exceptions import SchemaMismatchError
@@ -107,6 +109,11 @@ _SCHEDULE_TARGET_TYPES = ("agent", "team", "workflow")
 _NAME_MATCH_LIMIT = 20
 
 _NAME_MATCH_PAGES = 10
+
+
+def _is_mcp_toolkit(tool: Any) -> bool:
+    """Checked by class name so the optional mcp extra is never imported here."""
+    return any(c.__name__ == "MCPTools" for c in type(tool).__mro__)
 
 
 def _version_or_latest(version: Optional[int]) -> Optional[int]:
@@ -677,18 +684,89 @@ class StudioTools(Toolkit):
                 resolved.append(found)
         if missing:
             raise _ToolsNotFoundError(f"Tools not found in registry: {missing}")
+        self._connect_unconnected_mcp_toolkits(resolved)
         # Persisting a component serializes each toolkit's functions; a toolkit
-        # with none (e.g. an MCP toolkit that never connected) would be silently
-        # dropped from the config, permanently. Refuse instead.
+        # with none (e.g. an MCP toolkit whose on-demand connection failed)
+        # would be silently dropped from the config, permanently. Refuse instead.
         empty_toolkits = [t.name for t in resolved if isinstance(t, Toolkit) and not t.functions]
         if empty_toolkits:
             raise ValueError(
                 f"Toolkits have no functions and cannot be persisted: {empty_toolkits}. "
-                "An MCP toolkit has no functions until it is connected. Connect it before "
-                "creating or editing components with it (AgentOS connects MCP tools found in "
-                "the registry and on agents/teams/workflows at startup)."
+                "An MCP toolkit has no functions until it is connected; Studio connects "
+                "unconnected registry MCP toolkits on demand, so an MCP toolkit named here "
+                "failed to connect or its server exposes no tools. Any other toolkit named "
+                "here was registered without functions."
             )
         return resolved
+
+    def _connect_unconnected_mcp_toolkits(self, resolved: List[Any]) -> None:
+        """Fetch the function list of registry MCP toolkits nothing has connected.
+
+        A registry MCP toolkit has no functions until something connects it. Under
+        AgentOS the server lifespan does that at startup, but a standalone process
+        (script, notebook, eval run) has no lifespan, so the toolkit reaches
+        persist time empty and the guard in _resolve_tools would refuse a build
+        that succeeds against the running server. Persisting needs the toolkit's
+        function list, not a live session, so each such toolkit is connected on a
+        short-lived private event loop and released again before that loop goes
+        away: close() keeps the registered functions, and a released toolkit
+        reconnects per run, while a session left bound to the dead private loop
+        would break the toolkit's later tool calls in this process.
+
+        The dedicated thread serves every caller shape at once: a sync Studio
+        tool on a worker thread (no loop in this thread, but one running
+        elsewhere), a plain sync call (no loop anywhere), and a direct call from
+        a coroutine (a loop running in THIS thread, which must not be blocked by
+        or re-entered for the connect).
+
+        Fail-soft: connect errors are logged and swallowed, and a toolkit that
+        still has no functions afterwards is refused by the guard in
+        _resolve_tools -- never silently persisted empty.
+        """
+        pending: List[Toolkit] = []
+        seen: Set[int] = set()
+        for tool in resolved:
+            if (
+                isinstance(tool, Toolkit)
+                and not tool.functions
+                and id(tool) not in seen
+                and _is_mcp_toolkit(tool)
+            ):
+                seen.add(id(tool))
+                pending.append(tool)
+        if not pending:
+            return
+
+        async def _call(method: Callable[[], Any]) -> None:
+            result = method()
+            if inspect.isawaitable(result):
+                await result
+
+        async def _connect_and_release() -> None:
+            for toolkit in pending:
+                try:
+                    await _call(toolkit.connect)
+                except Exception as exc:
+                    log_warning(f"Error connecting MCP toolkit '{toolkit.name}': {exc}")
+                finally:
+                    try:
+                        await _call(toolkit.close)
+                    except Exception:
+                        pass
+
+        def _run() -> None:
+            try:
+                asyncio.run(_connect_and_release())
+            except Exception as exc:
+                log_warning(f"Error connecting MCP toolkits: {exc}")
+
+        # If the join times out, the guard in _resolve_tools reports the still-empty
+        # toolkits; a connect that completes late cleans itself up via the close()
+        # in _connect_and_release before its loop exits.
+        timeout = sum(float(getattr(toolkit, "timeout_seconds", None) or 10) for toolkit in pending) + 5.0
+        thread = threading.Thread(target=_run, name="studio-mcp-connect", daemon=True)
+        thread.start()
+        thread.join(timeout=timeout)
 
     def _normalize_tool_names(self, names: List[str]) -> List[str]:
         """Collapse toolkit function names back to their toolkit name."""
