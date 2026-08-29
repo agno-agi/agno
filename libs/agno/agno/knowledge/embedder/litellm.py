@@ -52,11 +52,23 @@ class LiteLLMEmbedder(Embedder):
         return params
 
     @staticmethod
+    def _item_embedding(item: Any) -> List[float]:
+        """Read one embedding vector from a LiteLLM data entry.
+
+        LiteLLM types EmbeddingResponse.data as a bare list and most providers
+        leave the raw JSON in it, so entries arrive as plain dicts rather than
+        objects with an .embedding attribute.
+        """
+        if isinstance(item, dict):
+            return item["embedding"]
+        return item.embedding
+
+    @staticmethod
     def _extract_embedding(response: Any) -> List[float]:
         """Extract first embedding from LiteLLM embedding response."""
         try:
-            if hasattr(response, 'data') and response.data:
-                return response.data[0].embedding
+            if hasattr(response, "data") and response.data:
+                return LiteLLMEmbedder._item_embedding(response.data[0])
             return []
         except Exception as e:
             log_warning(f"Failed to extract embedding: {e}")
@@ -66,7 +78,7 @@ class LiteLLMEmbedder(Embedder):
     def _extract_usage(response: Any) -> Optional[Dict[str, Any]]:
         """Extract usage information from LiteLLM response."""
         try:
-            if hasattr(response, 'usage') and response.usage:
+            if hasattr(response, "usage") and response.usage:
                 return response.usage.model_dump()
             return None
         except Exception as e:
@@ -123,19 +135,17 @@ class LiteLLMEmbedder(Embedder):
         all_embeddings: List[List[float]] = []
         all_usage: List[Optional[Dict]] = []
 
-        log_info(
-            f"Getting embeddings and usage for {len(texts)} texts in batches of {self.batch_size} (LiteLLM async)"
-        )
+        log_info(f"Getting embeddings and usage for {len(texts)} texts in batches of {self.batch_size} (LiteLLM async)")
         for i in range(0, len(texts), self.batch_size):
             batch = texts[i : i + self.batch_size]
             try:
                 request = self._build_request(batch)
                 response = await litellm.aembedding(**request)
                 embeddings: List[List[float]] = []
-                if hasattr(response, 'data') and response.data:
+                if hasattr(response, "data") and response.data:
                     for item in response.data:
-                        embeddings.append(item.embedding)
-                
+                        embeddings.append(self._item_embedding(item))
+
                 usage = self._extract_usage(response)
                 all_embeddings.extend(embeddings)
                 all_usage.extend([usage] * len(embeddings))
