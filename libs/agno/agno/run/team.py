@@ -12,7 +12,7 @@ from agno.models.message import Citations, Message
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus
+from agno.run.base import BaseRunOutputEvent, MessageReferences, RunStatus, UnrecognizedRunEvent
 from agno.run.requirement import RunRequirement
 from agno.utils.log import log_debug, log_error
 from agno.utils.media import (
@@ -731,11 +731,12 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def team_run_output_event_from_dict(data: dict) -> Optional[BaseTeamRunEvent]:
+def team_run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
     """Deserialize a team run event dict into its typed event.
 
-    Returns None for event types this version does not recognize, so sessions
-    written by a newer agno version (with new event types) remain readable.
+    Event types this version does not recognize come back as UnrecognizedRunEvent carrying the
+    raw payload, so sessions written by a newer agno version stay readable AND their events
+    survive the next whole-row save instead of being silently deleted.
     """
     event_type = data.get("event", "")
     if event_type in {e.value for e in RunEvent}:
@@ -743,8 +744,8 @@ def team_run_output_event_from_dict(data: dict) -> Optional[BaseTeamRunEvent]:
     else:
         event_class = TEAM_RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not event_class:
-        log_debug(f"Skipping unknown team run event type: {event_type}")
-        return None
+        log_debug(f"Preserving unknown team run event type verbatim: {event_type}")
+        return UnrecognizedRunEvent.from_dict(data)
     return event_class.from_dict(data)  # type: ignore
 
 
@@ -976,7 +977,7 @@ class TeamRunOutput:
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> "TeamRunOutput":
         events = data.pop("events", None)
-        final_events = []
+        final_events: List[Any] = []
         for event in events or []:
             if "agent_id" in event:
                 # Use the factory from response.py for agent events

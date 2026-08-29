@@ -525,21 +525,25 @@ def test_requirements_in_run_paused_event():
     assert reconstructed.requirements[0].needs_confirmation is True
 
 
-def test_unknown_event_type_returns_none():
-    """Unknown event types deserialize to None instead of raising, so stored
-    sessions written by a newer agno version remain readable."""
+def test_unknown_event_type_is_preserved_verbatim():
+    """Unknown event types deserialize to a preserving wrapper instead of raising, so stored
+    sessions written by a newer agno version remain readable AND re-saving does not delete
+    the newer version's events."""
     from agno.run.agent import run_output_event_from_dict
+    from agno.run.base import UnrecognizedRunEvent
     from agno.run.team import team_run_output_event_from_dict
     from agno.run.workflow import workflow_run_output_event_from_dict
 
-    unknown = {"event": "EventTypeFromTheFuture", "run_id": "run-1"}
-    assert run_output_event_from_dict(unknown) is None
-    assert team_run_output_event_from_dict(unknown) is None
-    assert workflow_run_output_event_from_dict(unknown) is None
+    unknown = {"event": "EventTypeFromTheFuture", "run_id": "run-1", "payload": {"tokens": 7}}
+    for factory in (run_output_event_from_dict, team_run_output_event_from_dict, workflow_run_output_event_from_dict):
+        restored = factory(dict(unknown))
+        assert isinstance(restored, UnrecognizedRunEvent)
+        assert restored.event == "EventTypeFromTheFuture"
+        assert restored.to_dict() == unknown
 
 
-def test_run_output_from_dict_drops_unknown_events():
-    """RunOutput.from_dict keeps known events and drops unknown ones."""
+def test_run_output_round_trips_unknown_events():
+    """RunOutput.from_dict keeps unknown events and re-serializes them unchanged."""
     from agno.run.agent import RunOutput, RunStartedEvent
 
     known = RunStartedEvent(run_id="run-1", agent_id="agent-1").to_dict()
@@ -547,12 +551,18 @@ def test_run_output_from_dict_drops_unknown_events():
     unknown_team = {"event": "EventTypeFromTheFuture", "run_id": "run-1"}
 
     restored = RunOutput.from_dict({"run_id": "run-1", "events": [known, unknown_agent, unknown_team]})
-    assert len(restored.events) == 1
-    assert restored.events[0].event == "RunStarted"
+    assert [event.event for event in restored.events] == [
+        "RunStarted",
+        "EventTypeFromTheFuture",
+        "EventTypeFromTheFuture",
+    ]
+    reserialized = restored.to_dict()["events"]
+    assert reserialized[1] == unknown_agent
+    assert reserialized[2] == unknown_team
 
 
-def test_team_run_output_from_dict_drops_unknown_events():
-    """TeamRunOutput.from_dict keeps known events and drops unknown ones."""
+def test_team_run_output_round_trips_unknown_events():
+    """TeamRunOutput.from_dict keeps unknown events and re-serializes them unchanged."""
     from agno.run.team import RunStartedEvent as TeamRunStartedEvent
     from agno.run.team import TeamRunOutput
 
@@ -560,12 +570,12 @@ def test_team_run_output_from_dict_drops_unknown_events():
     unknown = {"event": "EventTypeFromTheFuture", "run_id": "run-1"}
 
     restored = TeamRunOutput.from_dict({"run_id": "run-1", "team_id": "team-1", "events": [known, unknown]})
-    assert len(restored.events) == 1
-    assert restored.events[0].event == "TeamRunStarted"
+    assert [event.event for event in restored.events] == ["TeamRunStarted", "EventTypeFromTheFuture"]
+    assert restored.to_dict()["events"][1] == unknown
 
 
-def test_workflow_run_output_from_dict_drops_unknown_events():
-    """WorkflowRunOutput.from_dict keeps known events and drops unknown ones."""
+def test_workflow_run_output_round_trips_unknown_events():
+    """WorkflowRunOutput.from_dict keeps unknown events and re-serializes them unchanged."""
     from agno.run.workflow import WorkflowRunOutput, WorkflowStartedEvent
 
     known = WorkflowStartedEvent(run_id="run-1", workflow_id="wf-1").to_dict()
@@ -576,12 +586,17 @@ def test_workflow_run_output_from_dict_drops_unknown_events():
     restored = WorkflowRunOutput.from_dict(
         {"run_id": "run-1", "events": [known, unknown_workflow, unknown_agent, unknown_team]}
     )
-    assert len(restored.events) == 1
+    assert len(restored.events) == 4
     assert restored.events[0].event == "WorkflowStarted"
+    reserialized = restored.to_dict()["events"]
+    assert reserialized[1] == unknown_workflow
+    assert reserialized[2] == unknown_agent
+    assert reserialized[3] == unknown_team
 
 
-def test_session_from_dict_survives_unknown_stored_event():
-    """A stored session row containing an unknown event type still loads."""
+def test_session_from_dict_preserves_unknown_stored_event():
+    """A stored session row containing an unknown event type loads, and saving it again keeps
+    the unknown event in the row."""
     from agno.run.agent import RunOutput, RunStartedEvent
     from agno.session.agent import AgentSession
 
@@ -591,10 +606,11 @@ def test_session_from_dict_survives_unknown_stored_event():
     session = AgentSession(session_id="session-1", agent_id="agent-1", runs=[run_output])
 
     session_dict = session.to_dict()
-    session_dict["runs"][0]["events"].append(
-        {"event": "EventTypeFromTheFuture", "run_id": "run-1", "agent_id": "agent-1"}
-    )
+    future_event = {"event": "EventTypeFromTheFuture", "run_id": "run-1", "agent_id": "agent-1"}
+    session_dict["runs"][0]["events"].append(dict(future_event))
 
     restored = AgentSession.from_dict(session_dict)
-    assert len(restored.runs[0].events) == 1
-    assert restored.runs[0].events[0].event == "RunStarted"
+    assert len(restored.runs[0].events) == 2
+    assert restored.runs[0].events[1].event == "EventTypeFromTheFuture"
+    resaved = restored.to_dict()
+    assert resaved["runs"][0]["events"][-1] == future_event

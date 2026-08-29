@@ -68,6 +68,7 @@ from agno.os.schema import (
     WorkflowSummaryResponse,
 )
 from agno.run.agent import RunOutput, RunOutputEvent, run_output_event_from_dict
+from agno.run.base import UnrecognizedRunEvent
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent, team_run_output_event_from_dict
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent, workflow_run_output_event_from_dict
 from agno.utils.http import get_default_async_client, get_default_sync_client
@@ -395,10 +396,11 @@ class AgentOSClient:
                     json_str = line[6:]  # Remove "data: " prefix
                     event_dict = json.loads(json_str)
 
-                    # Parse into typed event using provided factory; the factory
-                    # returns None for event types this client version does not know
+                    # Parse into typed event using the provided factory. Event types this
+                    # client version does not know come back as a preserving wrapper; a live
+                    # stream has nothing to re-save, so they are simply skipped here.
                     event = event_parser(event_dict)
-                    if event is None:
+                    if event is None or isinstance(event, UnrecognizedRunEvent):
                         continue
                     yield event
 

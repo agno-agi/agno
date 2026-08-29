@@ -1,5 +1,5 @@
 from copy import copy
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -369,6 +369,28 @@ class BaseRunOutputEvent(_EventIndexCarrier):
     @property
     def is_cancelled(self):
         return False
+
+
+@dataclass
+class UnrecognizedRunEvent(BaseRunOutputEvent):
+    """A stored event whose type this agno version does not recognize.
+
+    Preserved verbatim so a session written by a newer agno version round-trips through an older
+    reader without losing the event: dropping it here would delete it from the stored row on the
+    next whole-row save."""
+
+    raw: Dict[str, Any] = field(default_factory=dict)
+
+    @property
+    def event(self) -> str:
+        return str(self.raw.get("event", ""))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return dict(self.raw)
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "UnrecognizedRunEvent":
+        return cls(raw=dict(data))
 
 
 class RunStatus(str, Enum):

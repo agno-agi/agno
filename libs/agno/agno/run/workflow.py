@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.base import BaseRunOutputEvent, RunStatus, UnrecognizedRunEvent
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.log import log_debug, log_warning
 from agno.utils.media import (
@@ -701,11 +701,12 @@ WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
 }
 
 
-def workflow_run_output_event_from_dict(data: dict) -> Optional[BaseWorkflowRunOutputEvent]:
+def workflow_run_output_event_from_dict(data: dict) -> BaseRunOutputEvent:
     """Deserialize a workflow run event dict into its typed event.
 
-    Returns None for event types this version does not recognize, so sessions
-    written by a newer agno version (with new event types) remain readable.
+    Event types this version does not recognize come back as UnrecognizedRunEvent carrying the
+    raw payload, so sessions written by a newer agno version stay readable AND their events
+    survive the next whole-row save instead of being silently deleted.
     """
     event_type = data.get("event", "")
     if event_type in {e.value for e in RunEvent}:
@@ -715,8 +716,8 @@ def workflow_run_output_event_from_dict(data: dict) -> Optional[BaseWorkflowRunO
     else:
         event_class = WORKFLOW_RUN_EVENT_TYPE_REGISTRY.get(event_type)
     if not event_class:
-        log_debug(f"Skipping unknown workflow run event type: {event_type}")
-        return None
+        log_debug(f"Preserving unknown workflow run event type verbatim: {event_type}")
+        return UnrecognizedRunEvent.from_dict(data)
     return event_class.from_dict(data)  # type: ignore
 
 
@@ -1026,7 +1027,7 @@ class WorkflowRunOutput:
         response_audio = reconstruct_response_audio(data.pop("response_audio", None))
 
         events_data = data.pop("events", [])
-        final_events = []
+        final_events: List[Any] = []
         for event in events_data or []:
             if "agent_id" in event:
                 # Agent event from agent step
