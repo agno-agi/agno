@@ -591,8 +591,7 @@ class Agent:
         elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
             self.tools = tools  # type: ignore[assignment]
         else:
-            # Same guard set_tools/add_tool apply: an as_tool() marker is an MCP
-            # publication declaration, not a runnable tool, and must fail here --
+            # A ComponentTool is not a runnable tool, and must fail here,
             # at construction -- not at the first run.
             from agno.tools.component import raise_if_component_tool
 
