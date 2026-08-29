@@ -41,8 +41,10 @@ def build_view(
     list, the summary and notice are injected and everything before the boundary is omitted — a
     summary is never injected unless its cut applies, so an unresolvable boundary fails open to
     the list as given. Tool results behind the elision watermark render as placeholders on
-    copies. With strip_provider_chaining, assistant copies drop provider_data so server-side
-    response chaining cannot silently rebuild the full history behind the view's back.
+    copies. With strip_provider_chaining, assistant copies drop the response-chaining key from
+    provider_data (reasoning items and other payload survive: a function_call without its paired
+    reasoning item is a provider error) so server-side chaining cannot silently rebuild the full
+    history behind the view's back.
     """
     lead = leading_system_count(messages)
 
@@ -79,7 +81,13 @@ def build_view(
         ):
             content = message.content if isinstance(message.content, str) else str(message.content or "")
             message = message.model_copy(update={"content": ELISION_PLACEHOLDER.format(n_chars=len(content))})
-        elif strip_provider_chaining and message.role == "assistant" and message.provider_data is not None:
-            message = message.model_copy(update={"provider_data": None})
+        elif (
+            strip_provider_chaining
+            and message.role == "assistant"
+            and message.provider_data is not None
+            and "response_id" in message.provider_data
+        ):
+            trimmed = {key: value for key, value in message.provider_data.items() if key != "response_id"}
+            message = message.model_copy(update={"provider_data": trimmed or None})
         view.append(message)
     return view

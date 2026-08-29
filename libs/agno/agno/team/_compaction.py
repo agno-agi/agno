@@ -230,6 +230,8 @@ def _start_background_fold(team: "Team", session: "TeamSession", plan) -> None:
         except Exception as exc:  # pure fold: failure loses nothing
             handle.error = exc
             log_debug(f"Background compaction fold failed (will retry at the next trigger): {exc}")
+        finally:
+            handle.finished = True
 
     thread = threading.Thread(target=_worker, name="agno-compaction-fold", daemon=True)
     handle.thread = thread
@@ -256,24 +258,21 @@ def adopt_finished_fold(team: "Team", session: "TeamSession") -> Optional[Compac
     return record
 
 
-def drain_compaction_state_at_persist(team: "Team", run_response, session: "TeamSession", storage_copy) -> None:
-    """Commit routing at the persist funnel: records created in-run reach the session row only
-    when the creating run completed; error, cancel, and pause discard them (the transcript they
-    summarise is excluded from history anyway) and abandon any in-flight fold un-joined."""
+def _drain_pre(run_response, storage_copy):
+    """Shared head of the persist drain: the carrier must never reach session.runs (readers
+    deepcopy stored runs), and only a terminal drain does more than strip it."""
+    if storage_copy is not None:
+        storage_copy.__dict__.pop("_compaction_state", None)
+    return getattr(run_response, "_compaction_state", None)
+
+
+def _drain_settle(state, session: "TeamSession", run_response, storage_copy, status) -> None:
+    """Shared tail of the persist drain, after any in-flight fold has been joined or abandoned."""
     from agno.run.base import RunStatus
 
-    state = getattr(run_response, "_compaction_state", None)
-    if state is None:
-        return
-    status = run_response.status
     if status == RunStatus.completed:
         handle = state.fold_future
         if handle is not None:
-            if not handle.done() and handle.thread is not None:
-                # Join before persist; the record commits for the next run's benefit only — it
-                # never activated, so this run's compaction_id keeps naming the record its final
-                # provider call actually used.
-                handle.join()
             clear_fold(state.session_id, state.owner_id, handle)
             if handle.record is not None and handle.record not in state.pending_records:
                 state.pending_records.append(handle.record)
@@ -295,6 +294,39 @@ def drain_compaction_state_at_persist(team: "Team", run_response, session: "Team
         # Abandon, never join: the fold is pure and its result is simply dropped. The registry
         # entry stays until the thread finishes so a concurrent fold cannot double-start.
         state.fold_future = None
+
+
+def drain_compaction_state_at_persist(team: "Team", run_response, session: "TeamSession", storage_copy) -> None:
+    """Commit routing at the persist funnel: records created in-run reach the session row only
+    when the creating run completed; error, cancel, and pause discard them (the transcript they
+    summarise is excluded from history anyway) and abandon any in-flight fold un-joined."""
+    from agno.run.base import RunStatus
+
+    state = _drain_pre(run_response, storage_copy)
+    if state is None:
+        return
+    status = run_response.status
+    handle = state.fold_future
+    if status == RunStatus.completed and handle is not None and not handle.done():
+        # Join before persist; the record commits for the next run's benefit only — it never
+        # activated, so this run's compaction_id keeps naming the record its final provider
+        # call actually used.
+        handle.join()
+    _drain_settle(state, session, run_response, storage_copy, status)
+
+
+async def adrain_compaction_state_at_persist(team: "Team", run_response, session: "TeamSession", storage_copy) -> None:
+    """Async twin of drain_compaction_state_at_persist: the join must not block the event loop."""
+    from agno.run.base import RunStatus
+
+    state = _drain_pre(run_response, storage_copy)
+    if state is None:
+        return
+    status = run_response.status
+    handle = state.fold_future
+    if status == RunStatus.completed and handle is not None and not handle.done():
+        await handle.ajoin()
+    _drain_settle(state, session, run_response, storage_copy, status)
 
 
 def record_compaction_events(team: "Team", run_response) -> None:
@@ -637,6 +669,19 @@ async def aadd_compacted_history(
     run_messages.compaction_record = record
 
 
+def _first_own_index(run_messages: "RunMessages") -> int:
+    """First index in the built list that belongs to the current run. The build appends the run's
+    user message before the state is created, so the own region starts AT that message — a fold
+    whose boundary lands past it has folded unpersisted content and must be scoped to the run."""
+    messages = run_messages.messages
+    user_message = run_messages.user_message
+    if user_message is not None:
+        for index in range(len(messages) - 1, -1, -1):
+            if messages[index] is user_message:
+                return index
+    return len(messages)
+
+
 def make_run_state(
     team: "Team",
     session: "TeamSession",
@@ -668,7 +713,7 @@ def make_run_state(
         chain=chain,
         notice_sources=lambda: compaction_notice_inputs(team, session_id),
         strip_provider_chaining=True,
-        first_own_message_index=len(run_messages.messages),
+        first_own_message_index=_first_own_index(run_messages),
         allow_tool_batch_heads=team.store_tool_messages,
     )
     return state

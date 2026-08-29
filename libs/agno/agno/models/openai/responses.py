@@ -700,6 +700,18 @@ class OpenAIResponses(Model):
                 if self._using_reasoning_model() and previous_response_id is not None:
                     continue
 
+                # Without chaining, a re-sent function_call needs its paired reasoning item, and
+                # the reasoning item must precede the function_call in the input list.
+                if (
+                    (self.store is False or previous_response_id is None)
+                    and hasattr(message, "provider_data")
+                    and message.provider_data is not None
+                    and message.provider_data.get("reasoning_output") is not None
+                ):
+                    formatted_messages.append(
+                        ResponseReasoningItem.model_validate(message.provider_data["reasoning_output"])
+                    )
+
                 for tool_call in message.tool_calls:
                     formatted_messages.append(
                         {
@@ -716,7 +728,11 @@ class OpenAIResponses(Model):
                 content = message.content if message.content is not None else ""
                 formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
-                if self.store is False and hasattr(message, "provider_data") and message.provider_data is not None:
+                if (
+                    (self.store is False or previous_response_id is None)
+                    and hasattr(message, "provider_data")
+                    and message.provider_data is not None
+                ):
                     if message.provider_data.get("reasoning_output") is not None:
                         reasoning_output = ResponseReasoningItem.model_validate(
                             message.provider_data["reasoning_output"]

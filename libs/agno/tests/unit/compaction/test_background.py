@@ -168,3 +168,59 @@ class TestBackgroundPasses:
         # Growth crosses the soft trigger on many loop-tops while one fold is in flight; the
         # registry caps concurrent folds at one, so fold calls stay far below loop iterations.
         assert summarizer.fold_calls <= 3
+
+    def test_storage_copy_never_carries_the_run_state(self):
+        # The carrier (gauge, summarizer model, fold thread) must not reach session.runs: session
+        # readers deepcopy stored runs, and a thread lock cannot be deep-copied.
+        from agno.agent._run import _scrub_and_propagate_session_state
+        from agno.run.agent import RunOutput
+
+        agent = Agent(id="strip-check", model=PaddedLoopModel(tool_rounds=0, padding=1), telemetry=False)
+        run_response = RunOutput(run_id="r-strip")
+        run_response._compaction_state = object()
+        storage_copy = _scrub_and_propagate_session_state(agent, run_response, None)
+        assert "_compaction_state" not in storage_copy.__dict__
+        # The live run keeps its carrier; only the stored copy is stripped.
+        assert getattr(run_response, "_compaction_state", None) is not None
+
+    def test_deepcopy_of_a_live_run_drops_the_carrier(self):
+        # Live run objects land in session.runs on some checkpoint paths; a deepcopy reader
+        # (AgentSession.get_run) must survive a live fold thread riding the state.
+        import copy
+        import threading
+
+        from agno.compaction._state import CompactionRunState, FoldHandle
+        from agno.compaction._tokens import ContextGauge
+        from agno.run.agent import RunOutput
+
+        config = Compaction(context_window=4_000)
+        limits = config.resolve_limits(None)
+        state = CompactionRunState(
+            config=config, limits=limits, gauge=ContextGauge(limits=limits), session_id="s", owner_id="o"
+        )
+        state.fold_future = FoldHandle(plan=None, thread=threading.Thread(target=lambda: None))
+        run_response = RunOutput(run_id="r-deepcopy")
+        run_response._compaction_state = state
+        clone = copy.deepcopy(run_response)
+        assert clone.__dict__.get("_compaction_state") is None
+
+    def test_async_run_commits_background_fold(self):
+        # The async seam end to end: aadd/aloop/adrain — the terminal drain must await the fold
+        # without a thread join on the event loop.
+        import asyncio
+
+        summarizer = SlowSummarizer(delay=0.02)
+        model = PaddedLoopModel(tool_rounds=10, padding=400)
+        agent = Agent(
+            id="bg-agent-5",
+            model=model,
+            db=InMemoryDb(),
+            tools=[note],
+            compaction=Compaction(context_window=4_000, model=summarizer, clear_tool_results=False),
+            telemetry=False,
+        )
+        output = asyncio.run(agent.arun("go", session_id="s-bg-5"))
+        assert str(output.content).endswith("Background run done.")
+        session = agent.get_session(session_id="s-bg-5")
+        records = get_owner_records(session.session_data, "bg-agent-5")
+        assert records

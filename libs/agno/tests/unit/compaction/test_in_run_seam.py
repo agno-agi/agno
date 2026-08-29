@@ -226,3 +226,35 @@ async def test_async_in_run_seam():
     assert output.content == "All lookups done."
     session = agent.get_session(session_id="s-inrun-async")
     assert get_owner_records(session.session_data, "inrun-agent")
+
+
+class TestOwnRegionScoping:
+    def test_first_own_index_points_at_the_user_message(self):
+        # The build appends the run's user message before the state is created; the own region
+        # starts AT that message. A fold whose boundary lands past it folded unpersisted content
+        # and must be scoped to the creating run (committed only if the run completes).
+        from agno.agent._compaction import _first_own_index
+        from agno.models.message import Message
+        from agno.run.messages import RunMessages
+
+        history = [
+            Message(role="system", content="sys"),
+            Message(role="user", content="old turn"),
+            Message(role="assistant", content="old reply"),
+        ]
+        current = Message(role="user", content="current ask")
+        run_messages = RunMessages(messages=history + [current], user_message=current)
+        assert _first_own_index(run_messages) == 3
+
+        # Without a recorded user message (rare builds), everything present counts as history.
+        run_messages_bare = RunMessages(messages=history + [current])
+        assert _first_own_index(run_messages_bare) == 4
+
+    def test_team_twin_matches(self):
+        from agno.models.message import Message
+        from agno.run.messages import RunMessages
+        from agno.team._compaction import _first_own_index
+
+        current = Message(role="user", content="current ask")
+        run_messages = RunMessages(messages=[Message(role="system", content="sys"), current], user_message=current)
+        assert _first_own_index(run_messages) == 1

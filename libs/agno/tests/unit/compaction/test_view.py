@@ -149,3 +149,26 @@ class TestElision:
         record.elision_watermark_message_id = "msg-gone"
         view = build_view(messages, record)
         assert [m.content for m in view] == [m.content for m in messages]
+
+
+class TestChainingStrip:
+    def test_strip_removes_only_the_chaining_key(self):
+        # Reasoning items must survive the strip: without chaining, a re-sent function_call
+        # requires its paired reasoning item, so nulling all provider_data breaks the provider.
+        messages = make_log()
+        messages[2].provider_data = {"response_id": "resp_1", "reasoning_output": {"id": "rs_1"}}
+        messages[4].provider_data = {"response_id": "resp_2"}
+        view = build_view(messages, None, strip_provider_chaining=True)
+        stripped_1 = next(m for m in view if m.id == messages[2].id)
+        assert stripped_1.provider_data == {"reasoning_output": {"id": "rs_1"}}
+        stripped_2 = next(m for m in view if m.id == messages[4].id)
+        assert stripped_2.provider_data is None
+        # The canonical messages keep their chaining keys.
+        assert messages[2].provider_data["response_id"] == "resp_1"
+
+    def test_strip_leaves_chaining_free_assistants_alone(self):
+        messages = make_log()
+        messages[2].provider_data = {"reasoning_output": {"id": "rs_1"}}
+        view = build_view(messages, None, strip_provider_chaining=True)
+        untouched = next(m for m in view if m.id == messages[2].id)
+        assert untouched is messages[2]

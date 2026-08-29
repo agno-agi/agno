@@ -315,3 +315,32 @@ class TestInFlightRegistry:
         clear_fold("s1", "o1", handle)
         # After clearing, the slot is free again.
         assert register_fold("s1", "o1", FoldHandle(plan=plan))
+
+
+class TestOverflowExemption:
+    def test_overflow_folds_even_when_estimate_reads_under_trigger(self):
+        # The provider proved the payload is too big; a local estimate under the trigger is
+        # wrong by construction and must not decline the pass.
+        config, limits = small_config()
+        messages = [Message(role="system", content="sys")] + [user(long_text(120)) for _ in range(5)]
+        assert estimate_tokens(build_view(messages, None)) < limits.trigger_tokens
+        assert prepare_pass(config, limits, messages, reason="threshold") is None
+        plan = prepare_pass(config, limits, messages, reason="overflow")
+        assert plan is not None and not plan.elision_only
+        assert plan.boundary_index is not None
+
+
+class TestFoldHandleCompletion:
+    def test_unstarted_handle_is_not_done(self):
+        # A handle is registered before its thread starts; that window must read as in-flight
+        # or a concurrent loop-top adopts-and-clears it and double-starts the fold.
+        config, limits = small_config()
+        messages = [Message(role="system", content="sys")] + [user(long_text(300)) for _ in range(10)]
+        plan = prepare_pass(config, limits, messages, reason="threshold")
+        handle = FoldHandle(plan=plan)
+        assert not handle.done()
+        assert register_fold("s-fh", "owner-fh", handle)
+        assert not register_fold("s-fh", "owner-fh", FoldHandle(plan=plan))
+        handle.finished = True
+        assert handle.done()
+        clear_fold("s-fh", "owner-fh", handle)

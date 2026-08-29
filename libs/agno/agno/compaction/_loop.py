@@ -235,6 +235,8 @@ def _start_background_fold(model: "Model", messages: List[Message], state: Compa
         except Exception as exc:
             handle.error = exc
             log_debug(f"Background compaction fold failed (will retry at the next trigger): {exc}")
+        finally:
+            handle.finished = True
 
     thread = threading.Thread(target=_worker, name="agno-compaction-fold", daemon=True)
     handle.thread = thread

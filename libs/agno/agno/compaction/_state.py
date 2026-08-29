@@ -32,13 +32,12 @@ class FoldHandle:
     task: Any = None  # asyncio.Task on async paths
     record: Optional[CompactionRecord] = None  # set by the worker on success
     error: Optional[BaseException] = None  # set by the worker on failure
+    # The only completion signal, set by the worker in a finally. A handle is registered before
+    # its thread starts, so liveness checks on the thread would misread that window as done.
+    finished: bool = False
 
     def done(self) -> bool:
-        if self.thread is not None:
-            return not self.thread.is_alive()
-        if self.task is not None:
-            return bool(self.task.done())
-        return True
+        return self.finished
 
     def join(self, timeout: Optional[float] = None) -> Optional[CompactionRecord]:
         """Wait for a thread-backed fold and return its record (None on failure)."""
@@ -144,3 +143,8 @@ class CompactionRunState:
     # helpers; stream loops drain these into marker events, non-stream callers convert what
     # remains after the call returns. Payloads carry numbers only, never summary text.
     event_buffer: List[Dict[str, Any]] = field(default_factory=list)
+
+    def __deepcopy__(self, memo: dict) -> None:
+        """A copied run must not drag the carrier with it: the gauge, the summarizer model, and
+        a live fold thread are per-run and a thread lock cannot be deep-copied at all."""
+        return None

@@ -400,9 +400,10 @@ def prepare_pass(
         build_view(messages, previous_record, elide_exclude_tools=config.elide_exclude_tools)
     )
 
-    # manual and requested passes fold regardless of the trigger: both are explicit asks to free
-    # space, so "already under trigger" is not a reason to decline.
-    if reason not in ("manual", "requested"):
+    # manual and requested passes fold regardless of the trigger (explicit asks to free space),
+    # and so does overflow: the provider just proved the payload is too big, so a local estimate
+    # reading under the trigger is wrong by construction and must not decline the pass.
+    if reason not in ("manual", "requested", "overflow"):
         trial = CompactionRecord.from_dict(previous_record.to_dict()) if previous_record else CompactionRecord()
         trial.elision_watermark_message_id = watermark_id
         elided_estimate = estimate_tokens(build_view(messages, trial, elide_exclude_tools=config.elide_exclude_tools))
@@ -450,7 +451,9 @@ def prepare_pass(
     kept_trial = CompactionRecord()
     kept_trial.elision_watermark_message_id = watermark_id
     kept_tokens = estimate_tokens(
-        build_view(messages[:lead] + messages[boundary_index:], kept_trial, elide_exclude_tools=config.elide_exclude_tools)
+        build_view(
+            messages[:lead] + messages[boundary_index:], kept_trial, elide_exclude_tools=config.elide_exclude_tools
+        )
     )
     return PassPlan(
         reason=reason,

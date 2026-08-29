@@ -4893,9 +4893,9 @@ async def _acleanup_and_store(
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
     if getattr(run_response, "_compaction_state", None) is not None:
-        from agno.team._compaction import drain_compaction_state_at_persist
+        from agno.team._compaction import adrain_compaction_state_at_persist
 
-        drain_compaction_state_at_persist(team, run_response, session, storage_copy)
+        await adrain_compaction_state_at_persist(team, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
@@ -5107,9 +5107,9 @@ async def _apersist_team_run_in_session(
 
     session.upsert_run(run_response=storage_copy)
     if getattr(run_response, "_compaction_state", None) is not None:
-        from agno.team._compaction import drain_compaction_state_at_persist
+        from agno.team._compaction import adrain_compaction_state_at_persist
 
-        drain_compaction_state_at_persist(team, run_response, session, storage_copy)
+        await adrain_compaction_state_at_persist(team, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(team, session=session, run_response=run_response)
 

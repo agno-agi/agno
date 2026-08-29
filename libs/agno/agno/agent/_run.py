@@ -6047,6 +6047,9 @@ def _scrub_and_propagate_session_state(
 
     if storage_copy is None:
         storage_copy = copy.copy(run_response)
+    # The per-run compaction carrier (gauge, summarizer model, fold thread) must never reach
+    # session.runs: session readers deepcopy stored runs and a thread lock cannot be copied.
+    storage_copy.__dict__.pop("_compaction_state", None)
     if isolate_inflight and not agent.store_media:
         isolate_media_scrub_targets(storage_copy)
     scrub_run_output_for_storage(agent, storage_copy)
@@ -6132,9 +6135,9 @@ async def apersist_run_in_session(
 
     session.upsert_run(run=storage_copy)
     if getattr(run_response, "_compaction_state", None) is not None:
-        from agno.agent._compaction import drain_compaction_state_at_persist
+        from agno.agent._compaction import adrain_compaction_state_at_persist
 
-        drain_compaction_state_at_persist(agent, run_response, session, storage_copy)
+        await adrain_compaction_state_at_persist(agent, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(agent, session=session, run_response=run_response)
 

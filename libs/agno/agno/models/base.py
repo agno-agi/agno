@@ -1502,6 +1502,7 @@ class Model(ABC):
                 self._ensure_message_metrics_initialized(assistant_message)
                 # Generate response
                 try:
+                    _yielded_delta = False
                     for response in self.process_response_stream(
                         messages=_outbound_messages,
                         assistant_message=assistant_message,
@@ -1514,9 +1515,12 @@ class Model(ABC):
                     ):
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
+                        _yielded_delta = True
                         yield response
                 except ContextWindowExceededError:
-                    if compaction_state is None:
+                    if compaction_state is None or _yielded_delta:
+                        # Deltas already reached the consumer; a compact-and-retry would replay
+                        # the turn from the start. Propagate instead.
                         raise
                     from agno.compaction._loop import drain_marker_events, handle_overflow
 
@@ -1822,6 +1826,7 @@ class Model(ABC):
                 self._ensure_message_metrics_initialized(assistant_message)
                 # Generate response
                 try:
+                    _yielded_delta = False
                     async for model_response_delta in self.aprocess_response_stream(
                         messages=_outbound_messages,
                         assistant_message=assistant_message,
@@ -1834,9 +1839,12 @@ class Model(ABC):
                     ):
                         if self.cache_response and isinstance(model_response_delta, ModelResponse):
                             streaming_responses.append(model_response_delta)
+                        _yielded_delta = True
                         yield model_response_delta
                 except ContextWindowExceededError:
-                    if compaction_state is None:
+                    if compaction_state is None or _yielded_delta:
+                        # Deltas already reached the consumer; a compact-and-retry would replay
+                        # the turn from the start. Propagate instead.
                         raise
                     from agno.compaction._loop import ahandle_overflow, drain_marker_events
 
