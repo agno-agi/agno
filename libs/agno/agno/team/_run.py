@@ -5114,23 +5114,14 @@ def _sync_team_run_response_with_model_response(
     Same shape as the agent helper, with one team-specific concern: ``child_run_id``
     (the delegation -> member-run link) is patched onto the existing
     ``run_response.tools`` entries during tool execution, NOT onto
-    ``model_response.tool_executions``. A naive ``run_response.tools = list(...)``
-    would therefore drop the linkage on every mid-run checkpoint taken after a
-    delegation. Carry it over by ``tool_call_id``, mirroring the streaming merge
-    in :mod:`agno.team._response`.
+    ``model_response.tool_executions``. Merge by ``tool_call_id`` so checkpoints
+    retain inherited tool history and delegation links, mirroring the terminal
+    merge in :mod:`agno.team._response`.
     """
     if model_response.tool_executions is not None:
-        existing_child_run_ids = {
-            tool.tool_call_id: tool.child_run_id
-            for tool in (run_response.tools or [])
-            if tool.tool_call_id is not None and tool.child_run_id is not None
-        }
-        new_tools = list(model_response.tool_executions)
-        if existing_child_run_ids:
-            for tool in new_tools:
-                if tool.child_run_id is None and tool.tool_call_id in existing_child_run_ids:
-                    tool.child_run_id = existing_child_run_ids[tool.tool_call_id]
-        run_response.tools = new_tools
+        from agno.team._response import _merge_team_tool_executions
+
+        run_response.tools = _merge_team_tool_executions(run_response.tools, model_response.tool_executions)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 

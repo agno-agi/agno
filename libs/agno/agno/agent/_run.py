@@ -6312,7 +6312,9 @@ def _sync_run_response_with_model_response(
     intermediate snapshot.
     """
     if model_response.tool_executions is not None:
-        run_response.tools = list(model_response.tool_executions)
+        from agno.agent._response import _merge_tool_executions
+
+        run_response.tools = _merge_tool_executions(run_response.tools, model_response.tool_executions)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 

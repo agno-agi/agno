@@ -6,9 +6,16 @@ not reset on each model invocation.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
+import pytest
+
+from agno.agent._tools import handle_tool_call_updates
 from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput
+from agno.run.messages import RunMessages
 from agno.run.team import TeamRunOutput
+from agno.tools.function import UserFeedbackQuestion, UserInputField
 
 
 class TestRunOutputExecutedToolCount:
@@ -173,3 +180,43 @@ class TestIssue7962Scenario:
         # With the fix: executed_tool_count = 1 (the executed HITL tool)
         # So with tool_call_limit=1, budget is exhausted
         assert run.executed_tool_count == 1, "The HITL tool should count as executed"
+
+
+class TestBuiltinHITLToolResults:
+    @pytest.mark.parametrize(
+        ("tool_name", "expected_prefix"),
+        [
+            ("get_user_input", "User inputs retrieved:"),
+            ("ask_user", "User feedback received:"),
+        ],
+    )
+    def test_resolved_builtin_hitl_tool_records_the_model_visible_result(self, tool_name, expected_prefix):
+        if tool_name == "get_user_input":
+            tool = ToolExecution(
+                tool_call_id="input-1",
+                tool_name=tool_name,
+                requires_user_input=True,
+                user_input_schema=[UserInputField(name="city", field_type=str, value="London")],
+            )
+        else:
+            tool = ToolExecution(
+                tool_call_id="feedback-1",
+                tool_name=tool_name,
+                requires_user_input=True,
+                user_feedback_schema=[
+                    UserFeedbackQuestion(question="Which environment?", selected_options=["production"])
+                ],
+            )
+        owner = SimpleNamespace(model=SimpleNamespace(tool_message_role="tool"), _result_store=None)
+        run_messages = RunMessages()
+        run_response = RunOutput(run_id="run-1", session_id="session-1", tools=[tool])
+
+        handle_tool_call_updates(owner, run_response, run_messages, tools=[])
+
+        assert tool.result is not None
+        assert tool.result.startswith(expected_prefix)
+        assert run_messages.messages[-1].content == tool.result
+        assert run_response.executed_tool_count == 1
+        assert TeamRunOutput(run_id="team-1", tools=[tool]).executed_tool_count == 1
+        assert tool.answered is True
+        assert tool.requires_user_input is False

@@ -760,6 +760,7 @@ def test_a_large_user_input_value_is_offloaded(db):
     tool_message = _tool_messages(output)[0]
     assert tool_message.content.startswith('<result id="res_')
     assert BIG not in tool_message.content
+    assert output.tools[0].result == tool_message.content
     result_id = tool_message.content.split('id="')[1].split('"')[0]
     assert "User inputs retrieved" in agent._result_store.read(result_id, 1, 1).text
 
@@ -778,7 +779,9 @@ async def test_a_large_user_input_value_is_offloaded_async(db):
         field.value = BIG
 
     output = await agent.acontinue_run(paused, session_id=session_id)
-    assert _tool_messages(output)[0].content.startswith('<result id="res_')
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith('<result id="res_')
+    assert output.tools[0].result == tool_message.content
 
 
 def test_small_user_input_stays_inline(db):
@@ -795,7 +798,9 @@ def test_small_user_input_stays_inline(db):
         field.value = "short"
 
     output = agent.continue_run(paused, session_id=session_id)
-    assert _tool_messages(output)[0].content.startswith("User inputs retrieved")
+    tool_message = _tool_messages(output)[0]
+    assert tool_message.content.startswith("User inputs retrieved")
+    assert output.tools[0].result == tool_message.content
 
 
 def test_scoped_delete_removes_only_the_callers_runs_in_a_shared_session(db):

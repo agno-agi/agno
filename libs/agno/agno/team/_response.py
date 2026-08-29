@@ -25,7 +25,7 @@ from agno.media import Audio
 from agno.models.base import Model
 from agno.models.fallback import acall_model_stream_with_fallback, call_model_stream_with_fallback
 from agno.models.message import Message
-from agno.models.response import ModelResponse, ModelResponseEvent
+from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
 from agno.reasoning.step import NextAction, ReasoningStep, ReasoningSteps
 from agno.run import RunContext
 from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, RunOutput, RunOutputEvent
@@ -900,6 +900,30 @@ def update_reasoning_content_from_tool_call(
 # ---------------------------------------------------------------------------
 
 
+def _merge_team_tool_executions(
+    existing_tools: Optional[List[ToolExecution]], incoming_tools: List[ToolExecution]
+) -> List[ToolExecution]:
+    """Merge cumulative team executions while preserving delegation links."""
+    if existing_tools is None:
+        return list(incoming_tools)
+
+    existing_by_id = {tool.tool_call_id: i for i, tool in enumerate(existing_tools) if tool.tool_call_id}
+    existing_by_identity = {id(tool): i for i, tool in enumerate(existing_tools)}
+    for tool in incoming_tools:
+        index = existing_by_id.get(tool.tool_call_id) if tool.tool_call_id else existing_by_identity.get(id(tool))
+        if index is not None:
+            if tool.child_run_id is None and existing_tools[index].child_run_id is not None:
+                tool.child_run_id = existing_tools[index].child_run_id
+            existing_tools[index] = tool
+        else:
+            index = len(existing_tools)
+            existing_tools.append(tool)
+        if tool.tool_call_id:
+            existing_by_id[tool.tool_call_id] = index
+        existing_by_identity[id(tool)] = index
+    return existing_tools
+
+
 def _update_run_response(
     team: "Team",
     model_response: ModelResponse,
@@ -944,18 +968,7 @@ def _update_run_response(
     # member-run link) when the incoming entry lacks it, since model_response
     # tool_executions do not carry it.
     if model_response.tool_executions is not None:
-        if run_response.tools is None:
-            run_response.tools = list(model_response.tool_executions)
-        else:
-            existing_by_id = {t.tool_call_id: i for i, t in enumerate(run_response.tools) if t.tool_call_id}
-            for tool in model_response.tool_executions:
-                if tool.tool_call_id and tool.tool_call_id in existing_by_id:
-                    index = existing_by_id[tool.tool_call_id]
-                    if tool.child_run_id is None and run_response.tools[index].child_run_id is not None:
-                        tool.child_run_id = run_response.tools[index].child_run_id
-                    run_response.tools[index] = tool
-                else:
-                    run_response.tools.append(tool)
+        run_response.tools = _merge_team_tool_executions(run_response.tools, model_response.tool_executions)
 
     # Update the run_response audio with the model response audio
     if model_response.audio is not None:

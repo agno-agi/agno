@@ -184,22 +184,58 @@ class TestSyncRunResponseWithModelResponse:
         assert len(run_response.messages) == 1
         assert run_response.messages[0].content == "keep me"
 
-    def test_replaces_tools_does_not_extend(self):
-        """The model_response.tool_executions list is cumulative; the sync should
-        replace run_response.tools to avoid double-counting."""
+    def test_merges_tools_preserving_inherited_order_and_refreshing_matches(self):
         run_response = _make_run_response()
-        run_response.tools = [ToolExecution(tool_call_id="old", tool_name="t", tool_args={})]
+        inherited = ToolExecution(tool_call_id="parent", tool_name="t", result="parent")
+        run_response.tools = [
+            inherited,
+            ToolExecution(tool_call_id="branch-1", tool_name="t", result="stale"),
+        ]
+        run_response.tool_count_at_fork = 1
         run_messages = _make_run_messages()
         model_response = ModelResponse()
         model_response.tool_executions = [
-            ToolExecution(tool_call_id="new-1", tool_name="t", tool_args={}),
-            ToolExecution(tool_call_id="new-2", tool_name="t", tool_args={}),
+            ToolExecution(tool_call_id="branch-1", tool_name="t", result="fresh"),
+            ToolExecution(tool_call_id="branch-2", tool_name="t", result="new"),
         ]
 
         _sync_run_response_with_model_response(run_response, run_messages, model_response)
 
         assert run_response.tools is not None
-        assert [t.tool_call_id for t in run_response.tools] == ["new-1", "new-2"]
+        assert [t.tool_call_id for t in run_response.tools] == ["parent", "branch-1", "branch-2"]
+        assert run_response.tools[0] is inherited
+        assert run_response.tools[1].result == "fresh"
+        assert run_response.executed_tool_count == 2
+
+    @pytest.mark.parametrize("tool_call_id", [None, ""])
+    def test_distinct_missing_ids_append_without_repeating_cumulative_entries(self, tool_call_id):
+        run_response = _make_run_response()
+        run_response.tools = [ToolExecution(tool_call_id=tool_call_id, tool_name="parent", result="parent")]
+        run_response.tool_count_at_fork = 1
+        branch = ToolExecution(tool_call_id=tool_call_id, tool_name="branch", result="branch")
+        model_response = ModelResponse(tool_executions=[branch])
+
+        _sync_run_response_with_model_response(run_response, _make_run_messages(), model_response)
+        model_response.tool_executions.append(
+            ToolExecution(tool_call_id=tool_call_id, tool_name="branch-2", result="branch-2")
+        )
+        _sync_run_response_with_model_response(run_response, _make_run_messages(), model_response)
+
+        assert run_response.tools is not None
+        assert [tool.tool_name for tool in run_response.tools] == ["parent", "branch", "branch-2"]
+        assert run_response.executed_tool_count == 2
+
+        from agno.agent._response import update_run_response
+
+        update_run_response(
+            agent=_make_agent(),
+            model_response=model_response,
+            run_response=run_response,
+            run_messages=_make_run_messages(),
+        )
+
+        assert [tool.tool_name for tool in run_response.tools] == ["parent", "branch", "branch-2"]
+        assert run_response.executed_tool_count == 2
 
 
 class TestCheckpointRun:
