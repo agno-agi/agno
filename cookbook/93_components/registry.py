@@ -58,7 +58,7 @@ registry = Registry(
 if __name__ == "__main__":
     # Uncomment this during your first run to save the agent to the database
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o-mini"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         db=db,
         tools=[DuckDuckGoTools(), sample_tool],
         output_schema=BasicOutputSchema,

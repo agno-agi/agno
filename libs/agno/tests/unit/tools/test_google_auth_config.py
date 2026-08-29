@@ -28,6 +28,7 @@ def test_auth_config_default_values(monkeypatch):
     monkeypatch.delenv("GOOGLE_DELEGATED_USER", raising=False)
     monkeypatch.delenv("GOOGLE_HOSTED_DOMAIN", raising=False)
     monkeypatch.delenv("GOOGLE_TOKEN_ENCRYPTION_KEY", raising=False)
+    monkeypatch.delenv("GOOGLE_OAUTH_NONINTERACTIVE", raising=False)
 
     auth = AuthConfig()
 
@@ -43,6 +44,7 @@ def test_auth_config_default_values(monkeypatch):
     assert auth.db is None
     assert auth.token_encryption_key is None
     assert auth.encrypt_tokens is True
+    assert auth.interactive is True
     assert auth._scopes == set()
     assert auth._creds is None
 
@@ -314,6 +316,48 @@ def test_encrypt_tokens_true_without_key_valid(monkeypatch):
 
     assert auth.encrypt_tokens is True
     assert auth.token_encryption_key is None
+
+
+# ============================================================================
+# INTERACTIVE FLAG TESTS
+# ============================================================================
+
+
+def test_interactive_defaults_true(monkeypatch):
+    monkeypatch.delenv("GOOGLE_OAUTH_NONINTERACTIVE", raising=False)
+    assert AuthConfig().interactive is True
+
+
+def test_interactive_explicit_false():
+    assert AuthConfig(interactive=False).interactive is False
+
+
+@pytest.mark.parametrize("value", ["1", "true", "TRUE", "yes"])
+def test_interactive_env_noninteractive(monkeypatch, value):
+    monkeypatch.setenv("GOOGLE_OAUTH_NONINTERACTIVE", value)
+    assert AuthConfig().interactive is False
+
+
+@pytest.mark.parametrize("value", ["0", "false", ""])
+def test_interactive_env_falsy_values_keep_interactive(monkeypatch, value):
+    monkeypatch.setenv("GOOGLE_OAUTH_NONINTERACTIVE", value)
+    assert AuthConfig().interactive is True
+
+
+def test_interactive_explicit_overrides_env(monkeypatch):
+    monkeypatch.setenv("GOOGLE_OAUTH_NONINTERACTIVE", "1")
+    assert AuthConfig(interactive=True).interactive is True
+
+
+def test_interactive_env_reaches_internally_built_auth_config(monkeypatch, mock_creds):
+    # Users who never pass auth= get an internally-built AuthConfig; the env
+    # default is the only way for them to reach the flag
+    monkeypatch.setenv("GOOGLE_OAUTH_NONINTERACTIVE", "1")
+
+    with patch("googleapiclient.discovery.build"):
+        gmail = GmailTools(creds=mock_creds)
+
+    assert gmail._auth.interactive is False
 
 
 # ============================================================================
