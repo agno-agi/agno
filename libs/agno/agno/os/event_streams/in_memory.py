@@ -17,7 +17,13 @@ from agno.run.base import RunStatus
 # safety net for contract parity with distributed implementations.
 _TAIL_IDLE_RECHECK_SECONDS = 15.0
 
-_TERMINAL_STATUSES = (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused)
+_TERMINAL_STATUSES = (
+    RunStatus.completed,
+    RunStatus.error,
+    RunStatus.cancelled,
+    RunStatus.paused,
+    RunStatus.unverified,
+)
 
 
 class InMemoryEventStream(BaseEventStream):
@@ -83,7 +89,7 @@ class InMemoryEventStream(BaseEventStream):
     async def complete_run(self, run_id: str, status: RunStatus, generation: Optional[int] = None) -> None:
         if self._generation_stale(run_id, generation):
             return  # a zombie's sentinel must not close the live attempt's tails
-        if status not in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+        if status not in _TERMINAL_STATUSES:
             # Contract: this call MARKS TERMINAL. A non-terminal argument
             # (producer raced mid-transition) must still end tails - coerce
             status = RunStatus.completed

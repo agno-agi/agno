@@ -243,6 +243,7 @@ _STATUS_ERRORS = {
     RunStatus.paused: "run paused awaiting user input",
     RunStatus.cancelled: "run cancelled",
     RunStatus.error: "run ended in error status",
+    RunStatus.unverified: "run ended unverified: its verifiers never passed",
 }
 
 
@@ -377,8 +378,9 @@ async def _run_case_body(
         return
 
     # Only a completed run is gradeable: paused/cancelled runs carry placeholder
-    # content (e.g. HITL boilerplate), and any other status (pending, running,
-    # regenerated, ...) is not a real answer either.
+    # content (e.g. HITL boilerplate), an unverified run's answer never passed its
+    # verifiers, and any other status (pending, running, regenerated, ...) is not
+    # a real answer either.
     gradeable = not component_errored and response is not None and response.status == RunStatus.completed
     if not gradeable:
         if not component_errored:

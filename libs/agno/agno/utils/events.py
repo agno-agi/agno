@@ -42,6 +42,8 @@ from agno.run.agent import (
     ToolCallCompletedEvent,
     ToolCallErrorEvent,
     ToolCallStartedEvent,
+    VerificationCompletedEvent,
+    VerificationStartedEvent,
 )
 from agno.run.requirement import RunRequirement
 from agno.run.team import CompressionCompletedEvent as TeamCompressionCompletedEvent
@@ -80,7 +82,14 @@ from agno.run.team import TaskIterationCompletedEvent as TeamTaskIterationComple
 from agno.run.team import TaskIterationStartedEvent as TeamTaskIterationStartedEvent
 from agno.run.team import TaskStateUpdatedEvent as TeamTaskStateUpdatedEvent
 from agno.run.team import TaskUpdatedEvent as TeamTaskUpdatedEvent
-from agno.run.team import TeamRunEvent, TeamRunInput, TeamRunOutput, TeamRunOutputEvent
+from agno.run.team import (
+    TeamRunEvent,
+    TeamRunInput,
+    TeamRunOutput,
+    TeamRunOutputEvent,
+    TeamVerificationCompletedEvent,
+    TeamVerificationStartedEvent,
+)
 from agno.run.team import ToolCallCompletedEvent as TeamToolCallCompletedEvent
 from agno.run.team import ToolCallErrorEvent as TeamToolCallErrorEvent
 from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
@@ -793,6 +802,44 @@ def create_followups_completed_event(
     )
 
 
+def create_verification_started_event(
+    from_run_response: RunOutput,
+    attempt: int,
+    max_attempts: int,
+) -> VerificationStartedEvent:
+    return VerificationStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        attempt=attempt,
+        max_attempts=max_attempts,
+    )
+
+
+def create_verification_completed_event(
+    from_run_response: RunOutput,
+    attempt: int,
+    max_attempts: int,
+    passed: bool,
+    verdicts: Optional[List[Dict[str, Any]]] = None,
+    noop: bool = False,
+    stop_reason: Optional[str] = None,
+) -> VerificationCompletedEvent:
+    return VerificationCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        attempt=attempt,
+        max_attempts=max_attempts,
+        passed=passed,
+        verdicts=verdicts,
+        noop=noop,
+        stop_reason=stop_reason,
+    )
+
+
 def create_team_parser_model_response_started_event(
     from_run_response: TeamRunOutput,
 ) -> TeamParserModelResponseStartedEvent:
@@ -1020,6 +1067,44 @@ def create_team_followups_completed_event(
         team_name=from_run_response.team_name,  # type: ignore
         run_id=from_run_response.run_id,
         followups=followups,
+    )
+
+
+def create_team_verification_started_event(
+    from_run_response: TeamRunOutput,
+    attempt: int,
+    max_attempts: int,
+) -> TeamVerificationStartedEvent:
+    return TeamVerificationStartedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        attempt=attempt,
+        max_attempts=max_attempts,
+    )
+
+
+def create_team_verification_completed_event(
+    from_run_response: TeamRunOutput,
+    attempt: int,
+    max_attempts: int,
+    passed: bool,
+    verdicts: Optional[List[Dict[str, Any]]] = None,
+    noop: bool = False,
+    stop_reason: Optional[str] = None,
+) -> TeamVerificationCompletedEvent:
+    return TeamVerificationCompletedEvent(
+        session_id=from_run_response.session_id,
+        team_id=from_run_response.team_id,  # type: ignore
+        team_name=from_run_response.team_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        attempt=attempt,
+        max_attempts=max_attempts,
+        passed=passed,
+        verdicts=verdicts,
+        noop=noop,
+        stop_reason=stop_reason,
     )
 
 

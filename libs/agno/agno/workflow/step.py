@@ -2262,8 +2262,12 @@ class Step:
                         executor_error_event = None
                         async for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                # Consume to exhaustion rather than break: abandoning the
+                                # executor's generator throws GeneratorExit into it, which
+                                # its disconnect handling persists as a cancelled run — a
+                                # paused run flipped to cancelled refuses its resume.
                                 active_executor_run_response = event
-                                break
+                                continue
                             if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
                                 executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
@@ -2622,9 +2626,10 @@ class Step:
         # Determine step type based on executor type
         step_type = StepType.WORKFLOW if self._executor_type == "workflow" else StepType.STEP
 
-        # Propagate cancelled / error status from the executor's RunOutput
+        # Propagate cancelled / error / unverified status from the executor's RunOutput.
+        # An unverified run never passed its verifiers, so the step is not a success.
         response_status = getattr(response, "status", None)
-        success = response_status not in (RunStatus.cancelled, RunStatus.error)
+        success = response_status not in (RunStatus.cancelled, RunStatus.error, RunStatus.unverified)
         error = response.content if not success else None
 
         return StepOutput(
@@ -2854,7 +2859,7 @@ class Step:
             content=nested_run_output.content,
             step_run_id=nested_run_output.run_id,
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
-            success=nested_run_output.status != RunStatus.error,
+            success=nested_run_output.status not in (RunStatus.error, RunStatus.unverified),
             error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
         )
@@ -3009,7 +3014,9 @@ class Step:
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
             if nested_run_output is not None
             else None,
-            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
+            success=nested_run_output.status not in (RunStatus.error, RunStatus.unverified)
+            if nested_run_output is not None
+            else False,
             error=nested_run_output.error
             if nested_run_output is not None and hasattr(nested_run_output, "error")
             else None,
@@ -3131,7 +3138,7 @@ class Step:
             content=nested_run_output.content,
             step_run_id=nested_run_output.run_id,
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics),
-            success=nested_run_output.status != RunStatus.error,
+            success=nested_run_output.status not in (RunStatus.error, RunStatus.unverified),
             error=nested_run_output.error if hasattr(nested_run_output, "error") else None,
             steps=nested_steps if nested_steps else None,  # Include nested workflow's step results
         )
@@ -3287,7 +3294,9 @@ class Step:
             metrics=self._aggregate_workflow_metrics(nested_run_output.metrics)
             if nested_run_output is not None
             else None,
-            success=nested_run_output.status != RunStatus.error if nested_run_output is not None else False,
+            success=nested_run_output.status not in (RunStatus.error, RunStatus.unverified)
+            if nested_run_output is not None
+            else False,
             error=nested_run_output.error
             if nested_run_output is not None and hasattr(nested_run_output, "error")
             else None,

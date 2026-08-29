@@ -386,6 +386,9 @@ class RunStatus(str, Enum):
     # history-builders can skip it when rebuilding context. Pass replace_original=false
     # to keep the original COMPLETED and visible instead.
     regenerated = "REGENERATED"
+    # Terminal status for a run whose verifiers never passed within budget. The
+    # transcript is real work, so it is deliberately NOT in HISTORY_SKIP_STATUSES.
+    unverified = "UNVERIFIED"
 
 
 # Canonical set of run statuses excluded when rebuilding message history/context.

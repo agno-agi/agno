@@ -602,7 +602,13 @@ async def handle_workflow_subscription(
         # PAUSED belongs here too: a paused run's stream is settled until the
         # continue-run, so subscribers get the replay (ending in the paused
         # snapshot) rather than an open live tail claiming RUNNING.
-        if buffer_status in [RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused]:
+        if buffer_status in [
+            RunStatus.completed,
+            RunStatus.error,
+            RunStatus.cancelled,
+            RunStatus.paused,
+            RunStatus.unverified,
+        ]:
             # Run finished - replay everything still buffered
             all_events = await event_stream.replay(run_id, last_event_index=None)
 
@@ -1325,7 +1331,13 @@ async def _resume_stream_generator(
         yield f"event: error\ndata: {json.dumps(error)}\n\n"
         return
 
-    if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+    if buffer_status in (
+        RunStatus.completed,
+        RunStatus.error,
+        RunStatus.cancelled,
+        RunStatus.paused,
+        RunStatus.unverified,
+    ):
         # PATH 2: Run finished -- replay missed events from the event stream
         total_buffered = await event_stream.get_event_count(run_id)
         missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)

@@ -493,7 +493,13 @@ async def _resume_stream_generator(
         yield f"event: error\ndata: {json.dumps(error)}\n\n"
         return
 
-    if buffer_status in (RunStatus.completed, RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+    if buffer_status in (
+        RunStatus.completed,
+        RunStatus.error,
+        RunStatus.cancelled,
+        RunStatus.paused,
+        RunStatus.unverified,
+    ):
         # PATH 2: Run finished -- replay missed events from the event stream
         total_buffered = await event_stream.get_event_count(run_id)
         missed_events = await event_stream.replay(run_id, last_event_index=last_event_index)

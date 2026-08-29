@@ -1516,6 +1516,7 @@ class StudioRunnerTools(Toolkit):
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify
 
         found: List[tuple] = []
 
@@ -1535,7 +1536,9 @@ class StudioRunnerTools(Toolkit):
                         ("step_workflow", qualified, "workflow", getattr(nested_workflow, "id", None), nested_workflow)
                     )
                 return
-            if isinstance(step, (Parallel, Loop, Steps, Condition)):
+            if isinstance(step, (Parallel, Loop, Steps, Condition, Verify)):
+                # A resolved Verify carries its absorbed loop-back segment on .steps;
+                # skipping it would hide the segment's step-family references.
                 for nested in getattr(step, "steps", None) or []:
                     walk(nested, suffix)
                 for nested in getattr(step, "else_steps", None) or []:

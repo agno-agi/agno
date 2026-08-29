@@ -596,6 +596,7 @@ def apply_executor_pause(
     executor_response: Any,
     workflow_run_response: "WorkflowRunOutput",
     collected_step_outputs: list,
+    paused_step_output: Any = None,
 ) -> "StepRequirement":
     """Apply executor pause state to the workflow run response.
 
@@ -621,7 +622,16 @@ def apply_executor_pause(
     workflow_run_response.pause_kind = PauseKind.EXECUTOR
     existing = workflow_run_response.step_requirements or []
     workflow_run_response.step_requirements = existing + [step_req]
-    workflow_run_response.step_results = collected_step_outputs
+    # Persist the pausing step's own output alongside the collected ones: a composite's
+    # paused output carries state a resume must restore (the Verify gate's verification
+    # record and its budget window live there — without it every resume starts a fresh
+    # window and max_rounds is bypassed across pause cycles).
+    if paused_step_output is not None and (
+        not collected_step_outputs or collected_step_outputs[-1] is not paused_step_output
+    ):
+        workflow_run_response.step_results = collected_step_outputs + [paused_step_output]
+    else:
+        workflow_run_response.step_results = collected_step_outputs
     return step_req
 
 

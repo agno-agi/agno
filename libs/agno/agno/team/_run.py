@@ -127,6 +127,7 @@ from agno.utils.log import (
     log_info,
     log_warning,
 )
+from agno.verifiers._gate import VerificationGate
 
 # Strong references to background tasks so they aren't garbage-collected mid-execution.
 # See: https://docs.python.org/3/library/asyncio-task.html#asyncio.create_task
@@ -369,103 +370,152 @@ def _run_tasks(
 
         model_response: Optional[ModelResponse] = None
 
-        # === Iterative task loop ===
-        idle_answer_turns = 0
-        for iteration in range(team.max_iterations):
-            n_tools_before_iteration = len(run_response.tools or [])
-            log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+        # The verification gate re-enters the model with an evidence report until the
+        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
+        # re-runs the task loop: its first iteration always calls the model, and the
+        # model can reopen tasks after reading the report, so an already-settled task
+        # list cannot dead-end the re-entry.
+        verification_gate = VerificationGate.for_run(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            session=session,
+            team_mode=True,
+            resume=False,
+        )
+        if verification_gate is not None:
+            verification_gate.begin()
 
-            # On subsequent iterations, inject current task state as a user message
-            if iteration > 0:
+        while True:
+            # === Iterative task loop ===
+            idle_answer_turns = 0
+            for iteration in range(team.max_iterations):
+                n_tools_before_iteration = len(run_response.tools or [])
+                log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+
+                # On subsequent iterations, inject current task state as a user message
+                if iteration > 0:
+                    task_list = load_task_list(run_context.session_state)
+                    task_summary = task_list.get_summary_string()
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When the goal is met, write your answer and call `mark_all_complete`.",
+                    )
+                    accumulated_messages.append(state_message)
+
+                # Get model response
+                model_response = call_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
+                    messages=accumulated_messages,
+                    response_format=response_format,
+                    tools=_tools,
+                    tool_choice=team.tool_choice,
+                    tool_call_limit=team.tool_call_limit,
+                    run_response=run_response,
+                    send_media_to_model=team.send_media_to_model,
+                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    **result_store_kwargs(team),
+                    after_tool_results=build_team_after_tool_results_callback(
+                        team, run_response, session, run_messages, run_context
+                    ),
+                )
+
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Update run response
+                _update_run_response(
+                    team,
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                )
+
+                # Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
+
+                    return _hooks.handle_team_run_paused(
+                        team, run_response=run_response, session=session, run_context=run_context
+                    )
+
+                # Check termination conditions
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When the goal is met, write your answer and call `mark_all_complete`.",
-                )
-                accumulated_messages.append(state_message)
-
-            # Get model response
-            model_response = call_model_with_fallback(
-                team.model,
-                team.fallback_config,
-                messages=accumulated_messages,
-                response_format=response_format,
-                tools=_tools,
-                tool_choice=team.tool_choice,
-                tool_call_limit=team.tool_call_limit,
-                run_response=run_response,
-                send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
-                **result_store_kwargs(team),
-                after_tool_results=build_team_after_tool_results_callback(
-                    team, run_response, session, run_messages, run_context
-                ),
-            )
-
-            raise_if_cancelled(run_response.run_id)  # type: ignore
-
-            # Update run response
-            _update_run_response(
-                team,
-                model_response=model_response,
-                run_response=run_response,
-                run_messages=run_messages,
-                run_context=run_context,
-            )
-
-            # Check if delegation propagated member HITL requirements
-            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                from agno.team import _hooks
-
-                return _hooks.handle_team_run_paused(
-                    team, run_response=run_response, session=session, run_context=run_context
-                )
-
-            # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
-                break
-
-            if task_list.all_terminal():
-                # All tasks done but some may have failed
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
+                if task_list.goal_complete:
+                    log_debug("Task goal marked complete, finishing task loop.")
                     break
-                # If there are failures, continue to let model handle them
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
 
-            # A run that needs no tasks ends by answering: with an empty list, one reminder still
-            # goes out, and a second turn that writes text but calls no tool is final. Without this,
-            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
-            if not task_list.tasks:
-                if len(run_response.tools or []) == n_tools_before_iteration:
-                    idle_answer_turns += 1
-                    if idle_answer_turns >= 2:
-                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                if task_list.all_terminal():
+                    # All tasks done but some may have failed
+                    has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
+                    if not has_failures:
+                        log_debug("All tasks completed successfully, finishing task loop.")
                         break
+                    # If there are failures, continue to let model handle them
+                    log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+                # A run that needs no tasks ends by answering: with an empty list, one reminder still
+                # goes out, and a second turn that writes text but calls no tool is final. Without this,
+                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                if not task_list.tasks:
+                    if len(run_response.tools or []) == n_tools_before_iteration:
+                        idle_answer_turns += 1
+                        if idle_answer_turns >= 2:
+                            log_debug(
+                                "No tasks and no tool calls for a second turn; treating the written answer as final."
+                            )
+                            break
+                    else:
+                        idle_answer_turns = 0
                 else:
                     idle_answer_turns = 0
             else:
-                idle_answer_turns = 0
-        else:
-            # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+                # Loop exhausted without completing
+                task_list = load_task_list(run_context.session_state)
+                if not task_list.goal_complete:
+                    log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
-        # === Post-loop ===
+            # === Post-loop ===
 
-        # Always add media to run_response for caller availability
-        if model_response is not None:
-            store_media_util(run_response, model_response)
+            # Always add media to run_response for caller availability
+            if model_response is not None:
+                store_media_util(run_response, model_response)
 
-        # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+            # Convert response to structured format
+            _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+            # Verify: the checks run on the parsed output, before post-hooks
+            if verification_gate is None:
+                break
+            started = verification_gate.open_attempt()
+            if started is None:
+                break
+            handle_event(
+                started.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            decision = verification_gate.settle_attempt()
+            handle_event(
+                decision.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            if decision.reenter:
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
+                run_response.content = None
+                run_response.reasoning_content = None
+                continue
+            break
 
         # Execute post-hooks
         if team.post_hooks is not None:
@@ -505,8 +555,9 @@ def _run_tasks(
 
         generate_team_followups(team, run_response=run_response)
 
-        # Set the run status to completed
-        run_response.status = RunStatus.completed
+        # Set the run status to completed (an unverified terminal outcome wins)
+        if run_response.status != RunStatus.unverified:
+            run_response.status = RunStatus.completed
 
         # Cleanup and store
         _cleanup_and_store(team, run_response=run_response, session=session)
@@ -732,185 +783,238 @@ def _run_tasks_stream(
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
 
-        # === Iterative task loop ===
-        idle_answer_turns = 0
-        for iteration in range(team.max_iterations):
-            n_tools_before_iteration = len(run_response.tools or [])
-            log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+        # The verification gate re-enters the model with an evidence report until the
+        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
+        # re-runs the task loop: its first iteration always calls the model, and the
+        # model can reopen tasks after reading the report, so an already-settled task
+        # list cannot dead-end the re-entry.
+        verification_gate = VerificationGate.for_run(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            session=session,
+            team_mode=True,
+            resume=False,
+        )
+        if verification_gate is not None:
+            verification_gate.begin()
 
-            # Yield task iteration started event
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_team_task_iteration_started_event(
-                        from_run_response=run_response,
-                        iteration=iteration + 1,
-                        max_iterations=team.max_iterations,
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
+        while True:
+            # === Iterative task loop ===
+            idle_answer_turns = 0
+            for iteration in range(team.max_iterations):
+                n_tools_before_iteration = len(run_response.tools or [])
+                log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
 
-            # On subsequent iterations, inject current task state as a user message
-            if iteration > 0:
-                task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When the goal is met, write your answer and call `mark_all_complete`.",
-                )
-                accumulated_messages.append(state_message)
+                # Yield task iteration started event
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_team_task_iteration_started_event(
+                            from_run_response=run_response,
+                            iteration=iteration + 1,
+                            max_iterations=team.max_iterations,
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
 
-            # Get model response with streaming
-            # Update run_messages with accumulated messages for streaming
-            run_messages.messages = accumulated_messages
+                # On subsequent iterations, inject current task state as a user message
+                if iteration > 0:
+                    task_list = load_task_list(run_context.session_state)
+                    task_summary = task_list.get_summary_string()
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When the goal is met, write your answer and call `mark_all_complete`.",
+                    )
+                    accumulated_messages.append(state_message)
 
-            if team.output_model is None:
-                for event in _handle_model_response_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                # Get model response with streaming
+                # Update run_messages with accumulated messages for streaming
+                run_messages.messages = accumulated_messages
+
+                if team.output_model is None:
+                    for event in _handle_model_response_stream(
+                        team,
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
+                else:
+                    for event in _handle_model_response_stream(
+                        team,
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                        if isinstance(event, RunContentEvent):
+                            if stream_events:
+                                yield IntermediateRunContentEvent(
+                                    content=event.content,
+                                    content_type=event.content_type,
+                                )
+                        else:
+                            yield event
+
+                    for event in generate_response_with_output_model_stream(
+                        team,
+                        session=session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        stream_events=stream_events,
+                    ):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-            else:
-                for event in _handle_model_response_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
-
-                    if isinstance(event, RunContentEvent):
-                        if stream_events:
-                            yield IntermediateRunContentEvent(
-                                content=event.content,
-                                content_type=event.content_type,
-                            )
-                    else:
                         yield event
 
-                for event in generate_response_with_output_model_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    stream_events=stream_events,
-                ):
-                    raise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                raise_if_cancelled(run_response.run_id)  # type: ignore
 
-            raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
 
-            # Check if delegation propagated member HITL requirements
-            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                from agno.team import _hooks
-
-                yield from _hooks.handle_team_run_paused_stream(
-                    team, run_response=run_response, session=session, run_context=run_context
-                )
-                if yield_run_output:
-                    yield run_response
-                return
-
-            # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
-
-            # Yield task state updated event
-            if stream_events:
-                # Convert task list to TaskData for frontend
-                task_data_list = [
-                    TaskData(
-                        id=t.id,
-                        title=t.title,
-                        description=t.description,
-                        status=t.status.value,
-                        assignee=t.assignee,
-                        dependencies=t.dependencies,
-                        result=t.result,
+                    yield from _hooks.handle_team_run_paused_stream(
+                        team, run_response=run_response, session=session, run_context=run_context
                     )
-                    for t in task_list.tasks
-                ]
-                yield handle_event(  # type: ignore
-                    create_team_task_state_updated_event(
-                        from_run_response=run_response,
-                        task_summary=task_list.get_summary_string(),
-                        goal_complete=task_list.goal_complete,
-                        tasks=task_data_list,
-                        completion_summary=task_list.completion_summary,
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
+                    if yield_run_output:
+                        yield run_response
+                    return
 
-            # Yield task iteration completed event
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_team_task_iteration_completed_event(
-                        from_run_response=run_response,
-                        iteration=iteration + 1,
-                        max_iterations=team.max_iterations,
-                        task_summary=task_list.get_summary_string(),
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
+                # Check termination conditions
+                task_list = load_task_list(run_context.session_state)
 
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
-                break
+                # Yield task state updated event
+                if stream_events:
+                    # Convert task list to TaskData for frontend
+                    task_data_list = [
+                        TaskData(
+                            id=t.id,
+                            title=t.title,
+                            description=t.description,
+                            status=t.status.value,
+                            assignee=t.assignee,
+                            dependencies=t.dependencies,
+                            result=t.result,
+                        )
+                        for t in task_list.tasks
+                    ]
+                    yield handle_event(  # type: ignore
+                        create_team_task_state_updated_event(
+                            from_run_response=run_response,
+                            task_summary=task_list.get_summary_string(),
+                            goal_complete=task_list.goal_complete,
+                            tasks=task_data_list,
+                            completion_summary=task_list.completion_summary,
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
 
-            if task_list.all_terminal():
-                # All tasks done but some may have failed
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
+                # Yield task iteration completed event
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_team_task_iteration_completed_event(
+                            from_run_response=run_response,
+                            iteration=iteration + 1,
+                            max_iterations=team.max_iterations,
+                            task_summary=task_list.get_summary_string(),
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
+
+                if task_list.goal_complete:
+                    log_debug("Task goal marked complete, finishing task loop.")
                     break
-                # If there are failures, continue to let model handle them
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
 
-            # A run that needs no tasks ends by answering: with an empty list, one reminder still
-            # goes out, and a second turn that writes text but calls no tool is final. Without this,
-            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
-            if not task_list.tasks:
-                if len(run_response.tools or []) == n_tools_before_iteration:
-                    idle_answer_turns += 1
-                    if idle_answer_turns >= 2:
-                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                if task_list.all_terminal():
+                    # All tasks done but some may have failed
+                    has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
+                    if not has_failures:
+                        log_debug("All tasks completed successfully, finishing task loop.")
                         break
+                    # If there are failures, continue to let model handle them
+                    log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+                # A run that needs no tasks ends by answering: with an empty list, one reminder still
+                # goes out, and a second turn that writes text but calls no tool is final. Without this,
+                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                if not task_list.tasks:
+                    if len(run_response.tools or []) == n_tools_before_iteration:
+                        idle_answer_turns += 1
+                        if idle_answer_turns >= 2:
+                            log_debug(
+                                "No tasks and no tool calls for a second turn; treating the written answer as final."
+                            )
+                            break
+                    else:
+                        idle_answer_turns = 0
                 else:
                     idle_answer_turns = 0
             else:
-                idle_answer_turns = 0
-        else:
-            # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+                # Loop exhausted without completing
+                task_list = load_task_list(run_context.session_state)
+                if not task_list.goal_complete:
+                    log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
-        # === Post-loop ===
+            # === Post-loop ===
 
-        # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+            # Convert response to structured format
+            _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+            # Verify: the checks run on the parsed output, before the content-completed event
+            if verification_gate is None:
+                break
+            started = verification_gate.open_attempt()
+            if started is None:
+                break
+            started_event = handle_event(
+                started.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            if stream_events:
+                yield started_event
+            decision = verification_gate.settle_attempt()
+            completed_event = handle_event(
+                decision.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            if stream_events:
+                yield completed_event
+            if decision.reenter:
+                raise_if_cancelled(run_response.run_id)  # type: ignore
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
+                run_response.content = None
+                run_response.reasoning_content = None
+                continue
+            break
 
         # Yield RunContentCompletedEvent
         if stream_events:
@@ -991,8 +1095,9 @@ def _run_tasks_stream(
 
         yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
 
-        # Set the run status to completed
-        run_response.status = RunStatus.completed
+        # Set the run status to completed (an unverified terminal outcome wins)
+        if run_response.status != RunStatus.unverified:
+            run_response.status = RunStatus.completed
 
         # Cleanup and store
         _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1254,58 +1359,102 @@ def _run(
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Get the model response for the team leader
-                team.model = cast(Model, team.model)
-                model_response: ModelResponse = call_model_with_fallback(
-                    team.model,
-                    team.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=_tools,
-                    tool_choice=team.tool_choice,
-                    tool_call_limit=team.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
-                    **result_store_kwargs(team),
-                    after_tool_results=build_team_after_tool_results_callback(
-                        team, run_response, session, run_messages, run_context
-                    ),
-                )
-
-                # Check for cancellation after model call
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # If an output model is provided, generate output using the output model
-                parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
-
-                # If a parser model is provided, structure the response separately
-                parse_response_with_parser_model(
-                    team, model_response, run_messages, run_context=run_context, run_response=run_response
-                )
-
-                # 7. Update TeamRunOutput with the model response
-                _update_run_response(
+                # The verification gate re-enters the model with an evidence report until
+                # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                verification_gate = VerificationGate.for_run(
                     team,
-                    model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
+                    session=session,
+                    team_mode=True,
+                    resume=False,
                 )
+                if verification_gate is not None:
+                    verification_gate.begin()
 
-                # 7b. Check if delegation propagated member HITL requirements
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
-
-                    return _hooks.handle_team_run_paused(
-                        team, run_response=run_response, session=session, run_context=run_context
+                while True:
+                    # 6. Get the model response for the team leader
+                    team.model = cast(Model, team.model)
+                    model_response: ModelResponse = call_model_with_fallback(
+                        team.model,
+                        team.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=_tools,
+                        tool_choice=team.tool_choice,
+                        tool_call_limit=team.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=team.send_media_to_model,
+                        compression_manager=team.compression_manager if team.compress_tool_results else None,
+                        **result_store_kwargs(team),
+                        after_tool_results=build_team_after_tool_results_callback(
+                            team, run_response, session, run_messages, run_context
+                        ),
                     )
 
-                # 8. Always add media to run_response for caller availability
-                store_media_util(run_response, model_response)
+                    # Check for cancellation after model call
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 9. Convert response to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                    # If an output model is provided, generate output using the output model
+                    parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+
+                    # If a parser model is provided, structure the response separately
+                    parse_response_with_parser_model(
+                        team, model_response, run_messages, run_context=run_context, run_response=run_response
+                    )
+
+                    # 7. Update TeamRunOutput with the model response
+                    _update_run_response(
+                        team,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
+
+                    # 7b. Check if delegation propagated member HITL requirements
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        return _hooks.handle_team_run_paused(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+
+                    # 8. Always add media to run_response for caller availability
+                    store_media_util(run_response, model_response)
+
+                    # 9. Convert response to structured format
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+                    # 9v. Verify: the checks run on the parsed output, before post-hooks
+                    if verification_gate is None:
+                        break
+                    started = verification_gate.open_attempt()
+                    if started is None:
+                        break
+                    handle_event(
+                        started.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    decision = verification_gate.settle_attempt()
+                    handle_event(
+                        decision.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if decision.reenter:
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
+                        run_response.content = None
+                        run_response.reasoning_content = None
+                        continue
+                    break
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
@@ -1349,8 +1498,9 @@ def _run(
 
                 generate_team_followups(team, run_response=run_response)
 
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -1632,79 +1782,127 @@ def _run_stream(
                 # Check for cancellation before model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Get a response from the model
-                if team.output_model is None:
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-                else:
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                # The verification gate re-enters the model with an evidence report until
+                # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                verification_gate = VerificationGate.for_run(
+                    team,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    session=session,
+                    team_mode=True,
+                    resume=False,
+                )
+                if verification_gate is not None:
+                    verification_gate.begin()
 
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
+                while True:
+                    # 6. Get a response from the model
+                    if team.output_model is None:
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        for event in generate_response_with_output_model_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            raise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
-                    for event in generate_response_with_output_model_stream(
+                    # Check for cancellation after model processing
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # 6b. Check if delegation propagated member HITL requirements
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        yield from _hooks.handle_team_run_paused_stream(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+                        if yield_run_output:
+                            yield run_response
+                        return
+
+                    # 7. Parse response with parser model if provided
+                    yield from parse_response_with_parser_model_stream(
                         team,
                         session=session,
                         run_response=run_response,
-                        run_messages=run_messages,
                         stream_events=stream_events,
-                    ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-
-                # Check for cancellation after model processing
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 6b. Check if delegation propagated member HITL requirements
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
-
-                    yield from _hooks.handle_team_run_paused_stream(
-                        team, run_response=run_response, session=session, run_context=run_context
+                        run_context=run_context,
                     )
-                    if yield_run_output:
-                        yield run_response
-                    return
 
-                # 7. Parse response with parser model if provided
-                yield from parse_response_with_parser_model_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                )
+                    # 7v. Verify: the checks run on the parsed output, before the content-completed event
+                    if verification_gate is None:
+                        break
+                    started = verification_gate.open_attempt()
+                    if started is None:
+                        break
+                    started_event = handle_event(
+                        started.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if stream_events:
+                        yield started_event
+                    decision = verification_gate.settle_attempt()
+                    completed_event = handle_event(
+                        decision.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if stream_events:
+                        yield completed_event
+                    if decision.reenter:
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
+                        run_response.content = None
+                        run_response.reasoning_content = None
+                        continue
+                    break
 
                 # Yield RunContentCompletedEvent
                 if stream_events:
@@ -1789,8 +1987,9 @@ def _run_stream(
 
                 yield from generate_team_followups_stream(team, run_response=run_response, stream_events=stream_events)
 
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response
                 _cleanup_and_store(team, run_response=run_response, session=session)
@@ -2266,101 +2465,150 @@ async def _arun_tasks(
 
         model_response: Optional[ModelResponse] = None
 
-        # === Iterative task loop ===
-        idle_answer_turns = 0
-        for iteration in range(team.max_iterations):
-            n_tools_before_iteration = len(run_response.tools or [])
-            log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+        # The verification gate re-enters the model with an evidence report until the
+        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
+        # re-runs the task loop: its first iteration always calls the model, and the
+        # model can reopen tasks after reading the report, so an already-settled task
+        # list cannot dead-end the re-entry.
+        verification_gate = VerificationGate.for_run(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            session=team_session,
+            team_mode=True,
+            resume=False,
+        )
+        if verification_gate is not None:
+            await verification_gate.abegin()
 
-            # On subsequent iterations, inject current task state as a user message
-            if iteration > 0:
+        while True:
+            # === Iterative task loop ===
+            idle_answer_turns = 0
+            for iteration in range(team.max_iterations):
+                n_tools_before_iteration = len(run_response.tools or [])
+                log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+
+                # On subsequent iterations, inject current task state as a user message
+                if iteration > 0:
+                    task_list = load_task_list(run_context.session_state)
+                    task_summary = task_list.get_summary_string()
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When the goal is met, write your answer and call `mark_all_complete`.",
+                    )
+                    accumulated_messages.append(state_message)
+
+                # Get model response
+                model_response = await acall_model_with_fallback(
+                    team.model,
+                    team.fallback_config,
+                    messages=accumulated_messages,
+                    response_format=response_format,
+                    tools=_tools,
+                    tool_choice=team.tool_choice,
+                    tool_call_limit=team.tool_call_limit,
+                    run_response=run_response,
+                    send_media_to_model=team.send_media_to_model,
+                    compression_manager=team.compression_manager if team.compress_tool_results else None,
+                    **result_store_kwargs(team),
+                    after_tool_results=abuild_team_after_tool_results_callback(
+                        team, run_response, team_session, run_messages, run_context
+                    ),
+                )  # type: ignore
+
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                # Update run response
+                _update_run_response(
+                    team,
+                    model_response=model_response,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                )
+
+                # Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
+
+                    return await _hooks.ahandle_team_run_paused(
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    )
+
+                # Check termination conditions
                 task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When the goal is met, write your answer and call `mark_all_complete`.",
-                )
-                accumulated_messages.append(state_message)
-
-            # Get model response
-            model_response = await acall_model_with_fallback(
-                team.model,
-                team.fallback_config,
-                messages=accumulated_messages,
-                response_format=response_format,
-                tools=_tools,
-                tool_choice=team.tool_choice,
-                tool_call_limit=team.tool_call_limit,
-                run_response=run_response,
-                send_media_to_model=team.send_media_to_model,
-                compression_manager=team.compression_manager if team.compress_tool_results else None,
-                **result_store_kwargs(team),
-                after_tool_results=abuild_team_after_tool_results_callback(
-                    team, run_response, team_session, run_messages, run_context
-                ),
-            )  # type: ignore
-
-            await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-            # Update run response
-            _update_run_response(
-                team,
-                model_response=model_response,
-                run_response=run_response,
-                run_messages=run_messages,
-                run_context=run_context,
-            )
-
-            # Check if delegation propagated member HITL requirements
-            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                from agno.team import _hooks
-
-                return await _hooks.ahandle_team_run_paused(
-                    team, run_response=run_response, session=team_session, run_context=run_context
-                )
-
-            # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
-                break
-
-            if task_list.all_terminal():
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
+                if task_list.goal_complete:
+                    log_debug("Task goal marked complete, finishing task loop.")
                     break
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
 
-            # A run that needs no tasks ends by answering: with an empty list, one reminder still
-            # goes out, and a second turn that writes text but calls no tool is final. Without this,
-            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
-            if not task_list.tasks:
-                if len(run_response.tools or []) == n_tools_before_iteration:
-                    idle_answer_turns += 1
-                    if idle_answer_turns >= 2:
-                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                if task_list.all_terminal():
+                    has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
+                    if not has_failures:
+                        log_debug("All tasks completed successfully, finishing task loop.")
                         break
+                    log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+                # A run that needs no tasks ends by answering: with an empty list, one reminder still
+                # goes out, and a second turn that writes text but calls no tool is final. Without this,
+                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                if not task_list.tasks:
+                    if len(run_response.tools or []) == n_tools_before_iteration:
+                        idle_answer_turns += 1
+                        if idle_answer_turns >= 2:
+                            log_debug(
+                                "No tasks and no tool calls for a second turn; treating the written answer as final."
+                            )
+                            break
+                    else:
+                        idle_answer_turns = 0
                 else:
                     idle_answer_turns = 0
             else:
-                idle_answer_turns = 0
-        else:
-            # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+                # Loop exhausted without completing
+                task_list = load_task_list(run_context.session_state)
+                if not task_list.goal_complete:
+                    log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
-        # === Post-loop ===
+            # === Post-loop ===
 
-        # Always add media to run_response for caller availability
-        if model_response is not None:
-            store_media_util(run_response, model_response)
+            # Always add media to run_response for caller availability
+            if model_response is not None:
+                store_media_util(run_response, model_response)
 
-        # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+            # Convert response to structured format
+            _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+            # Verify: the checks run on the parsed output, before post-hooks
+            if verification_gate is None:
+                break
+            started = verification_gate.open_attempt()
+            if started is None:
+                break
+            handle_event(
+                started.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            decision = await verification_gate.asettle_attempt()
+            handle_event(
+                decision.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            if decision.reenter:
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
+                run_response.content = None
+                run_response.reasoning_content = None
+                continue
+            break
 
         # Execute post-hooks
         if team.post_hooks is not None:
@@ -2402,8 +2650,9 @@ async def _arun_tasks(
 
         await agenerate_team_followups(team, run_response=run_response)
 
-        # Set the run status to completed
-        run_response.status = RunStatus.completed
+        # Set the run status to completed (an unverified terminal outcome wins)
+        if run_response.status != RunStatus.unverified:
+            run_response.status = RunStatus.completed
 
         # Cleanup and store
         await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -2664,184 +2913,237 @@ async def _arun_tasks_stream(
         # Use accumulated messages for the iterative loop
         accumulated_messages = run_messages.messages
 
-        # === Iterative task loop ===
-        idle_answer_turns = 0
-        for iteration in range(team.max_iterations):
-            n_tools_before_iteration = len(run_response.tools or [])
-            log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
+        # The verification gate re-enters the model with an evidence report until the
+        # verifiers pass or the budget is spent; the whole loop is ONE run. A re-entry
+        # re-runs the task loop: its first iteration always calls the model, and the
+        # model can reopen tasks after reading the report, so an already-settled task
+        # list cannot dead-end the re-entry.
+        verification_gate = VerificationGate.for_run(
+            team,
+            run_response=run_response,
+            run_messages=run_messages,
+            run_context=run_context,
+            session=team_session,
+            team_mode=True,
+            resume=False,
+        )
+        if verification_gate is not None:
+            await verification_gate.abegin()
 
-            # Yield task iteration started event
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_team_task_iteration_started_event(
-                        from_run_response=run_response,
-                        iteration=iteration + 1,
-                        max_iterations=team.max_iterations,
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
+        while True:
+            # === Iterative task loop ===
+            idle_answer_turns = 0
+            for iteration in range(team.max_iterations):
+                n_tools_before_iteration = len(run_response.tools or [])
+                log_debug(f"Task iteration {iteration + 1}/{team.max_iterations}")
 
-            # On subsequent iterations, inject current task state as a user message
-            if iteration > 0:
-                task_list = load_task_list(run_context.session_state)
-                task_summary = task_list.get_summary_string()
-                state_message = Message(
-                    role="user",
-                    content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
-                    "Continue working on the tasks. Create, execute, or update tasks as needed. "
-                    "When the goal is met, write your answer and call `mark_all_complete`.",
-                )
-                accumulated_messages.append(state_message)
+                # Yield task iteration started event
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_team_task_iteration_started_event(
+                            from_run_response=run_response,
+                            iteration=iteration + 1,
+                            max_iterations=team.max_iterations,
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
 
-            # Get model response with streaming
-            # Update run_messages with accumulated messages for streaming
-            run_messages.messages = accumulated_messages
+                # On subsequent iterations, inject current task state as a user message
+                if iteration > 0:
+                    task_list = load_task_list(run_context.session_state)
+                    task_summary = task_list.get_summary_string()
+                    state_message = Message(
+                        role="user",
+                        content=f"<current_task_state>\n{task_summary}\n</current_task_state>\n\n"
+                        "Continue working on the tasks. Create, execute, or update tasks as needed. "
+                        "When the goal is met, write your answer and call `mark_all_complete`.",
+                    )
+                    accumulated_messages.append(state_message)
 
-            if team.output_model is None:
-                async for event in _ahandle_model_response_stream(
-                    team,
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                # Get model response with streaming
+                # Update run_messages with accumulated messages for streaming
+                run_messages.messages = accumulated_messages
+
+                if team.output_model is None:
+                    async for event in _ahandle_model_response_stream(
+                        team,
+                        session=team_session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        yield event
+                else:
+                    async for event in _ahandle_model_response_stream(
+                        team,
+                        session=team_session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        tools=_tools,
+                        response_format=response_format,
+                        stream_events=stream_events,
+                        session_state=run_context.session_state,
+                        run_context=run_context,
+                    ):
+                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                        if isinstance(event, RunContentEvent):
+                            if stream_events:
+                                yield IntermediateRunContentEvent(
+                                    content=event.content,
+                                    content_type=event.content_type,
+                                )
+                        else:
+                            yield event
+
+                    async for event in agenerate_response_with_output_model_stream(
+                        team,
+                        session=team_session,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        stream_events=stream_events,
+                    ):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
-            else:
-                async for event in _ahandle_model_response_stream(
-                    team,
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    tools=_tools,
-                    response_format=response_format,
-                    stream_events=stream_events,
-                    session_state=run_context.session_state,
-                    run_context=run_context,
-                ):
-                    if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
-
-                    if isinstance(event, RunContentEvent):
-                        if stream_events:
-                            yield IntermediateRunContentEvent(
-                                content=event.content,
-                                content_type=event.content_type,
-                            )
-                    else:
                         yield event
 
-                async for event in agenerate_response_with_output_model_stream(
-                    team,
-                    session=team_session,
-                    run_response=run_response,
-                    run_messages=run_messages,
-                    stream_events=stream_events,
-                ):
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
-                    yield event
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                # Check if delegation propagated member HITL requirements
+                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                    from agno.team import _hooks
 
-            # Check if delegation propagated member HITL requirements
-            if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                from agno.team import _hooks
+                    async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
+                        team, run_response=run_response, session=team_session, run_context=run_context
+                    ):
+                        yield item
+                    if yield_run_output:
+                        yield run_response
+                    return
 
-                async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
-                    team, run_response=run_response, session=team_session, run_context=run_context
-                ):
-                    yield item
-                if yield_run_output:
-                    yield run_response
-                return
+                # Check termination conditions
+                task_list = load_task_list(run_context.session_state)
 
-            # Check termination conditions
-            task_list = load_task_list(run_context.session_state)
-
-            # Yield task state updated event
-            if stream_events:
-                # Convert task list to TaskData for creating detailed events
-                task_data_list = [
-                    TaskData(
-                        id=t.id,
-                        title=t.title,
-                        description=t.description,
-                        status=t.status.value,
-                        assignee=t.assignee,
-                        dependencies=t.dependencies,
-                        result=t.result,
+                # Yield task state updated event
+                if stream_events:
+                    # Convert task list to TaskData for creating detailed events
+                    task_data_list = [
+                        TaskData(
+                            id=t.id,
+                            title=t.title,
+                            description=t.description,
+                            status=t.status.value,
+                            assignee=t.assignee,
+                            dependencies=t.dependencies,
+                            result=t.result,
+                        )
+                        for t in task_list.tasks
+                    ]
+                    yield handle_event(  # type: ignore
+                        create_team_task_state_updated_event(
+                            from_run_response=run_response,
+                            task_summary=task_list.get_summary_string(),
+                            goal_complete=task_list.goal_complete,
+                            tasks=task_data_list,
+                            completion_summary=task_list.completion_summary,
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
                     )
-                    for t in task_list.tasks
-                ]
-                yield handle_event(  # type: ignore
-                    create_team_task_state_updated_event(
-                        from_run_response=run_response,
-                        task_summary=task_list.get_summary_string(),
-                        goal_complete=task_list.goal_complete,
-                        tasks=task_data_list,
-                        completion_summary=task_list.completion_summary,
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
 
-            # Yield task iteration completed event
-            if stream_events:
-                yield handle_event(  # type: ignore
-                    create_team_task_iteration_completed_event(
-                        from_run_response=run_response,
-                        iteration=iteration + 1,
-                        max_iterations=team.max_iterations,
-                        task_summary=task_list.get_summary_string(),
-                    ),
-                    run_response,
-                    events_to_skip=team.events_to_skip,
-                    store_events=team.store_events,
-                )
+                # Yield task iteration completed event
+                if stream_events:
+                    yield handle_event(  # type: ignore
+                        create_team_task_iteration_completed_event(
+                            from_run_response=run_response,
+                            iteration=iteration + 1,
+                            max_iterations=team.max_iterations,
+                            task_summary=task_list.get_summary_string(),
+                        ),
+                        run_response,
+                        events_to_skip=team.events_to_skip,
+                        store_events=team.store_events,
+                    )
 
-            if task_list.goal_complete:
-                log_debug("Task goal marked complete, finishing task loop.")
-                break
-
-            if task_list.all_terminal():
-                has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
-                if not has_failures:
-                    log_debug("All tasks completed successfully, finishing task loop.")
+                if task_list.goal_complete:
+                    log_debug("Task goal marked complete, finishing task loop.")
                     break
-                log_debug("All tasks terminal but some failed, continuing to let model handle.")
 
-            # A run that needs no tasks ends by answering: with an empty list, one reminder still
-            # goes out, and a second turn that writes text but calls no tool is final. Without this,
-            # an empty list never satisfies all_terminal and a greeting burns max_iterations.
-            if not task_list.tasks:
-                if len(run_response.tools or []) == n_tools_before_iteration:
-                    idle_answer_turns += 1
-                    if idle_answer_turns >= 2:
-                        log_debug("No tasks and no tool calls for a second turn; treating the written answer as final.")
+                if task_list.all_terminal():
+                    has_failures = any(t.status == TaskStatus.failed for t in task_list.tasks)
+                    if not has_failures:
+                        log_debug("All tasks completed successfully, finishing task loop.")
                         break
+                    log_debug("All tasks terminal but some failed, continuing to let model handle.")
+
+                # A run that needs no tasks ends by answering: with an empty list, one reminder still
+                # goes out, and a second turn that writes text but calls no tool is final. Without this,
+                # an empty list never satisfies all_terminal and a greeting burns max_iterations.
+                if not task_list.tasks:
+                    if len(run_response.tools or []) == n_tools_before_iteration:
+                        idle_answer_turns += 1
+                        if idle_answer_turns >= 2:
+                            log_debug(
+                                "No tasks and no tool calls for a second turn; treating the written answer as final."
+                            )
+                            break
+                    else:
+                        idle_answer_turns = 0
                 else:
                     idle_answer_turns = 0
             else:
-                idle_answer_turns = 0
-        else:
-            # Loop exhausted without completing
-            task_list = load_task_list(run_context.session_state)
-            if not task_list.goal_complete:
-                log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
+                # Loop exhausted without completing
+                task_list = load_task_list(run_context.session_state)
+                if not task_list.goal_complete:
+                    log_warning(f"Reached max_iterations ({team.max_iterations}) without completing all tasks.")
 
-        # === Post-loop ===
+            # === Post-loop ===
 
-        # Convert response to structured format
-        _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+            # Convert response to structured format
+            _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+            # Verify: the checks run on the parsed output, before the content-completed event
+            if verification_gate is None:
+                break
+            started = verification_gate.open_attempt()
+            if started is None:
+                break
+            started_event = handle_event(
+                started.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            if stream_events:
+                yield started_event
+            decision = await verification_gate.asettle_attempt()
+            completed_event = handle_event(
+                decision.event,
+                run_response,
+                events_to_skip=team.events_to_skip,  # type: ignore
+                store_events=team.store_events,
+            )
+            if stream_events:
+                yield completed_event
+            if decision.reenter:
+                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                # Team content and reasoning content accumulate across model passes;
+                # the re-entered attempt replaces the rejected answer, not
+                # concatenates onto it.
+                run_response.content = None
+                run_response.reasoning_content = None
+                continue
+            break
 
         # Yield RunContentCompletedEvent
         if stream_events:
@@ -2927,8 +3229,9 @@ async def _arun_tasks_stream(
         ):
             yield event
 
-        # Set the run status to completed
-        run_response.status = RunStatus.completed
+        # Set the run status to completed (an unverified terminal outcome wins)
+        if run_response.status != RunStatus.unverified:
+            run_response.status = RunStatus.completed
 
         # Cleanup and store
         await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -3242,63 +3545,107 @@ async def _arun(
                 # Check for cancellation before model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Get the model response for the team leader
-                model_response = await acall_model_with_fallback(
-                    team.model,
-                    team.fallback_config,
-                    messages=run_messages.messages,
-                    tools=_tools,
-                    tool_choice=team.tool_choice,
-                    tool_call_limit=team.tool_call_limit,
-                    response_format=response_format,
-                    send_media_to_model=team.send_media_to_model,
-                    run_response=run_response,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
-                    **result_store_kwargs(team),
-                    after_tool_results=abuild_team_after_tool_results_callback(
-                        team, run_response, team_session, run_messages, run_context
-                    ),
-                )  # type: ignore
-
-                # Check for cancellation after model call
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # If an output model is provided, generate output using the output model
-                await agenerate_response_with_output_model(
-                    team, model_response=model_response, run_messages=run_messages, run_response=run_response
-                )
-
-                # If a parser model is provided, structure the response separately
-                await aparse_response_with_parser_model(
+                # The verification gate re-enters the model with an evidence report until
+                # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                verification_gate = VerificationGate.for_run(
                     team,
-                    model_response=model_response,
-                    run_messages=run_messages,
-                    run_context=run_context,
-                    run_response=run_response,
-                )
-
-                # 7. Update TeamRunOutput with the model response
-                _update_run_response(
-                    team,
-                    model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
+                    session=team_session,
+                    team_mode=True,
+                    resume=False,
                 )
+                if verification_gate is not None:
+                    await verification_gate.abegin()
 
-                # 7b. Check if delegation propagated member HITL requirements
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
+                while True:
+                    # 6. Get the model response for the team leader
+                    model_response = await acall_model_with_fallback(
+                        team.model,
+                        team.fallback_config,
+                        messages=run_messages.messages,
+                        tools=_tools,
+                        tool_choice=team.tool_choice,
+                        tool_call_limit=team.tool_call_limit,
+                        response_format=response_format,
+                        send_media_to_model=team.send_media_to_model,
+                        run_response=run_response,
+                        compression_manager=team.compression_manager if team.compress_tool_results else None,
+                        **result_store_kwargs(team),
+                        after_tool_results=abuild_team_after_tool_results_callback(
+                            team, run_response, team_session, run_messages, run_context
+                        ),
+                    )  # type: ignore
 
-                    return await _hooks.ahandle_team_run_paused(
-                        team, run_response=run_response, session=team_session, run_context=run_context
+                    # Check for cancellation after model call
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # If an output model is provided, generate output using the output model
+                    await agenerate_response_with_output_model(
+                        team, model_response=model_response, run_messages=run_messages, run_response=run_response
                     )
 
-                # 8. Always add media to run_response for caller availability
-                store_media_util(run_response, model_response)
+                    # If a parser model is provided, structure the response separately
+                    await aparse_response_with_parser_model(
+                        team,
+                        model_response=model_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        run_response=run_response,
+                    )
 
-                # 9. Convert response to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                    # 7. Update TeamRunOutput with the model response
+                    _update_run_response(
+                        team,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
+
+                    # 7b. Check if delegation propagated member HITL requirements
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        return await _hooks.ahandle_team_run_paused(
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        )
+
+                    # 8. Always add media to run_response for caller availability
+                    store_media_util(run_response, model_response)
+
+                    # 9. Convert response to structured format
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+                    # 9v. Verify: the checks run on the parsed output, before post-hooks
+                    if verification_gate is None:
+                        break
+                    started = verification_gate.open_attempt()
+                    if started is None:
+                        break
+                    handle_event(
+                        started.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    decision = await verification_gate.asettle_attempt()
+                    handle_event(
+                        decision.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if decision.reenter:
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
+                        run_response.content = None
+                        run_response.reasoning_content = None
+                        continue
+                    break
 
                 # 10. Execute post-hooks after output is generated but before response is returned
                 if team.post_hooks is not None:
@@ -3340,7 +3687,8 @@ async def _arun(
 
                 await agenerate_team_followups(team, run_response=run_response)
 
-                run_response.status = RunStatus.completed
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 13. Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -3970,81 +4318,129 @@ async def _arun_stream(
                 # Check for cancellation before model processing
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # 6. Get a response from the model
-                if team.output_model is None:
-                    async for event in _ahandle_model_response_stream(
-                        team,
-                        session=team_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-                else:
-                    async for event in _ahandle_model_response_stream(
-                        team,
-                        session=team_session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=_tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
-                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                # The verification gate re-enters the model with an evidence report until
+                # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                verification_gate = VerificationGate.for_run(
+                    team,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    session=team_session,
+                    team_mode=True,
+                    resume=False,
+                )
+                if verification_gate is not None:
+                    await verification_gate.abegin()
 
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
+                while True:
+                    # 6. Get a response from the model
+                    if team.output_model is None:
+                        async for event in _ahandle_model_response_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        async for event in _ahandle_model_response_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=_tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        async for event in agenerate_response_with_output_model_stream(
+                            team,
+                            session=team_session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
-                    async for event in agenerate_response_with_output_model_stream(
+                    # Check for cancellation after model processing
+                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # 6b. Check if delegation propagated member HITL requirements
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
+                            team, run_response=run_response, session=team_session, run_context=run_context
+                        ):
+                            yield item
+                        if yield_run_output:
+                            yield run_response
+                        return
+
+                    # 7. Parse response with parser model if provided
+                    async for event in aparse_response_with_parser_model_stream(
                         team,
                         session=team_session,
                         run_response=run_response,
-                        run_messages=run_messages,
                         stream_events=stream_events,
+                        run_context=run_context,
                     ):
-                        await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
-                # Check for cancellation after model processing
-                await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # 6b. Check if delegation propagated member HITL requirements
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
-
-                    async for item in _hooks.ahandle_team_run_paused_stream(  # type: ignore[assignment]
-                        team, run_response=run_response, session=team_session, run_context=run_context
-                    ):
-                        yield item
-                    if yield_run_output:
-                        yield run_response
-                    return
-
-                # 7. Parse response with parser model if provided
-                async for event in aparse_response_with_parser_model_stream(
-                    team,
-                    session=team_session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                ):
-                    yield event
+                    # 7v. Verify: the checks run on the parsed output, before the content-completed event
+                    if verification_gate is None:
+                        break
+                    started = verification_gate.open_attempt()
+                    if started is None:
+                        break
+                    started_event = handle_event(
+                        started.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if stream_events:
+                        yield started_event
+                    decision = await verification_gate.asettle_attempt()
+                    completed_event = handle_event(
+                        decision.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if stream_events:
+                        yield completed_event
+                    if decision.reenter:
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
+                        run_response.content = None
+                        run_response.reasoning_content = None
+                        continue
+                    break
 
                 # Yield RunContentCompletedEvent
                 if stream_events:
@@ -4133,8 +4529,9 @@ async def _arun_stream(
                 ):
                     yield event
 
-                # Set the run status to completed
-                run_response.status = RunStatus.completed
+                # Set the run status to completed (an unverified terminal outcome wins)
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
 
                 # 10. Cleanup and store the run response and session
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
@@ -7064,6 +7461,11 @@ def _truncate_team_run_to_checkpoint(run_response: "TeamRunOutput", message_inde
 
     run_response.messages = run_response.messages[:message_index]
 
+    # The verification record's attempts index into the transcript this cut just rewrote;
+    # a kept record would point at the wrong messages, so it does not survive a real
+    # truncation. The next gate (if any) builds a fresh record, mirroring _fork_team_run.
+    run_response.verification = None
+
     valid_tool_call_ids: set = set()
     for msg in run_response.messages:
         tool_call_id = getattr(msg, "tool_call_id", None)
@@ -7130,6 +7532,9 @@ def _fork_team_run(run_response: "TeamRunOutput", message_index: int) -> "TeamRu
     # store_events=True the new run's events would otherwise be the parent's
     # events with this run's events appended onto them.
     forked.events = None
+    # Same for the verification record: its attempts index into the parent's untruncated
+    # transcript; the fork's own gate starts fresh.
+    forked.verification = None
 
     _truncate_team_run_to_checkpoint(forked, message_index)
     return forked
@@ -8116,7 +8521,8 @@ def continue_run_dispatch(
             )
 
     # Fallback: nothing to do
-    run_response.status = RunStatus.completed
+    if run_response.status != RunStatus.unverified:
+        run_response.status = RunStatus.completed
     _cleanup_and_store(team, run_response=run_response, session=team_session)
     return run_response
 
@@ -8314,7 +8720,8 @@ def _continue_run_dispatch_stream_with_member_events(
         return
 
     # Fallback: nothing more to do
-    run_response.status = RunStatus.completed
+    if run_response.status != RunStatus.unverified:
+        run_response.status = RunStatus.completed
     _cleanup_and_store(team, run_response=run_response, session=team_session)
     if opts.yield_run_output:
         yield run_response
@@ -8372,54 +8779,98 @@ def _continue_run(
             try:
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Generate model response
-                model_response: ModelResponse = call_model_with_fallback(
-                    team.model,
-                    team.fallback_config,
-                    messages=run_messages.messages,
-                    response_format=response_format,
-                    tools=tools,
-                    tool_choice=team.tool_choice,
-                    tool_call_limit=team.tool_call_limit,
-                    run_response=run_response,
-                    send_media_to_model=team.send_media_to_model,
-                    compression_manager=team.compression_manager if team.compress_tool_results else None,
-                    **result_store_kwargs(team),
-                    after_tool_results=build_team_after_tool_results_callback(
-                        team, run_response, session, run_messages, run_context
-                    ),
-                )
-
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # Parse with output/parser models if needed
-                parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
-                parse_response_with_parser_model(
-                    team, model_response, run_messages, run_context=run_context, run_response=run_response
-                )
-
-                # Update run response
-                _update_run_response(
+                # The verification gate re-enters the model with an evidence report until
+                # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                verification_gate = VerificationGate.for_run(
                     team,
-                    model_response=model_response,
                     run_response=run_response,
                     run_messages=run_messages,
                     run_context=run_context,
+                    session=session,
+                    team_mode=True,
+                    resume=True,
                 )
+                if verification_gate is not None:
+                    verification_gate.begin()
 
-                # Check for new pauses (team-level tools or member propagation)
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
-
-                    return _hooks.handle_team_run_paused(
-                        team, run_response=run_response, session=session, run_context=run_context
+                while True:
+                    # Generate model response
+                    model_response: ModelResponse = call_model_with_fallback(
+                        team.model,
+                        team.fallback_config,
+                        messages=run_messages.messages,
+                        response_format=response_format,
+                        tools=tools,
+                        tool_choice=team.tool_choice,
+                        tool_call_limit=team.tool_call_limit,
+                        run_response=run_response,
+                        send_media_to_model=team.send_media_to_model,
+                        compression_manager=team.compression_manager if team.compress_tool_results else None,
+                        **result_store_kwargs(team),
+                        after_tool_results=build_team_after_tool_results_callback(
+                            team, run_response, session, run_messages, run_context
+                        ),
                     )
 
-                # Convert to structured format
-                _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
 
-                # Always add media to run_response for caller availability
-                store_media_util(run_response, model_response)
+                    # Parse with output/parser models if needed
+                    parse_response_with_output_model(team, model_response, run_messages, run_response=run_response)
+                    parse_response_with_parser_model(
+                        team, model_response, run_messages, run_context=run_context, run_response=run_response
+                    )
+
+                    # Update run response
+                    _update_run_response(
+                        team,
+                        model_response=model_response,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                    )
+
+                    # Check for new pauses (team-level tools or member propagation)
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        return _hooks.handle_team_run_paused(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+
+                    # Convert to structured format
+                    _convert_response_to_structured_format(team, run_response=run_response, run_context=run_context)
+
+                    # Always add media to run_response for caller availability
+                    store_media_util(run_response, model_response)
+
+                    # Verify: the checks run on the parsed output, before post-hooks
+                    if verification_gate is None:
+                        break
+                    started = verification_gate.open_attempt()
+                    if started is None:
+                        break
+                    handle_event(
+                        started.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    decision = verification_gate.settle_attempt()
+                    handle_event(
+                        decision.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if decision.reenter:
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
+                        run_response.content = None
+                        run_response.reasoning_content = None
+                        continue
+                    break
 
                 # Execute post-hooks
                 if team.post_hooks is not None:
@@ -8447,7 +8898,8 @@ def _continue_run(
                         log_warning(f"Error in session summary creation: {str(e)}")
 
                 # Complete
-                run_response.status = RunStatus.completed
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
                 _cleanup_and_store(team, run_response=run_response, session=session)
 
                 log_team_telemetry(team, session_id=session.session_id, run_id=run_response.run_id)
@@ -8569,78 +9021,126 @@ def _continue_run_stream(
                     stream_events=stream_events,
                 )
 
-                # Stream model response
-                if team.output_model is None:
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                            raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-                else:
-                    from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                # The verification gate re-enters the model with an evidence report until
+                # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                verification_gate = VerificationGate.for_run(
+                    team,
+                    run_response=run_response,
+                    run_messages=run_messages,
+                    run_context=run_context,
+                    session=session,
+                    team_mode=True,
+                    resume=True,
+                )
+                if verification_gate is not None:
+                    verification_gate.begin()
 
-                    for event in _handle_model_response_stream(
-                        team,
-                        session=session,
-                        run_response=run_response,
-                        run_messages=run_messages,
-                        tools=tools,
-                        response_format=response_format,
-                        stream_events=stream_events,
-                        session_state=run_context.session_state,
-                        run_context=run_context,
-                    ):
-                        if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                while True:
+                    # Stream model response
+                    if team.output_model is None:
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            yield event
+                    else:
+                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                        for event in _handle_model_response_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            tools=tools,
+                            response_format=response_format,
+                            stream_events=stream_events,
+                            session_state=run_context.session_state,
+                            run_context=run_context,
+                        ):
+                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                raise_if_cancelled(run_response.run_id)  # type: ignore
+                            if isinstance(event, RunContentEvent):
+                                if stream_events:
+                                    yield IntermediateRunContentEvent(
+                                        content=event.content,
+                                        content_type=event.content_type,
+                                    )
+                            else:
+                                yield event
+
+                        for event in generate_response_with_output_model_stream(
+                            team,
+                            session=session,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            stream_events=stream_events,
+                        ):
                             raise_if_cancelled(run_response.run_id)  # type: ignore
-                        if isinstance(event, RunContentEvent):
-                            if stream_events:
-                                yield IntermediateRunContentEvent(
-                                    content=event.content,
-                                    content_type=event.content_type,
-                                )
-                        else:
                             yield event
 
-                    for event in generate_response_with_output_model_stream(
+                    raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                    # Check for new pauses
+                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
+                        from agno.team import _hooks
+
+                        yield from _hooks.handle_team_run_paused_stream(
+                            team, run_response=run_response, session=session, run_context=run_context
+                        )
+                        if yield_run_output:
+                            yield run_response
+                        return
+
+                    # Parse response with parser model
+                    yield from parse_response_with_parser_model_stream(
                         team,
                         session=session,
                         run_response=run_response,
-                        run_messages=run_messages,
                         stream_events=stream_events,
-                    ):
-                        raise_if_cancelled(run_response.run_id)  # type: ignore
-                        yield event
-
-                raise_if_cancelled(run_response.run_id)  # type: ignore
-
-                # Check for new pauses
-                if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                    from agno.team import _hooks
-
-                    yield from _hooks.handle_team_run_paused_stream(
-                        team, run_response=run_response, session=session, run_context=run_context
+                        run_context=run_context,
                     )
-                    if yield_run_output:
-                        yield run_response
-                    return
 
-                # Parse response with parser model
-                yield from parse_response_with_parser_model_stream(
-                    team,
-                    session=session,
-                    run_response=run_response,
-                    stream_events=stream_events,
-                    run_context=run_context,
-                )
+                    # Verify: the checks run on the parsed output, before the content-completed event
+                    if verification_gate is None:
+                        break
+                    started = verification_gate.open_attempt()
+                    if started is None:
+                        break
+                    started_event = handle_event(
+                        started.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if stream_events:
+                        yield started_event
+                    decision = verification_gate.settle_attempt()
+                    completed_event = handle_event(
+                        decision.event,
+                        run_response,
+                        events_to_skip=team.events_to_skip,  # type: ignore
+                        store_events=team.store_events,
+                    )
+                    if stream_events:
+                        yield completed_event
+                    if decision.reenter:
+                        raise_if_cancelled(run_response.run_id)  # type: ignore
+                        # Team content and reasoning content accumulate across model passes;
+                        # the re-entered attempt replaces the rejected answer, not
+                        # concatenates onto it.
+                        run_response.content = None
+                        run_response.reasoning_content = None
+                        continue
+                    break
 
                 # Content completed event
                 if stream_events:
@@ -8701,7 +9201,8 @@ def _continue_run_stream(
                     store_events=team.store_events,
                 )
 
-                run_response.status = RunStatus.completed
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
                 _cleanup_and_store(team, run_response=run_response, session=session)
 
                 if stream_events:
@@ -9218,6 +9719,7 @@ async def _acontinue_run_background_stream(
                         RunStatus.paused,
                         RunStatus.cancelled,
                         RunStatus.error,
+                        RunStatus.unverified,
                     ):
                         final_status = source_status
                     else:
@@ -9248,6 +9750,7 @@ async def _acontinue_run_background_stream(
                         RunStatus.paused,
                         RunStatus.cancelled,
                         RunStatus.error,
+                        RunStatus.unverified,
                     ):
                         final_status = produced_status
                     else:
@@ -9794,18 +10297,62 @@ async def _acontinue_run(
                     run_response.status = RunStatus.running
                     run_response.content = None
 
-                    # Handle model response using shared helper
-                    paused_result = await _ahandle_model_response_for_continue(
+                    # The verification gate re-enters the model with an evidence report until
+                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                    verification_gate = VerificationGate.for_run(
                         team,
                         run_response=run_response,
                         run_messages=run_messages,
                         run_context=run_context,
-                        tools=_tools,
-                        team_session=team_session,
-                        response_format=response_format,
+                        session=team_session,
+                        team_mode=True,
+                        resume=True,
                     )
-                    if paused_result is not None:
-                        return paused_result
+                    if verification_gate is not None:
+                        await verification_gate.abegin()
+
+                    while True:
+                        # Handle model response using shared helper
+                        paused_result = await _ahandle_model_response_for_continue(
+                            team,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                            tools=_tools,
+                            team_session=team_session,
+                            response_format=response_format,
+                        )
+                        if paused_result is not None:
+                            return paused_result
+
+                        # Verify: the checks run on the parsed output, before post-hooks
+                        if verification_gate is None:
+                            break
+                        started = verification_gate.open_attempt()
+                        if started is None:
+                            break
+                        handle_event(
+                            started.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        decision = await verification_gate.asettle_attempt()
+                        handle_event(
+                            decision.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        if decision.reenter:
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
+                            run_response.content = None
+                            run_response.reasoning_content = None
+                            continue
+                        break
 
                 elif member_results:
                     # Member-only: continue the same run with results
@@ -9840,18 +10387,62 @@ async def _acontinue_run(
 
                     log_debug(f"Team Continue Run (Member HITL): {run_response.run_id}", center=True)
 
-                    # Handle model response using shared helper
-                    paused_result = await _ahandle_model_response_for_continue(
+                    # The verification gate re-enters the model with an evidence report until
+                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                    verification_gate = VerificationGate.for_run(
                         team,
                         run_response=run_response,
                         run_messages=run_messages,
                         run_context=run_context,
-                        tools=_tools,
-                        team_session=team_session,
-                        response_format=response_format,
+                        session=team_session,
+                        team_mode=True,
+                        resume=True,
                     )
-                    if paused_result is not None:
-                        return paused_result
+                    if verification_gate is not None:
+                        await verification_gate.abegin()
+
+                    while True:
+                        # Handle model response using shared helper
+                        paused_result = await _ahandle_model_response_for_continue(
+                            team,
+                            run_response=run_response,
+                            run_messages=run_messages,
+                            run_context=run_context,
+                            tools=_tools,
+                            team_session=team_session,
+                            response_format=response_format,
+                        )
+                        if paused_result is not None:
+                            return paused_result
+
+                        # Verify: the checks run on the parsed output, before post-hooks
+                        if verification_gate is None:
+                            break
+                        started = verification_gate.open_attempt()
+                        if started is None:
+                            break
+                        handle_event(
+                            started.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        decision = await verification_gate.asettle_attempt()
+                        handle_event(
+                            decision.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        if decision.reenter:
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
+                            run_response.content = None
+                            run_response.reasoning_content = None
+                            continue
+                        break
 
                 # Post-hooks
                 if team.post_hooks is not None:
@@ -9878,7 +10469,8 @@ async def _acontinue_run(
                     except Exception as e:
                         log_warning(f"Error in session summary creation: {str(e)}")
 
-                run_response.status = RunStatus.completed
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
                 await alog_team_telemetry(team, session_id=team_session.session_id, run_id=run_response.run_id)
                 log_debug(f"Team Continue Run End: {run_response.run_id}", center=True, symbol="*")
@@ -10310,80 +10902,130 @@ async def _acontinue_run_stream(
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                         yield event
 
-                    # Stream model response
-                    if team.output_model is None:
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                                await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
-                    else:
-                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                    # The verification gate re-enters the model with an evidence report until
+                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                    verification_gate = VerificationGate.for_run(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        session=team_session,
+                        team_mode=True,
+                        resume=True,
+                    )
+                    if verification_gate is not None:
+                        await verification_gate.abegin()
 
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                    while True:
+                        # Stream model response
+                        if team.output_model is None:
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                yield event
+                        else:
+                            from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                if isinstance(event, RunContentEvent):
+                                    if stream_events:
+                                        yield IntermediateRunContentEvent(
+                                            content=event.content,
+                                            content_type=event.content_type,
+                                        )
+                                else:
+                                    yield event
+
+                            async for event in agenerate_response_with_output_model_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                stream_events=stream_events,
+                            ):
                                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            if isinstance(event, RunContentEvent):
-                                if stream_events:
-                                    yield IntermediateRunContentEvent(
-                                        content=event.content,
-                                        content_type=event.content_type,
-                                    )
-                            else:
                                 yield event
 
-                        async for event in agenerate_response_with_output_model_stream(
+                        await araise_if_cancelled(run_response.run_id)  # type: ignore
+
+                        # Check for new pauses
+                        if run_response.requirements and any(
+                            not req.is_resolved() for req in run_response.requirements
+                        ):
+                            from agno.team import _hooks
+
+                            async for item in _hooks.ahandle_team_run_paused_stream(
+                                team, run_response=run_response, session=team_session, run_context=run_context
+                            ):
+                                yield item
+                            if yield_run_output:
+                                yield run_response
+                            return
+
+                        # Parse response with parser model
+                        async for event in aparse_response_with_parser_model_stream(
                             team,
                             session=team_session,
                             run_response=run_response,
-                            run_messages=run_messages,
                             stream_events=stream_events,
+                            run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
-                    await araise_if_cancelled(run_response.run_id)  # type: ignore
-
-                    # Check for new pauses
-                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                        from agno.team import _hooks
-
-                        async for item in _hooks.ahandle_team_run_paused_stream(
-                            team, run_response=run_response, session=team_session, run_context=run_context
-                        ):
-                            yield item
-                        if yield_run_output:
-                            yield run_response
-                        return
-
-                    # Parse response with parser model
-                    async for event in aparse_response_with_parser_model_stream(
-                        team,
-                        session=team_session,
-                        run_response=run_response,
-                        stream_events=stream_events,
-                        run_context=run_context,
-                    ):
-                        yield event
+                        # Verify: the checks run on the parsed output, before the content-completed event
+                        if verification_gate is None:
+                            break
+                        started = verification_gate.open_attempt()
+                        if started is None:
+                            break
+                        started_event = handle_event(
+                            started.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        if stream_events:
+                            yield started_event
+                        decision = await verification_gate.asettle_attempt()
+                        completed_event = handle_event(
+                            decision.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        if stream_events:
+                            yield completed_event
+                        if decision.reenter:
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
+                            run_response.content = None
+                            run_response.reasoning_content = None
+                            continue
+                        break
 
                 elif member_results:
                     # Member-only: continue the same run with member results
@@ -10429,78 +11071,128 @@ async def _acontinue_run_stream(
                             store_events=team.store_events,
                         )
 
-                    # Stream model response
-                    if team.output_model is None:
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
-                                await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            yield event
-                    else:
-                        from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+                    # The verification gate re-enters the model with an evidence report until
+                    # the verifiers pass or the budget is spent; the whole loop is ONE run.
+                    verification_gate = VerificationGate.for_run(
+                        team,
+                        run_response=run_response,
+                        run_messages=run_messages,
+                        run_context=run_context,
+                        session=team_session,
+                        team_mode=True,
+                        resume=True,
+                    )
+                    if verification_gate is not None:
+                        await verification_gate.abegin()
 
-                        async for event in _ahandle_model_response_stream(
-                            team,
-                            session=team_session,
-                            run_response=run_response,
-                            run_messages=run_messages,
-                            tools=_tools,
-                            response_format=response_format,
-                            stream_events=stream_events,
-                            session_state=run_context.session_state,
-                            run_context=run_context,
-                        ):
-                            if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                    while True:
+                        # Stream model response
+                        if team.output_model is None:
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                yield event
+                        else:
+                            from agno.run.team import IntermediateRunContentEvent, RunContentEvent
+
+                            async for event in _ahandle_model_response_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                tools=_tools,
+                                response_format=response_format,
+                                stream_events=stream_events,
+                                session_state=run_context.session_state,
+                                run_context=run_context,
+                            ):
+                                if not isinstance(event, _MEMBER_CANCEL_BYPASS_EVENT_TYPES):
+                                    await araise_if_cancelled(run_response.run_id)  # type: ignore
+                                if isinstance(event, RunContentEvent):
+                                    if stream_events:
+                                        yield IntermediateRunContentEvent(
+                                            content=event.content,
+                                            content_type=event.content_type,
+                                        )
+                                else:
+                                    yield event
+
+                            async for event in agenerate_response_with_output_model_stream(
+                                team,
+                                session=team_session,
+                                run_response=run_response,
+                                run_messages=run_messages,
+                                stream_events=stream_events,
+                            ):
                                 await araise_if_cancelled(run_response.run_id)  # type: ignore
-                            if isinstance(event, RunContentEvent):
-                                if stream_events:
-                                    yield IntermediateRunContentEvent(
-                                        content=event.content,
-                                        content_type=event.content_type,
-                                    )
-                            else:
                                 yield event
 
-                        async for event in agenerate_response_with_output_model_stream(
+                        # Check for new pauses
+                        if run_response.requirements and any(
+                            not req.is_resolved() for req in run_response.requirements
+                        ):
+                            from agno.team import _hooks
+
+                            async for item in _hooks.ahandle_team_run_paused_stream(
+                                team, run_response=run_response, session=team_session, run_context=run_context
+                            ):
+                                yield item
+                            if yield_run_output:
+                                yield run_response
+                            return
+
+                        # Parse response with parser model
+                        async for event in aparse_response_with_parser_model_stream(
                             team,
                             session=team_session,
                             run_response=run_response,
-                            run_messages=run_messages,
                             stream_events=stream_events,
+                            run_context=run_context,
                         ):
-                            await araise_if_cancelled(run_response.run_id)  # type: ignore
                             yield event
 
-                    # Check for new pauses
-                    if run_response.requirements and any(not req.is_resolved() for req in run_response.requirements):
-                        from agno.team import _hooks
-
-                        async for item in _hooks.ahandle_team_run_paused_stream(
-                            team, run_response=run_response, session=team_session, run_context=run_context
-                        ):
-                            yield item
-                        if yield_run_output:
-                            yield run_response
-                        return
-
-                    # Parse response with parser model
-                    async for event in aparse_response_with_parser_model_stream(
-                        team,
-                        session=team_session,
-                        run_response=run_response,
-                        stream_events=stream_events,
-                        run_context=run_context,
-                    ):
-                        yield event
+                        # Verify: the checks run on the parsed output, before the content-completed event
+                        if verification_gate is None:
+                            break
+                        started = verification_gate.open_attempt()
+                        if started is None:
+                            break
+                        started_event = handle_event(
+                            started.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        if stream_events:
+                            yield started_event
+                        decision = await verification_gate.asettle_attempt()
+                        completed_event = handle_event(
+                            decision.event,
+                            run_response,
+                            events_to_skip=team.events_to_skip,  # type: ignore
+                            store_events=team.store_events,
+                        )
+                        if stream_events:
+                            yield completed_event
+                        if decision.reenter:
+                            await araise_if_cancelled(run_response.run_id)  # type: ignore
+                            # Team content and reasoning content accumulate across model passes;
+                            # the re-entered attempt replaces the rejected answer, not
+                            # concatenates onto it.
+                            run_response.content = None
+                            run_response.reasoning_content = None
+                            continue
+                        break
 
                 # Content completed
                 if stream_events:
@@ -10561,7 +11253,8 @@ async def _acontinue_run_stream(
                     store_events=team.store_events,
                 )
 
-                run_response.status = RunStatus.completed
+                if run_response.status != RunStatus.unverified:
+                    run_response.status = RunStatus.completed
                 await _acleanup_and_store(team, run_response=run_response, session=team_session)
 
                 if stream_events:

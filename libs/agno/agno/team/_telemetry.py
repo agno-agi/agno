@@ -35,6 +35,7 @@ def get_telemetry_data(team: "Team") -> Dict[str, Any]:
         "has_knowledge": team.knowledge is not None,
         "has_tools": team.tools is not None,
         "has_learnings": team._learning is not None,
+        "has_verifiers": team.verifiers is not None,
     }
 
 

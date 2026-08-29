@@ -161,6 +161,7 @@ from agno.workflow.utils import (
     save_paused_session,
     step_pause_status,
 )
+from agno.workflow.verify import Verify, resolve_verify_steps
 
 # Set to prevent background tasks from being garbage-collected
 _workflow_background_tasks: set[asyncio.Task[None]] = set()
@@ -172,6 +173,7 @@ STEP_TYPE_MAPPING = {
     Parallel: StepType.PARALLEL,
     Condition: StepType.CONDITION,
     Router: StepType.ROUTER,
+    Verify: StepType.VERIFY,
 }
 
 # Cancel raises immediately on every event. Only terminal events bypass so the
@@ -197,6 +199,7 @@ WorkflowStep = Union[
     Parallel,
     Condition,
     Router,
+    Verify,
     "Workflow",
     Callable[
         [StepInput],
@@ -226,10 +229,55 @@ def _step_on_error(step: Union[Step, Condition]) -> Union[OnError, str]:
     return hr.on_error
 
 
+def _adopt_nested_verify_owners(steps: Any, workflow: Any) -> None:
+    """Pin the owning workflow on every Verify nested inside container steps.
+
+    Containers prepare their own inner steps at execute time with no workflow reference,
+    so a nested Verify's checks would receive workflow=None. Walked here, from the one
+    place that knows the owner; a Verify already bound keeps its binding (the resolver
+    guards on `_workflow is None`).
+    """
+    from agno.workflow.verify import Verify as _Verify
+
+    stack = list(steps or [])
+    visited: set = set()
+    while stack:
+        node = stack.pop()
+        if id(node) in visited:
+            continue
+        visited.add(id(node))
+        if isinstance(node, Workflow):
+            # A nested workflow owns its own Verifies; pinning the outer owner here
+            # would misroute their checks' workflow argument.
+            continue
+        if isinstance(node, _Verify) and node._workflow is None:
+            node._workflow = workflow
+        for attr in ("steps", "else_steps"):
+            children = getattr(node, attr, None)
+            if isinstance(children, list):
+                stack.extend(children)
+        choices = getattr(node, "choices", None)
+        if isinstance(choices, list):
+            for child in choices:
+                # A list route is a raw list of steps until Router wraps it; walk its
+                # elements, not the list object.
+                if isinstance(child, list):
+                    stack.extend(child)
+                else:
+                    stack.append(child)
+        elif isinstance(choices, dict):
+            for child in choices.values():
+                if isinstance(child, list):
+                    stack.extend(child)
+                else:
+                    stack.append(child)
+
+
 def _find_inner_step_by_executor(
     step: WorkflowStep,
     executor_id: Optional[str] = None,
     executor_name: Optional[str] = None,
+    step_id: Optional[str] = None,
 ) -> Optional[Step]:
     """Find an inner Step within a composite step (Condition, Loop, etc.) by executor identity.
 
@@ -243,6 +291,8 @@ def _find_inner_step_by_executor(
     if isinstance(step, Step):
         executor = getattr(step, "agent", None) or getattr(step, "team", None)
         if executor is not None:
+            if step_id and getattr(step, "step_id", None) not in (None, step_id):
+                return None
             return step
         return None
 
@@ -258,6 +308,13 @@ def _find_inner_step_by_executor(
         if isinstance(inner, Step):
             executor = getattr(inner, "agent", None) or getattr(inner, "team", None)
             if executor is not None:
+                # Exact step identity outranks executor identity: one Agent may be
+                # deliberately reused across several workflow steps, and resuming the
+                # first wrapper that shares the executor would replay the wrong step.
+                if step_id:
+                    if getattr(inner, "step_id", None) == step_id:
+                        return inner
+                    continue
                 if not has_filter:
                     # No filter — return first inner step with an agent/team executor
                     return inner
@@ -267,11 +324,129 @@ def _find_inner_step_by_executor(
                     return inner
         else:
             # Recurse into nested composite steps (not plain Steps without executors)
-            found = _find_inner_step_by_executor(inner, executor_id, executor_name)
+            found = _find_inner_step_by_executor(inner, executor_id, executor_name, step_id=step_id)
             if found is not None:
                 return found
 
+    # A step_id that matched nothing falls back to executor identity so older persisted
+    # requirements (no step_id) and renumbered steps still resume.
+    if step_id and (executor_id or executor_name):
+        return _find_inner_step_by_executor(step, executor_id, executor_name)
     return None
+
+
+def _paused_step_identity(workflow_run_response: Any, step_req: Any) -> Optional[str]:
+    """The step_id of the step whose executor actually paused.
+
+    The pause requirement is minted against the first executor-bearing inner step of the
+    paused composite, which is not necessarily the step that paused — a container can
+    pause in a later step while an earlier one shares the same executor. The paused step
+    output chain records the true identity, so it outranks the requirement's step_id;
+    the requirement's step_id remains the answer for rows without a paused output chain.
+    """
+    executor_run_id = getattr(step_req, "executor_run_id", None)
+    results = getattr(workflow_run_response, "step_results", None) or []
+
+    def walk(outputs: Any) -> Optional[str]:
+        for output in reversed(list(outputs)):
+            nested = getattr(output, "steps", None)
+            if nested:
+                found = walk(nested)
+                if found is not None:
+                    return found
+            if not getattr(output, "is_paused", False):
+                continue
+            executor_type = getattr(output, "executor_type", None)
+            if getattr(executor_type, "value", executor_type) not in ("agent", "team"):
+                continue
+            run_id = getattr(output, "step_run_id", None)
+            if executor_run_id and run_id and run_id != executor_run_id:
+                continue
+            return getattr(output, "step_id", None)
+        return None
+
+    found = walk(results)
+    return found if found is not None else getattr(step_req, "step_id", None)
+
+
+def _find_resumable_composite(step: Any, step_req: Any, workflow_run_response: Any = None) -> Optional[Any]:
+    """The deepest composite inside ``step`` (or ``step`` itself) that must finish its own
+    job after its paused executor resumes.
+
+    The resume seam continues only the paused EXECUTOR; any hook-bearing composite (the
+    Verify gate) between that executor and the top level must regain control afterwards or
+    its remaining work — the checks themselves — is silently skipped. Deepest match wins so
+    a gate nested inside a container is found through the container.
+
+    Ownership is judged step_id-first: when the pause names a step_id, only a composite
+    holding that exact step owns the pause. Executor identity alone is not ownership —
+    one agent may serve both a gate's segment and a step outside it, and handing the
+    outside step's continued output to the gate would re-run checks on an output the gate
+    was never mounted on. Executor-identity matching remains the fallback for a step_id
+    that names no live step (older rows, a rebuilt workflow with re-minted ids).
+    """
+    executor_id = getattr(step_req, "executor_id", None)
+    executor_name = getattr(step_req, "executor_name", None)
+    if workflow_run_response is not None:
+        step_id = _paused_step_identity(workflow_run_response, step_req)
+    else:
+        step_id = getattr(step_req, "step_id", None)
+
+    def children_of(node: Any) -> list:
+        found: list = []
+        for attr in ("steps", "else_steps"):
+            value = getattr(node, attr, None)
+            if isinstance(value, list):
+                found.extend(value)
+        choices = getattr(node, "choices", None)
+        if isinstance(choices, list):
+            for child in choices:
+                if isinstance(child, list):
+                    found.extend(child)
+                else:
+                    found.append(child)
+        elif isinstance(choices, dict):
+            for child in choices.values():
+                if isinstance(child, list):
+                    found.extend(child)
+                else:
+                    found.append(child)
+        return found
+
+    def subtree_has_step_id(node: Any) -> bool:
+        if getattr(node, "step_id", None) == step_id:
+            return True
+        return any(subtree_has_step_id(child) for child in children_of(node))
+
+    def owns_executor(node: Any, by_step_id: bool) -> bool:
+        if by_step_id:
+            return _find_inner_step_by_executor(node, step_id=step_id) is not None
+        return _find_inner_step_by_executor(node, executor_id=executor_id, executor_name=executor_name) is not None
+
+    def deepest(node: Any, by_step_id: bool) -> Optional[Any]:
+        for child in children_of(node):
+            found = deepest(child, by_step_id)
+            if found is not None:
+                return found
+        if hasattr(node, "continue_from_paused") and owns_executor(node, by_step_id):
+            return node
+        return None
+
+    def resolve(root: Any) -> Optional[Any]:
+        if step_id:
+            found = deepest(root, by_step_id=True)
+            if found is not None:
+                return found
+            if subtree_has_step_id(root):
+                # The paused step_id names a live step that no composite owns; a shared
+                # executor must not hand its output to a gate it never ran under.
+                return None
+        return deepest(root, by_step_id=False)
+
+    if hasattr(step, "continue_from_paused"):
+        nested = resolve(step)
+        return nested if nested is not None and nested is not step else step
+    return resolve(step)
 
 
 def _find_paused_executor_run(
@@ -351,7 +526,7 @@ class WorkflowLinkCollisionError(ValueError):
 # Container step types, as serialized by each container's ``to_dict``. A
 # config walked from the db has dicts where an in-process workflow has step
 # objects, and both must produce the same links.
-_CONTAINER_STEP_TYPES = {"parallel", "loop", "steps", "condition"}
+_CONTAINER_STEP_TYPES = {"parallel", "loop", "steps", "condition", "verify"}
 
 
 def _step_link_children(step: Any) -> Optional[Tuple[List[Any], List[Any]]]:
@@ -369,7 +544,7 @@ def _step_link_children(step: Any) -> Optional[Tuple[List[Any], List[Any]]]:
         return None
     if isinstance(step, Router):
         return list(getattr(step, "choices", None) or []), []
-    if isinstance(step, (Parallel, Loop, Steps, Condition)):
+    if isinstance(step, (Parallel, Loop, Steps, Condition, Verify)):
         return list(getattr(step, "steps", None) or []), list(getattr(step, "else_steps", None) or [])
     return None
 
@@ -496,7 +671,7 @@ def _step_from_dict(
     links: Optional[List[Dict[str, Any]]] = None,
     strict: bool = False,
     branch_suffix: str = "",
-) -> Union[Step, Steps, Loop, Parallel, Condition, Router]:
+) -> Union[Step, Steps, Loop, Parallel, Condition, Router, Verify]:
     """
     Deserialize a step from a dictionary based on its type.
 
@@ -525,6 +700,8 @@ def _step_from_dict(
         )
     elif step_type == "Router":
         return Router.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
+    elif step_type == "Verify":
+        return Verify.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     elif step_type == "Step":
         return Step.from_dict(data, registry=registry, db=db, links=links, strict=strict, branch_suffix=branch_suffix)
     else:
@@ -548,6 +725,7 @@ WorkflowSteps = Union[
             Parallel,
             Condition,
             Router,
+            Verify,
             "Workflow",  # Nested workflow support
         ]
     ],
@@ -2961,7 +3139,13 @@ class Workflow:
                         if resolved:
                             _inner, _executor_run = resolved
                             apply_executor_pause(
-                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                                _inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             save_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
@@ -3361,6 +3545,7 @@ class Workflow:
                                             _executor_run,
                                             workflow_run_response,
                                             collected_step_outputs,
+                                            paused_step_output=step_output,
                                         )
                                         yield create_executor_paused_event(
                                             step_req, _inner, i, step_name, workflow_run_response
@@ -4009,7 +4194,13 @@ class Workflow:
                         if resolved:
                             _inner, _executor_run = resolved
                             apply_executor_pause(
-                                _inner, i, step_name, _executor_run, workflow_run_response, collected_step_outputs
+                                _inner,
+                                i,
+                                step_name,
+                                _executor_run,
+                                workflow_run_response,
+                                collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             await asave_paused_session(self, workflow_session, workflow_run_response)
                             return workflow_run_response
@@ -4441,6 +4632,7 @@ class Workflow:
                                             _executor_run,
                                             workflow_run_response,
                                             collected_step_outputs,
+                                            paused_step_output=step_output,
                                         )
                                         yield create_executor_paused_event(
                                             step_req, _inner, i, step_name, workflow_run_response
@@ -6737,6 +6929,12 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
+        # A continue may land on a workflow object that never ran in this process (server
+        # restart between pause and resume). The persisted paused index was minted against
+        # the prepared steps list — Verify loop-back segments absorbed — so prepare here,
+        # before any step is located by index. Idempotent when run() already prepared.
+        self._prepare_steps()
+
         # Keep step identity stable across the run's pause/continue boundary
         self._restore_paused_step_ids(run_response)
 
@@ -6983,6 +7181,31 @@ class Workflow:
 
                     raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    _resumable = (
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
+                    )
+                    if _resumable is not None:
+                        step_output = _resumable.continue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -6995,6 +7218,7 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             save_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
@@ -7003,6 +7227,15 @@ class Workflow:
                     if workflow_run_response is not None and hasattr(step, "_store_executor_response"):
                         self._store_continue_executor_response(workflow_run_response, step_output)
 
+                    # A composite that paused persisted its own paused output as a
+                    # placeholder (it carries the verification record); the completed
+                    # resume replaces it, so drop the stale entry before appending.
+                    while (
+                        collected_step_outputs
+                        and getattr(collected_step_outputs[-1], "is_paused", False)
+                        and getattr(collected_step_outputs[-1], "step_name", None) == step_name
+                    ):
+                        collected_step_outputs.pop()
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
                     shared_images.extend(step_output.images or [])
@@ -7171,6 +7404,7 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             save_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
@@ -7321,6 +7555,7 @@ class Workflow:
                             _executor_run,
                             workflow_run_response,
                             collected_step_outputs,
+                            paused_step_output=step_output,
                         )
                         save_paused_session(self, session, workflow_run_response)
                         return workflow_run_response
@@ -7447,6 +7682,7 @@ class Workflow:
                 step,
                 executor_id=step_req.executor_id,
                 executor_name=step_req.executor_name,
+                step_id=getattr(step_req, "step_id", None),
             )
         )
         if inner_step is None:
@@ -7509,6 +7745,7 @@ class Workflow:
                 step,
                 executor_id=step_req.executor_id,
                 executor_name=step_req.executor_name,
+                step_id=getattr(step_req, "step_id", None),
             )
         )
         if inner_step is None:
@@ -7598,6 +7835,7 @@ class Workflow:
                 step,
                 executor_id=step_req.executor_id,
                 executor_name=step_req.executor_name,
+                step_id=getattr(step_req, "step_id", None),
             )
         )
         if inner_step is None:
@@ -7683,6 +7921,7 @@ class Workflow:
                 step,
                 executor_id=step_req.executor_id,
                 executor_name=step_req.executor_name,
+                step_id=getattr(step_req, "step_id", None),
             )
         )
         if inner_step is None:
@@ -7840,6 +8079,31 @@ class Workflow:
                     if step_output is None:
                         step_output = StepOutput(content="")
 
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    _resumable = (
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
+                    )
+                    if _resumable is not None:
+                        step_output = _resumable.continue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -7851,11 +8115,21 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
                             save_paused_session(self, session, workflow_run_response)
                             return
 
+                    # A composite that paused persisted its own paused output as a
+                    # placeholder (it carries the verification record); the completed
+                    # resume replaces it, so drop the stale entry before appending.
+                    while (
+                        collected_step_outputs
+                        and getattr(collected_step_outputs[-1], "is_paused", False)
+                        and getattr(collected_step_outputs[-1], "step_name", None) == step_name
+                    ):
+                        collected_step_outputs.pop()
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
                     shared_images.extend(step_output.images or [])
@@ -8105,6 +8379,7 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             yield create_executor_paused_event(
                                 new_req, _router_inner, i, step_name, workflow_run_response
@@ -8250,6 +8525,7 @@ class Workflow:
                                         _executor_run,
                                         workflow_run_response,
                                         collected_step_outputs,
+                                        paused_step_output=step_output,
                                     )
                                     yield create_executor_paused_event(
                                         step_req, _inner, i, step_name, workflow_run_response
@@ -8749,6 +9025,12 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
+        # A continue may land on a workflow object that never ran in this process (server
+        # restart between pause and resume). The persisted paused index was minted against
+        # the prepared steps list — Verify loop-back segments absorbed — so prepare here,
+        # before any step is located by index. Idempotent when arun() already prepared.
+        self._prepare_steps()
+
         # Keep step identity stable across the run's pause/continue boundary
         self._restore_paused_step_ids(run_response)
 
@@ -9028,6 +9310,31 @@ class Workflow:
 
                     await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
 
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    _resumable = (
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
+                    )
+                    if _resumable is not None and hasattr(_resumable, "acontinue_from_paused"):
+                        step_output = await _resumable.acontinue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -9039,10 +9346,20 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             await asave_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
 
+                    # A composite that paused persisted its own paused output as a
+                    # placeholder (it carries the verification record); the completed
+                    # resume replaces it, so drop the stale entry before appending.
+                    while (
+                        collected_step_outputs
+                        and getattr(collected_step_outputs[-1], "is_paused", False)
+                        and getattr(collected_step_outputs[-1], "step_name", None) == step_name
+                    ):
+                        collected_step_outputs.pop()
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
                     shared_images.extend(step_output.images or [])
@@ -9211,6 +9528,7 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             await asave_paused_session(self, session, workflow_run_response)
                             return workflow_run_response
@@ -9348,6 +9666,7 @@ class Workflow:
                             _executor_run,
                             workflow_run_response,
                             collected_step_outputs,
+                            paused_step_output=step_output,
                         )
                         await asave_paused_session(self, session, workflow_run_response)
                         return workflow_run_response
@@ -9580,6 +9899,31 @@ class Workflow:
                     if step_output is None:
                         step_output = StepOutput(content="")
 
+                    # A composite step (Verify) must finish its own job after the inner
+                    # executor resumes: run the rest of its segment and its checks. Routing
+                    # alone would publish the INNER step's output as the composite's and the
+                    # composite's remaining work - for a verification gate, the checks
+                    # themselves - would be silently skipped.
+                    _resumable = (
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
+                    )
+                    if _resumable is not None and hasattr(_resumable, "acontinue_from_paused"):
+                        step_output = await _resumable.acontinue_from_paused(
+                            continued_output=step_output,
+                            step_req=executor_step_req,
+                            step_input=step_input,
+                            workflow_run_response=workflow_run_response,
+                            workflow_session=session,
+                            run_context=run_context,
+                            store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
+                            add_workflow_history_to_steps=self.add_workflow_history_to_steps,
+                            num_history_runs=self.num_history_runs,
+                            background_tasks=background_tasks,
+                        )
+
                     if is_executor_pause(step_output):
                         resolved = resolve_executor_pause(step, workflow_run_response)
                         if resolved:
@@ -9591,11 +9935,21 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             yield create_executor_paused_event(new_req, _inner, i, step_name, workflow_run_response)
                             await asave_paused_session(self, session, workflow_run_response)
                             return
 
+                    # A composite that paused persisted its own paused output as a
+                    # placeholder (it carries the verification record); the completed
+                    # resume replaces it, so drop the stale entry before appending.
+                    while (
+                        collected_step_outputs
+                        and getattr(collected_step_outputs[-1], "is_paused", False)
+                        and getattr(collected_step_outputs[-1], "step_name", None) == step_name
+                    ):
+                        collected_step_outputs.pop()
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
                     shared_images.extend(step_output.images or [])
@@ -9846,6 +10200,7 @@ class Workflow:
                                 _executor_run,
                                 workflow_run_response,
                                 collected_step_outputs,
+                                paused_step_output=step_output,
                             )
                             yield create_executor_paused_event(
                                 new_req, _router_inner, i, step_name, workflow_run_response
@@ -9991,6 +10346,7 @@ class Workflow:
                                         _executor_run,
                                         workflow_run_response,
                                         collected_step_outputs,
+                                        paused_step_output=step_output,
                                     )
                                     yield create_executor_paused_event(
                                         step_req, _inner, i, step_name, workflow_run_response
@@ -10912,7 +11268,7 @@ class Workflow:
     def _prepare_steps(self):
         """Prepare the steps for execution"""
         if not callable(self.steps) and self.steps is not None:
-            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router, "Workflow"]] = []
+            prepared_steps: List[Union[Step, Steps, Loop, Parallel, Condition, Router, Verify, "Workflow"]] = []
             for i, step in enumerate(self.steps):  # type: ignore
                 if callable(step) and hasattr(step, "__name__"):
                     step_name = step.__name__
@@ -10936,7 +11292,7 @@ class Workflow:
                         "but no database is configured in the Workflow. "
                         "History won't be persisted. Add a database to persist runs across executions."
                     )
-                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
                     log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
@@ -10944,7 +11300,10 @@ class Workflow:
                 else:
                     raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-            self.steps = prepared_steps  # type: ignore
+            # Absorb each Verify's loop-back segment so the gate can re-run it with the
+            # evidence report; raises here — before any step runs — on a bad target.
+            self.steps = resolve_verify_steps(prepared_steps, owner=self)  # type: ignore
+            _adopt_nested_verify_owners(self.steps, self)
             log_debug("Step preparation completed")
 
     def print_response(
@@ -11184,7 +11543,7 @@ class Workflow:
                     [serialize_step(step) for step in step.choices] if hasattr(step, "choices") else None
                 )
 
-            elif isinstance(step, (Loop, Condition, Steps, Parallel)):
+            elif isinstance(step, (Loop, Condition, Steps, Parallel, Verify)):
                 # Condition may also have else_steps
                 step_dict["steps"] = [serialize_step(s) for s in step.steps] if hasattr(step, "steps") else None
                 if isinstance(step, Condition) and getattr(step, "else_steps", None):
@@ -11749,6 +12108,18 @@ class Workflow:
                 # human_review preserves it through the copy.
                 human_review=step.human_review,
             )
+
+        # Handle Verify gates
+        from agno.workflow.verify import Verify as _Verify
+
+        if isinstance(step, _Verify):
+            copied = copy(step)
+            # The absorbed segment must be deep-copied like any container's steps (db-backed
+            # agents cannot survive a naive deepcopy), and the copy must re-bind: a shared
+            # _workflow pointer would trip the cross-workflow reuse guard on its first run.
+            copied.steps = [self._deep_copy_single_step(s) for s in step.steps] if step.steps else []
+            copied._workflow = None
+            return copied
 
         # Handle Steps container
         if isinstance(step, Steps):

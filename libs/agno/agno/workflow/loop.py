@@ -34,6 +34,7 @@ WorkflowSteps = List[
         "Parallel",  # type: ignore # noqa: F821
         "Condition",  # type: ignore # noqa: F821
         "Router",  # type: ignore # noqa: F821
+        "Verify",  # type: ignore # noqa: F821
         "Workflow",  # type: ignore # noqa: F821 - Nested workflow support
     ]
 ]
@@ -238,6 +239,12 @@ class Loop:
                 return Router.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
                 )
+            elif step_type == "Verify":
+                from agno.workflow.verify import Verify
+
+                return Verify.from_dict(
+                    step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
+                )
             else:
                 return Step.from_dict(
                     step_data, registry=registry, db=db, links=links, strict=strict, branch_suffix=suffix
@@ -355,6 +362,7 @@ class Loop:
         from agno.workflow.router import Router
         from agno.workflow.step import Step
         from agno.workflow.steps import Steps
+        from agno.workflow.verify import Verify, resolve_verify_steps
         from agno.workflow.workflow import Workflow
 
         prepared_steps: WorkflowSteps = []
@@ -367,12 +375,12 @@ class Loop:
                 prepared_steps.append(Step(name=step.name, description=step.description, team=step))
             elif isinstance(step, Workflow):
                 prepared_steps.append(Step(name=step.name, description=step.description, workflow=step))
-            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+            elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router, Verify)):
                 prepared_steps.append(step)
             else:
                 raise ValueError(f"Invalid step type: {type(step).__name__}")
 
-        self.steps = prepared_steps
+        self.steps = resolve_verify_steps(prepared_steps)
 
     def _update_step_input_from_outputs(
         self,

@@ -9,7 +9,7 @@ over the wire and raises on binary media.
 """
 
 import json
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from mcp.types import AudioContent, ContentBlock, ImageContent, TextContent
 
@@ -76,12 +76,60 @@ def _json_safe(data: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(json.dumps(data, default=json_serializer))
 
 
+def _verification_summary(run_output: AnyRunOutput) -> Optional[Dict[str, Any]]:
+    """Compact status + stop_reason view of the run's verification record.
+
+    The full record (attempts, verdicts, reports) is context the frontend model
+    does not need next to the answer - full mode ships it via ``to_dict()``.
+    Accepts the record as a dataclass (fresh run) or a dict (DB round-trip).
+    """
+    verification = getattr(run_output, "verification", None)
+    if verification is None:
+        return None
+    if isinstance(verification, dict):
+        return {"status": verification.get("status"), "stop_reason": verification.get("stop_reason")}
+    return {
+        "status": getattr(verification, "status", None),
+        "stop_reason": getattr(verification, "stop_reason", None),
+    }
+
+
+def _verification_history_summary(verification: Any) -> Optional[Dict[str, Any]]:
+    """History-read view of one persisted run's verification record.
+
+    The raw record carries every attempt's verdicts and reports - measured at
+    11-76KB per run - which would dominate a conversation-history payload whose
+    reader only needs the outcome. Ships status, stop_reason and the attempt
+    COUNT; the full record stays reachable via ``get_session_runs(run_id=...)``.
+    Accepts the record as a dataclass (fresh run) or a dict (DB round-trip).
+    """
+    if verification is None:
+        return None
+    if isinstance(verification, dict):
+        attempts = verification.get("attempts")
+        summary: Dict[str, Any] = {
+            "status": verification.get("status"),
+            "stop_reason": verification.get("stop_reason"),
+        }
+    else:
+        attempts = getattr(verification, "attempts", None)
+        summary = {
+            "status": getattr(verification, "status", None),
+            "stop_reason": getattr(verification, "stop_reason", None),
+        }
+    summary["attempts"] = len(attempts) if isinstance(attempts, (list, tuple)) else 0
+    return summary
+
+
 def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
     structured: Dict[str, Any] = {
         "run_id": run_output.run_id,
         "session_id": run_output.session_id,
         "status": run_status_string(run_output),
     }
+    verification_summary = _verification_summary(run_output)
+    if verification_summary is not None:
+        structured["verification"] = verification_summary
     requirements = serialized_paused_requirements(run_output)
     if requirements is not None:
         structured["requirements"] = requirements
@@ -127,6 +175,7 @@ SESSION_RUN_HISTORY_FIELDS = (
     "run_input",
     "content",
     "status",
+    "verification",
     "created_at",
     "agent_id",
     "team_id",
@@ -137,4 +186,9 @@ SESSION_RUN_HISTORY_FIELDS = (
 def trim_session_run(run: Any) -> Dict[str, Any]:
     """Compact view of one persisted run for conversation-history reads."""
     data = run.model_dump() if hasattr(run, "model_dump") else dict(run)
-    return {key: data[key] for key in SESSION_RUN_HISTORY_FIELDS if data.get(key) is not None}
+    trimmed = {key: data[key] for key in SESSION_RUN_HISTORY_FIELDS if data.get(key) is not None}
+    if "verification" in trimmed:
+        # The raw record is per-attempt verdicts and reports; the history view
+        # carries only the outcome summary (see _verification_history_summary).
+        trimmed["verification"] = _verification_history_summary(trimmed["verification"])
+    return trimmed

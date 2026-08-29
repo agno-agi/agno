@@ -44,6 +44,8 @@ from agno.models.response import ModelResponse
 
 if TYPE_CHECKING:
     from agno.offload.store import ResultStore
+    from agno.verifiers.base import Verifier
+    from agno.verifiers.types import VerificationConfig
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import RunEvent, RunOutput, RunOutputEvent
@@ -287,6 +289,16 @@ class Team:
     post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None
     # If True, run hooks as FastAPI background tasks (non-blocking). Set by AgentOS.
     _run_hooks_in_background: Optional[bool] = None
+
+    # --- Verification ---
+    # Checks that run when the model stops; a failure is sent back to the model as evidence
+    # and the run continues, inside the same run. A run that never passes within budget ends
+    # with RunStatus.unverified and the record on TeamRunOutput.verification.
+    verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None
+    # Shared-loop budget and options for the verification loop. Ignored when verifiers is None.
+    verification: Optional["VerificationConfig"] = None
+    # The coerced verifier list, built at construction (and rebuilt on a copy).
+    _verifiers: Optional[List[Any]] = None
 
     # --- Structured output ---
     # Input schema for validating input
@@ -532,6 +544,8 @@ class Team:
         tool_hooks: Optional[List[Callable]] = None,
         pre_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
         post_hooks: Optional[List[Union[Callable[..., Any], BaseGuardrail, BaseEval]]] = None,
+        verifiers: Optional[List[Union["Verifier", Callable[..., Any]]]] = None,
+        verification: Optional["VerificationConfig"] = None,
         input_schema: Optional[Type[BaseModel]] = None,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         parser_model: Optional[Union[Model, str]] = None,
@@ -651,6 +665,8 @@ class Team:
             tool_hooks=tool_hooks,
             pre_hooks=pre_hooks,
             post_hooks=post_hooks,
+            verifiers=verifiers,
+            verification=verification,
             input_schema=input_schema,
             output_schema=output_schema,
             parser_model=parser_model,
