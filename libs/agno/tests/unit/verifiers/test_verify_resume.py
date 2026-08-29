@@ -346,3 +346,297 @@ def test_budget_exhaustion_holds_across_the_pause(tmp_path):
     assert record.status == "unverified"
     assert record.stop_reason == "exhausted"
     assert len(record.attempts) == 2
+
+
+def _verification_records(step_results):
+    """Every verification record in a run's step results, nested outputs included."""
+    records = []
+
+    def walk(outputs):
+        for output in outputs or []:
+            record = getattr(output, "verification", None)
+            if record is not None:
+                records.append(record)
+            walk(getattr(output, "steps", None))
+
+    walk(step_results)
+    return records
+
+
+def _nested_budget_workflow(tmp_path, name):
+    """A Verify with a loop-back segment nested inside a Steps container; the gate always
+    fails, and round 2 pauses on the tool confirmation."""
+    from agno.workflow.steps import Steps
+
+    gate_runs = {"n": 0}
+
+    def gate(run_output):
+        gate_runs["n"] += 1
+        return "never good"
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy the change."""
+        return "deployed"
+
+    model = ScriptedModel(
+        [
+            _text("claimed done"),  # round 1: no tool, gate rejects
+            _tool_call("deploy", "c1"),  # round 2 (loop-back): pauses on confirmation
+            _text("done after tool"),
+        ]
+    )
+    agent = Agent(model=model, tools=[deploy])
+    workflow = Workflow(
+        name=name,
+        steps=[
+            Steps(
+                name="gated-segment",
+                steps=[Step(name="deployer", agent=agent), Verify(gate, on_fail="deployer", max_rounds=1)],
+            ),
+        ],
+        db=SqliteDb(db_file=str(tmp_path / f"{name}.db")),
+    )
+    run = workflow.run("go", session_id=f"{name}-session")
+    assert run.is_paused, "round 2 must pause on the tool confirmation"
+    assert gate_runs["n"] == 1, "one attempt concluded before the pause"
+    return workflow, run, gate_runs, model
+
+
+def test_nested_budget_exhaustion_holds_across_the_pause(tmp_path):
+    """The nested twin of test_budget_exhaustion_holds_across_the_pause: the record rides
+    the paused Verify output INSIDE the container's wrapper output, and must still be
+    found on resume — the resumed round is the LAST round of the window."""
+    workflow, run, gate_runs, model = _nested_budget_workflow(tmp_path, "nested-budget")
+
+    _confirm_all(run)
+    resumed = workflow.continue_run(run)
+
+    assert gate_runs["n"] == 2, "the resumed round is the LAST round of the window"
+    assert model.calls == 3, "no segment execution past max_rounds"
+    records = _verification_records(resumed.step_results)
+    assert records, "the resumed run must carry the gate's record"
+    assert records[-1].status == "unverified"
+    assert records[-1].stop_reason == "exhausted"
+    assert len(records[-1].attempts) == 2, "the pre-pause attempt must survive the pause"
+
+
+def test_nested_budget_exhaustion_holds_across_the_pause_async(tmp_path):
+    """Async twin: the nested gate's budget window survives the pause via acontinue_run."""
+    workflow, run, gate_runs, model = _nested_budget_workflow(tmp_path, "nested-budget-async")
+
+    _confirm_all(run)
+    resumed = asyncio.run(workflow.acontinue_run(run))
+
+    assert gate_runs["n"] == 2
+    assert model.calls == 3
+    records = _verification_records(resumed.step_results)
+    assert records
+    assert records[-1].stop_reason == "exhausted"
+    assert len(records[-1].attempts) == 2
+
+
+def _cross_process_pieces(tmp_path, name):
+    """Two workflow objects over one database: the first runs to the pause, the second —
+    steps never prepared, as after a server restart — must continue the persisted run."""
+    gate_runs = {"n": 0}
+
+    def gate(run_output):
+        gate_runs["n"] += 1
+        return "never good"
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy the change."""
+        return "deployed"
+
+    model = ScriptedModel(
+        [
+            _text("claimed done"),
+            _tool_call("deploy", "c1"),
+            _text("done after tool"),
+        ]
+    )
+    agent = Agent(name="deployer-agent", model=model, tools=[deploy])
+    db_file = str(tmp_path / f"{name}.db")
+
+    def build():
+        return Workflow(
+            name=name,
+            steps=[Step(name="deployer", agent=agent), Verify(gate, on_fail="deployer", max_rounds=1)],
+            db=SqliteDb(db_file=db_file),
+        )
+
+    run = build().run("go", session_id=f"{name}-session")
+    assert run.is_paused and gate_runs["n"] == 1
+    _confirm_all(run)
+    return build(), run, gate_runs, model
+
+
+def test_fresh_workflow_continues_a_persisted_paused_run(tmp_path):
+    """Cross-process resume: the continuing workflow object never ran, so its steps were
+    never prepared and the Verify never absorbed its segment. continue_run must prepare
+    them, resume from storage, and hold the budget window recorded before the restart."""
+    fresh, run, gate_runs, model = _cross_process_pieces(tmp_path, "xproc")
+
+    resumed = fresh.continue_run(run_id=run.run_id, session_id="xproc-session", step_requirements=run.step_requirements)
+
+    assert resumed.status == RunStatus.completed
+    assert gate_runs["n"] == 2, "exactly one further check pass on resume"
+    assert model.calls == 3, "no segment execution past max_rounds"
+    records = _verification_records(resumed.step_results)
+    assert records, "the resumed run must carry the gate's record"
+    assert records[-1].stop_reason == "exhausted"
+    assert len(records[-1].attempts) == 2, "the budget window survived the process boundary"
+
+
+def test_fresh_workflow_continues_a_persisted_paused_run_async(tmp_path):
+    """Async twin: acontinue_run on a workflow object whose steps were never prepared."""
+    fresh, run, gate_runs, model = _cross_process_pieces(tmp_path, "xproc-async")
+
+    resumed = asyncio.run(
+        fresh.acontinue_run(
+            run_id=run.run_id, session_id="xproc-async-session", step_requirements=run.step_requirements
+        )
+    )
+
+    assert resumed.status == RunStatus.completed
+    assert gate_runs["n"] == 2
+    assert model.calls == 3
+    records = _verification_records(resumed.step_results)
+    assert records and records[-1].stop_reason == "exhausted"
+    assert len(records[-1].attempts) == 2
+
+
+def _post_gate_shared_agent_workflow(tmp_path, name):
+    """A container holding [segment agent step, Verify, post-gate step] where the
+    post-gate step reuses the segment's agent, and the pause is in the post-gate step."""
+    from agno.workflow.steps import Steps
+
+    gate_runs = {"n": 0}
+
+    def gate(run_output):
+        gate_runs["n"] += 1
+        return True
+
+    tool_calls = {"n": 0}
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy the change."""
+        tool_calls["n"] += 1
+        return "deployed"
+
+    model = ScriptedModel(
+        [
+            _text("segment done"),  # writer inside the segment: passes the gate
+            _tool_call("deploy", "c1"),  # editor AFTER the gate: pauses
+            _text("done after tool"),
+        ]
+    )
+    agent = Agent(model=model, tools=[deploy])
+    workflow = Workflow(
+        name=name,
+        steps=[
+            Steps(
+                name="pipeline",
+                steps=[
+                    Step(name="writer", agent=agent),
+                    Verify(gate, on_fail="writer", max_rounds=1),
+                    Step(name="editor", agent=agent),
+                ],
+            ),
+        ],
+        db=SqliteDb(db_file=str(tmp_path / f"{name}.db")),
+    )
+    run = workflow.run("go", session_id=f"{name}-session")
+    assert run.is_paused, "the post-gate editor must pause on the tool confirmation"
+    assert gate_runs["n"] == 1, "the gate concluded before the pause"
+    assert tool_calls["n"] == 0
+    return workflow, run, gate_runs, tool_calls
+
+
+def test_post_gate_pause_with_shared_agent_leaves_the_gate_untouched(tmp_path):
+    """A pause AFTER the gate, in a step reusing a segment agent, must not hand the
+    continued output to the gate: no extra check pass, and the post-gate step's output is
+    published as itself, not as a gate output."""
+    workflow, run, gate_runs, tool_calls = _post_gate_shared_agent_workflow(tmp_path, "post-gate-shared")
+
+    _confirm_all(run)
+    resumed = workflow.continue_run(run)
+
+    assert resumed.status == RunStatus.completed
+    assert gate_runs["n"] == 1, "the gate must not re-run on an output it was never mounted on"
+    assert tool_calls["n"] == 1
+    final = (resumed.step_results or [])[-1]
+    assert getattr(final, "verification", None) is None, "the continued output must not become a gate output"
+    assert final.content == "done after tool"
+
+
+def test_post_gate_pause_with_shared_agent_leaves_the_gate_untouched_async(tmp_path):
+    """Async twin: acontinue_run must not route the post-gate step's output to the gate."""
+    workflow, run, gate_runs, tool_calls = _post_gate_shared_agent_workflow(tmp_path, "post-gate-shared-async")
+
+    _confirm_all(run)
+    resumed = asyncio.run(workflow.acontinue_run(run))
+
+    assert resumed.status == RunStatus.completed
+    assert gate_runs["n"] == 1
+    assert tool_calls["n"] == 1
+    final = (resumed.step_results or [])[-1]
+    assert getattr(final, "verification", None) is None
+    assert final.content == "done after tool"
+
+
+def test_async_stream_pause_under_the_gate_persists_paused_not_cancelled(tmp_path):
+    """Async-streaming twin of test_resume_runs_the_checks_async: a pause surfacing
+    mid-stream must leave the executor run paused. Abandoning the executor's generator
+    throws GeneratorExit into it, whose disconnect handling stamps the run cancelled —
+    and a cancelled run refuses its resume."""
+    import gc
+
+    gate_runs = {"n": 0}
+
+    def gate(run_output):
+        gate_runs["n"] += 1
+        return True
+
+    tool_calls = {"n": 0}
+
+    @tool(requires_confirmation=True)
+    def deploy() -> str:
+        """Deploy the change."""
+        tool_calls["n"] += 1
+        return "deployed"
+
+    model = ScriptedModel([_tool_call("deploy", "c1"), _text("done after tool")])
+    agent = Agent(model=model, tools=[deploy])
+    workflow = Workflow(
+        name="astream-pause",
+        steps=[Step(name="deployer", agent=agent), Verify(gate, on_fail="deployer", max_rounds=1)],
+        db=SqliteDb(db_file=str(tmp_path / "astream.db")),
+    )
+
+    async def scenario():
+        run_id = None
+        async for event in workflow.arun("go", session_id="astream-session", stream=True):
+            run_id = getattr(event, "run_id", None) or run_id
+        run = workflow.get_run_output(run_id=run_id, session_id="astream-session")
+        assert run is not None and run.is_paused
+
+        # Force finalization of any abandoned executor generator before the resume; an
+        # abandoned generator is closed with GeneratorExit at its suspension point.
+        gc.collect()
+        await asyncio.sleep(0.05)
+
+        paused_executor_run = (run.step_executor_runs or [])[-1]
+        assert paused_executor_run.is_paused, "the executor run must persist as paused, not cancelled"
+
+        _confirm_all(run)
+        return await workflow.acontinue_run(run)
+
+    resumed = asyncio.run(scenario())
+
+    assert resumed.status == RunStatus.completed
+    assert gate_runs["n"] == 1, "the gate must run on resume"
+    assert tool_calls["n"] == 1

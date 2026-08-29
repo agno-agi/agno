@@ -1008,19 +1008,42 @@ class Verify:
     # ------------------------------------------------------------------
 
     def _find_paused_self(self, workflow_run_response: Optional[WorkflowRunOutput]) -> Optional[StepOutput]:
-        """The paused composite output this gate produced, from the persisted run. Absent
-        (older rows, exotic resume orders) the resume degrades to a fresh record - the
-        checks still run, which is the fail-closed direction."""
+        """The paused composite output this gate produced, from the persisted run. A gate
+        nested in a container (Steps, Condition, Loop iterations) pauses inside the
+        container's wrapper output, so the search walks nested step results, newest first.
+        Absent (older rows, exotic resume orders) the resume degrades to a fresh record -
+        the checks still run, which is the fail-closed direction."""
         results = getattr(workflow_run_response, "step_results", None) or []
-        for output in reversed(list(results)):
-            if (
-                getattr(output, "step_name", None) == self.name
-                and getattr(output, "is_paused", False)
-                and getattr(output, "step_type", None)
-                in (StepType.VERIFY, "Verify", getattr(StepType.VERIFY, "value", None))
+        self_id = getattr(self, "step_id", None)
+
+        def matches(output: Any) -> bool:
+            if not getattr(output, "is_paused", False):
+                return False
+            if getattr(output, "step_type", None) not in (
+                StepType.VERIFY,
+                "Verify",
+                getattr(StepType.VERIFY, "value", None),
             ):
-                return output
-        return None
+                return False
+            output_id = getattr(output, "step_id", None)
+            # Exact step identity outranks the name where both sides carry one; the name
+            # is the identity for everything persisted before step ids rode along.
+            if self_id and output_id:
+                return output_id == self_id
+            return getattr(output, "step_name", None) == self.name
+
+        def walk(outputs: Any) -> Optional[StepOutput]:
+            for output in reversed(list(outputs)):
+                if matches(output):
+                    return output
+                nested = getattr(output, "steps", None)
+                if nested:
+                    found = walk(nested)
+                    if found is not None:
+                        return found
+            return None
+
+        return walk(results)
 
     def _segment_index_for(self, step_req: Any, continued_output: StepOutput) -> int:
         """Which absorbed segment step the resumed executor belongs to. Exact step identity

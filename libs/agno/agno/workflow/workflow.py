@@ -335,7 +335,41 @@ def _find_inner_step_by_executor(
     return None
 
 
-def _find_resumable_composite(step: Any, step_req: Any) -> Optional[Any]:
+def _paused_step_identity(workflow_run_response: Any, step_req: Any) -> Optional[str]:
+    """The step_id of the step whose executor actually paused.
+
+    The pause requirement is minted against the first executor-bearing inner step of the
+    paused composite, which is not necessarily the step that paused — a container can
+    pause in a later step while an earlier one shares the same executor. The paused step
+    output chain records the true identity, so it outranks the requirement's step_id;
+    the requirement's step_id remains the answer for rows without a paused output chain.
+    """
+    executor_run_id = getattr(step_req, "executor_run_id", None)
+    results = getattr(workflow_run_response, "step_results", None) or []
+
+    def walk(outputs: Any) -> Optional[str]:
+        for output in reversed(list(outputs)):
+            nested = getattr(output, "steps", None)
+            if nested:
+                found = walk(nested)
+                if found is not None:
+                    return found
+            if not getattr(output, "is_paused", False):
+                continue
+            executor_type = getattr(output, "executor_type", None)
+            if getattr(executor_type, "value", executor_type) not in ("agent", "team"):
+                continue
+            run_id = getattr(output, "step_run_id", None)
+            if executor_run_id and run_id and run_id != executor_run_id:
+                continue
+            return getattr(output, "step_id", None)
+        return None
+
+    found = walk(results)
+    return found if found is not None else getattr(step_req, "step_id", None)
+
+
+def _find_resumable_composite(step: Any, step_req: Any, workflow_run_response: Any = None) -> Optional[Any]:
     """The deepest composite inside ``step`` (or ``step`` itself) that must finish its own
     job after its paused executor resumes.
 
@@ -343,10 +377,20 @@ def _find_resumable_composite(step: Any, step_req: Any) -> Optional[Any]:
     Verify gate) between that executor and the top level must regain control afterwards or
     its remaining work — the checks themselves — is silently skipped. Deepest match wins so
     a gate nested inside a container is found through the container.
+
+    Ownership is judged step_id-first: when the pause names a step_id, only a composite
+    holding that exact step owns the pause. Executor identity alone is not ownership —
+    one agent may serve both a gate's segment and a step outside it, and handing the
+    outside step's continued output to the gate would re-run checks on an output the gate
+    was never mounted on. Executor-identity matching remains the fallback for a step_id
+    that names no live step (older rows, a rebuilt workflow with re-minted ids).
     """
     executor_id = getattr(step_req, "executor_id", None)
     executor_name = getattr(step_req, "executor_name", None)
-    step_id = getattr(step_req, "step_id", None)
+    if workflow_run_response is not None:
+        step_id = _paused_step_identity(workflow_run_response, step_req)
+    else:
+        step_id = getattr(step_req, "step_id", None)
 
     def children_of(node: Any) -> list:
         found: list = []
@@ -369,25 +413,40 @@ def _find_resumable_composite(step: Any, step_req: Any) -> Optional[Any]:
                     found.append(child)
         return found
 
-    def owns_executor(node: Any) -> bool:
-        return (
-            _find_inner_step_by_executor(node, executor_id=executor_id, executor_name=executor_name, step_id=step_id)
-            is not None
-        )
+    def subtree_has_step_id(node: Any) -> bool:
+        if getattr(node, "step_id", None) == step_id:
+            return True
+        return any(subtree_has_step_id(child) for child in children_of(node))
 
-    def deepest(node: Any) -> Optional[Any]:
+    def owns_executor(node: Any, by_step_id: bool) -> bool:
+        if by_step_id:
+            return _find_inner_step_by_executor(node, step_id=step_id) is not None
+        return _find_inner_step_by_executor(node, executor_id=executor_id, executor_name=executor_name) is not None
+
+    def deepest(node: Any, by_step_id: bool) -> Optional[Any]:
         for child in children_of(node):
-            found = deepest(child)
+            found = deepest(child, by_step_id)
             if found is not None:
                 return found
-        if hasattr(node, "continue_from_paused") and owns_executor(node):
+        if hasattr(node, "continue_from_paused") and owns_executor(node, by_step_id):
             return node
         return None
 
+    def resolve(root: Any) -> Optional[Any]:
+        if step_id:
+            found = deepest(root, by_step_id=True)
+            if found is not None:
+                return found
+            if subtree_has_step_id(root):
+                # The paused step_id names a live step that no composite owns; a shared
+                # executor must not hand its output to a gate it never ran under.
+                return None
+        return deepest(root, by_step_id=False)
+
     if hasattr(step, "continue_from_paused"):
-        nested = deepest(step)
+        nested = resolve(step)
         return nested if nested is not None and nested is not step else step
-    return deepest(step)
+    return resolve(step)
 
 
 def _find_paused_executor_run(
@@ -6836,6 +6895,12 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
+        # A continue may land on a workflow object that never ran in this process (server
+        # restart between pause and resume). The persisted paused index was minted against
+        # the prepared steps list — Verify loop-back segments absorbed — so prepare here,
+        # before any step is located by index. Idempotent when run() already prepared.
+        self._prepare_steps()
+
         # Keep step identity stable across the run's pause/continue boundary
         self._restore_paused_step_ids(run_response)
 
@@ -7088,7 +7153,9 @@ class Workflow:
                     # composite's remaining work - for a verification gate, the checks
                     # themselves - would be silently skipped.
                     _resumable = (
-                        None if is_executor_pause(step_output) else _find_resumable_composite(step, executor_step_req)
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
                     )
                     if _resumable is not None:
                         step_output = _resumable.continue_from_paused(
@@ -7984,7 +8051,9 @@ class Workflow:
                     # composite's remaining work - for a verification gate, the checks
                     # themselves - would be silently skipped.
                     _resumable = (
-                        None if is_executor_pause(step_output) else _find_resumable_composite(step, executor_step_req)
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
                     )
                     if _resumable is not None:
                         step_output = _resumable.continue_from_paused(
@@ -8922,6 +8991,12 @@ class Workflow:
         if paused_step_index is None:
             raise ValueError("Cannot continue run - no paused step index found")
 
+        # A continue may land on a workflow object that never ran in this process (server
+        # restart between pause and resume). The persisted paused index was minted against
+        # the prepared steps list — Verify loop-back segments absorbed — so prepare here,
+        # before any step is located by index. Idempotent when arun() already prepared.
+        self._prepare_steps()
+
         # Keep step identity stable across the run's pause/continue boundary
         self._restore_paused_step_ids(run_response)
 
@@ -9207,7 +9282,9 @@ class Workflow:
                     # composite's remaining work - for a verification gate, the checks
                     # themselves - would be silently skipped.
                     _resumable = (
-                        None if is_executor_pause(step_output) else _find_resumable_composite(step, executor_step_req)
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
                     )
                     if _resumable is not None and hasattr(_resumable, "acontinue_from_paused"):
                         step_output = await _resumable.acontinue_from_paused(
@@ -9794,7 +9871,9 @@ class Workflow:
                     # composite's remaining work - for a verification gate, the checks
                     # themselves - would be silently skipped.
                     _resumable = (
-                        None if is_executor_pause(step_output) else _find_resumable_composite(step, executor_step_req)
+                        None
+                        if is_executor_pause(step_output)
+                        else _find_resumable_composite(step, executor_step_req, workflow_run_response)
                     )
                     if _resumable is not None and hasattr(_resumable, "acontinue_from_paused"):
                         step_output = await _resumable.acontinue_from_paused(

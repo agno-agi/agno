@@ -2237,8 +2237,12 @@ class Step:
                         active_executor_run_response = None
                         async for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                # Consume to exhaustion rather than break: abandoning the
+                                # executor's generator throws GeneratorExit into it, which
+                                # its disconnect handling persists as a cancelled run — a
+                                # paused run flipped to cancelled refuses its resume.
                                 active_executor_run_response = event
-                                break
+                                continue
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
