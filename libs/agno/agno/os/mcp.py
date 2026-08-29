@@ -1551,7 +1551,7 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="get_agentos_config",
-        title="Discover AgentOS",
+        title="Get AgentOS Configuration",
         description=(
             "Discover this AgentOS: the agents, teams, and workflows available to run (with their ids "
             "and descriptions), and the database ids used by the session tools. Call this first to learn "
