@@ -716,11 +716,13 @@ async def test_stream_handles_unknown_event_type():
             async for event in client.run_agent_stream("agent-123", "test"):
                 events.append(event)
 
-            # Should skip unknown event and continue
+            # Should skip unknown event and continue. The factory now returns None for
+            # unknown event types (skip-with-debug) instead of raising, so no exception is
+            # logged; the stream simply drops the event.
             assert len(events) == 2
             assert isinstance(events[0], RunStartedEvent)
             assert isinstance(events[1], RunCompletedEvent)
-            assert mock_logger.exception.called
+            assert not mock_logger.exception.called
 
 
 @pytest.mark.asyncio
