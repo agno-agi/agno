@@ -543,3 +543,58 @@ async def acomplete_pass(
             run_metrics=run_metrics,
         )
     return _record_from_plan(plan, summary, int((time() - started) * 1000), model_id)
+
+
+def render_view(
+    session: Any,
+    run_id: str,
+    *,
+    owner_id: Optional[str] = None,
+    elide_exclude_tools: Optional[List[str]] = None,
+) -> List["Message"]:
+    """Reconstruct the wire view of a stored run's final provider call.
+
+    The persisted run holds the transcript; the view it saw is deterministic from (canonical
+    messages, the record its compaction_id names), so this rebuilds it. Exact when the run stored
+    its history copies; under the default history scrub the history segment is re-derived from
+    the sibling stored runs first.
+    """
+    from agno.compaction._view import build_view
+    from agno.run.base import HISTORY_SKIP_STATUSES
+
+    run = None
+    prior_runs = []
+    for candidate in session.runs or []:
+        if getattr(candidate, "run_id", None) == run_id:
+            run = candidate
+            break
+        prior_runs.append(candidate)
+    if run is None:
+        raise ValueError(f"Run not found in session: {run_id}")
+
+    owner = owner_id or getattr(run, "team_id", None) or getattr(run, "agent_id", None) or ""
+    chain = get_owner_records(getattr(session, "session_data", None), owner)
+    record = next((r for r in chain if r.id == getattr(run, "compaction_id", None)), None)
+
+    own_messages = list(getattr(run, "messages", None) or [])
+    if any(message.from_history for message in own_messages):
+        canonical = own_messages
+    else:
+        # History copies were scrubbed at persist; re-derive them from the prior stored runs.
+        history: List["Message"] = []
+        for prior in prior_runs:
+            if getattr(prior, "parent_run_id", None) is not None:
+                continue
+            if getattr(prior, "status", None) in HISTORY_SKIP_STATUSES:
+                continue
+            history.extend(m for m in getattr(prior, "messages", None) or [] if not m.from_history and m.role != "system")
+        if record is not None and record.first_kept_message_id:
+            for index, message in enumerate(history):
+                if message.id == record.first_kept_message_id:
+                    history = history[index:]
+                    break
+        if own_messages and own_messages[0].role in ("system", "developer"):
+            canonical = [own_messages[0]] + history + own_messages[1:]
+        else:
+            canonical = history + own_messages
+    return build_view(canonical, record, elide_exclude_tools=elide_exclude_tools, strip_provider_chaining=True)
