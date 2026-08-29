@@ -197,6 +197,13 @@ def get_tools(
         agent_tools.append(get_read_result_function(agent, run_context=run_context, async_mode=False))
         agent_tools.append(get_search_result_function(agent, run_context=run_context, async_mode=False))
 
+    # Compaction status/scheduling tools
+    if agent._compaction is not None and agent._compaction.expose_tools:
+        from agno.compaction._tools import get_compact_run_function, get_compact_status_function
+
+        agent_tools.append(get_compact_status_function(agent, run_context=run_context, async_mode=False))
+        agent_tools.append(get_compact_run_function(agent, run_context=run_context, async_mode=False))
+
     # Add learning machine tools
     if agent._learning is not None:
         learning_tools = agent._learning.get_tools(
@@ -331,6 +338,13 @@ async def aget_tools(
 
         agent_tools.append(get_read_result_function(agent, run_context=run_context, async_mode=True))
         agent_tools.append(get_search_result_function(agent, run_context=run_context, async_mode=True))
+
+    # Compaction status/scheduling tools
+    if agent._compaction is not None and agent._compaction.expose_tools:
+        from agno.compaction._tools import get_compact_run_function, get_compact_status_function
+
+        agent_tools.append(get_compact_status_function(agent, run_context=run_context, async_mode=True))
+        agent_tools.append(get_compact_run_function(agent, run_context=run_context, async_mode=True))
 
     # Add learning machine tools (async)
     if agent._learning is not None:

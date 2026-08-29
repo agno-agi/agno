@@ -655,4 +655,8 @@ def compaction_state_kwargs(agent: "Agent", *, session: "AgentSession", run_resp
     if state is None:
         state = make_run_state(agent, session, run_response, run_messages)
         run_response._compaction_state = state
+        if run_response.run_id:
+            from agno.compaction._state import register_run_state
+
+            register_run_state(run_response.run_id, state)
     return {"compaction_state": state}

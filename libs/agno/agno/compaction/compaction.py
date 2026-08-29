@@ -391,7 +391,9 @@ def prepare_pass(
         build_view(messages, previous_record, elide_exclude_tools=config.elide_exclude_tools)
     )
 
-    if reason != "manual":
+    # manual and requested passes fold regardless of the trigger: both are explicit asks to free
+    # space, so "already under trigger" is not a reason to decline.
+    if reason not in ("manual", "requested"):
         trial = CompactionRecord.from_dict(previous_record.to_dict()) if previous_record else CompactionRecord()
         trial.elision_watermark_message_id = watermark_id
         elided_estimate = estimate_tokens(build_view(messages, trial, elide_exclude_tools=config.elide_exclude_tools))

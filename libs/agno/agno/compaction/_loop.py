@@ -117,13 +117,15 @@ def _prepare(
             notice_inputs = state.notice_sources()
         except Exception:
             notice_inputs = None
+    # No floor at the history boundary: an in-run cut may land in the history region — run
+    # attribution is stamped from message ids at persist, and commit routing below keys off
+    # whether the fold reached the run's own messages.
     plan = prepare_pass(
         state.config,
         state.limits,
         messages,
         reason=reason,  # type: ignore[arg-type]
         previous_record=state.active_record,
-        min_boundary_index=state.first_own_message_index,
         created_by_run_id=None,
         notice_inputs=notice_inputs,
         call_instructions=call_instructions,
@@ -257,9 +259,15 @@ async def aloop_top(model: "Model", messages: List[Message], state: CompactionRu
             state.scheduled = False
             instructions = state.scheduled_instructions
             state.scheduled_instructions = None
-            await _run_pass_async(
-                model, messages, state, "requested", run_metrics=run_metrics, untrusted_instructions=instructions
-            )
+            reading = state.gauge.reading(outbound_view(messages, state))
+            # A requested pass shares the post-pass suppression window and the worth-it floor, so
+            # a looping model cannot buy a summariser call per turn.
+            if state.gauge.meets_floor(reading) and not (
+                state.gauge.suppress_soft_below is not None and reading < state.gauge.suppress_soft_below
+            ):
+                await _run_pass_async(
+                    model, messages, state, "requested", run_metrics=run_metrics, untrusted_instructions=instructions
+                )
             return
         reading = state.gauge.reading(outbound_view(messages, state))
         if state.gauge.over_hard(reading) and state.gauge.meets_floor(reading):
@@ -295,7 +303,15 @@ def _loop_top_shared(model: "Model", messages: List[Message], state: CompactionR
         state.scheduled = False
         instructions = state.scheduled_instructions
         state.scheduled_instructions = None
-        _run_pass_sync(model, messages, state, "requested", run_metrics=run_metrics, untrusted_instructions=instructions)
+        reading = state.gauge.reading(outbound_view(messages, state))
+        # A requested pass shares the post-pass suppression window and the worth-it floor, so a
+        # looping model cannot buy a summariser call per turn.
+        if state.gauge.meets_floor(reading) and not (
+            state.gauge.suppress_soft_below is not None and reading < state.gauge.suppress_soft_below
+        ):
+            _run_pass_sync(
+                model, messages, state, "requested", run_metrics=run_metrics, untrusted_instructions=instructions
+            )
         return
     reading = state.gauge.reading(outbound_view(messages, state))
     if state.gauge.over_hard(reading) and state.gauge.meets_floor(reading):

@@ -42,6 +42,8 @@ class ContextGauge:
     # Threshold checks are suppressed until the reading grows past these watermarks.
     suppress_hard_below: Optional[int] = None
     suppress_soft_below: Optional[int] = None
+    # The most recent reading, for out-of-loop observers (the compact_status tool).
+    last_reading: Optional[int] = None
     _cache: Optional[Tuple[int, Optional[str], int]] = field(default=None, repr=False)
 
     def observe_actual(self, assistant_message: Message) -> None:
@@ -71,12 +73,16 @@ class ContextGauge:
         if self.anchor_tokens is not None and self.anchor_message_id is not None:
             for index in range(len(view_messages) - 1, -1, -1):
                 if view_messages[index].id == self.anchor_message_id:
-                    return self.anchor_tokens + estimate_tokens(view_messages[index + 1 :])
+                    value = self.anchor_tokens + estimate_tokens(view_messages[index + 1 :])
+                    self.last_reading = value
+                    return value
         cache_key = (len(view_messages), view_messages[-1].id if view_messages else None)
         if self._cache is not None and self._cache[0] == cache_key[0] and self._cache[1] == cache_key[1]:
+            self.last_reading = self._cache[2]
             return self._cache[2]
         value = estimate_tokens(view_messages)
         self._cache = (cache_key[0], cache_key[1], value)
+        self.last_reading = value
         return value
 
     def over_hard(self, reading: int) -> bool:
