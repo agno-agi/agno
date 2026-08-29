@@ -38,9 +38,13 @@ prompts = [
 ]
 
 for prompt in prompts:
-    for event in agent.run(prompt, session_id=session_id, stream=True, stream_events=True):
+    for event in agent.run(
+        prompt, session_id=session_id, stream=True, stream_events=True
+    ):
         if event.event == RunEvent.compaction_started.value:
-            print(f"\n[compaction started: reason={event.reason} tokens_before={event.tokens_before}]")
+            print(
+                f"\n[compaction started: reason={event.reason} tokens_before={event.tokens_before}]"
+            )
         elif event.event == RunEvent.compaction_completed.value:
             print(
                 f"[compaction completed: {event.tokens_before} -> {event.tokens_after} tokens, "

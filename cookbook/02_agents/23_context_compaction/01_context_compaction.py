@@ -19,6 +19,7 @@ Run: .venvs/demo/bin/python cookbook/02_agents/23_context_compaction/01_context_
 
 from agno.agent import Agent
 from agno.compaction import Compaction
+from agno.compaction.compaction import get_owner_records
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 
@@ -53,8 +54,6 @@ for topic in topics:
 # ---------------------------------------------------------------------------
 # The record chain: what got folded, and when.
 # ---------------------------------------------------------------------------
-from agno.compaction.compaction import get_owner_records
-
 session = agent.get_session(session_id=session_id)
 records = get_owner_records(session.session_data, "compaction-demo")
 print(f"\nCompaction records: {len(records)}")

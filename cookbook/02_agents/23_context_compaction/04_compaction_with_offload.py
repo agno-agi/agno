@@ -18,7 +18,8 @@ from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 
 INVENTORY = "\n".join(
-    f"SKU-{i:05d}\tpart-{i % 37}\tqty={i * 7 % 91}\twarehouse={'ABCDE'[i % 5]}" for i in range(1, 4001)
+    f"SKU-{i:05d}\tpart-{i % 37}\tqty={i * 7 % 91}\twarehouse={'ABCDE'[i % 5]}"
+    for i in range(1, 4001)
 )
 
 

@@ -187,9 +187,7 @@ class TestInRunSeam:
         assert record.created_by_run_id == output.run_id
         assert record.first_kept_run_id == output.run_id
         # A late provider call saw the injected summary instead of the folded prefix.
-        assert any(
-            isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX) for m in model.calls[-1]
-        )
+        assert any(isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX) for m in model.calls[-1])
 
     def test_overflow_pass_retries_once(self):
         model = ToolLoopModel(tool_rounds=3, overflow_on_call=3)

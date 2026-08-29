@@ -37,7 +37,9 @@ def build_survival_notice(inputs: NoticeInputs) -> str:
     """The <context_survived> block, or an empty string when no source has anything."""
     lines: List[str] = []
     if inputs.result_ids:
-        lines.append(f"- Offloaded results readable with read_result(id): {_capped(inputs.result_ids, _MAX_RESULT_IDS)}")
+        lines.append(
+            f"- Offloaded results readable with read_result(id): {_capped(inputs.result_ids, _MAX_RESULT_IDS)}"
+        )
     if inputs.variables:
         lines.append(f"- CodeMode variables still defined: {_capped(inputs.variables, _MAX_VARIABLES)}")
     if inputs.files:

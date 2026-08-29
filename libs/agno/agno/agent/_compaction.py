@@ -5,14 +5,13 @@ storage. The team twin mirrors this file.
 """
 
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.compaction._notice import NoticeInputs
 from agno.compaction._state import CompactionRunState, FoldHandle, clear_fold, in_flight_fold, register_fold
 from agno.compaction._tokens import ContextGauge, estimate_tokens
 from agno.compaction._view import build_view, notice_message, summary_message
 from agno.compaction.compaction import (
-    Compaction,
     CompactionRecord,
     EffectiveLimits,
     acomplete_pass,
@@ -57,7 +56,8 @@ def compaction_notice_inputs(agent: "Agent", session_id: Optional[str]) -> Notic
     except Exception:
         pass
     try:
-        for tool in agent.tools or []:
+        tools = agent.tools if isinstance(agent.tools, list) else []
+        for tool in tools:
             if type(tool).__name__ == "CodeMode" and hasattr(tool, "variables"):
                 inputs.variables = sorted((tool.variables(session_id) or {}).keys())
                 break
@@ -78,7 +78,8 @@ async def acompaction_notice_inputs(agent: "Agent", session_id: Optional[str]) -
     except Exception:
         pass
     try:
-        for tool in agent.tools or []:
+        tools = agent.tools if isinstance(agent.tools, list) else []
+        for tool in tools:
             if type(tool).__name__ == "CodeMode" and hasattr(tool, "avariables"):
                 inputs.variables = sorted((await tool.avariables(session_id) or {}).keys())
                 break
@@ -161,8 +162,9 @@ def load_compacted_history(
             available_ids = {message.id for message in history}
             record = resolve_active_record(
                 chain,
-                record_is_valid=lambda r: valid(r)
-                and (not r.first_kept_message_id or r.first_kept_message_id in available_ids),
+                record_is_valid=lambda r: (
+                    valid(r) and (not r.first_kept_message_id or r.first_kept_message_id in available_ids)
+                ),
             )
             boundary = (
                 _find_message_index(history, record.first_kept_message_id)
@@ -482,6 +484,7 @@ def record_compaction_events(agent: "Agent", run_response) -> None:
     state = getattr(run_response, "_compaction_state", None)
     if state is None or not state.event_buffer:
         return
+    from agno.run.agent import CompactionCompletedEvent, CompactionStartedEvent
     from agno.utils.events import (
         create_compaction_completed_event,
         create_compaction_started_event,
@@ -489,6 +492,7 @@ def record_compaction_events(agent: "Agent", run_response) -> None:
     )
 
     for item in state.event_buffer:
+        event: Union[CompactionStartedEvent, CompactionCompletedEvent]
         if item.get("type") == "started":
             event = create_compaction_started_event(
                 from_run_response=run_response,
@@ -506,7 +510,7 @@ def record_compaction_events(agent: "Agent", run_response) -> None:
                 duration_ms=item.get("duration_ms"),
                 still_over_trigger=item.get("still_over_trigger"),
             )
-        handle_event(event, run_response, events_to_skip=agent.events_to_skip, store_events=agent.store_events)
+        handle_event(event, run_response, events_to_skip=agent.events_to_skip, store_events=agent.store_events)  # type: ignore
     state.event_buffer.clear()
 
 
@@ -527,8 +531,10 @@ def compact_session(
         raise ValueError("agent.compact() requires compaction to be enabled on the agent")
     config = agent._compaction
     limits = resolve_limits(agent)
+    from agno.session.agent import AgentSession
+
     session = agent.get_session(session_id=session_id, user_id=user_id)
-    if session is None:
+    if not isinstance(session, AgentSession):
         raise ValueError(f"Session not found: {session_id}")
 
     skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
@@ -574,8 +580,10 @@ async def acompact_session(
         raise ValueError("agent.compact() requires compaction to be enabled on the agent")
     config = agent._compaction
     limits = resolve_limits(agent)
+    from agno.session.agent import AgentSession
+
     session = await agent.aget_session(session_id=session_id, user_id=user_id)
-    if session is None:
+    if not isinstance(session, AgentSession):
         raise ValueError(f"Session not found: {session_id}")
 
     skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None

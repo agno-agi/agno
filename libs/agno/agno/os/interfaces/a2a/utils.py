@@ -5,9 +5,9 @@ from uuid import uuid4
 from fastapi import HTTPException
 from typing_extensions import AsyncIterator, List, Union
 
-from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import CompactionCompletedEvent as TeamCompactionCompletedEvent
 from agno.run.team import CompactionStartedEvent as TeamCompactionStartedEvent
+from agno.run.team import MemoryUpdateCompletedEvent as TeamMemoryUpdateCompletedEvent
 from agno.run.team import MemoryUpdateStartedEvent as TeamMemoryUpdateStartedEvent
 from agno.run.team import ReasoningCompletedEvent as TeamReasoningCompletedEvent
 from agno.run.team import ReasoningStartedEvent as TeamReasoningStartedEvent
@@ -67,9 +67,9 @@ except ImportError as e:
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import (
-    MemoryUpdateCompletedEvent,
     CompactionCompletedEvent,
     CompactionStartedEvent,
+    MemoryUpdateCompletedEvent,
     MemoryUpdateStartedEvent,
     ReasoningCompletedEvent,
     ReasoningStartedEvent,

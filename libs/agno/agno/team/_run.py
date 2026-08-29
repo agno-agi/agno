@@ -28,7 +28,6 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent._tools import result_store_kwargs
-from agno.team._compaction import compaction_state_kwargs, record_compaction_events
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -92,6 +91,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.session._utils import resolve_run_index
+from agno.team._compaction import compaction_state_kwargs, record_compaction_events
 from agno.tools.function import Function
 from agno.utils.agent import (
     abuild_full_run_storage_copy,

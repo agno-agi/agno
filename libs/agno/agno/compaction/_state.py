@@ -7,6 +7,7 @@ folds at one per (session, owner) and lets a later run see a still-flying post-r
 """
 
 import threading
+import weakref
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
 
@@ -66,20 +67,15 @@ _IN_FLIGHT_LOCK = threading.Lock()
 
 # Run states by run_id, weakly held (the strong reference rides the run output object), so the
 # compact_status / compact_run tools can reach their run's state from an injected run_context.
-_RUN_STATES: "weakref.WeakValueDictionary[str, CompactionRunState]" = None  # type: ignore[assignment]
+_RUN_STATES: "weakref.WeakValueDictionary[str, CompactionRunState]" = weakref.WeakValueDictionary()
 
 
 def register_run_state(run_id: str, state: "CompactionRunState") -> None:
-    global _RUN_STATES
-    if _RUN_STATES is None:
-        import weakref
-
-        _RUN_STATES = weakref.WeakValueDictionary()
     _RUN_STATES[run_id] = state
 
 
 def get_run_state(run_id: Optional[str]) -> Optional["CompactionRunState"]:
-    if not run_id or _RUN_STATES is None:
+    if not run_id:
         return None
     return _RUN_STATES.get(run_id)
 

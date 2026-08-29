@@ -1,5 +1,7 @@
 """Boundary and watermark selection: pair-safety, anchor durability, monotonicity."""
 
+import pytest
+
 from agno.compaction._cut import (
     choose_boundary,
     choose_watermark,
@@ -33,9 +35,6 @@ def long_text(tokens):
     return "word " * tokens
 
 
-import pytest
-
-
 @pytest.fixture
 def exact_tokens(monkeypatch):
     """Deterministic estimator for boundary-precision tests: one token per 'word'."""
@@ -63,8 +62,12 @@ class TestHelpers:
         assert not is_injected_compaction_message(user())
 
     def test_envelope_detection(self):
-        envelope = Message(role="tool", tool_call_id="c", content='<result id="res_ab" tool="t" lines="9" size="1 KB">\np\n</result>')
-        refused = Message(role="tool", tool_call_id="c", content='<result tool="t" lines="9" size="1 KB" stored="false" reason="x">')
+        envelope = Message(
+            role="tool", tool_call_id="c", content='<result id="res_ab" tool="t" lines="9" size="1 KB">\np\n</result>'
+        )
+        refused = Message(
+            role="tool", tool_call_id="c", content='<result tool="t" lines="9" size="1 KB" stored="false" reason="x">'
+        )
         assert is_offload_envelope(envelope)
         assert not is_offload_envelope(refused)
         assert not is_offload_envelope(Message(role="tool", tool_call_id="c", content="plain"))

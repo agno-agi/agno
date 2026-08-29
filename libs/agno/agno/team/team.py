@@ -454,6 +454,11 @@ class Team:
     _inherited_result_store: Optional["ResultStore"] = None
     # The setting the store was built from, so a changed setting rebuilds it
     _result_store_setting: Union[bool, "ResultStore", None] = None
+    # The resolved compaction config the runs use (compaction=True becomes a default Compaction here)
+    _compaction: Optional["Compaction"] = None
+    # Whether the caller set a history window explicitly (the compaction retention warning names
+    # only fields the user actually set, not the num_history_runs=3 default)
+    _history_window_explicit: bool = False
     # Internal resolved LearningMachine instance
     _learning: Optional[LearningMachine] = None
     # Whether learning init has been attempted (prevents repeated attempts when db is None)

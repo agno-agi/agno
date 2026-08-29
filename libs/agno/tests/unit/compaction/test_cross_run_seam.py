@@ -122,8 +122,7 @@ class TestCrossRunSeam:
         )
         output = plain.run("hello", session_id=session_id)
         assert all(
-            not (isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX))
-            for m in (output.messages or [])
+            not (isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX)) for m in (output.messages or [])
         )
 
     def test_chain_grows_and_folds_incrementally(self):

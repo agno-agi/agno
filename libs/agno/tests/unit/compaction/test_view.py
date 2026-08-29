@@ -135,7 +135,7 @@ class TestElision:
         )
         view = build_view(messages, self.watermark_record(messages, 3))
         envelope = next(m for m in view if m.id == messages[2].id)
-        assert 'res_ab' in envelope.content
+        assert "res_ab" in envelope.content
 
     def test_excluded_tools_never_elided(self):
         messages = self.make_tool_log()

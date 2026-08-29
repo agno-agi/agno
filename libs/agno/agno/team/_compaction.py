@@ -7,7 +7,7 @@ agent_id chain.
 """
 
 import threading
-from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, Union
 
 from agno.compaction._notice import NoticeInputs
 from agno.compaction._state import CompactionRunState, FoldHandle, clear_fold, in_flight_fold, register_fold
@@ -58,7 +58,8 @@ def compaction_notice_inputs(team: "Team", session_id: Optional[str]) -> NoticeI
     except Exception:
         pass
     try:
-        for tool in team.tools or []:
+        tools = team.tools if isinstance(team.tools, list) else []
+        for tool in tools:
             if type(tool).__name__ == "CodeMode" and hasattr(tool, "variables"):
                 inputs.variables = sorted((tool.variables(session_id) or {}).keys())
                 break
@@ -79,7 +80,8 @@ async def acompaction_notice_inputs(team: "Team", session_id: Optional[str]) -> 
     except Exception:
         pass
     try:
-        for tool in team.tools or []:
+        tools = team.tools if isinstance(team.tools, list) else []
+        for tool in tools:
             if type(tool).__name__ == "CodeMode" and hasattr(tool, "avariables"):
                 inputs.variables = sorted((await tool.avariables(session_id) or {}).keys())
                 break
@@ -304,6 +306,8 @@ def record_compaction_events(team: "Team", run_response) -> None:
     state = getattr(run_response, "_compaction_state", None)
     if state is None or not state.event_buffer:
         return
+    from agno.run.team import CompactionCompletedEvent as TeamCompactionCompletedEvent
+    from agno.run.team import CompactionStartedEvent as TeamCompactionStartedEvent
     from agno.utils.events import (
         create_team_compaction_completed_event,
         create_team_compaction_started_event,
@@ -311,6 +315,7 @@ def record_compaction_events(team: "Team", run_response) -> None:
     )
 
     for item in state.event_buffer:
+        event: Union[TeamCompactionStartedEvent, TeamCompactionCompletedEvent]
         if item.get("type") == "started":
             event = create_team_compaction_started_event(
                 from_run_response=run_response,

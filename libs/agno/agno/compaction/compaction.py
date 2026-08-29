@@ -200,7 +200,9 @@ class Compaction:
                 f"Compaction keep_recent_tokens ({keep}) must be smaller than the context window ({window})"
             )
         if reserve_set and reserve >= window:
-            raise ValueError(f"Compaction reserve_tokens ({reserve}) must be smaller than the context window ({window})")
+            raise ValueError(
+                f"Compaction reserve_tokens ({reserve}) must be smaller than the context window ({window})"
+            )
 
         reserve_eff = min(reserve, window // 8)
         keep_eff = min(keep, window // 4)
@@ -216,7 +218,11 @@ class Compaction:
         soft_trigger_tokens: Optional[int] = None
         if self.background:
             ratio_set = self.background_start_ratio is not None
-            ratio = self.background_start_ratio if self.background_start_ratio is not None else DEFAULT_BACKGROUND_START_RATIO
+            ratio = (
+                self.background_start_ratio
+                if self.background_start_ratio is not None
+                else DEFAULT_BACKGROUND_START_RATIO
+            )
             soft = floor(window * ratio)
             lower = keep_eff + reserve_eff
             upper = trigger_tokens - reserve_eff
@@ -400,9 +406,12 @@ def prepare_pass(
         # The watermark advanced only if it newly elides something; a moved pointer with no tool
         # result behind it is not a pass worth a record.
         previous_watermark = previous_record.elision_watermark_message_id if previous_record else None
-        watermark_advanced = watermark_id is not None and watermark_id != previous_watermark and _elidable_count(
-            messages, watermark_id, config.elide_exclude_tools
-        ) > _elidable_count(messages, previous_watermark, config.elide_exclude_tools)
+        watermark_advanced = (
+            watermark_id is not None
+            and watermark_id != previous_watermark
+            and _elidable_count(messages, watermark_id, config.elide_exclude_tools)
+            > _elidable_count(messages, previous_watermark, config.elide_exclude_tools)
+        )
         target = elision_target_tokens if elision_target_tokens is not None else limits.trigger_tokens
         if elided_estimate <= target:
             if not watermark_advanced:
@@ -452,7 +461,9 @@ def prepare_pass(
     )
 
 
-def _record_from_plan(plan: PassPlan, summary: Optional[str], duration_ms: int, model_id: Optional[str]) -> CompactionRecord:
+def _record_from_plan(
+    plan: PassPlan, summary: Optional[str], duration_ms: int, model_id: Optional[str]
+) -> CompactionRecord:
     record = CompactionRecord.create(
         plan.reason,
         previous_id=plan.previous_record.id if plan.previous_record else None,
@@ -587,7 +598,9 @@ def render_view(
                 continue
             if getattr(prior, "status", None) in HISTORY_SKIP_STATUSES:
                 continue
-            history.extend(m for m in getattr(prior, "messages", None) or [] if not m.from_history and m.role != "system")
+            history.extend(
+                m for m in getattr(prior, "messages", None) or [] if not m.from_history and m.role != "system"
+            )
         if record is not None and record.first_kept_message_id:
             for index, message in enumerate(history):
                 if message.id == record.first_kept_message_id:

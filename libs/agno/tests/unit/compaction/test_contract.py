@@ -3,11 +3,9 @@
 import sys
 from typing import Any
 
-import pytest
-
 sys.path.insert(0, __file__.rsplit("/", 1)[0])
 
-from test_cross_run_seam import EchoModel, make_agent, run_until_compacted, SUMMARY_TEXT  # noqa: E402
+from test_cross_run_seam import EchoModel, make_agent, run_until_compacted  # noqa: E402
 
 from agno.agent import Agent  # noqa: E402
 from agno.compaction import Compaction  # noqa: E402
@@ -55,7 +53,9 @@ class TestOffPathGate:
                 outputs.append([(m.role, m.content) for m in out.messages or []])
             return outputs
 
-        agent_a = Agent(id="gate-a", model=EchoModel("reply"), db=InMemoryDb(), add_history_to_context=True, telemetry=False)
+        agent_a = Agent(
+            id="gate-a", model=EchoModel("reply"), db=InMemoryDb(), add_history_to_context=True, telemetry=False
+        )
         agent_b = Agent(
             id="gate-a",  # same id: assembly must not differ because the field exists
             model=EchoModel("reply"),
@@ -121,18 +121,12 @@ class TestScrubInterplay:
         output = agent.run("after " + "word " * 100, session_id=session_id)
         session = agent.get_session(session_id=session_id)
         stored = next(run for run in session.runs if run.run_id == output.run_id)
-        pair = [
-            m
-            for m in stored.messages or []
-            if isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX)
-        ]
+        pair = [m for m in stored.messages or [] if isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX)]
         assert pair and all(m.from_history for m in pair)
         # Re-reading does not double-inject: the next run still carries exactly one summary.
         next_output = agent.run("more " + "word " * 100, session_id=session_id)
         summaries = [
-            m
-            for m in next_output.messages or []
-            if isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX)
+            m for m in next_output.messages or [] if isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX)
         ]
         assert len(summaries) == 1
 

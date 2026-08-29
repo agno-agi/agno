@@ -268,9 +268,17 @@ class TestInFlightRegistry:
         from agno.compaction.compaction import PassPlan
 
         plan = PassPlan(
-            reason="threshold", created_by_run_id=None, previous_record=None, elision_only=True,
-            watermark_id=None, boundary_index=None, boundary_message_id=None, rendered_segment=None,
-            previous_summary=None, notice=None, tokens_before=0,
+            reason="threshold",
+            created_by_run_id=None,
+            previous_record=None,
+            elision_only=True,
+            watermark_id=None,
+            boundary_index=None,
+            boundary_message_id=None,
+            rendered_segment=None,
+            previous_summary=None,
+            notice=None,
+            tokens_before=0,
         )
         handle = FoldHandle(plan=plan, thread=thread)
         try:

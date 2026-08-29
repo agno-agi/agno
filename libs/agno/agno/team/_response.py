@@ -20,7 +20,6 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent._tools import result_store_kwargs
-from agno.team._compaction import compaction_state_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
 from agno.models.base import Model
@@ -39,6 +38,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
+from agno.team._compaction import compaction_state_kwargs
 from agno.tools.function import Function
 from agno.utils.events import (
     create_team_compaction_completed_event,

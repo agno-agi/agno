@@ -29,10 +29,10 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._compaction import compaction_state_kwargs, record_compaction_events
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
-from agno.agent._compaction import compaction_state_kwargs, record_compaction_events
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,

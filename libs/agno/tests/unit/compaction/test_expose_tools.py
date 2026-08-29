@@ -57,7 +57,9 @@ class SummarizerModel(ScriptedModel):
 def tool_call(call_id: str, name: str, arguments: dict) -> ModelResponse:
     return ModelResponse(
         role="assistant",
-        tool_calls=[{"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}],
+        tool_calls=[
+            {"id": call_id, "type": "function", "function": {"name": name, "arguments": json.dumps(arguments)}}
+        ],
     )
 
 

@@ -22,6 +22,7 @@ from agno.utils.log import log_debug, log_error, log_warning
 
 if TYPE_CHECKING:
     from agno.models.base import Model
+    from agno.models.response import ModelResponse
 
 
 def outbound_view(messages: List[Message], state: CompactionRunState) -> List[Message]:
@@ -85,11 +86,11 @@ def _activate(state: CompactionRunState, record: CompactionRecord, messages: Lis
     )
 
 
-def drain_marker_events(state: CompactionRunState) -> List["object"]:
+def drain_marker_events(state: CompactionRunState) -> List["ModelResponse"]:
     """Convert buffered pass events into ModelResponse markers (stream loops yield these)."""
     from agno.models.response import ModelResponse, ModelResponseEvent
 
-    markers = []
+    markers: List[ModelResponse] = []
     for item in state.event_buffer:
         event = (
             ModelResponseEvent.compaction_started.value
@@ -295,7 +296,9 @@ async def aloop_top(model: "Model", messages: List[Message], state: CompactionRu
         log_error(f"Compaction loop check failed; continuing uncompacted: {exc}")
 
 
-def _loop_top_shared(model: "Model", messages: List[Message], state: CompactionRunState, run_response, async_mode: bool) -> None:
+def _loop_top_shared(
+    model: "Model", messages: List[Message], state: CompactionRunState, run_response, async_mode: bool
+) -> None:
     run_metrics = getattr(run_response, "metrics", None)
     _maybe_refresh_limits(model, state)
     _adopt_finished_fold(state, messages)
@@ -357,7 +360,9 @@ def handle_overflow(model: "Model", messages: List[Message], state: CompactionRu
     return record is not None
 
 
-async def ahandle_overflow(model: "Model", messages: List[Message], state: CompactionRunState, run_response=None) -> bool:
+async def ahandle_overflow(
+    model: "Model", messages: List[Message], state: CompactionRunState, run_response=None
+) -> bool:
     """Async twin of handle_overflow."""
     if state.overflow_attempted:
         return False

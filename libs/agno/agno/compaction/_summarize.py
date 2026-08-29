@@ -70,7 +70,9 @@ def _build_prompt(
     return prompt
 
 
-def _build_user_message(previous_summary: Optional[str], segment_text: str, untrusted_instructions: Optional[str]) -> str:
+def _build_user_message(
+    previous_summary: Optional[str], segment_text: str, untrusted_instructions: Optional[str]
+) -> str:
     parts: List[str] = []
     if previous_summary:
         parts.append(f"Previous summary:\n\n{previous_summary}")
