@@ -120,3 +120,12 @@ class CompactionRunState:
     first_own_message_index: int = 0
     # Set when a pass completed but the view is still over trigger; warn once, never loop.
     still_over_trigger: bool = False
+    # One compact-and-retry per successful provider call: set on an overflow pass, cleared when a
+    # provider call succeeds; a second overflow with this set propagates.
+    overflow_attempted: bool = False
+    # False when store_tool_messages is off: scrub deletes assistant batch heads, so they cannot anchor.
+    allow_tool_batch_heads: bool = True
+    # Pass observability: {"type": "started"/"completed", ...numbers...} appended by the loop
+    # helpers; stream loops drain these into marker events, non-stream callers convert what
+    # remains after the call returns. Payloads carry numbers only, never summary text.
+    event_buffer: List[Dict[str, Any]] = field(default_factory=list)

@@ -230,21 +230,63 @@ def _start_background_fold(agent: "Agent", session: "AgentSession", plan) -> Non
 
 def adopt_finished_fold(agent: "Agent", session: "AgentSession") -> Optional[CompactionRecord]:
     """If a registry-visible fold for this (session, owner) has finished, commit and return its
-    record; None otherwise. Never blocks."""
+    record; None otherwise. Never blocks.
+
+    A record scoped to another run's own messages (created_by_run_id set) is dropped here: only
+    the creating run may commit it, and if that run died its content never persisted."""
     session_id = session.session_id or ""
     owner_id = agent.id or ""
     handle = in_flight_fold(session_id, owner_id)
     if handle is None or not handle.done():
         return None
     clear_fold(session_id, owner_id, handle)
-    if handle.record is None:
+    if handle.record is None or handle.record.created_by_run_id is not None:
         return None
     record = handle.record
-    if record.created_by_run_id is None:
-        stamp_run_attribution(session, record)
-        _commit_record(session, owner_id, record)
-        return record
+    stamp_run_attribution(session, record)
+    _commit_record(session, owner_id, record)
     return record
+
+
+def drain_compaction_state_at_persist(agent: "Agent", run_response, session: "AgentSession", storage_copy) -> None:
+    """Commit routing at the persist funnel: records created in-run reach the session row only
+    when the creating run completed; error, cancel, and pause discard them (the transcript they
+    summarise is excluded from history anyway) and abandon any in-flight fold un-joined."""
+    from agno.run.base import RunStatus
+
+    state = getattr(run_response, "_compaction_state", None)
+    if state is None:
+        return
+    status = run_response.status
+    if status == RunStatus.completed:
+        handle = state.fold_future
+        if handle is not None:
+            if not handle.done() and handle.thread is not None:
+                # Join before persist; the record commits for the next run's benefit only — it
+                # never activated, so this run's compaction_id keeps naming the record its final
+                # provider call actually used.
+                handle.join()
+            clear_fold(state.session_id, state.owner_id, handle)
+            if handle.record is not None and handle.record not in state.pending_records:
+                state.pending_records.append(handle.record)
+            state.fold_future = None
+        if state.pending_records:
+            if session.session_data is None:
+                session.session_data = {}
+            for record in state.pending_records:
+                if record.first_kept_message_id and record.first_kept_run_index is None:
+                    stamp_run_attribution(session, record)
+            merge_records_into_session_data(session.session_data, state.owner_id, state.pending_records)
+            state.pending_records = []
+        if state.active_record is not None:
+            run_response.compaction_id = state.active_record.id
+            if storage_copy is not None:
+                storage_copy.compaction_id = state.active_record.id
+    elif status in (RunStatus.error, RunStatus.cancelled, RunStatus.paused):
+        state.pending_records = []
+        # Abandon, never join: the fold is pure and its result is simply dropped. The registry
+        # entry stays until the thread finishes so a concurrent fold cannot double-start.
+        state.fold_future = None
 
 
 def add_compacted_history(
@@ -434,7 +476,7 @@ async def aadd_compacted_history(
 def make_run_state(
     agent: "Agent",
     session: "AgentSession",
-    run_id: Optional[str],
+    run_response,
     run_messages: "RunMessages",
 ) -> CompactionRunState:
     """Build the per-run carrier after the message build. Everything appended from here on is the
@@ -443,18 +485,40 @@ def make_run_state(
     assert config is not None
     limits = resolve_limits(agent)
     session_id = session.session_id or ""
+    chain = get_owner_records(session.session_data, agent.id or "")
     record = run_messages.compaction_record
+    if not isinstance(record, CompactionRecord):
+        record = None
+    if record is None and getattr(run_response, "compaction_id", None):
+        # Resume/fork: the run builds from its own record, not the chain head.
+        record = next((r for r in chain if r.id == run_response.compaction_id), None)
     state = CompactionRunState(
         config=config,
         limits=limits,
         gauge=ContextGauge(limits=limits),
         session_id=session_id,
         owner_id=agent.id or "",
-        run_id=run_id,
-        active_record=record if isinstance(record, CompactionRecord) else None,
-        chain=get_owner_records(session.session_data, agent.id or ""),
+        run_id=getattr(run_response, "run_id", None),
+        active_record=record,
+        chain=chain,
         notice_sources=lambda: compaction_notice_inputs(agent, session_id),
         strip_provider_chaining=True,
         first_own_message_index=len(run_messages.messages),
+        allow_tool_batch_heads=agent.store_tool_messages,
     )
     return state
+
+
+def compaction_state_kwargs(agent: "Agent", *, session: "AgentSession", run_response, run_messages) -> Dict[str, Any]:
+    """The ``compaction_state=`` kwarg for a model call, or nothing at all when compaction is off.
+
+    The kwarg is omitted entirely when off so Model.response* overrides without the parameter
+    keep working. The state is created once per run and rides the run output object (a private,
+    never-serialized attribute) so persist points can drain it."""
+    if agent._compaction is None:
+        return {}
+    state = getattr(run_response, "_compaction_state", None)
+    if state is None:
+        state = make_run_state(agent, session, run_response, run_messages)
+        run_response._compaction_state = state
+    return {"compaction_state": state}

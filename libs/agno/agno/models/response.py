@@ -18,6 +18,8 @@ class ModelResponseEvent(str, Enum):
     assistant_response = "AssistantResponse"
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
+    compaction_started = "CompactionStarted"
+    compaction_completed = "CompactionCompleted"
     model_request_started = "ModelRequestStarted"
     model_request_completed = "ModelRequestCompleted"
     fallback_model_activated = "FallbackModelActivated"
@@ -150,6 +152,9 @@ class ModelResponse:
 
     # Compression stats
     compression_stats: Optional[Dict[str, Any]] = None
+
+    # Compaction event payload (numbers only, never summary text)
+    compaction_stats: Optional[Dict[str, Any]] = None
 
     # Model request metrics (for model_request_completed events)
     input_tokens: Optional[int] = None

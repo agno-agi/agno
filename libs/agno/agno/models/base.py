@@ -25,6 +25,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
+    from agno.compaction._state import CompactionRunState
     from agno.compression.manager import CompressionManager
     from agno.offload.store import ResultStore
 from uuid import uuid4
@@ -653,6 +654,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction_state: Optional["CompactionRunState"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> ModelResponse:
@@ -706,20 +708,42 @@ class Model(ABC):
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
 
+            # Compaction seam: adopt finished folds, run threshold passes, derive the view
+            _outbound_messages = messages
+            if compaction_state is not None:
+                from agno.compaction._loop import loop_top, outbound_view
+
+                loop_top(self, messages, compaction_state, run_response)
+                _outbound_messages = outbound_view(messages, compaction_state)
+
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
-            self._process_model_response(
-                messages=messages,
-                assistant_message=assistant_message,
-                model_response=model_response,
-                response_format=response_format,
-                tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
-                run_response=run_response,
-                compress_tool_results=_compress_tool_results,
-            )
+            try:
+                self._process_model_response(
+                    messages=_outbound_messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
+                )
+            except ContextWindowExceededError:
+                if compaction_state is None:
+                    raise
+                from agno.compaction._loop import handle_overflow
+
+                # Compact and retry the call once; a second overflow propagates.
+                if not handle_overflow(self, messages, compaction_state, run_response):
+                    raise
+                continue
+            if compaction_state is not None:
+                from agno.compaction._loop import observe_provider_success
+
+                observe_provider_success(compaction_state, assistant_message)
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:
@@ -886,6 +910,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction_state: Optional["CompactionRunState"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> ModelResponse:
@@ -930,20 +955,42 @@ class Model(ABC):
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
 
+            # Compaction seam: adopt finished folds, run threshold passes, derive the view
+            _outbound_messages = messages
+            if compaction_state is not None:
+                from agno.compaction._loop import aloop_top, outbound_view
+
+                await aloop_top(self, messages, compaction_state, run_response)
+                _outbound_messages = outbound_view(messages, compaction_state)
+
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
             # Initialize message metrics and start timer before model call
             self._ensure_message_metrics_initialized(assistant_message)
-            await self._aprocess_model_response(
-                messages=messages,
-                assistant_message=assistant_message,
-                model_response=model_response,
-                response_format=response_format,
-                tools=_tool_dicts,
-                tool_choice=tool_choice or self._tool_choice,
-                run_response=run_response,
-                compress_tool_results=_compress_tool_results,
-            )
+            try:
+                await self._aprocess_model_response(
+                    messages=_outbound_messages,
+                    assistant_message=assistant_message,
+                    model_response=model_response,
+                    response_format=response_format,
+                    tools=_tool_dicts,
+                    tool_choice=tool_choice or self._tool_choice,
+                    run_response=run_response,
+                    compress_tool_results=_compress_tool_results,
+                )
+            except ContextWindowExceededError:
+                if compaction_state is None:
+                    raise
+                from agno.compaction._loop import ahandle_overflow
+
+                # Compact and retry the call once; a second overflow propagates.
+                if not await ahandle_overflow(self, messages, compaction_state, run_response):
+                    raise
+                continue
+            if compaction_state is not None:
+                from agno.compaction._loop import observe_provider_success
+
+                observe_provider_success(compaction_state, assistant_message)
 
             # Accumulate metrics for non-stream responses
             if run_response is not None and model_response.response_usage is not None:
@@ -1370,6 +1417,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction_state: Optional["CompactionRunState"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
@@ -1428,6 +1476,16 @@ class Model(ABC):
                     compression_stats=_compression_manager.stats.copy(),
                 )
 
+            # Compaction seam: adopt finished folds, run threshold passes, derive the view
+            _outbound_messages = messages
+            if compaction_state is not None:
+                from agno.compaction._loop import drain_marker_events, loop_top, outbound_view
+
+                loop_top(self, messages, compaction_state, run_response)
+                for _marker in drain_marker_events(compaction_state):
+                    yield _marker
+                _outbound_messages = outbound_view(messages, compaction_state)
+
             assistant_message = Message(role=self.assistant_message_role)
             # Create assistant message and stream data
             stream_data = MessageData()
@@ -1445,7 +1503,7 @@ class Model(ABC):
                 # Generate response
                 try:
                     for response in self.process_response_stream(
-                        messages=messages,
+                        messages=_outbound_messages,
                         assistant_message=assistant_message,
                         stream_data=stream_data,
                         response_format=response_format,
@@ -1457,6 +1515,17 @@ class Model(ABC):
                         if self.cache_response and isinstance(response, ModelResponse):
                             streaming_responses.append(response)
                         yield response
+                except ContextWindowExceededError:
+                    if compaction_state is None:
+                        raise
+                    from agno.compaction._loop import drain_marker_events, handle_overflow
+
+                    # Compact and retry the call once; a second overflow propagates.
+                    if not handle_overflow(self, messages, compaction_state, run_response):
+                        raise
+                    for _marker in drain_marker_events(compaction_state):
+                        yield _marker
+                    continue
                 finally:
                     # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
@@ -1469,16 +1538,28 @@ class Model(ABC):
             else:
                 # Initialize message metrics and start timer before model call
                 self._ensure_message_metrics_initialized(assistant_message)
-                self._process_model_response(
-                    messages=messages,
-                    assistant_message=assistant_message,
-                    model_response=model_response,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
-                    run_response=run_response,
-                    compress_tool_results=_compress_tool_results,
-                )
+                try:
+                    self._process_model_response(
+                        messages=_outbound_messages,
+                        assistant_message=assistant_message,
+                        model_response=model_response,
+                        response_format=response_format,
+                        tools=_tool_dicts,
+                        tool_choice=tool_choice or self._tool_choice,
+                        run_response=run_response,
+                        compress_tool_results=_compress_tool_results,
+                    )
+                except ContextWindowExceededError:
+                    if compaction_state is None:
+                        raise
+                    from agno.compaction._loop import drain_marker_events, handle_overflow
+
+                    # Compact and retry the call once; a second overflow propagates.
+                    if not handle_overflow(self, messages, compaction_state, run_response):
+                        raise
+                    for _marker in drain_marker_events(compaction_state):
+                        yield _marker
+                    continue
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
@@ -1487,6 +1568,11 @@ class Model(ABC):
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
+
+            if compaction_state is not None:
+                from agno.compaction._loop import observe_provider_success
+
+                observe_provider_success(compaction_state, assistant_message)
 
             # Add assistant message to messages
             messages.append(assistant_message)
@@ -1651,6 +1737,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        compaction_state: Optional["CompactionRunState"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
@@ -1709,6 +1796,16 @@ class Model(ABC):
                     compression_stats=_compression_manager.stats.copy(),
                 )
 
+            # Compaction seam: adopt finished folds, run threshold passes, derive the view
+            _outbound_messages = messages
+            if compaction_state is not None:
+                from agno.compaction._loop import aloop_top, drain_marker_events, outbound_view
+
+                await aloop_top(self, messages, compaction_state, run_response)
+                for _marker in drain_marker_events(compaction_state):
+                    yield _marker
+                _outbound_messages = outbound_view(messages, compaction_state)
+
             # Create assistant message and stream data
             assistant_message = Message(role=self.assistant_message_role)
             stream_data = MessageData()
@@ -1726,7 +1823,7 @@ class Model(ABC):
                 # Generate response
                 try:
                     async for model_response_delta in self.aprocess_response_stream(
-                        messages=messages,
+                        messages=_outbound_messages,
                         assistant_message=assistant_message,
                         stream_data=stream_data,
                         response_format=response_format,
@@ -1738,6 +1835,17 @@ class Model(ABC):
                         if self.cache_response and isinstance(model_response_delta, ModelResponse):
                             streaming_responses.append(model_response_delta)
                         yield model_response_delta
+                except ContextWindowExceededError:
+                    if compaction_state is None:
+                        raise
+                    from agno.compaction._loop import ahandle_overflow, drain_marker_events
+
+                    # Compact and retry the call once; a second overflow propagates.
+                    if not await ahandle_overflow(self, messages, compaction_state, run_response):
+                        raise
+                    for _marker in drain_marker_events(compaction_state):
+                        yield _marker
+                    continue
                 finally:
                     # Accumulate metrics for this streamed iteration (also on cancel)
                     if run_response is not None and assistant_message.metrics is not None:
@@ -1750,16 +1858,28 @@ class Model(ABC):
             else:
                 # Initialize message metrics and start timer before model call
                 self._ensure_message_metrics_initialized(assistant_message)
-                await self._aprocess_model_response(
-                    messages=messages,
-                    assistant_message=assistant_message,
-                    model_response=model_response,
-                    response_format=response_format,
-                    tools=_tool_dicts,
-                    tool_choice=tool_choice or self._tool_choice,
-                    run_response=run_response,
-                    compress_tool_results=_compress_tool_results,
-                )
+                try:
+                    await self._aprocess_model_response(
+                        messages=_outbound_messages,
+                        assistant_message=assistant_message,
+                        model_response=model_response,
+                        response_format=response_format,
+                        tools=_tool_dicts,
+                        tool_choice=tool_choice or self._tool_choice,
+                        run_response=run_response,
+                        compress_tool_results=_compress_tool_results,
+                    )
+                except ContextWindowExceededError:
+                    if compaction_state is None:
+                        raise
+                    from agno.compaction._loop import ahandle_overflow, drain_marker_events
+
+                    # Compact and retry the call once; a second overflow propagates.
+                    if not await ahandle_overflow(self, messages, compaction_state, run_response):
+                        raise
+                    for _marker in drain_marker_events(compaction_state):
+                        yield _marker
+                    continue
                 # Accumulate metrics for non-streamed response within stream
                 if run_response is not None and model_response.response_usage is not None:
                     from agno.metrics import accumulate_model_metrics
@@ -1768,6 +1888,11 @@ class Model(ABC):
                 if self.cache_response:
                     streaming_responses.append(model_response)
                 yield model_response
+
+            if compaction_state is not None:
+                from agno.compaction._loop import observe_provider_success
+
+                observe_provider_success(compaction_state, assistant_message)
 
             # Add assistant message to messages
             messages.append(assistant_message)

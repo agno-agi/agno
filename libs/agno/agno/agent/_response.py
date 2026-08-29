@@ -22,6 +22,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._compaction import compaction_state_kwargs
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import RunCancelledException
 from agno.media import Audio
@@ -1068,6 +1069,7 @@ def handle_model_response_stream(
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
         **result_store_kwargs(agent),
+        **compaction_state_kwargs(agent, session=session, run_response=run_response, run_messages=run_messages),
         after_tool_results=build_after_tool_results_callback(
             agent,
             run_response=run_response,
@@ -1229,6 +1231,7 @@ async def ahandle_model_response_stream(
         send_media_to_model=agent.send_media_to_model,
         compression_manager=agent.compression_manager if agent.compress_tool_results else None,
         **result_store_kwargs(agent),
+        **compaction_state_kwargs(agent, session=session, run_response=run_response, run_messages=run_messages),
         after_tool_results=abuild_after_tool_results_callback(
             agent,
             run_response=run_response,

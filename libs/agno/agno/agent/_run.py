@@ -32,6 +32,7 @@ if TYPE_CHECKING:
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
+from agno.agent._compaction import compaction_state_kwargs
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
@@ -541,6 +542,9 @@ def _run(
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                     **result_store_kwargs(agent),
+                    **compaction_state_kwargs(
+                        agent, session=agent_session, run_response=run_response, run_messages=run_messages
+                    ),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -1675,6 +1679,9 @@ async def _arun(
                     run_response=run_response,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                     **result_store_kwargs(agent),
+                    **compaction_state_kwargs(
+                        agent, session=agent_session, run_response=run_response, run_messages=run_messages
+                    ),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -3776,6 +3783,9 @@ def _continue_run(
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                     **result_store_kwargs(agent),
+                    **compaction_state_kwargs(
+                        agent, session=session, run_response=run_response, run_messages=run_messages
+                    ),
                     after_tool_results=build_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -5003,6 +5013,9 @@ async def _acontinue_run(
                     send_media_to_model=agent.send_media_to_model,
                     compression_manager=agent.compression_manager if agent.compress_tool_results else None,
                     **result_store_kwargs(agent),
+                    **compaction_state_kwargs(
+                        agent, session=agent_session, run_response=run_response, run_messages=run_messages
+                    ),
                     after_tool_results=abuild_after_tool_results_callback(
                         agent,
                         run_response=run_response,
@@ -6070,6 +6083,10 @@ def persist_run_in_session(
 
     # Add scrubbed RunOutput to Agent Session
     session.upsert_run(run=storage_copy)
+    if getattr(run_response, "_compaction_state", None) is not None:
+        from agno.agent._compaction import drain_compaction_state_at_persist
+
+        drain_compaction_state_at_persist(agent, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
@@ -6110,6 +6127,10 @@ async def apersist_run_in_session(
         )
 
     session.upsert_run(run=storage_copy)
+    if getattr(run_response, "_compaction_state", None) is not None:
+        from agno.agent._compaction import drain_compaction_state_at_persist
+
+        drain_compaction_state_at_persist(agent, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(agent, session=session, run_response=run_response)
 
