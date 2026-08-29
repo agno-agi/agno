@@ -258,7 +258,11 @@ def convert_schema(
 
     # Handle enum types
     if "enum" in schema_dict:
-        enum_values = schema_dict["enum"]
+        # ``GeminiType.STRING`` is used for enums, so the values must be
+        # coerced to strings as well: a tool parameter typed as ``IntEnum``
+        # or ``Literal[1, 2, 3]`` produces a JSON schema whose ``enum`` holds
+        # integers, and ``Schema.enum`` is typed ``List[str]``.
+        enum_values = [str(v) for v in schema_dict["enum"]]
         return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default, title=title)
 
     if schema_type == "object":
