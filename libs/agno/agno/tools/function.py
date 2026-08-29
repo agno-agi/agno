@@ -1409,16 +1409,21 @@ def isolated_runtime_value(value: Any) -> Any:
     ``UserInputField`` objects, so one run's input would be visible to every
     other component holding that tool, and to the registry itself.
 
-    Lists are rebuilt rather than deep-copied, so callables such as tool hooks
-    stay the same objects; only dataclass elements are copied, because those
-    are the ones written in place. No RUNTIME_ONLY_FIELDS entry holds a dict,
-    so lists are the only containers handled.
+    Containers are rebuilt one level deep rather than deep-copied, so callables
+    such as tool hooks stay the same objects; only dataclass elements are copied,
+    because those are the ones written in place. Both list and dict entries are
+    handled -- ``annotations`` is a dict, and sharing it would let one component's
+    edit change what every other component and the registry itself publish.
     """
     from copy import copy
     from dataclasses import is_dataclass
 
     if isinstance(value, list):
         return [copy(item) if is_dataclass(item) else item for item in value]
+    if isinstance(value, dict):
+        # Shallow is enough: annotation values are bools and strings, enforced by
+        # validate_tool_annotations at construction.
+        return dict(value)
     return value
 
 

@@ -65,6 +65,29 @@ question; `chief` ran to COMPLETED.
 
 ---
 
+### agents_as_tools.py (corrected annotations)
+
+**Status:** PASS
+
+**Test mode:** LIVE (2026-08-30, second run)
+
+**Description:** Re-ran after two corrections: the cookbook's `deep_research`
+override no longer claims `readOnlyHint` (a run writes a session row and a run
+row, so the claim was false), and every tool the server composes now states all
+three of `readOnlyHint`, `destructiveHint`, and `openWorldHint` rather than
+leaving the ones that "do not apply" unset.
+
+**Result:** `tools/list` returned `chief`, `deep_research`, `continue_run`,
+`cancel_run`, and every one carried all three hints with no gaps:
+`chief` false/true/true (published-component defaults), `deep_research`
+false/false/true plus `idempotentHint` false (its override now refines the
+default instead of contradicting it -- it appends to its own session and
+destroys nothing), `continue_run` false/true/true, `cancel_run` false/true/false
+(it writes this deployment's own run state and reaches nothing external).
+`deep_research` ran to COMPLETED.
+
+---
+
 ### basic.py
 
 **Status:** PASS

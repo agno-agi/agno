@@ -72,9 +72,13 @@ _BUILTIN_TOOL_NAMES: Dict[str, frozenset] = {
 
 # What a published component's run tool asserts about itself, before the deployer's own
 # ``as_tool(annotations=...)``. A run is not read-only (it persists a session and may
-# call side-effectful tools) and reaches beyond this server, and ``destructiveHint`` is
-# stated rather than left implicit: an absent hint defaults to true CLIENT-side, so
-# spelling it out is what makes a reviewer see the deployer's own claim.
+# call side-effectful tools) and reaches beyond this server.
+#
+# All three of readOnlyHint/destructiveHint/openWorldHint are stated rather than left
+# implicit, here and on every built-in tool. An omitted hint is not "unknown" to a
+# client -- it falls back to a protocol default -- and a directory submission scan
+# rejects a tool that leaves any of the three unset, so a hint the server declines to
+# state is a hint someone else answers on its behalf.
 _EXPOSED_COMPONENT_ANNOTATIONS: Dict[str, Any] = {
     "readOnlyHint": False,
     "destructiveHint": True,
@@ -1392,12 +1396,14 @@ def _register_exposed_components(
         component_id = getattr(component, "id", None)
         # On Remote* components name/description are network-backed properties (a
         # synchronous config fetch that blocks to the timeout when the remote is
-        # unreachable). Skip the read entirely when both overrides are supplied and
+        # unreachable). Skip the read for those when both overrides are supplied and
         # non-blank -- neither the tool name nor the description needs the component's
         # own metadata then. The bare path (no name override) still needs the name for
         # the auto-derived-id origin hint; a blank description override still needs the
-        # component description as its fallback.
-        if name_override is not None and (description_override or "").strip():
+        # component description as its fallback. A LOCAL component's metadata is a
+        # plain attribute read, so it is never skipped: the display title falls back to
+        # the component's name, which the skip would otherwise throw away.
+        if isinstance(component, BaseRemote) and name_override is not None and (description_override or "").strip():
             component_name, component_description = None, None
         else:
             component_name, component_description = _safe_component_metadata(component)
@@ -1553,7 +1559,7 @@ def build_mcp_server(
             "the REST /config endpoint."
         ),
         tags={"core"},
-        annotations={"readOnlyHint": True, "idempotentHint": True},
+        annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )  # type: ignore
     async def config() -> Dict[str, Any]:
         _require_tool_scopes("GET", "/config")
@@ -1824,7 +1830,7 @@ def build_mcp_server(
             "run_id, its session_id, and exactly one of agent_id / team_id / workflow_id."
         ),
         tags={"core", "lifecycle"},
-        annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True},
+        annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
     )  # type: ignore
     async def cancel_run(
         run_id: str,
@@ -1874,7 +1880,7 @@ def build_mcp_server(
             "read its history. db_id is only needed when get_agentos_config lists multiple databases."
         ),
         tags={"session"},
-        annotations={"readOnlyHint": True},
+        annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_sessions(
         session_type: Literal["agent", "team", "workflow"] = "agent",
@@ -1937,7 +1943,7 @@ def build_mcp_server(
             "omitted; db_id is only needed when get_agentos_config lists multiple databases."
         ),
         tags={"session"},
-        annotations={"readOnlyHint": True},
+        annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_session_runs(
         session_id: str,

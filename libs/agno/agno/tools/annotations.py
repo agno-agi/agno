@@ -6,6 +6,14 @@ marketplaces read them: a submission scan rejects tools that carry none, and rev
 test the claim against the tool's real behaviour, so a wrong hint is worse than a
 missing one.
 
+Publish all three of ``readOnlyHint``, ``destructiveHint``, and ``openWorldHint`` on
+every tool. A submission scan rejects a tool that leaves any of them unset, and an
+omitted hint is not read as "unknown" by a client -- it falls back to a protocol
+default, which answers for the tool whether or not that answer is true. Components
+published through ``as_tool`` get all three from the serving surface; a plain callable
+carries none, so a tool that is going to be listed should be an agno ``Function``
+(``@tool(annotations=...)``) that states them.
+
 The keys are fixed by the protocol. They are validated where the developer writes them
 (``as_tool(annotations=...)``, ``@tool(annotations=...)``) rather than at registration,
 because a silent typo -- ``readonlyHint`` for ``readOnlyHint`` -- forwards as an unknown

@@ -145,6 +145,22 @@ async def test_the_explicit_title_wins_when_both_slots_are_set():
     assert published.annotations.title == "Ask the Chief"
 
 
+async def test_a_local_component_keeps_its_name_as_the_title_under_both_overrides():
+    """The metadata skip exists so an unreachable REMOTE cannot block the build. A local
+    component's metadata is a plain attribute read, so overriding name and description
+    must not cost it the documented component-name title fallback."""
+    agent = _agent()
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(default_tools=False, tools=[agent.as_tool(name="ask_chief", description="Ask.")]),
+    )
+
+    published = await _tool_by_name(os, "ask_chief")
+
+    assert published.title == "Chief of Staff"
+    assert published.annotations.title == "Chief of Staff"
+
+
 async def test_remote_with_overrides_and_no_title_still_skips_the_metadata_fetch(monkeypatch):
     """A remote's name is a network-backed property that blocks to the timeout when the
     remote is unreachable. Filling a DISPLAY TITLE must never be the thing that triggers
@@ -270,6 +286,22 @@ async def test_toolkit_method_publishes_the_metadata_its_decorator_declared():
     assert published.annotations.openWorldHint is True
 
 
+def test_rehydrated_annotations_are_isolated_from_the_registry_source():
+    """Restoring a runtime-only field by reference would let one component's edit change
+    what every other component -- and the registry itself -- publishes."""
+    from agno.tools.function import isolated_runtime_value
+
+    source = {"readOnlyHint": False, "destructiveHint": True}
+
+    first = isolated_runtime_value(source)
+    second = isolated_runtime_value(source)
+    first["destructiveHint"] = False
+
+    assert first is not source and second is not source
+    assert second == {"readOnlyHint": False, "destructiveHint": True}
+    assert source == {"readOnlyHint": False, "destructiveHint": True}
+
+
 def test_presentation_survives_a_registry_reload():
     """to_dict() deliberately omits presentation, so the registry restores it from the
     live Function instead -- a reloaded component must publish the same title and hints
@@ -356,18 +388,20 @@ async def test_presentation_is_never_duck_typed_off_a_non_function_tool():
 # --------------------------------------------------------------------------------------
 
 
-# What each built-in claims about itself, as (readOnlyHint, destructiveHint). A wrong
-# hint is worse than a missing one -- a reviewer tests these against real behaviour --
-# so the values are pinned per tool, not just checked for presence.
+# What each built-in claims about itself, as (readOnlyHint, destructiveHint,
+# openWorldHint). A wrong hint is worse than a missing one -- a reviewer tests these
+# against real behaviour -- so every value is pinned per tool rather than checked for
+# presence. The run tools reach an open world because the component they run may call
+# anything; the config and session tools only read this deployment's own state.
 _BUILTIN_HINTS = {
-    "get_agentos_config": (True, None),
-    "run_agent": (False, True),
-    "run_team": (False, True),
-    "run_workflow": (False, True),
-    "continue_run": (False, True),
-    "cancel_run": (False, True),
-    "get_sessions": (True, None),
-    "get_session_runs": (True, None),
+    "get_agentos_config": (True, False, False),
+    "run_agent": (False, True, True),
+    "run_team": (False, True, True),
+    "run_workflow": (False, True, True),
+    "continue_run": (False, True, True),
+    "cancel_run": (False, True, False),
+    "get_sessions": (True, False, False),
+    "get_session_runs": (True, False, False),
 }
 
 
@@ -379,17 +413,29 @@ async def test_every_builtin_tool_publishes_the_hints_it_claims():
 
     assert set(published) == set(mcp_mod._BUILTIN_TOOL_NAMES) == set(_BUILTIN_HINTS)
     for name, entry in published.items():
-        read_only, destructive = _BUILTIN_HINTS[name]
+        read_only, destructive, open_world = _BUILTIN_HINTS[name]
         assert entry.title, f"{name} has no title"
         assert entry.description, f"{name} has no description"
         assert entry.annotations is not None, f"{name} has no annotations"
         assert entry.annotations.readOnlyHint is read_only, f"{name} readOnlyHint changed"
         assert entry.annotations.destructiveHint is destructive, f"{name} destructiveHint changed"
-        # A tool that is not read-only must say whether its write destroys something,
-        # rather than leaving a client to fall back on the protocol default (true).
-        if entry.annotations.readOnlyHint is False:
-            assert entry.annotations.destructiveHint is not None, f"{name} writes but omits destructiveHint"
+        assert entry.annotations.openWorldHint is open_world, f"{name} openWorldHint changed"
         assert entry.annotations.title == entry.title, f"{name} title not mirrored into annotations"
+
+
+async def test_no_tool_this_server_owns_leaves_a_required_hint_unset():
+    """A submission scan rejects a tool that leaves readOnlyHint, destructiveHint, or
+    openWorldHint unset, and an omitted hint is answered by a protocol default rather
+    than read as "unknown". Every tool the server itself composes states all three."""
+    agent = _agent()
+    os = AgentOS(
+        agents=[agent],
+        mcp=MCPConfig(tools=[agent, agent.as_tool(name="ask_chief", description="Ask.")]),
+    )
+
+    for name, entry in (await _tools_by_name(os)).items():
+        for hint in ("readOnlyHint", "destructiveHint", "openWorldHint"):
+            assert getattr(entry.annotations, hint) is not None, f"{name} leaves {hint} unset"
 
 
 # --------------------------------------------------------------------------------------

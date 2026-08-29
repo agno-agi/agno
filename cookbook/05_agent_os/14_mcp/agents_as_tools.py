@@ -75,13 +75,14 @@ agent_os = AgentOS(
                 name="deep_research",
                 title="Deep Research",
                 description="Thorough, sourced research. Send one clear question.",
-                # The researcher only reads and reports, so it can say so. Hints are
-                # published to the client and read by assistant marketplaces during a
-                # listing review -- which test them against what the tool really does,
-                # so claim read-only only when it is true. The default for a published
-                # component is the honest one for a run that persists a session and can
-                # call side-effectful tools: readOnlyHint False, destructiveHint True.
-                annotations={"readOnlyHint": True, "destructiveHint": False},
+                # Hints are published to the client and read by assistant marketplaces
+                # during a listing review, which test them against what the tool really
+                # does -- so a wrong hint is worse than a missing one. The researcher
+                # holds no tools and only appends to its own session, so it refines the
+                # default rather than contradicting it: still not read-only (every run
+                # writes a session and a run row), but nothing it writes destroys
+                # anything, and running it twice is not the same as running it once.
+                annotations={"destructiveHint": False, "idempotentHint": False},
             ),
         ],
     ),
