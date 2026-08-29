@@ -25,7 +25,7 @@ _MISSING = object()
 
 
 def _apply_state_changes(target: Dict[str, Any], baseline: Dict[str, Any], modified: Dict[str, Any]) -> None:
-    """Apply the keys modified changed against baseline to target, recursing into nested dicts.
+    """Apply the keys that modified changed relative to baseline to target, recursing into nested dicts.
 
     Every parallel step works on its own copy of the state, so a step that
     changed one key of a nested dict hands back the whole dict. Assigning that
