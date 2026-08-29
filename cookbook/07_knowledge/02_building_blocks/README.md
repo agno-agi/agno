@@ -28,6 +28,6 @@ Core components you can configure to customize knowledge behavior.
 ## Further Reading
 
 - [Knowledge Overview](https://docs.agno.com/knowledge/overview)
-- [Chunking Strategies](https://docs.agno.com/knowledge/chunking)
-- [Embedders](https://docs.agno.com/knowledge/embedders)
-- [Vector Databases](https://docs.agno.com/vectordb)
+- [Chunking Strategies](https://docs.agno.com/knowledge/concepts/chunking/overview)
+- [Embedders](https://docs.agno.com/knowledge/concepts/embedder/overview)
+- [Vector Databases](https://docs.agno.com/knowledge/concepts/vector-db)

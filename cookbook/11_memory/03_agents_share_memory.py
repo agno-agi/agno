@@ -21,14 +21,14 @@ db = PostgresDb(db_url=db_url)
 # Create Agents
 # ---------------------------------------------------------------------------
 chat_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     description="You are a helpful assistant that can chat with users",
     db=db,
     update_memory_on_run=True,
 )
 
 research_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     description="You are a research assistant that can help users with their research questions",
     tools=[WebSearchTools()],
     db=db,
