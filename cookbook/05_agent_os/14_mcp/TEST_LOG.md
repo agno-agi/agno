@@ -8,7 +8,8 @@ Tested on 2026-07-24 against Agno source commit
 `MCPConfig` / `default_tools` spellings (behavior unchanged; the old spellings
 remain accepted aliases). Re-run LIVE on 2026-08-28 after the lifecycle
 ride-along and the review-round fixes landed; the entry below records the
-2026-08-28 run.
+2026-08-28 run. Re-run LIVE again on 2026-08-30 after tool presentation
+metadata (`title`, `annotations`) landed -- see the entry below the first.
 
 ### agents_as_tools.py
 
@@ -37,6 +38,30 @@ recalled "Earth", proving live session continuity through the exposed tool.
 The same re-run verified the publication bound on the riding pair:
 `cancel_run` acted on the published `researcher` but refused an id outside
 the publication list with the "published components" error.
+
+---
+
+### agents_as_tools.py (tool presentation metadata)
+
+**Status:** PASS
+
+**Test mode:** LIVE (2026-08-30)
+
+**Description:** Re-ran the checked-in server after `title` / `annotations`
+landed on `as_tool`, and drove it with a FastMCP streamable-HTTP client:
+listed tools and read the presentation each one publishes, then called both
+exposed tools.
+
+**Result:** `tools/list` returned `chief`, `deep_research`, `continue_run`,
+`cancel_run`. `chief` (bare) titled itself from the agent name and carried
+the published-component defaults (`readOnlyHint` false, `destructiveHint`
+true, `openWorldHint` true). `deep_research` carried the cookbook's
+`title="Deep Research"` and its annotation override (`readOnlyHint` true,
+`destructiveHint` false) merged over those defaults, with `openWorldHint`
+still true from the default. Every tool's title also appeared in
+`annotations.title`, so a client reading either slot shows the same name.
+`deep_research` then ran to COMPLETED with a minted session and answered the
+question; `chief` ran to COMPLETED.
 
 ---
 

@@ -67,16 +67,27 @@ class BaseExternalAgent:
         """Return the agent ID, guaranteed non-None after __post_init__."""
         return self.id or ""
 
-    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
         """Publish this external-framework agent as a tool with its own model-facing
-        name and description, for surfaces that turn components into tools -- today
-        the AgentOS MCP server: ``MCPConfig(tools=[adapter.as_tool(name=...,
-        description=...)])``. Both overrides are optional; the adapter ``id`` remains
+        name, description, title, and behaviour annotations, for surfaces that turn
+        components into tools -- today the AgentOS MCP server: ``MCPConfig(tools=[adapter.as_tool(name=...,
+        description=...)])``. Every override is optional; the adapter ``id`` remains
         the run/scope handle.
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
         """
         from agno.tools.component import ComponentTool
 
-        return ComponentTool(component=self, name=name, description=description)
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     # ---------------------------------------------------------------------------
     # Public async API (satisfies AgentProtocol protocol)

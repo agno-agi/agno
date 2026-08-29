@@ -12,6 +12,11 @@ session minting, scope checks, progress). continue_run and cancel_run ride
 along automatically so paused (human-in-the-loop) runs stay resumable; set
 lifecycle_tools=False to serve exactly the configured tools.
 
+as_tool also carries the presentation a client and a marketplace reviewer
+read: title= is the display name, and annotations= are the behaviour hints
+(readOnlyHint, destructiveHint, idempotentHint, openWorldHint) merged over
+the defaults a published component asserts about itself.
+
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/agents_as_tools.py
 Try: connect an MCP client to http://localhost:7777/mcp and call chief or deep_research
@@ -68,7 +73,15 @@ agent_os = AgentOS(
             chief,
             researcher.as_tool(
                 name="deep_research",
+                title="Deep Research",
                 description="Thorough, sourced research. Send one clear question.",
+                # The researcher only reads and reports, so it can say so. Hints are
+                # published to the client and read by assistant marketplaces during a
+                # listing review -- which test them against what the tool really does,
+                # so claim read-only only when it is true. The default for a published
+                # component is the honest one for a run that persists a session and can
+                # call side-effectful tools: readOnlyHint False, destructiveHint True.
+                annotations={"readOnlyHint": True, "destructiveHint": False},
             ),
         ],
     ),
