@@ -189,11 +189,16 @@ async def _asetup_session(
     session_id: str,
     user_id: Optional[str],
     run_id: Optional[str],
+    resolve_dependencies: bool = True,
 ) -> TeamSession:
     """Read/create session, load state from DB, and resolve callable dependencies.
 
     Shared setup for _arun() and _arun_stream(). Mirrors what the sync
     run_dispatch() does inline before calling _run()/_run_stream().
+
+    Continue paths pass ``resolve_dependencies=False``: a continuation may fork a
+    sibling run after this setup, and a callable dependency resolved here would be
+    consumed against the parent's run_id. Those call sites resolve after their fork.
     """
     # Read or create session
     from agno.team._init import _has_async_db, _initialize_session_state
@@ -226,7 +231,7 @@ async def _asetup_session(
         )
 
     # Resolve callable dependencies AFTER state is loaded
-    if run_context.dependencies is not None:
+    if resolve_dependencies and run_context.dependencies is not None:
         await _aresolve_run_dependencies(team, run_context=run_context)
 
     return team_session
@@ -9506,6 +9511,11 @@ async def _acontinue_run(
     # with nothing to route. Without the banked results every dispatch branch is
     # skipped and the run would complete without the leader ever being called.
     routed_member_results: List[str] = []
+    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
+    # callable factories with their results in place. Keep the unresolved values so a
+    # retry re-resolves against the fork it actually executes instead of reusing values
+    # scoped to the abandoned previous fork.
+    unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
 
     try:
         num_attempts = team.retries + 1
@@ -9514,6 +9524,9 @@ async def _acontinue_run(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
+                if attempt > 0 and unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                    run_context.dependencies.clear()
+                    run_context.dependencies.update(unresolved_dependencies)
                 # Setup session
                 team_session = await _asetup_session(
                     team=team,
@@ -9521,6 +9534,7 @@ async def _acontinue_run(
                     session_id=session_id,
                     user_id=user_id,
                     run_id=run_id,
+                    resolve_dependencies=False,
                 )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
@@ -9578,6 +9592,13 @@ async def _acontinue_run(
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
                         await _amark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
+
+                # Resolve dependencies AFTER the fork. A callable dependency may derive
+                # run-scoped values from run_context, and continuing a completed run forks a
+                # sibling with a new run_id; resolving first would hand every factory the
+                # PARENT's id. Mirrors the sync continue dispatch.
+                if run_context.dependencies is not None:
+                    await _aresolve_run_dependencies(team, run_context=run_context)
 
                 # Append input/additional_instructions as a user message.
                 if input:
@@ -9987,6 +10008,9 @@ async def _acontinue_run_stream(
     # run that skipped it.
     requirements_applied = False
     routed_member_results: List[str] = []
+    # See _acontinue_run: keep the unresolved dependency values so a retry re-resolves
+    # against the fork it actually executes.
+    unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
 
     try:
         num_attempts = team.retries + 1
@@ -9995,6 +10019,9 @@ async def _acontinue_run_stream(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
+                if attempt > 0 and unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                    run_context.dependencies.clear()
+                    run_context.dependencies.update(unresolved_dependencies)
                 # Setup session
                 team_session = await _asetup_session(
                     team=team,
@@ -10002,6 +10029,7 @@ async def _acontinue_run_stream(
                     session_id=session_id,
                     user_id=user_id,
                     run_id=run_id,
+                    resolve_dependencies=False,
                 )
 
                 # Fall back to the owner the run paused with, so the resume retrieves under
@@ -10059,6 +10087,13 @@ async def _acontinue_run_stream(
                     run_response.regenerated_from = original_run_id_for_lineage
                     if replace_original is not False and run_response.forked_from_run_id:
                         await _amark_team_run_regenerated(team, team_session, original_run_id_for_lineage)
+
+                # Resolve dependencies AFTER the fork. A callable dependency may derive
+                # run-scoped values from run_context, and continuing a completed run forks a
+                # sibling with a new run_id; resolving first would hand every factory the
+                # PARENT's id. Mirrors the sync continue dispatch.
+                if run_context.dependencies is not None:
+                    await _aresolve_run_dependencies(team, run_context=run_context)
 
                 # Append input/additional_instructions as a user message.
                 if input:

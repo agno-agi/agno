@@ -4806,6 +4806,12 @@ async def _acontinue_run(
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
     agent_session: Optional[AgentSession] = None
 
+    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
+    # callable factories with their results in place. Keep the unresolved values so a
+    # retry re-resolves against the fork it actually executes instead of reusing values
+    # scoped to the abandoned previous fork.
+    unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+
     # Resolve retry parameters
     try:
         num_attempts = agent.retries + 1
@@ -4816,6 +4822,9 @@ async def _acontinue_run(
                 run_messages: Optional[RunMessages] = None
                 if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+                    if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                        run_context.dependencies.clear()
+                        run_context.dependencies.update(unresolved_dependencies)
 
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -5322,6 +5331,12 @@ async def _acontinue_run_stream(
 
     agent_session: Optional[AgentSession] = None
 
+    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
+    # callable factories with their results in place. Keep the unresolved values so a
+    # retry re-resolves against the fork it actually executes instead of reusing values
+    # scoped to the abandoned previous fork.
+    unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+
     # Resolve retry parameters
     try:
         num_attempts = agent.retries + 1
@@ -5330,6 +5345,9 @@ async def _acontinue_run_stream(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
+                if attempt > 0 and unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                    run_context.dependencies.clear()
+                    run_context.dependencies.update(unresolved_dependencies)
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
