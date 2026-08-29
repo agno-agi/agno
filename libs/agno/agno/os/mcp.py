@@ -3,6 +3,7 @@
 import functools
 import inspect
 import logging
+import re
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Union
 from uuid import uuid4
@@ -12,6 +13,7 @@ from fastmcp.server.http import (
     StarletteWithLifespan,
 )
 from fastmcp.tools import ToolResult
+from mcp.types import ToolAnnotations
 
 from agno.db.base import SessionType
 from agno.os.mcp_results import build_run_tool_result, trim_session_run
@@ -37,49 +39,106 @@ from agno.remote.base import BaseRemote, RemoteDb
 from agno.run.agent import RunEvent, RunOutput
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
+from agno.tools.annotations import tool_presentation
+from agno.utils.string import generate_component_id_from_name, generate_id_from_name
 
 if TYPE_CHECKING:
     from agno.os.app import AgentOS
-    from agno.os.config import MCPServerConfig
+    from agno.os.config import MCPConfig
 
 logger = logging.getLogger(__name__)
 
 # Built-in MCP tools are tagged by domain so they can be scoped as a group. The canonical
-# tag set lives in agno/os/config.py next to the MCPServerConfig fields that consume it --
+# tag set lives in agno/os/config.py next to the MCPConfig fields that consume it --
 # single source of truth so adding a new tag is a one-place change.
 from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
 
+# Names of the default (built-in) tools by tag set, used to detect name collisions with
+# exposed components before registration. Keep in sync with the ``name=`` / ``tags=``
+# arguments on each ``@register_builtin_tool(...)`` below; a unit test asserts this map
+# matches the tools a default server actually registers. continue_run/cancel_run carry
+# ``lifecycle`` alongside ``core`` so they can ride along with exposed components even
+# when the rest of the default surface is off.
+_BUILTIN_TOOL_NAMES: Dict[str, frozenset] = {
+    "get_agentos_config": frozenset({"core"}),
+    "run_agent": frozenset({"core"}),
+    "run_team": frozenset({"core"}),
+    "run_workflow": frozenset({"core"}),
+    "continue_run": frozenset({"core", "lifecycle"}),
+    "cancel_run": frozenset({"core", "lifecycle"}),
+    "get_sessions": frozenset({"session"}),
+    "get_session_runs": frozenset({"session"}),
+}
 
-def _enabled_builtin_tags(config: "Optional[MCPServerConfig]") -> set:
+# What a published component's run tool asserts about itself, before the deployer's own
+# ``as_tool(annotations=...)``. A run is not read-only (it persists a session and may
+# call side-effectful tools) and reaches beyond this server.
+#
+# All three of readOnlyHint/destructiveHint/openWorldHint are stated rather than left
+# implicit, here and on every built-in tool. An omitted hint is not "unknown" to a
+# client -- it falls back to a protocol default -- and a directory submission scan
+# rejects a tool that leaves any of the three unset, so a hint the server declines to
+# state is a hint someone else answers on its behalf.
+#
+# openWorldHint asks whether a tool can reach a system this deployment does not own.
+# The run tools can, because the component they run may call anything, and so can
+# cancel_run: cancelling a Remote* component's run is an outbound HTTP call to that
+# deployment. The config and session tools only read storage this deployment owns.
+_EXPOSED_COMPONENT_ANNOTATIONS: Dict[str, Any] = {
+    "readOnlyHint": False,
+    "destructiveHint": True,
+    "openWorldHint": True,
+}
+
+
+def _enabled_builtin_tags(config: "Optional[MCPConfig]", has_exposures: bool = False) -> set:
     """Resolve which built-in tool tags should be registered, given the MCP config.
 
-    Returns the full set of built-in tags when no config is provided, preserving the
-    default behavior (all built-in tools registered).
+    ``lifecycle`` never enters the set implicitly: with the default surface on,
+    continue_run/cancel_run are ordinary core tools (``exclude_tags={"core"}`` removes
+    them, exactly as it did before the tag existed -- tools register on tag
+    INTERSECTION, so an implicitly enabled ``lifecycle`` would resurrect the dual-tagged
+    pair on a surface that excluded ``core``). The tag is added only when named
+    explicitly in ``include_tags``, or by the exposure ride-along below: an exposed
+    component can pause on a HITL tool, and without continue_run the pause would be a
+    dead end over MCP. Both ride-along off-switches are honoured --
+    ``lifecycle_tools=False`` and an explicit ``exclude_tags={"lifecycle"}`` -- and
+    both gate ONLY the ride-along; neither strips the pair from an enabled ``core``
+    surface.
     """
     if config is None:
-        return set(_BUILTIN_TOOL_TAGS)
-    if not config.enable_builtin_tools:
-        return set()
-    # An explicitly empty include_tags set means "no built-in tools", so test against
-    # None rather than truthiness.
-    enabled = set(config.include_tags) if config.include_tags is not None else set(_BUILTIN_TOOL_TAGS)
-    if config.exclude_tags:
-        enabled -= set(config.exclude_tags)
+        return set(_BUILTIN_TOOL_TAGS) - {"lifecycle"}
+    if not config.default_tools:
+        enabled: set = set()
+    else:
+        # An explicitly empty include_tags set means "no built-in tools", so test
+        # against None rather than truthiness.
+        enabled = (
+            set(config.include_tags) if config.include_tags is not None else set(_BUILTIN_TOOL_TAGS) - {"lifecycle"}
+        )
+        if config.exclude_tags:
+            enabled -= set(config.exclude_tags)
+    if has_exposures and config.lifecycle_tools and "lifecycle" not in (config.exclude_tags or set()):
+        enabled.add("lifecycle")
     return enabled
 
 
-def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPServerConfig]"):
+def _builtin_tool_registrar(mcp: FastMCP, enabled_tags: set):
     """Return a drop-in replacement for ``mcp.tool`` that scopes the built-in tools.
 
-    When a tool's tags are enabled by the config, the tool is registered as usual.
+    When a tool's tags intersect the enabled set, the tool is registered as usual.
     Otherwise the decorator is a no-op (the function is returned unregistered), so
     scoping happens at registration time without depending on FastMCP tool-removal APIs.
     """
-    enabled_tags = _enabled_builtin_tags(config)
 
     def register(*args: Any, **kwargs: Any):
         tags = kwargs.get("tags") or set()
         if tags & enabled_tags:
+            title, annotations = tool_presentation(
+                kwargs.get("title"), kwargs.get("annotations"), source=f"built-in tool {kwargs.get('name')!r}"
+            )
+            if annotations is not None:
+                kwargs["annotations"] = annotations
             return mcp.tool(*args, **kwargs)
 
         def _skip(fn: Any) -> Any:
@@ -90,16 +149,79 @@ def _builtin_tool_registrar(mcp: FastMCP, config: "Optional[MCPServerConfig]"):
     return register
 
 
-def _register_custom_tools(mcp: FastMCP, config: "Optional[MCPServerConfig]") -> None:
-    """Register any user-provided custom tools on the MCP server."""
-    if config is None or not config.tools:
-        return
-    for tool in config.tools:
-        _register_custom_tool(mcp, tool)
+def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Optional[set]" = None) -> Dict[str, str]:
+    """Register the custom-tool entries (callables and Agno tools) on the MCP server.
+
+    Entries are pre-classified by ``_split_tool_entries`` -- components and
+    ``ComponentTool`` markers never reach here. Returns the names the tools actually
+    registered under (FastMCP's own naming, e.g. ``functools.partial`` objects register
+    as "partial"), so the exposure collision check downstream sees the real registry
+    rather than a re-derivation.
+
+    A custom tool named like a default tool that will register (its tags intersect
+    ``enabled_tags``), or like an earlier custom tool, is a hard error, matching the
+    exposure path: FastMCP would otherwise warn-and-REPLACE, so a custom
+    ``continue_run`` would silently shadow the riding builtin (while paused results
+    keep steering callers to the builtin's schema), and a duplicate custom name would
+    silently swallow the first tool.
+    """
+    taken = {
+        builtin: f'the default tool "{builtin}"'
+        for builtin, tags in _BUILTIN_TOOL_NAMES.items()
+        if tags & (enabled_tags or set())
+    }
+    names: Dict[str, str] = {}
+    for tool in entries:
+        name = _register_custom_tool(mcp, tool, taken=taken, enabled_tags=enabled_tags)
+        label = f'custom tool "{name}"'
+        names[name] = label
+        taken[name] = label
+    return names
 
 
-def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
-    """Register a single custom tool, supporting plain callables and Agno tools/Functions."""
+def _collision_free_advice(colliding_name: str, enabled_tags: "Optional[set]") -> str:
+    """The action clause of a name-collision error: how to free ``colliding_name``.
+
+    The run-lifecycle pair (continue_run/cancel_run) is tagged BOTH "core" and
+    "lifecycle", and rides along with any exposure. So "is this a lifecycle tool" is
+    always true for it and cannot decide the advice -- what matters is HOW the name got
+    onto the server. When it was claimed solely via the ride-along ("core" not enabled),
+    only the lifecycle switches free it; when "core" is enabled the pair registers as a
+    core default and the lifecycle switches do nothing (core keeps re-adding it), so the
+    caller must drop core too.
+    """
+    tags = _BUILTIN_TOOL_NAMES.get(colliding_name) or frozenset()
+    if "lifecycle" in tags and "core" not in (enabled_tags or set()):
+        return 'or drop the run-lifecycle pair via lifecycle_tools=False or exclude_tags={"lifecycle"} '
+    return "or scope the default tool out via default_tools/include_tags/exclude_tags "
+
+
+def _custom_tool_presentation(tool: Any) -> "tuple[Optional[str], Optional[ToolAnnotations]]":
+    """The ``title`` / ``annotations`` an Agno ``Function`` publishes, if it is one.
+
+    ``Tool.from_function`` takes a ``ToolAnnotations`` model rather than a dict (the
+    ``mcp.tool`` decorator accepts either), so the Function's dict is converted here.
+    """
+    from agno.tools.function import Function
+
+    if not isinstance(tool, Function):
+        return None, None
+    title, annotations = tool_presentation(
+        tool.title, tool.annotations, source=f"@tool(annotations=...) on {tool.name!r}"
+    )
+    return title, (ToolAnnotations(**annotations) if annotations else None)
+
+
+def _register_custom_tool(
+    mcp: FastMCP, tool: Any, taken: "Optional[Dict[str, str]]" = None, enabled_tags: "Optional[set]" = None
+) -> str:
+    """Register a single custom tool, supporting plain callables and Agno tools/Functions.
+
+    Returns the name the tool registered under. ``taken`` holds names already claimed
+    on this server (checked before registration -- FastMCP replaces on duplicates
+    rather than raising). ``enabled_tags`` steers the collision advice toward the knob
+    that actually frees the name.
+    """
     from fastmcp.tools import Tool
 
     # Agno tool / Function: a callable ``entrypoint`` plus name/description metadata.
@@ -107,17 +229,35 @@ def _register_custom_tool(mcp: FastMCP, tool: Any) -> None:
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
-        mcp.add_tool(Tool.from_function(_inject_user_id(entrypoint), name=name, description=description))
-        return
+        # Presentation metadata is read only from an Agno Function, never duck-typed off
+        # an arbitrary object: a stray ``.annotations`` attribute on some other tool-ish
+        # object means something else entirely. Marketplace scans reject tools that carry
+        # no annotations, so a custom tool that wants a listing sets them on its Function.
+        title, annotations = _custom_tool_presentation(tool)
+        tool_obj = Tool.from_function(
+            _inject_user_id(entrypoint),
+            name=name,
+            title=title,
+            description=description,
+            annotations=annotations,
+        )
+    elif callable(tool):
+        # Plain callable: name/description inferred from ``__name__``/docstring.
+        tool_obj = Tool.from_function(_inject_user_id(tool))
+    else:
+        raise TypeError(
+            f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
+        )
 
-    # Plain callable: name/description inferred from ``__name__``/docstring.
-    if callable(tool):
-        mcp.add_tool(Tool.from_function(_inject_user_id(tool)))
-        return
-
-    raise TypeError(
-        f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
-    )
+    if taken and tool_obj.name in taken:
+        claimant = taken[tool_obj.name]
+        if claimant.startswith("the default tool"):
+            advice = f"Rename the custom tool, {_collision_free_advice(tool_obj.name, enabled_tags)}so each tool name is unique."
+        else:
+            advice = "Rename one of them so each tool name is unique."
+        raise ValueError(f'MCP custom tool name "{tool_obj.name}" collides with {claimant}. {advice}')
+    mcp.add_tool(tool_obj)
+    return tool_obj.name
 
 
 def _inject_user_id(fn: Callable) -> Callable:
@@ -172,11 +312,12 @@ def _resolve_user_id(caller_user_id: Optional[str]) -> Optional[str]:
     return caller_user_id
 
 
-def _forwarded_auth_headers() -> Optional[Dict[str, str]]:
-    """The caller's bearer token as an Authorization header for downstream RemoteDb calls.
+def _forwarded_auth_token() -> Optional[str]:
+    """The caller's inbound bearer token, for forwarding to Remote* components.
 
-    Mirrors the REST routers, which forward the inbound token on every RemoteDb call so
-    a JWT/PAT-protected downstream AgentOS accepts the request.
+    Remote run/continue/cancel take an ``auth_token`` and build their own Authorization
+    header from it (the REST routers forward the same token on every remote call), so a
+    JWT/PAT-protected downstream AgentOS accepts the proxied request instead of 401ing.
     """
     from fastmcp.server.dependencies import get_http_request
 
@@ -186,7 +327,16 @@ def _forwarded_auth_headers() -> Optional[Dict[str, str]]:
         request = get_http_request()
     except RuntimeError:
         return None
-    token = get_auth_token_from_request(request)
+    return get_auth_token_from_request(request)
+
+
+def _forwarded_auth_headers() -> Optional[Dict[str, str]]:
+    """The caller's bearer token as an Authorization header for downstream RemoteDb calls.
+
+    Mirrors the REST routers, which forward the inbound token on every RemoteDb call so
+    a JWT/PAT-protected downstream AgentOS accepts the request.
+    """
+    token = _forwarded_auth_token()
     return {"Authorization": f"Bearer {token}"} if token else None
 
 
@@ -461,7 +611,11 @@ async def _run_agentic_component(
 
     with _detached_trace_context():
         if not isinstance(component, (Agent, Team)):
-            return await component.arun(message, user_id=user_id, session_id=session_id)
+            # Forward the caller's bearer token to Remote* proxies (as the REST routers
+            # do) so a protected downstream AgentOS accepts the run; duck-typed protocol
+            # implementations do not take auth_token, so only pass it to BaseRemote.
+            extra = {"auth_token": _forwarded_auth_token()} if isinstance(component, BaseRemote) else {}
+            return await component.arun(message, user_id=user_id, session_id=session_id, **extra)
 
         stream = component.arun(
             message,
@@ -703,9 +857,20 @@ async def _resolve_run_component(
 def _make_run_ownership_verifier(os: "AgentOS"):
     """Bind the run-lifecycle ownership verifier to an AgentOS.
 
-    continue_run and cancel_run must, for a scoped (non-admin) caller, prove the run lives
-    in a session they own -- the same gate the REST cancel/continue endpoints enforce
-    before touching a run.
+    continue_run and cancel_run must not let a caller reach a DIFFERENT component's run
+    by passing its run_id while naming a component they may reach. Two tiers, matching
+    the REST cancel/continue routes:
+
+    - A scoped (user-isolation) caller must own the session the run lives in:
+      session_id is required and an absent session or run row fails closed, exactly
+      the REST scoped-caller rule.
+    - An admin / non-isolated caller is gated by the persisted run row itself, looked
+      up by run_id alone (a caller-supplied session_id cannot steer the check): a row
+      bound to a different component is refused; an absent row proceeds, because an
+      in-flight or not-yet-started run has no row until it pauses or finishes and
+      cancellation intent exists precisely for those runs. REST admin callers get no
+      ownership check at all, so this tier is strictly harder than REST while keeping
+      every REST-cancellable run cancellable here too.
     """
 
     async def verify(
@@ -718,25 +883,40 @@ def _make_run_ownership_verifier(os: "AgentOS"):
         if component is None:
             raise Exception(f"Component {component_id} not found")
         scoped_user_id = _scoped_caller_user_id()
-        if scoped_user_id is None:
-            return
         if isinstance(component, BaseRemote):
             # Remote components keep their sessions on the remote OS: there is no local
-            # session to prove ownership against (BaseRemote has no aget_session), and
+            # session to prove the binding against (BaseRemote has no aget_session), and
             # the forwarded call would not carry this caller's identity for the remote
-            # to check either. Fail closed rather than let a scoped caller act on
-            # another user's run; admins (scoped_user_id None) pass through above.
-            raise Exception(
-                "Run ownership cannot be verified for remote components; an administrator can act on this run."
-            )
-        if not session_id:
-            raise Exception("session_id is required to act on this run")
+            # to check either. A scoped caller fails closed; an admin / non-isolated
+            # deployment proceeds and the downstream OS owns the run.
+            if scoped_user_id is not None:
+                raise Exception(
+                    "Run ownership cannot be verified for remote components; an administrator can act on this run."
+                )
+            return
+        if scoped_user_id is not None:
+            # Scoped caller: per-user session ownership, fail-closed (the REST rule).
+            if not session_id:
+                raise Exception("session_id is required to act on this run")
+            try:
+                await session_service.verify_run_ownership(
+                    component,
+                    session_id=session_id,
+                    run_id=run_id,
+                    user_id=scoped_user_id,
+                    component_type=component_type,
+                    component_id=component_id,
+                )
+            except session_service.RunOwnershipError as e:
+                raise Exception(str(e))
+            return
+        # Admin / non-isolated caller: refuse only a run row that provably belongs to a
+        # different component. The row lookup keys on run_id -- the one value the caller
+        # must supply truthfully, since it names the run they want to act on.
         try:
-            await session_service.verify_run_ownership(
-                component,
-                session_id=session_id,
+            await session_service.verify_persisted_run_binding(
+                getattr(component, "db", None) or os.db,
                 run_id=run_id,
-                user_id=scoped_user_id,
                 component_type=component_type,
                 component_id=component_id,
             )
@@ -744,6 +924,572 @@ def _make_run_ownership_verifier(os: "AgentOS"):
             raise Exception(str(e))
 
     return verify
+
+
+async def _verify_factory_run_ownership(
+    db: Any,
+    component_type: Literal["agents", "teams", "workflows"],
+    component_id: str,
+    session_id: Optional[str],
+    run_id: str,
+) -> None:
+    """The run-ownership gate for a FACTORY component, without building the factory.
+
+    A factory has no resolved instance (and no ``aget_session``), so the two tiers run
+    off its ``db`` directly -- the same shape the REST factory-cancel routes use. Scoped:
+    session ownership via ``verify_run_in_session_via_db``; admin / non-isolated: the
+    persisted-run binding by run_id. Mirrors ``_make_run_ownership_verifier``'s local
+    tiers exactly, only db-based.
+    """
+    from fastapi import HTTPException
+
+    from agno.os.middleware.user_scope import verify_run_in_session_via_db
+
+    scoped_user_id = _scoped_caller_user_id()
+    if scoped_user_id is not None:
+        if not session_id:
+            raise Exception("session_id is required to act on this run")
+        try:
+            await verify_run_in_session_via_db(
+                db, session_id, run_id, scoped_user_id, component_type=component_type, component_id=component_id
+            )
+        except HTTPException as e:
+            raise Exception(e.detail if isinstance(e.detail, str) else str(e.detail))
+        return
+    try:
+        await session_service.verify_persisted_run_binding(
+            db, run_id=run_id, component_type=component_type, component_id=component_id
+        )
+    except session_service.RunOwnershipError as e:
+        raise Exception(str(e))
+
+
+async def _static_cancel_factory_run(component_type: Literal["agents", "teams", "workflows"], run_id: str) -> None:
+    """Record cancellation intent for a factory run by run_id, building no component.
+
+    Cancellation is a global-registry intent keyed on run_id (plus a queue tombstone for
+    a still-queued ticket), so it never needs a component instance -- the REST
+    factory-cancel routes cancel statically for exactly this reason. Building the factory
+    here (as generic run resolution does) would 400 a required-input factory or a
+    request-less transport, making a live factory run uncancellable over MCP.
+    """
+    from agno.os.job_queue import get_active_queue_worker
+
+    queue_worker = get_active_queue_worker()
+    if queue_worker is not None:
+        await queue_worker.acancel_queued(run_id)
+    if component_type == "agents":
+        from agno.agent._run import acancel_run as _acancel
+    elif component_type == "teams":
+        from agno.team._run import acancel_run as _acancel
+    else:
+        from agno.run.cancel import acancel_run as _acancel
+    await _acancel(run_id)
+
+
+# ==================== Exposed components (agents/teams/workflows as tools) ====================
+
+# An exposed tool is named by its component id VERBATIM -- the id is also the client's
+# handle for continue_run/get_sessions and the resource segment in per-resource scopes
+# (agents:<id>:run), so a name that differs from the id would break HITL resume and make
+# the visible tool name disagree with the scope that grants it. Ids outside this shape
+# are therefore a hard error, never sanitized. The shape is what the LLM providers MCP
+# clients bridge tool names into actually accept (probed live against OpenAI, Anthropic,
+# and Gemini, 2026-08): at most 128 characters, starting with a letter or underscore --
+# Gemini 400s a leading digit, and it validates per request, so ONE bad name takes down
+# every tool in the call. A violating name would fail client-side at runtime with no
+# server signal, which is why it is rejected at build instead.
+_TOOL_NAME_MAX_LENGTH = 128
+_TOOL_NAME_VALID_RE = re.compile(r"[A-Za-z_][A-Za-z0-9_-]*")
+
+# One fixed sentence appended to every exposed tool's description: the session contract
+# is part of the tool's calling convention, not something each component should restate.
+_EXPOSED_SESSION_SENTENCE = (
+    "Pass the returned session_id back to continue the conversation; omit it to start a new one."
+)
+
+
+def _safe_component_metadata(component: Any) -> "tuple[Optional[str], Optional[str]]":
+    """``(name, description)`` without letting a remote component take down the build.
+
+    On ``RemoteTeam``/``RemoteWorkflow`` these are network-backed properties (a
+    synchronous config fetch); an unreachable remote at boot must degrade this tool's
+    description to the id, not hard-fail ``get_app()`` -- REST included -- before
+    anything called the component.
+    """
+    try:
+        name = getattr(component, "name", None)
+    except Exception:
+        name = None
+    try:
+        description = getattr(component, "description", None)
+    except Exception:
+        description = None
+    return name, description
+
+
+def _suggest_exposed_id(component_id: str, singular: str, taken: Dict[str, str]) -> Optional[str]:
+    """A clean candidate id to put in the invalid-id error, or None when no good one
+    exists (e.g. a fully non-Latin id). Suggest, never apply: silently rewriting would
+    decouple the tool name from the continue_run handle and the scope segment, and
+    mutating a component's id at build could break persisted/registry identity."""
+    import unicodedata
+
+    # NFKD + ASCII fold transliterates accents (réviseur -> reviseur) instead of
+    # deleting them; the house id mint then lowercases and collapses separator runs.
+    ascii_id = unicodedata.normalize("NFKD", component_id).encode("ascii", "ignore").decode("ascii")
+    candidate = generate_component_id_from_name(ascii_id) if ascii_id.strip() else ""
+    candidate = re.sub(r"-{2,}", "-", re.sub(r"[^A-Za-z0-9_-]+", "-", candidate)).strip("-")
+    if candidate and not re.match(r"[A-Za-z_]", candidate):
+        candidate = f"{singular}-{candidate}"
+    if not candidate or candidate in taken or not _TOOL_NAME_VALID_RE.fullmatch(candidate):
+        return None
+    if len(candidate) > _TOOL_NAME_MAX_LENGTH:
+        return None
+    return candidate
+
+
+def _validate_exposed_tool_name(
+    value: str,
+    singular: str,
+    component_name: Optional[str],
+    taken: Dict[str, str],
+    source: str = "id",
+) -> str:
+    """The exposed tool name -- the component id, or an ``as_tool(name=...)`` override
+    -- validated verbatim, never sanitized.
+
+    ``fullmatch`` (not ``match``): ``$`` would accept a trailing newline.
+    """
+    shape_rule = (
+        "tool names must start with a letter or underscore and contain only letters, digits, "
+        "hyphens, and underscores (Gemini rejects a leading digit, and one invalid name fails "
+        "every tool in the request)"
+    )
+    if not _TOOL_NAME_VALID_RE.fullmatch(value):
+        candidate = _suggest_exposed_id(value, singular, taken)
+        if source == "as_tool":
+            advice = f" For example, name={candidate!r}." if candidate else ""
+            raise ValueError(f"as_tool(name={value!r}) is not a valid tool name: {shape_rule}.{advice}")
+        # Say where the id came from: with no explicit id= the user only ever typed
+        # name=..., so an error quoting the derived id alone sends them hunting for a
+        # string that is not in their source.
+        origin = ""
+        if component_name and generate_id_from_name(component_name) == value:
+            origin = f" (auto-derived from name={component_name!r})"
+        advice = (
+            f" For example, set id={candidate!r} on the component, or publish it under a different "
+            f"tool name via as_tool(name={candidate!r})."
+            if candidate
+            else " Set an id on the component using letters, digits, hyphens, or underscores, starting with a letter or underscore -- or publish it under a valid tool name via as_tool(name=...)."
+        )
+        raise ValueError(
+            f"MCPConfig cannot expose {singular} id {value!r}{origin}: a bare component's tool name is "
+            f"its id verbatim, and {shape_rule}.{advice} Note: changing the id of a component that "
+            "already has sessions is a migration -- sessions and memories are keyed by it."
+        )
+    if len(value) > _TOOL_NAME_MAX_LENGTH:
+        where = "as_tool(name=...)" if source == "as_tool" else f"{singular} id"
+        raise ValueError(
+            f'MCP tool name "{value}" (from {where}) is {len(value)} characters; the LLM providers '
+            f"MCP clients bridge tools into cap tool names at {_TOOL_NAME_MAX_LENGTH} characters "
+            "(OpenAI, Anthropic, and Gemini all reject longer). Use a shorter name."
+        )
+    return value
+
+
+def _locate_component(entry: Any, os: "AgentOS", expected_kind: "Optional[str]" = None) -> "tuple[str, Any]":
+    """``(kind, component)`` for an exposure entry, derived from roster membership.
+
+    Exposure is a view on the deployment, not a second registration path: sessions,
+    config, REST, and MCP must agree on what exists, so every exposed component must be
+    part of the roster -- and the roster a component lives in IS its kind (``Remote*``
+    classes are not subclasses of Agent/Team, so isinstance cannot tell kinds apart).
+    Identity match first; then id equality, so an equal copy of a roster component
+    still resolves -- but an id present in more than one roster is ambiguous and
+    errors, because publishing the wrong same-id component under another kind's scopes
+    is exactly the silent failure this check exists to prevent.
+
+    ``expected_kind`` restricts the id fallback for entries whose class already names
+    their kind (concrete components, ``Remote*``, factories): a non-roster ``Agent``
+    or ``RemoteAgent`` entry must never resolve to a same-id roster ``Team`` -- that
+    would run the team under the agent entry's name and description, gated by the
+    other kind's scopes. Only a truly kindless duck-typed protocol object keeps the
+    all-roster scan.
+    """
+    for kind in ("agents", "teams", "workflows"):
+        for component in getattr(os, kind, None) or []:
+            if component is entry:
+                # A concrete-class entry names its kind: if it was placed in the wrong
+                # roster (a Team in agents=, violating the annotation), running it under
+                # that roster's scopes and SessionType would be silently wrong. Refuse
+                # instead -- roster placement and class must agree.
+                if expected_kind is not None and kind != expected_kind:
+                    raise ValueError(
+                        f"MCPConfig.tools entry {getattr(entry, 'id', None)!r} is a {expected_kind[:-1]} "
+                        f"by type but is registered in AgentOS({kind}=[...]); place it in the roster "
+                        f"matching its type so its scopes and session semantics are correct."
+                    )
+                return kind, component
+    entry_id = getattr(entry, "id", None)
+    if entry_id is not None:
+        matches = []
+        for kind in (expected_kind,) if expected_kind else ("agents", "teams", "workflows"):
+            for component in getattr(os, kind, None) or []:
+                if getattr(component, "id", None) == entry_id:
+                    matches.append((kind, component))
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            kinds = " and ".join(kind for kind, _ in matches)
+            raise ValueError(
+                f"MCPConfig.tools entry with id {entry_id!r} matches components in more than one "
+                f"AgentOS roster ({kinds}); pass the roster instance itself so the kind is unambiguous."
+            )
+        if expected_kind:
+            other_kinds = [
+                kind
+                for kind in ("agents", "teams", "workflows")
+                if kind != expected_kind
+                and any(getattr(c, "id", None) == entry_id for c in getattr(os, kind, None) or [])
+            ]
+            if other_kinds:
+                singular = {"agents": "agent", "teams": "team", "workflows": "workflow"}[expected_kind]
+                article = "an" if singular == "agent" else "a"
+                raise ValueError(
+                    f"MCPConfig.tools contains {article} {singular} with id {entry_id!r} that is not in "
+                    f"AgentOS({expected_kind}=[...]); the roster component with that id is of a different "
+                    f"kind ({' and '.join(other_kinds)}). If you meant that component, pass the roster "
+                    "instance itself -- exposing it through a same-id entry of another kind would swap "
+                    "which component runs and which scopes gate it."
+                )
+    name, _ = _safe_component_metadata(entry)
+    label = name or entry_id or type(entry).__name__
+    raise ValueError(
+        f"MCPConfig.tools contains {label!r} which is not part of the AgentOS roster; add it to "
+        f"AgentOS(agents=[...]/teams=[...]/workflows=[...]) or remove it from MCPConfig.tools."
+    )
+
+
+def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tuple[List[Any], List[tuple]]":
+    """Classify ``MCPConfig.tools`` into custom-tool entries and component exposures.
+
+    Exposures come back as ``(kind, component, marker)``, where ``marker`` is the
+    ``as_tool(...)`` marker carrying the model-facing overrides, or ``None`` for a bare
+    component that takes all of its presentation from itself.
+    A bare Agent/Team/Workflow that is not in the roster is a hard error here (it would
+    otherwise fall through to the custom-tool TypeError, which names the type but not
+    the fix); non-component callables pass through untouched.
+    """
+    from agno.agent.agent import Agent
+    from agno.team.team import Team
+    from agno.tools.component import ComponentTool
+    from agno.workflow.workflow import Workflow
+
+    def _concrete_kind(obj: Any) -> "Optional[str]":
+        # The class names the intended kind, so _locate_component can refuse a same-id
+        # roster component of another kind instead of silently publishing it. Remote*
+        # and factory classes name their kind just as the concrete components do; only
+        # a truly kindless duck-typed protocol object returns None (kind comes from
+        # the roster alone).
+        from agno.agent.factory import AgentFactory
+        from agno.agent.remote import RemoteAgent
+        from agno.agents.base import BaseExternalAgent
+        from agno.team.factory import TeamFactory
+        from agno.team.remote import RemoteTeam
+        from agno.workflow.factory import WorkflowFactory
+        from agno.workflow.remote import RemoteWorkflow
+
+        kinds: "tuple[tuple[type, str], ...]" = (
+            (Agent, "agents"),
+            (RemoteAgent, "agents"),
+            (AgentFactory, "agents"),
+            (BaseExternalAgent, "agents"),
+            (Team, "teams"),
+            (RemoteTeam, "teams"),
+            (TeamFactory, "teams"),
+            (Workflow, "workflows"),
+            (RemoteWorkflow, "workflows"),
+            (WorkflowFactory, "workflows"),
+        )
+        for cls, kind in kinds:
+            if isinstance(obj, cls):
+                return kind
+        return None
+
+    def _roster_member(obj: Any) -> bool:
+        return any(
+            obj is component for kind in ("agents", "teams", "workflows") for component in getattr(os, kind, None) or []
+        )
+
+    customs: List[Any] = []
+    exposures: List[tuple] = []
+    for entry in getattr(mcp_config, "tools", None) or []:
+        if isinstance(entry, ComponentTool):
+            kind, component = _locate_component(entry.component, os, expected_kind=_concrete_kind(entry.component))
+            exposures.append((kind, component, entry))
+            continue
+        if isinstance(entry, str):
+            raise TypeError(
+                f"MCPConfig.tools got the string {entry!r}; pass the component instance itself "
+                "(or a callable/Agno tool)."
+            )
+        if isinstance(entry, (Agent, Team, Workflow)):
+            kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
+            exposures.append((kind, component, None))
+            continue
+        # Anything that lives on the roster is a component entry, whatever its shape:
+        # Remote* instances, component factories (BaseFactory has no arun and is not
+        # callable), and duck-typed protocol implementations. Classifying a roster
+        # factory as a custom tool would hand Tool.from_function an object that is not
+        # a tool at all.
+        if _roster_member(entry):
+            kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
+            exposures.append((kind, component, None))
+            continue
+        # Off-roster component-shaped entries (id + arun, not a callable tool) resolve
+        # through the roster too -- reaching an equal-id roster component, the
+        # wrong-kind error, or the not-in-roster error, never the custom-tool TypeError.
+        if not callable(getattr(entry, "entrypoint", None)) and not callable(entry):
+            if getattr(entry, "id", None) is not None and hasattr(entry, "arun"):
+                kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
+                exposures.append((kind, component, None))
+                continue
+        customs.append(entry)
+    return customs, exposures
+
+
+def _make_exposed_run_tool(
+    os: "AgentOS",
+    kind: "Literal['agents', 'teams']",
+    component_id: str,
+    result_mode: str,
+    continue_run_available: bool = True,
+) -> Callable:
+    """A run tool bound to one agent or team: the ``run_agent``/``run_team`` body with
+    the component id fixed. Resolution happens at call time so per-run copies, registry
+    lookup, versioning, and factories behave identically to the generic tools."""
+    session_type = SessionType.AGENT if kind == "agents" else SessionType.TEAM
+    label_prefix = "Agent" if kind == "agents" else "Team"
+
+    async def run_exposed(
+        message: str,
+        ctx: Context,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> ToolResult:
+        _require_tool_scopes("POST", f"/{kind}/{component_id}/runs")
+        resolved_user_id = _resolve_user_id(user_id)
+        component = await _resolve_run_component(
+            os, kind, component_id, user_id=resolved_user_id, session_id=session_id
+        )
+        # Mint a fresh session per call when omitted (matches REST), never the sticky default.
+        new_session_id = _session_id_or_new(session_id)
+        await _assert_session_writable_mcp(os, component, new_session_id, resolved_user_id, session_type)
+        # Label from the resolved component, matching run_agent/run_team -- a registry or
+        # published version may carry a different name than the roster instance. Safe
+        # read: on a remote component the name is a network-backed property.
+        resolved_name, _ = _safe_component_metadata(component)
+        run_output = await _run_agentic_component(
+            ctx,
+            component,
+            message,
+            resolved_user_id,
+            new_session_id,
+            label=f"{label_prefix} {resolved_name or component_id}",
+        )
+        return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
+
+    return run_exposed
+
+
+def _make_exposed_workflow_tool(
+    os: "AgentOS",
+    component_id: str,
+    result_mode: str,
+    continue_run_available: bool = True,
+) -> Callable:
+    """A run tool bound to one workflow: the ``run_workflow`` body with the id fixed."""
+
+    async def run_exposed_workflow(
+        message: str,
+        ctx: Context,
+        user_id: Optional[str] = None,
+        session_id: Optional[str] = None,
+    ) -> ToolResult:
+        from agno.workflow.remote import RemoteWorkflow
+
+        _require_tool_scopes("POST", f"/workflows/{component_id}/runs")
+        resolved_user_id = _resolve_user_id(user_id)
+        workflow = await _resolve_run_component(
+            os, "workflows", component_id, user_id=resolved_user_id, session_id=session_id
+        )
+        # Mint a fresh session per call when omitted (matches REST), never the sticky default.
+        new_session_id = _session_id_or_new(session_id)
+        await _assert_session_writable_mcp(os, workflow, new_session_id, resolved_user_id, SessionType.WORKFLOW)
+        # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
+        with _detached_trace_context():
+            if isinstance(workflow, RemoteWorkflow):
+                run_output = await workflow.arun(
+                    message, user_id=resolved_user_id, session_id=new_session_id, auth_token=_forwarded_auth_token()
+                )
+                return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
+            steps = getattr(workflow, "steps", None)
+            total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
+            stream = workflow.arun(
+                message,
+                user_id=resolved_user_id,
+                session_id=new_session_id,
+                stream=True,
+                stream_events=True,
+            )
+            run_output = await _consume_workflow_stream(ctx, workflow, stream, total_steps, resolved_user_id)
+        return build_run_tool_result(run_output, result_mode, continue_run_available=continue_run_available)
+
+    return run_exposed_workflow
+
+
+def _register_exposed_components(
+    mcp: FastMCP,
+    os: "AgentOS",
+    result_mode: str,
+    custom_tool_names: "Optional[Dict[str, str]]" = None,
+    exposure_entries: "Optional[List[tuple]]" = None,
+    enabled_tags: "Optional[set]" = None,
+) -> None:
+    """Register the component entries from ``MCPConfig.tools`` as named tools.
+
+    ``exposure_entries`` come from ``_split_tool_entries``: ``(kind, component,
+    marker)``, where ``marker`` is the ``as_tool(...)`` marker carrying the
+    explicit model-facing overrides, or ``None`` for a bare component -- which gets its
+    id as the tool name and its own description and name. Names are validated verbatim,
+    never sanitized;
+    collisions with the enabled default tools, custom tools, or other exposed
+    components are a hard error at build. The component id (not the tool name) remains
+    the continue_run handle -- carried in the result's structuredContent -- and the
+    per-resource scope segment.
+
+    The registered tool list is deliberately static and identical for every caller:
+    exposure is a hand-typed publication list, so listing a tool's name and description
+    is what the deployer asked for, and access is enforced at call time via the same
+    scope checks the generic run tools apply. (The MCP spec does permit per-caller
+    tool lists; serving one is a possible future refinement, not a spec constraint.)
+    """
+    if not exposure_entries:
+        return
+
+    # Names already claimed by the default tools that will actually register, and by
+    # the custom tools registered just before this (their REAL registered names, so
+    # e.g. a functools.partial custom tool named "partial" by FastMCP still collides).
+    enabled_tags = enabled_tags if enabled_tags is not None else set()
+    taken: Dict[str, str] = {
+        name: f'the default tool "{name}"' for name, tags in _BUILTIN_TOOL_NAMES.items() if tags & enabled_tags
+    }
+    taken.update(custom_tool_names or {})
+
+    # continue_run rides along with exposure by default (the lifecycle tag), so this is
+    # False only when the deployer opted out -- the paused-result text then points the
+    # caller at REST instead of at a tool that does not exist.
+    continue_run_available = bool({"core", "lifecycle"} & enabled_tags)
+    singulars = {"agents": "agent", "teams": "team", "workflows": "workflow"}
+
+    for kind, component, marker in exposure_entries:
+        name_override = marker.name if marker is not None else None
+        description_override = marker.description if marker is not None else None
+        title_override = marker.title if marker is not None else None
+        annotations_override = marker.annotations if marker is not None else None
+        singular = singulars[kind]
+        # AgentOS mints ids for roster components at construction (name-derived when
+        # named, generated otherwise), so the id is normally always set here; the
+        # error is defense for exotic components that dodge that path.
+        component_id = getattr(component, "id", None)
+        # On Remote* components name/description are network-backed properties (a
+        # synchronous config fetch that blocks to the timeout when the remote is
+        # unreachable). Skip the read for those when both overrides are supplied and
+        # non-blank -- neither the tool name nor the description needs the component's
+        # own metadata then. The bare path (no name override) still needs the name for
+        # the auto-derived-id origin hint; a blank description override still needs the
+        # component description as its fallback. A LOCAL component's metadata is a
+        # plain attribute read, so it is never skipped: the display title falls back to
+        # the component's name, which the skip would otherwise throw away.
+        if isinstance(component, BaseRemote) and name_override is not None and (description_override or "").strip():
+            component_name, component_description = None, None
+        else:
+            component_name, component_description = _safe_component_metadata(component)
+        if not component_id:
+            # Type name, never repr(): a component repr can carry credentials (a
+            # model api_key) into the error message.
+            label = component_name or type(component).__name__
+            raise ValueError(
+                f"MCPConfig.tools contains {label!r} which has no id; set id= on the "
+                f"component so its MCP tool has a stable name."
+            )
+        if name_override is not None:
+            tool_name = _validate_exposed_tool_name(name_override, singular, None, taken, source="as_tool")
+            # The override renames the TOOL, but the component id is still the
+            # per-resource scope segment (``agents:<id>:run``), the continue_run handle,
+            # and the session key. A slash or other out-of-charset id would make the
+            # synthetic scope path (``/agents/<id>/runs``) truncate at the first slash,
+            # so ``agents:<prefix>:run`` would authorize a different component. The bare
+            # path validates this as a side effect of validating the tool name; the
+            # override path must check the id explicitly.
+            if not _TOOL_NAME_VALID_RE.fullmatch(component_id):
+                raise ValueError(
+                    f"MCPConfig.tools exposes {singular} id {component_id!r} via as_tool(name={tool_name!r}), "
+                    "but the id must still start with a letter or underscore and contain only "
+                    "letters, digits, hyphens, and underscores: it is the RBAC scope segment "
+                    f"(agents:<id>:run), the continue_run handle, and the session key. Set a "
+                    "scope-safe id on the component (changing it is a migration -- sessions and "
+                    "memories are keyed by it)."
+                )
+        else:
+            tool_name = _validate_exposed_tool_name(component_id, singular, component_name, taken)
+        if tool_name in taken:
+            # Attribute the name to where the user actually typed it: an as_tool
+            # override quoted as "the component id" sends them hunting the wrong string.
+            source_label = (
+                f'as_tool(name="{tool_name}") on {singular} "{component_id}"'
+                if name_override is not None
+                else f'{singular} id "{component_id}"'
+            )
+            # Advice must name a knob that actually frees the colliding name. The
+            # lifecycle pair is tagged both "core" and "lifecycle": when it rode in via
+            # the exposure (core not enabled) only the lifecycle switches free it, but
+            # when core is enabled those switches do nothing (core keeps re-adding it),
+            # so _collision_free_advice keys on HOW the name was claimed, not its tags.
+            free_advice = _collision_free_advice(tool_name, enabled_tags)
+            raise ValueError(
+                f'MCP tool name "{tool_name}" (from {source_label}) collides with '
+                f"{taken[tool_name]}. Rename the tool (as_tool(name=...)) or the component id, "
+                f"{free_advice}so each tool name is unique."
+            )
+        taken[tool_name] = f'exposed {singular} "{component_id}"'
+
+        display_name = component_name or component_id
+        # strip() BEFORE the fallback test: a whitespace-only description is truthy
+        # but would rstrip to nothing, yielding a description that starts with ".".
+        base_description = (description_override or "").strip() or (component_description or "").strip()
+        if not base_description:
+            base_description = f"Run the {display_name} {singular} with a message."
+        if not base_description.endswith((".", "!", "?")):
+            base_description += "."
+        description = f"{base_description} {_EXPOSED_SESSION_SENTENCE}"
+
+        if kind == "workflows":
+            fn = _make_exposed_workflow_tool(os, component_id, result_mode, continue_run_available)
+        else:
+            fn = _make_exposed_run_tool(os, kind, component_id, result_mode, continue_run_available)  # type: ignore[arg-type]
+        # component_name is None on the skipped-metadata path above, so this fallback
+        # never reaches for a Remote* component's network-backed name just to fill a
+        # display title -- the tool name is the last resort instead.
+        title, annotations = tool_presentation(
+            title_override,
+            annotations_override,
+            defaults=_EXPOSED_COMPONENT_ANNOTATIONS,
+            fallback_title=component_name or tool_name,
+            source=f'as_tool(annotations=...) on {singular} "{component_id}"',
+        )
+        mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
 
 def build_mcp_server(
@@ -755,7 +1501,7 @@ def build_mcp_server(
     Split out from :func:`get_mcp_server` so the tool surface can be exercised directly
     by an in-memory MCP client in tests, without the HTTP/JWT layer.
     """
-    mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
+    mcp_config: "Optional[MCPConfig]" = getattr(os, "mcp_config", None)
 
     # Create an MCP server. With AgentOS(mcp_auth=...) set, the resolved fastmcp provider
     # owns authentication for the HTTP transport: http_app() serves its discovery/OAuth
@@ -763,9 +1509,14 @@ def build_mcp_server(
     # The in-memory client path used in tests ignores it.
     mcp = FastMCP(os.name or "AgentOS", auth=os._get_mcp_auth_provider())
 
+    # Classify the tool surface up front: the enabled default-tool tags depend on
+    # whether components are exposed (the lifecycle pair rides along with exposure).
+    custom_entries, exposure_entries = _split_tool_entries(mcp_config, os)
+    enabled_tags = _enabled_builtin_tags(mcp_config, has_exposures=bool(exposure_entries))
+
     # Decorator used to register the built-in tools. Honors ``mcp_config`` scoping;
     # behaves exactly like ``mcp.tool`` when no config (or default config) is provided.
-    register_builtin_tool = _builtin_tool_registrar(mcp, mcp_config)
+    register_builtin_tool = _builtin_tool_registrar(mcp, enabled_tags)
 
     # How the run tools serialize their results ("trimmed" keeps the frontend model's
     # context clean; "full" is the escape hatch for programmatic clients).
@@ -774,8 +1525,43 @@ def build_mcp_server(
     # Component resolution + ownership gate shared by continue_run and cancel_run.
     _verify_run_ownership = _make_run_ownership_verifier(os)
 
+    # The ride-along pair is bounded to the publication list. When continue_run/
+    # cancel_run would not register at all without exposures -- neither "core" (whose
+    # generic run tools reach the whole roster anyway) nor "lifecycle" (an explicit
+    # include under the default surface: the deployer chose a roster-wide resume
+    # surface) is enabled on its own -- they must not reach components the deployer
+    # chose not to publish: tools= bounds what can be started on this server AND what
+    # can be resumed or cancelled. None means unrestricted (REST parity).
+    tags_without_ride_along = _enabled_builtin_tags(mcp_config, has_exposures=False)
+    lifecycle_rides_only = "lifecycle" in enabled_tags and not ({"core", "lifecycle"} & tags_without_ride_along)
+    published_lifecycle_targets: "Optional[set]" = (
+        {(kind, getattr(component, "id", None)) for kind, component, _ in exposure_entries}
+        if lifecycle_rides_only
+        else None
+    )
+
+    def _require_published_component(tool_name: str, component_type: str, component_id: str) -> None:
+        """Fail closed when the riding pair is asked about an unpublished component.
+
+        Without this, an exposure-only server (default_tools=False) would let any
+        caller resume or cancel runs on EVERY roster component -- including resuming a
+        paused confirmation-required tool on a component the deployer deliberately
+        left off the surface. The publication list is public via tools/list, so this
+        reveals nothing new."""
+        if published_lifecycle_targets is None:
+            return
+        if (component_type, component_id) in published_lifecycle_targets:
+            return
+        singular = {"agents": "agent", "teams": "team", "workflows": "workflow"}.get(component_type, component_type)
+        raise Exception(
+            f"{tool_name} on this server only acts on runs of its published components; "
+            f"{singular} {component_id!r} is not one of them. Use the REST API to manage "
+            "other components' runs."
+        )
+
     @register_builtin_tool(
         name="get_agentos_config",
+        title="Get AgentOS Configuration",
         description=(
             "Discover this AgentOS: the agents, teams, and workflows available to run (with their ids "
             "and descriptions), and the database ids used by the session tools. Call this first to learn "
@@ -783,7 +1569,7 @@ def build_mcp_server(
             "the REST /config endpoint."
         ),
         tags={"core"},
-        annotations={"readOnlyHint": True, "idempotentHint": True},
+        annotations={"readOnlyHint": True, "destructiveHint": False, "idempotentHint": True, "openWorldHint": False},
     )  # type: ignore
     async def config() -> Dict[str, Any]:
         _require_tool_scopes("GET", "/config")
@@ -868,6 +1654,7 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="run_agent",
+        title="Run Agent",
         description=(
             "Run an agent with a message and get its response. Pass a session_id from get_sessions to "
             "continue that conversation; omit it to start a new one (the session_id comes back in "
@@ -875,7 +1662,7 @@ def build_mcp_server(
             "call continue_run. Agent ids come from get_agentos_config."
         ),
         tags={"core"},
-        annotations={"readOnlyHint": False, "openWorldHint": True},
+        annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_agent(
         agent_id: str,
@@ -897,12 +1684,13 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="run_team",
+        title="Run Team",
         description=(
             "Run a team of agents with a message and get its response. Same session and PAUSED semantics "
             "as run_agent. Team ids come from get_agentos_config."
         ),
         tags={"core"},
-        annotations={"readOnlyHint": False, "openWorldHint": True},
+        annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_team(
         team_id: str,
@@ -924,13 +1712,14 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="run_workflow",
+        title="Run Workflow",
         description=(
             "Run a workflow with an input message and get its result. Can be long-running: progress is "
             "reported per step when the client supports it. Same session and PAUSED semantics as "
             "run_agent. Workflow ids come from get_agentos_config."
         ),
         tags={"core"},
-        annotations={"readOnlyHint": False, "openWorldHint": True},
+        annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def run_workflow(
         workflow_id: str,
@@ -950,7 +1739,9 @@ def build_mcp_server(
         # Detach from FastMCP's tool-call span so the workflow run is its own root trace.
         with _detached_trace_context():
             if isinstance(workflow, RemoteWorkflow):
-                run_output = await workflow.arun(message, user_id=user_id, session_id=session_id)
+                run_output = await workflow.arun(
+                    message, user_id=user_id, session_id=session_id, auth_token=_forwarded_auth_token()
+                )
                 return build_run_tool_result(run_output, result_mode)
             steps = getattr(workflow, "steps", None)
             total_steps = float(len(steps)) if isinstance(steps, (list, tuple)) and steps else None
@@ -968,6 +1759,7 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="continue_run",
+        title="Continue Paused Run",
         description=(
             "Resume a PAUSED run after resolving its requirements (human-in-the-loop). "
             "When a run tool returns status=PAUSED, its structuredContent carries the unresolved "
@@ -975,8 +1767,8 @@ def build_mcp_server(
             "back here unchanged otherwise. Provide exactly one of agent_id / team_id / workflow_id "
             "(the component that owns the run) plus the run_id and session_id from the paused result."
         ),
-        tags={"core"},
-        annotations={"readOnlyHint": False, "destructiveHint": False},
+        tags={"core", "lifecycle"},
+        annotations={"readOnlyHint": False, "destructiveHint": True, "openWorldHint": True},
     )  # type: ignore
     async def continue_run(
         run_id: str,
@@ -989,6 +1781,7 @@ def build_mcp_server(
         user_id: Optional[str] = None,
     ) -> ToolResult:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
+        _require_published_component("continue_run", component_type, component_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/continue")
         user_id = _resolve_user_id(user_id)
         # published_only=False, like the REST /continue routes: the run may live
@@ -1040,13 +1833,14 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="cancel_run",
+        title="Cancel Run",
         description=(
             "Request cancellation of a running run. Irreversible: the run stops and is marked CANCELLED "
             "(if it has not started yet, the intent is recorded and applied when it does). Provide the "
             "run_id, its session_id, and exactly one of agent_id / team_id / workflow_id."
         ),
-        tags={"core"},
-        annotations={"destructiveHint": True, "idempotentHint": True},
+        tags={"core", "lifecycle"},
+        annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     )  # type: ignore
     async def cancel_run(
         run_id: str,
@@ -1056,7 +1850,21 @@ def build_mcp_server(
         workflow_id: Optional[str] = None,
     ) -> str:
         component_type, component_id = _classify_lifecycle_target(agent_id, team_id, workflow_id)
+        _require_published_component("cancel_run", component_type, component_id)
         _require_tool_scopes("POST", f"/{component_type}/{component_id}/runs/{run_id}/cancel")
+        # Factory components cancel STATICALLY (mirrors the REST factory-cancel routes):
+        # cancellation is a run_id-keyed global intent, so building the factory is both
+        # unnecessary and harmful -- generic resolution invokes it, which 400s a
+        # required-input factory or a request-less transport and would make a live
+        # factory run uncancellable over MCP.
+        roster = {"agents": os.agents, "teams": os.teams, "workflows": os.workflows}[component_type]
+        factory = find_factory_by_id(component_id, roster)
+        if factory is not None:
+            await _verify_factory_run_ownership(
+                getattr(factory, "db", None) or os.db, component_type, component_id, session_id, run_id
+            )
+            await _static_cancel_factory_run(component_type, run_id)
+            return f"Run {run_id} cancellation requested"
         # Lenient: cancel needs only a handle on the component, and a drifted
         # registry must never make a run uncancellable. Matches the REST route
         # (strict=False, published_only=False - a draft-only preview run must
@@ -1065,7 +1873,7 @@ def build_mcp_server(
             os, component_type, component_id, user_id=None, session_id=session_id, strict=False, published_only=False
         )
         await _verify_run_ownership(component, component_type, component_id, session_id, run_id)
-        await run_service.cancel_component_run(component, run_id)
+        await run_service.cancel_component_run(component, run_id, auth_token=_forwarded_auth_token())
         return f"Run {run_id} cancellation requested"
 
     # ==================== Session Tools (read-only) ====================
@@ -1074,6 +1882,7 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="get_sessions",
+        title="List Sessions",
         description=(
             "List past sessions (conversations), newest first. Filter by session_type, component_id "
             "(an agent/team/workflow id from get_agentos_config), user, or session_name. Use a returned "
@@ -1081,7 +1890,7 @@ def build_mcp_server(
             "read its history. db_id is only needed when get_agentos_config lists multiple databases."
         ),
         tags={"session"},
-        annotations={"readOnlyHint": True},
+        annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_sessions(
         session_type: Literal["agent", "team", "workflow"] = "agent",
@@ -1133,6 +1942,7 @@ def build_mcp_server(
 
     @register_builtin_tool(
         name="get_session_runs",
+        title="Read Session History",
         description=(
             "Read a session's conversation history: each run's input and response content with its "
             "run_id, status, and timestamp, oldest first. Returns the answer content only, not the full "
@@ -1143,7 +1953,7 @@ def build_mcp_server(
             "omitted; db_id is only needed when get_agentos_config lists multiple databases."
         ),
         tags={"session"},
-        annotations={"readOnlyHint": True},
+        annotations={"readOnlyHint": True, "destructiveHint": False, "openWorldHint": False},
     )  # type: ignore
     async def get_session_runs(
         session_id: str,
@@ -1181,7 +1991,11 @@ def build_mcp_server(
 
     # Register any user-provided custom tools. These share the same server, mount (/mcp),
     # lifespan, and JWT middleware as the built-in tools.
-    _register_custom_tools(mcp, mcp_config)
+    custom_tool_names = _register_custom_tools(mcp, custom_entries, enabled_tags)
+
+    # Expose the components named in the config as individual tools ("chief", not
+    # run_agent(agent_id="chief")). Last, so collision checks see the full surface.
+    _register_exposed_components(mcp, os, result_mode, custom_tool_names, exposure_entries, enabled_tags)
 
     return mcp
 
@@ -1361,7 +2175,7 @@ def get_mcp_server(
     (``_require_tool_scopes``).
     """
     mcp = build_mcp_server(os)
-    mcp_config: "Optional[MCPServerConfig]" = getattr(os, "mcp_config", None)
+    mcp_config: "Optional[MCPConfig]" = getattr(os, "mcp_config", None)
     mcp_auth = os._get_mcp_auth_provider()
 
     # Use http_app for Streamable HTTP transport (modern MCP standard).
@@ -1369,7 +2183,7 @@ def get_mcp_server(
     # deployed hosts before our own middleware runs. Disable it where the parameter exists
     # and run AgentOS's single validation engine instead (the transport-security middleware
     # below), which protects open servers by default and lets deployed hosts opt in via
-    # MCPServerConfig.allowed_hosts.
+    # MCPConfig.allowed_hosts.
     http_app_kwargs: Dict[str, Any] = {"path": "/mcp"}
     if "host_origin_protection" in inspect.signature(mcp.http_app).parameters:
         http_app_kwargs["host_origin_protection"] = False
@@ -1414,7 +2228,7 @@ def get_mcp_server(
             from agno.utils.log import log_warning
 
             log_warning(
-                "MCPServerConfig.authorize is set but AgentOS(authorization=False); the gate will "
+                "MCPConfig.authorize is set but AgentOS(authorization=False); the gate will "
                 "be called with user_id=None on every request because no JWT middleware populates "
                 "request.state.user_id. Either pass authorization=True with an authorization_config, "
                 "or write your authorize() to handle user_id=None explicitly (e.g. for a dev shortcut)."

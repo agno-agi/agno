@@ -25,11 +25,12 @@ from typing import (
 
 from docstring_parser import parse
 from packaging.version import Version
-from pydantic import BaseModel, Field, validate_call
+from pydantic import BaseModel, Field, field_validator, validate_call
 
 from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
+from agno.tools.annotations import validate_tool_annotations
 from agno.utils.log import log_debug, log_exception, log_warning
 
 T = TypeVar("T")
@@ -1391,6 +1392,11 @@ RUNTIME_ONLY_FIELDS = (
     # A code-declared trait that discovery reports; the live registry Function
     # owns it, not the persisted config.
     "has_side_effects",
+    # Presentation for people and clients, declared in code alongside the tool.
+    # Restored from the live Function so a reloaded component publishes the same
+    # title and behaviour hints a fresh one does.
+    "title",
+    "annotations",
 )
 
 
@@ -1403,16 +1409,21 @@ def isolated_runtime_value(value: Any) -> Any:
     ``UserInputField`` objects, so one run's input would be visible to every
     other component holding that tool, and to the registry itself.
 
-    Lists are rebuilt rather than deep-copied, so callables such as tool hooks
-    stay the same objects; only dataclass elements are copied, because those
-    are the ones written in place. No RUNTIME_ONLY_FIELDS entry holds a dict,
-    so lists are the only containers handled.
+    Containers are rebuilt one level deep rather than deep-copied, so callables
+    such as tool hooks stay the same objects; only dataclass elements are copied,
+    because those are the ones written in place. Both list and dict entries are
+    handled -- ``annotations`` is a dict, and sharing it would let one component's
+    edit change what every other component and the registry itself publish.
     """
     from copy import copy
     from dataclasses import is_dataclass
 
     if isinstance(value, list):
         return [copy(item) if is_dataclass(item) else item for item in value]
+    if isinstance(value, dict):
+        # Shallow is enough: annotation values are bools and strings, enforced by
+        # validate_tool_annotations at construction.
+        return dict(value)
     return value
 
 
@@ -1424,6 +1435,17 @@ class Function(BaseModel):
     name: str
     # A description of what the function does, used by the model to choose when and how to call the function.
     description: Optional[str] = None
+    # Human-facing display name, shown by clients that render tools to people (an MCP
+    # server, an assistant marketplace listing). Never sent to the model, which reads
+    # name/description/parameters: to_dict() serializes an explicit allowlist.
+    title: Optional[str] = None
+    # MCP behaviour hints (readOnlyHint, destructiveHint, idempotentHint, openWorldHint)
+    # published alongside the tool. Marketplace submission scans reject tools that carry
+    # none, and reviewers test the hints against what the tool actually does.
+    # readOnlyHint is the published form of has_side_effects below: set one, or keep the
+    # two consistent -- a tool that declares side effects and claims read-only is making
+    # opposite claims to agno's own discovery and to an MCP client.
+    annotations: Optional[Dict[str, Any]] = None
     # The parameters the functions accepts, described as a JSON Schema object.
     # To describe a function that accepts no parameters, provide the value {"type": "object", "properties": {}}.
     parameters: Dict[str, Any] = Field(
@@ -1513,6 +1535,14 @@ class Function(BaseModel):
     _videos: Optional[Sequence[Video]] = None
     _audios: Optional[Sequence[Audio]] = None
     _files: Optional[Sequence[File]] = None
+
+    @field_validator("annotations")
+    @classmethod
+    def _validate_annotations(cls, annotations: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        # The MCP annotations model accepts unknown keys, so a misspelled hint would
+        # travel all the way to a client as "no such annotation". Reject it here, where
+        # the developer wrote it.
+        return validate_tool_annotations(annotations, "Function(annotations=...)")
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True, include=set(SERIALIZED_FIELDS))

@@ -9,7 +9,7 @@ over the wire and raises on binary media.
 """
 
 import json
-from typing import Any, Dict, List, Union
+from typing import Any, Dict, List, Optional, Union
 
 from mcp.types import AudioContent, ContentBlock, ImageContent, TextContent
 
@@ -76,24 +76,43 @@ def _json_safe(data: Dict[str, Any]) -> Dict[str, Any]:
     return json.loads(json.dumps(data, default=json_serializer))
 
 
-def trimmed_structured_content(run_output: AnyRunOutput) -> Dict[str, Any]:
+def trimmed_structured_content(run_output: AnyRunOutput, content_text: Optional[str] = None) -> Dict[str, Any]:
     structured: Dict[str, Any] = {
         "run_id": run_output.run_id,
         "session_id": run_output.session_id,
         "status": run_status_string(run_output),
+        # The answer rides in BOTH result fields: clients that render
+        # structuredContent when it is present (Claude Code among them) would
+        # otherwise show metadata with no answer, and the official MCP servers keep
+        # the two fields mirrored the same way. ``content_text`` lets the caller pass
+        # the final text block (the paused/no-continue placeholder and REST-recovery
+        # hint) so the two fields stay identical, not just for completed runs.
+        "content": _content_text(run_output) if content_text is None else content_text,
     }
+    # The component id is the handle for continue_run/get_sessions. The generic run
+    # tools' callers already know it (they passed it), but an exposed tool's caller only
+    # knows the tool name -- which may be an as_tool() override -- so the result must
+    # carry the id or a paused run is unresumable.
+    for key in ("agent_id", "team_id", "workflow_id"):
+        value = getattr(run_output, key, None)
+        if value:
+            structured[key] = value
     requirements = serialized_paused_requirements(run_output)
     if requirements is not None:
         structured["requirements"] = requirements
     return _json_safe(structured)
 
 
-def build_run_tool_result(run_output: AnyRunOutput, result_mode: str = "trimmed") -> "Any":
+def build_run_tool_result(
+    run_output: AnyRunOutput, result_mode: str = "trimmed", continue_run_available: bool = True
+) -> "Any":
     """Build the MCP ``ToolResult`` for a completed (or paused) run.
 
     ``trimmed`` (default): answer text + generated media as MCP content blocks,
-    with ``structuredContent`` limited to run_id / session_id / status and, when
-    paused, the unresolved requirements a continue call must address.
+    with ``structuredContent`` carrying run_id / session_id / status, the answer
+    mirrored under ``content``, the owning component id (``agent_id``/``team_id``/
+    ``workflow_id`` — the continue_run handle), and, when paused, the unresolved
+    requirements a continue call must address.
 
     ``full``: text content with ``structuredContent`` set to the run's complete
     ``to_dict()`` (media base64-encoded there — no separate media blocks, so large
@@ -105,6 +124,17 @@ def build_run_tool_result(run_output: AnyRunOutput, result_mode: str = "trimmed"
     if not text and getattr(run_output, "is_paused", False):
         requirements = serialized_paused_requirements(run_output) or []
         text = f"Run paused: {len(requirements)} requirement(s) awaiting resolution."
+    if getattr(run_output, "is_paused", False) and not continue_run_available:
+        # continue_run rides along with exposures by default, so this fires only when
+        # the deployer opted out (lifecycle_tools=False / exclude_tags={"lifecycle"},
+        # or tag scoping that drops both core and lifecycle). The paused run is then a
+        # dead end over MCP -- say so at the moment it happens instead of letting the
+        # client hunt for a tool that is not registered.
+        text = (
+            f"{text} The continue_run tool is not registered on this server; resume this run over "
+            "the REST API, or re-enable the run-lifecycle tools (lifecycle_tools=True, and do not "
+            'exclude the "lifecycle" tag).'
+        ).strip()
 
     content: List[ContentBlock] = [TextContent(type="text", text=text)]
 
@@ -112,7 +142,9 @@ def build_run_tool_result(run_output: AnyRunOutput, result_mode: str = "trimmed"
         structured = _json_safe(run_output.to_dict())
     else:
         content.extend(_media_blocks(run_output))
-        structured = trimmed_structured_content(run_output)
+        # Pass the final text so structuredContent["content"] carries the same message
+        # the text block does -- including the paused / no-continue REST-recovery hint.
+        structured = trimmed_structured_content(run_output, content_text=text)
 
     return ToolResult(content=content, structured_content=structured)
 
