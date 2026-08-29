@@ -2,6 +2,43 @@
 
 Tested on 2026-07-24 against Agno source commit
 `a463d3be3563d30d11d32d4f0f9dc23ccefdb4d2`.
+`agents_as_tools.py` first tested LIVE on 2026-08-27 on the
+`feat/mcp-agents-as-tools` branch (pre-lifecycle: `tools/list` showed exactly
+`chief` and `deep_research`), alongside the folder-wide move to the `mcp=` /
+`MCPConfig` / `default_tools` spellings (behavior unchanged; the old spellings
+remain accepted aliases). Re-run LIVE on 2026-08-28 after the lifecycle
+ride-along and the review-round fixes landed; the entry below records the
+2026-08-28 run.
+
+### agents_as_tools.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (2026-08-28)
+
+**Description:** Started the checked-in server (two gpt-5.6-luna agents,
+`default_tools=False`, one exposed bare and one via
+`researcher.as_tool(name="deep_research", description=...)` in
+`MCPConfig(tools=[...])`) and drove it with a FastMCP streamable-HTTP client:
+listed tools, checked the generated schemas and descriptions, ran `chief`
+twice -- once sessionless, once continuing the returned session.
+
+**Result:** `tools/list` returned `chief`, `deep_research`, and the riding
+lifecycle pair (`continue_run`, `cancel_run`) introduced after the first run
+of this cookbook. The `chief` tool carried the agent's own description plus
+the session sentence; `deep_research` carried the as_tool override pitch. The
+client-facing schema was `message` (required), `session_id`, `user_id`;
+structuredContent carried `agent_id` ("chief") alongside
+run_id/session_id/status, and (verified in a same-day re-run after the fix
+landed) mirrors the answer text in its `content` key, so structuredContent-
+rendering clients show the answer. The sessionless call minted a session and
+completed with content "Earth"; the follow-up call on the returned session_id
+recalled "Earth", proving live session continuity through the exposed tool.
+The same re-run verified the publication bound on the riding pair:
+`cancel_run` acted on the published `researcher` but refused an id outside
+the publication list with the "published components" error.
+
+---
 
 ### basic.py
 

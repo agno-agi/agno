@@ -7,7 +7,10 @@ from sqlalchemy.pool import StaticPool
 from agno.db.sqlite import SqliteDb
 
 
-@pytest.mark.parametrize("db_url", ["sqlite://", "sqlite:///:memory:"])
+@pytest.mark.parametrize(
+    "db_url",
+    ["sqlite://", "sqlite:///:memory:", "sqlite:///file:agno_worker_mem?mode=memory&cache=shared&uri=true"],
+)
 def test_in_memory_database_is_shared_with_worker_threads(db_url: str) -> None:
     db = SqliteDb(db_url=db_url, session_table="sessions")
 

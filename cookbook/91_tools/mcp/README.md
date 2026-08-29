@@ -44,15 +44,22 @@ This example connects to the hosted DeepWiki MCP server (public, no API key) to 
 
 This example connects to the hosted emem MCP server (public, no API key) for shared, signed memory of the physical world. It shows an agent answering a plain-language question about a place by calling emem's MCP tools directly.
 
+11. Peer Cash Agent (`peer_cash.py`)
+
+This example connects to the published Peer Cash MCP server to discover fiat payout rails, read market-rate estimates, prepare unsigned Base USDC cash-outs, and track their order state. Wallet custody stays outside the agent: the server never accepts private keys, signs transactions, or broadcasts them.
+
 
 ## Getting Started
 
 ### Prerequisites
 
-Install the required dependencies:
+Install Python 3.11 or newer. The Peer Cash example also requires Node.js 22 or
+newer with `npx` available on your `PATH`.
+
+Install the required Python dependencies:
 
 ```bash
-uv pip install agno mcp openai
+uv pip install "agno[mcp]" openai
 ```
 
 Export your API keys:
@@ -71,6 +78,7 @@ python github.py
 python bgpt.py
 python structured_content.py
 python emem.py
+python peer_cash.py
 ```
 
 ## How It Works

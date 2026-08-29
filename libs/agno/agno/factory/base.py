@@ -9,6 +9,7 @@ from pydantic import BaseModel
 
 if TYPE_CHECKING:
     from agno.db.base import AsyncBaseDb, BaseDb
+    from agno.tools.component import ComponentTool
 
 from agno.factory.utils import (
     FactoryError,
@@ -59,6 +60,17 @@ class BaseFactory(Generic[T]):
         self.name = name
         self.description = description
         self.input_schema = input_schema
+
+    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
+        """Publish this factory as a tool with its own model-facing name and
+        description, for surfaces that turn components into tools -- today the AgentOS
+        MCP server: ``MCPConfig(tools=[factory.as_tool(name=..., description=...)])``.
+        Both overrides are optional; the factory ``id`` remains the run/scope handle,
+        and the component is built per request as on every other surface.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description)
 
     def validate_input(self, raw_input: Any) -> Any:
         """Validate and parse raw factory_input against input_schema.

@@ -1,10 +1,12 @@
 """Unit tests for eval utils (agno.eval.utils)."""
 
 import asyncio
+import json
 import threading
 
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, spinner_live
+from agno.eval.accuracy import AccuracyResult
+from agno.eval.utils import async_log_eval, spinner_live, store_result_in_file
 
 
 class RecordingSyncDb:
@@ -53,29 +55,46 @@ def test_async_log_eval_write_failure_is_swallowed_and_warned(monkeypatch):
     assert any("Could not log eval run" in message for message in warnings)
 
 
-def test_async_log_eval_in_memory_sqlite_stays_on_loop_and_persists():
-    # In-memory sqlite is thread-affine (one private database per thread): the
-    # write must run on the loop thread so it lands in the caller's database.
+def test_async_log_eval_in_memory_sqlite_runs_off_loop_and_persists(monkeypatch):
+    # SqliteDb configures in-memory databases with a cross-thread StaticPool, so
+    # the write can leave the event loop without landing in a private database.
     from agno.db.sqlite import SqliteDb
 
     db = SqliteDb(db_url="sqlite:///:memory:")
+    write_threads = []
+    create_eval_run = db.create_eval_run
+
+    def record_thread(record):
+        write_threads.append(threading.current_thread())
+        return create_eval_run(record)
+
+    monkeypatch.setattr(db, "create_eval_run", record_thread)
 
     asyncio.run(async_log_eval(db=db, run_id="run-1", run_data={}, eval_type=EvalType.AGENT_AS_JUDGE, eval_input={}))
 
+    assert write_threads[0] is not threading.main_thread()
     runs = db.get_eval_runs()
     assert [run.run_id for run in runs] == ["run-1"]
 
 
-def test_async_log_eval_uri_form_in_memory_sqlite_stays_on_loop_and_persists():
-    # URI-form in-memory sqlite gets the same thread-affine SingletonThreadPool as
-    # ":memory:" but a different url.database - the pool class, not the URL
-    # spelling, must decide the routing.
+def test_async_log_eval_uri_form_in_memory_sqlite_runs_off_loop_and_persists(monkeypatch):
+    # URI-form in-memory databases use the same cross-thread StaticPool despite
+    # having a different url.database spelling.
     from agno.db.sqlite import SqliteDb
 
     db = SqliteDb(db_url="sqlite:///file:eval_mem?mode=memory&uri=true")
+    write_threads = []
+    create_eval_run = db.create_eval_run
+
+    def record_thread(record):
+        write_threads.append(threading.current_thread())
+        return create_eval_run(record)
+
+    monkeypatch.setattr(db, "create_eval_run", record_thread)
 
     asyncio.run(async_log_eval(db=db, run_id="run-1", run_data={}, eval_type=EvalType.AGENT_AS_JUDGE, eval_input={}))
 
+    assert write_threads[0] is not threading.main_thread()
     runs = db.get_eval_runs()
     assert [run.run_id for run in runs] == ["run-1"]
 
@@ -130,3 +149,23 @@ def test_spinner_live_disabled_emits_nothing(capsys):
         # And no auto-refresh: nothing renders, so no render thread either
         assert live.auto_refresh is False
     assert capsys.readouterr().out == ""
+
+
+def test_store_result_in_file_formats_run_id_template(tmp_path):
+    result = AccuracyResult(run_id="run-1")
+
+    store_result_in_file(str(tmp_path / "{run_id}.json"), result=result, run_id="run-1")
+
+    saved = json.loads((tmp_path / "run-1.json").read_text())
+    assert saved["run_id"] == "run-1"
+
+
+def test_store_result_in_file_rejects_the_removed_eval_id_template(tmp_path):
+    """{eval_id} went with the field it named. A pre-3.0 template now raises KeyError inside
+    store_result_in_file, which logs "Failed to save result to file: \'eval_id\'" and writes
+    nothing -- a named warning and a one-word fix, not a silent stop."""
+    result = AccuracyResult(run_id="run-1")
+
+    store_result_in_file(str(tmp_path / "{eval_id}.json"), result=result, run_id="run-1")
+
+    assert list(tmp_path.iterdir()) == []

@@ -9,8 +9,8 @@ from pydantic import BaseModel
 from agno.db.base import SessionType
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
-from agno.models.response import ToolExecution
 from agno.run.agent import RunOutput, RunOutputEvent
+from agno.run.requirement import RunRequirement
 from agno.run.team import TeamRunOutput, TeamRunOutputEvent
 from agno.run.workflow import WorkflowRunOutput, WorkflowRunOutputEvent
 
@@ -46,6 +46,7 @@ if TYPE_CHECKING:
         WorkflowRunSchema,
         WorkflowSessionDetailSchema,
     )
+    from agno.tools.component import ComponentTool
 
 
 @dataclass
@@ -60,7 +61,6 @@ class RemoteDb:
     eval_table_name: Optional[str] = None
     traces_table_name: Optional[str] = None
     spans_table_name: Optional[str] = None
-    culture_table_name: Optional[str] = None
 
     @classmethod
     def from_config(
@@ -424,6 +424,19 @@ class BaseRemote:
         else:
             raise ValueError(f"Invalid protocol: {protocol}")
 
+    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
+        """Publish this remote component as a tool with its own model-facing name and
+        description, for surfaces that turn components into tools -- today the AgentOS
+        MCP server: ``MCPConfig(tools=[remote.as_tool(name=..., description=...)])``.
+        Both overrides are optional. A remote component's id comes from the remote
+        deployment, so ``name=`` is how the local deployment renames the published
+        tool without touching that id (which remains the continue_run handle and the
+        scope segment).
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description)
+
     def get_os_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.
 
@@ -603,12 +616,15 @@ class BaseRemote:
         self,
         run_id: str,
         stream: Optional[bool] = None,
-        updated_tools: Optional[List[ToolExecution]] = None,
+        requirements: Optional[List[RunRequirement]] = None,
         user_id: Optional[str] = None,
         session_id: Optional[str] = None,
     ) -> Union[RunOutput, TeamRunOutput, WorkflowRunOutput]:
         raise NotImplementedError("acontinue_run method must be implemented by the subclass")
 
     @abstractmethod
-    async def acancel_run(self, run_id: str) -> bool:
+    async def acancel_run(self, run_id: str, auth_token: Optional[str] = None) -> bool:
+        """Cancel ``run_id`` on the remote OS; ``auth_token`` is the caller's bearer,
+        forwarded so a protected downstream accepts the call. Surfaces pass it as a
+        keyword, so implementations must accept the parameter."""
         raise NotImplementedError("cancel_run method must be implemented by the subclass")
