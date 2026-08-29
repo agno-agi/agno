@@ -877,15 +877,50 @@ async def acli(
     # actual run pays for (and has to tear down) live MCP sessions.
     connected_mcp_tools: List[Any] = []
 
+    def _genuinely_cancelled() -> bool:
+        # Detectable on Python 3.11+; below that a genuine cancel during this
+        # bookkeeping is absorbed like a connect failure.
+        cancelling = getattr(asyncio.current_task(), "cancelling", None)
+        return cancelling is not None and cancelling() > 0
+
+    async def _drop_partial_mcp_state(tool: Any) -> None:
+        # A failed connect can leave partially-entered transport contexts that
+        # poison a later reconnect; connect()'s own cleanup does not always
+        # run (a CancelledError bypasses it, and initialize() failures return
+        # with the dead session still attached).
+        safe_cleanup = getattr(tool, "_safe_cleanup", None)
+        if safe_cleanup is None:
+            return
+        try:
+            maybe = safe_cleanup()
+            if isawaitable(maybe):
+                await maybe
+        except BaseException:
+            pass
+
     async def _close_connected_mcp_tools() -> None:
+        cancelled: Optional[BaseException] = None
         for tool in connected_mcp_tools:
             try:
                 await tool.close()
+            except asyncio.CancelledError as exc:
+                # Keep releasing the remaining tools, then let the host's
+                # cancel land instead of reporting a normal exit.
+                if _genuinely_cancelled():
+                    cancelled = exc
             except BaseException:
                 pass
+        if cancelled is not None:
+            raise cancelled
 
     try:
         for tool in mcp_tools or []:
+            if getattr(tool, "initialized", False):
+                # Connected by someone else (a server lifespan, the caller
+                # itself); not ours to manage -- connect() would no-op and
+                # closing it afterwards would tear down a session we never
+                # opened.
+                continue
             try:
                 await tool.connect()
             except BaseException as exc:
@@ -894,27 +929,26 @@ async def acli(
                 # connect()'s own fail-soft handler. Unlike a private loop,
                 # this coroutine runs on the caller's loop where cancellation
                 # can also be genuine -- re-raise that so the host's cancel
-                # still lands (detectable on Python 3.11+; below that a
-                # genuine cancel during connect is absorbed like a failure).
-                if isinstance(exc, asyncio.CancelledError):
-                    task = asyncio.current_task()
-                    cancelling = getattr(task, "cancelling", None)
-                    if cancelling is not None and cancelling() > 0:
-                        raise
-                # A failed connect can leave partially-entered transport
-                # contexts that poison a later reconnect; connect()'s own
-                # cleanup was bypassed along with its handler.
-                safe_cleanup = getattr(tool, "_safe_cleanup", None)
-                if safe_cleanup is not None:
-                    try:
-                        maybe = safe_cleanup()
-                        if isawaitable(maybe):
-                            await maybe
-                    except BaseException:
-                        pass
+                # still lands.
+                if isinstance(exc, asyncio.CancelledError) and _genuinely_cancelled():
+                    await _drop_partial_mcp_state(tool)
+                    raise
+                await _drop_partial_mcp_state(tool)
                 console.print(f"[yellow]warning:[/yellow] failed to connect MCP tool: {escape(repr(exc))}")
             else:
-                connected_mcp_tools.append(tool)
+                if getattr(tool, "initialized", True):
+                    connected_mcp_tools.append(tool)
+                else:
+                    # connect() is fail-soft and can return without a usable
+                    # session (initialize() failures leave the toolkit
+                    # uninitialized); close() would no-op on it, so it is not
+                    # connected for our purposes.
+                    await _drop_partial_mcp_state(tool)
+                    tool_name = getattr(tool, "name", type(tool).__name__)
+                    console.print(
+                        f"[yellow]warning:[/yellow] failed to connect MCP tool: "
+                        f"{escape(str(tool_name))} did not yield a usable session"
+                    )
     except BaseException:
         await _close_connected_mcp_tools()
         raise

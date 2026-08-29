@@ -125,6 +125,13 @@ _MCP_CONNECT_SLACK_SECONDS = 5.0
 # across StudioTools instances, so this cannot be per-instance state.
 _MCP_CONNECT_LOCK = threading.Lock()
 
+# Connect threads abandoned at their join deadline, by toolkit id. A toolkit
+# held by a live abandoned thread cannot be safely reconnected -- a second
+# connect would interleave with the first on the toolkit's unlocked transport
+# state -- so it stays refused until that thread dies. Guarded by
+# _MCP_CONNECT_LOCK; entries are pruned once their thread has exited.
+_MCP_CONNECT_ZOMBIES: Dict[int, threading.Thread] = {}
+
 
 def _version_or_latest(version: Optional[int]) -> Optional[int]:
     """Read a "which version" argument, treating 0 as omitted.
@@ -736,8 +743,9 @@ class StudioTools(Toolkit):
 
         Fail-soft: connect errors are logged and swallowed. Returns the ids of
         toolkits whose connect attempt raised, timed out, or was abandoned at
-        the join deadline -- an interrupted connect may have registered only
-        part of the server's tools (or still be registering them), so the
+        the join deadline (or that are still held by a connect thread a
+        previous call abandoned) -- an interrupted connect may have registered
+        only part of the server's tools (or still be registering them), so the
         guard in _resolve_tools must refuse those even when their functions
         dict is non-empty. Toolkits that merely stay empty are refused by the
         guard's own emptiness check -- never silently persisted empty.
@@ -762,7 +770,7 @@ class StudioTools(Toolkit):
                     out.append(tool)
             return out
 
-        if not _candidates():
+        if not any(isinstance(tool, Toolkit) and _is_mcp_toolkit(tool) for tool in resolved):
             return set()
 
         # MCPTools stages its transport state on unlocked instance attributes,
@@ -771,9 +779,21 @@ class StudioTools(Toolkit):
         # two private loops corrupt each other roughly half the time. Serialize
         # the whole connect pass; the loser re-checks and finds the work done.
         with _MCP_CONNECT_LOCK:
-            pending = _candidates()
+            for key, zombie in list(_MCP_CONNECT_ZOMBIES.items()):
+                if not zombie.is_alive():
+                    del _MCP_CONNECT_ZOMBIES[key]
+            # Checked against every resolved MCP toolkit, not just the
+            # connect candidates: a zombie's partial registrations make its
+            # toolkit look connected enough to skip candidacy, but they are
+            # still mutating and must not be persisted.
+            blocked = {
+                id(tool)
+                for tool in resolved
+                if isinstance(tool, Toolkit) and id(tool) in _MCP_CONNECT_ZOMBIES and _is_mcp_toolkit(tool)
+            }
+            pending = [toolkit for toolkit in _candidates() if id(toolkit) not in blocked]
             if not pending:
-                return set()
+                return blocked
 
             budgets = {
                 id(toolkit): float(getattr(toolkit, "timeout_seconds", None) or 10) + _MCP_CONNECT_SLACK_SECONDS
@@ -795,6 +815,7 @@ class StudioTools(Toolkit):
                 # mid-list. Cancellation cannot mean anything else here --
                 # this coroutine is the only thing this private loop ever runs.
                 for toolkit in pending:
+                    succeeded = False
                     try:
                         # wait_for bounds a hung transport in-loop (some hangs,
                         # e.g. an SSE stream that never sends its endpoint
@@ -802,6 +823,7 @@ class StudioTools(Toolkit):
                         # 300s read default), so cleanup runs on this same
                         # loop and the thread reliably exits.
                         await asyncio.wait_for(_call(toolkit.connect), timeout=budgets[id(toolkit)])
+                        succeeded = True
                     except BaseException as exc:
                         failed.add(id(toolkit))
                         log_warning(f"Error connecting MCP toolkit '{toolkit.name}': {exc!r}")
@@ -820,6 +842,15 @@ class StudioTools(Toolkit):
                                     await _call(safe_cleanup)
                         except BaseException:
                             pass
+                        if not succeeded:
+                            # An interrupted connect may have registered part
+                            # of the server's tools (MCPToolbox even registers
+                            # the unfiltered superset before filtering, and
+                            # raises with it in place). The failed-ids refusal
+                            # only protects THIS call; restore the unconnected
+                            # invariant -- empty functions -- so a retry
+                            # reconnects instead of persisting the leftovers.
+                            toolkit.functions.clear()
                         completed.add(id(toolkit))
 
             def _run() -> None:
@@ -844,9 +875,13 @@ class StudioTools(Toolkit):
             thread = threading.Thread(target=_run, name="studio-mcp-connect", daemon=True)
             thread.start()
             thread.join(timeout=timeout)
-            # A toolkit the abandoned thread never finished counts as failed:
-            # its functions dict may still be mutating under the zombie loop.
-            return failed | {id(toolkit) for toolkit in pending if id(toolkit) not in completed}
+            # A toolkit the abandoned thread never finished counts as failed
+            # (its functions dict may still be mutating under the zombie loop)
+            # and stays blocked from reconnecting until that thread dies.
+            abandoned = {id(toolkit) for toolkit in pending if id(toolkit) not in completed}
+            for toolkit_id in abandoned:
+                _MCP_CONNECT_ZOMBIES[toolkit_id] = thread
+            return failed | blocked | abandoned
 
     def _normalize_tool_names(self, names: List[str]) -> List[str]:
         """Collapse toolkit function names back to their toolkit name."""

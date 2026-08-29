@@ -824,6 +824,10 @@ class MCPTools(Toolkit):
         connect_error=None,
         connect_delay=0.0,
         hang_after=None,
+        fail_times=0,
+        register_before_error=0,
+        error_leaves_initialized=False,
+        swallow_cancel=False,
         **kwargs,
     ):
         super().__init__(name=name, **kwargs)
@@ -834,6 +838,10 @@ class MCPTools(Toolkit):
         self._connect_error = connect_error
         self._connect_delay = connect_delay
         self._hang_after = hang_after
+        self._fail_times = fail_times
+        self._register_before_error = register_before_error
+        self._error_leaves_initialized = error_leaves_initialized
+        self._swallow_cancel = swallow_cancel
         self.connect_count = 0
         self.close_count = 0
         self.safe_cleanup_count = 0
@@ -842,18 +850,8 @@ class MCPTools(Toolkit):
     def initialized(self) -> bool:
         return self._initialized
 
-    async def connect(self, force: bool = False) -> None:
-        self.connect_count += 1
-        if self._connect_error is not None:
-            raise self._connect_error
-        if self._connect_delay:
-            await asyncio.sleep(self._connect_delay)
-        if not self._connect_succeeds:
-            # The real connect() is fail-soft for ordinary errors: it logs and
-            # returns, leaving the toolkit empty.
-            return
-        register_count = self._tool_count if self._hang_after is None else self._hang_after
-        for index in range(register_count):
+    def _register(self, count: int) -> None:
+        for index in range(count):
             suffix = "" if index == 0 else f"_{index}"
 
             async def call_proxy(**kwargs) -> str:
@@ -867,10 +865,39 @@ class MCPTools(Toolkit):
                 skip_entrypoint_processing=True,
             )
             self.functions[func.name] = func
+
+    async def connect(self, force: bool = False) -> None:
+        self.connect_count += 1
+        if self._connect_error is not None:
+            raise self._connect_error
+        if self._connect_delay:
+            await asyncio.sleep(self._connect_delay)
+        if self.connect_count <= self._fail_times:
+            # A transient failure with tools already registered -- the
+            # MCPToolbox shape: it registers the unfiltered superset first and
+            # a filtering failure raises with that superset (and initialized)
+            # in place.
+            self._register(self._register_before_error)
+            self._initialized = self._error_leaves_initialized
+            raise RuntimeError("transient connect failure")
+        if not self._connect_succeeds:
+            # The real connect() is fail-soft for ordinary errors: it logs and
+            # returns, leaving the toolkit empty.
+            return
+        self._register(self._tool_count if self._hang_after is None else self._hang_after)
         if self._hang_after is not None:
-            # Models a transport that stops responding mid-handshake; only
-            # cancellation ends it.
-            await asyncio.Event().wait()
+            if self._swallow_cancel:
+                # A transport whose teardown never completes: the bounding
+                # cancellation is absorbed, so the connect thread outlives its
+                # join deadline.
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    await asyncio.Event().wait()
+            else:
+                # Models a transport that stops responding mid-handshake; only
+                # cancellation ends it.
+                await asyncio.Event().wait()
         self._initialized = True
 
     async def close(self) -> None:
@@ -1035,9 +1062,11 @@ class TestMCPToolkitOnDemandConnect:
         assert toolkit.safe_cleanup_count == 1
         assert db.get_component("docs-agent") is None
 
-    def test_partially_registered_hung_connect_is_refused(self, db, monkeypatch):
-        """A connect interrupted mid-registration may hold a partial function
-        list; it must be refused even though functions is non-empty."""
+    def test_partially_registered_hung_connect_is_refused_and_cleared(self, db, monkeypatch):
+        """A connect interrupted mid-registration holds a partial function
+        list; the create must be refused and the leftovers cleared -- an
+        unconnected toolkit with functions would be persisted as-is by any
+        LATER call."""
         monkeypatch.setattr("agno.tools.studio._MCP_CONNECT_SLACK_SECONDS", 0.2)
         toolkit = MCPTools(tool_count=2, hang_after=1)
         toolkit.timeout_seconds = 0.1
@@ -1047,8 +1076,58 @@ class TestMCPToolkitOnDemandConnect:
 
         assert error["code"] == "invalid_request"
         assert "agno_docs" in error["message"]
-        assert toolkit.functions  # the partial registration happened...
-        assert db.get_component("docs-agent") is None  # ...and was not persisted
+        assert not toolkit.functions  # the partial registration was cleared
+        assert db.get_component("docs-agent") is None
+
+    def test_retry_after_transient_failure_reconnects_and_persists_fully(self, db):
+        """The first create fails mid-connect with one of two tools already
+        registered; the retry must reconnect (not persist the leftover)."""
+        toolkit = MCPTools(tool_count=2, fail_times=1, register_before_error=1)
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        assert error["code"] == "invalid_request"
+
+        data = _data(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        assert data["id"] == "docs-agent"
+        persisted_tools = db.get_latest_config("docs-agent")["config"]["tools"]
+        assert sorted(t["name"] for t in persisted_tools) == ["search_docs", "search_docs_1"]
+        assert toolkit.connect_count == 2
+
+    def test_failed_filter_superset_is_not_persisted_on_retry(self, db):
+        """MCPToolbox registers the unfiltered superset before filtering and a
+        filter failure raises with that superset (and initialized) in place.
+        The retry must reconnect and persist only the filtered set."""
+        toolkit = MCPTools(tool_count=1, fail_times=1, register_before_error=2, error_leaves_initialized=True)
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        assert error["code"] == "invalid_request"
+        assert toolkit.close_count == 1  # the initialized-but-failed toolkit was released
+        assert not toolkit.functions  # the unfiltered superset was cleared
+
+        data = _data(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        assert data["id"] == "docs-agent"
+        persisted_tools = db.get_latest_config("docs-agent")["config"]["tools"]
+        assert [t["name"] for t in persisted_tools] == ["search_docs"]
+
+    def test_abandoned_connect_blocks_retry_until_its_thread_dies(self, db, monkeypatch):
+        """A connect that absorbs its bounding cancellation outlives the join
+        deadline. Its partial functions are still live under the zombie loop,
+        so the first call must refuse them via the failed-ids channel, and a
+        retry must not start a second connect against the same toolkit."""
+        monkeypatch.setattr("agno.tools.studio._MCP_CONNECT_SLACK_SECONDS", 0.2)
+        toolkit = MCPTools(hang_after=1, swallow_cancel=True)
+        toolkit.timeout_seconds = 0.1
+        studio = self._studio(db, toolkit)
+
+        error = _error(studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs"]))
+        assert error["code"] == "invalid_request"
+        assert toolkit.functions  # zombie still holds its partial registration
+
+        error = _error(studio.create_agent(name="docs-agent2", instructions="i", tool_names=["agno_docs"]))
+        assert error["code"] == "invalid_request"
+        assert toolkit.connect_count == 1  # no second connect raced the zombie
 
     def test_toolkit_connected_elsewhere_with_no_tools_is_not_touched(self, db):
         toolkit = MCPTools(tool_count=0)
@@ -1144,6 +1223,27 @@ class TestRealMCPToolsContract:
         assert isinstance(toolkit.timeout_seconds, (int, float)) and toolkit.timeout_seconds > 0
         assert toolkit.initialized is False
         assert not toolkit.functions
+
+    def test_real_close_keeps_the_harvested_functions(self):
+        """The single most load-bearing property of the release design: the
+        real close() tears down sessions but never touches functions. If a
+        hygiene refactor ever clears them, the on-demand connect silently
+        regresses into always-refuse in standalone processes."""
+        pytest.importorskip("mcp")
+        from agno.tools.mcp import MCPTools as RealMCPTools
+
+        toolkit = RealMCPTools(url="https://docs.example.com/mcp")
+        toolkit.functions["search_docs"] = Function(
+            name="search_docs",
+            parameters={"type": "object", "properties": {}},
+            skip_entrypoint_processing=True,
+        )
+        toolkit._initialized = True
+        # All teardown contexts are None, so close() no-ops through them.
+        asyncio.run(toolkit.close())
+
+        assert toolkit.initialized is False
+        assert "search_docs" in toolkit.functions
 
 
 class TestCreateTeam:
