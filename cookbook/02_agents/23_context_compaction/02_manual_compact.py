@@ -19,7 +19,9 @@ agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
     db=SqliteDb(db_file="tmp/compaction.db"),
     add_history_to_context=True,
-    compaction=Compaction(context_window=16_000),
+    # A small window keeps the demo's kept tail short, so compact() has
+    # something older than the tail to fold even in a brief conversation.
+    compaction=Compaction(context_window=2_000),
     markdown=True,
 )
 
