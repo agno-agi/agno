@@ -10930,13 +10930,13 @@ class Workflow:
                     step_name = step.name or f"step_{i + 1}"
                     log_debug(f"Step {i + 1}: Nested Workflow '{step_name}'")
                     prepared_steps.append(Step(name=step_name, description=step.description, workflow=step))
-                elif isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
-                    log_warning(
-                        f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
-                        "but no database is configured in the Workflow. "
-                        "History won't be persisted. Add a database to persist runs across executions."
-                    )
                 elif isinstance(step, (Step, Steps, Loop, Parallel, Condition, Router)):
+                    if isinstance(step, Step) and step.add_workflow_history is True and self.db is None:
+                        log_warning(
+                            f"Step '{step.name or f'step_{i + 1}'}' has add_workflow_history=True "
+                            "but no database is configured in the Workflow. "
+                            "History won't be persisted. Add a database to persist runs across executions."
+                        )
                     step_type = type(step).__name__
                     step_name = getattr(step, "name", f"unnamed_{step_type.lower()}")
                     log_debug(f"Step {i + 1}: {step_type} '{step_name}'")
