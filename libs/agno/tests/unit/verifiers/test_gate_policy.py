@@ -326,3 +326,145 @@ def test_policy_round_trips_through_persistence():
     back = RunOutput.from_dict(json.loads(json.dumps(out.to_dict(), default=str)))
     verdict = back.verification.attempts[0].verdicts[0]
     assert verdict.required is False and verdict.skipped is False
+
+
+# ---------------------------------------------------------------------------
+# Owner-named parameters are kind-matched, never aliased
+# ---------------------------------------------------------------------------
+
+
+def _fake_team():
+    # Owner kind is classified by class name in the MRO; a class named Team stands in
+    # for the real mount without importing agno.team.
+    class Team:
+        pass
+
+    return Team()
+
+
+def _fake_workflow():
+    class Workflow:
+        pass
+
+    return Workflow()
+
+
+def test_agent_mount_fills_only_the_agent_param():
+    seen = {}
+
+    def probe(run_output, agent, team, workflow):
+        seen["agent"] = agent
+        seen["team"] = team
+        seen["workflow"] = workflow
+        return True
+
+    model = ScriptedModel([_text("done")])
+    a = Agent(model=model, verifiers=[probe])
+    out = a.run("go")
+    assert out.verification.status == "verified"
+    assert seen["agent"] is a
+    assert seen["team"] is None
+    assert seen["workflow"] is None
+
+
+def test_shared_runner_kind_matches_a_team_owner():
+    from agno.verifiers._gate import run_checks
+
+    seen = {}
+
+    def wants_team(run_output, team):
+        seen["team"] = team
+        return True
+
+    def wants_agent(run_output, agent):
+        seen["agent"] = agent
+        return True
+
+    owner = _fake_team()
+    result = run_checks([check(wants_team), check(wants_agent)], run_output=object(), owner=owner)
+    assert result.passed is True
+    assert seen["team"] is owner
+    assert seen["agent"] is None
+
+
+def test_shared_runner_kind_matches_a_workflow_owner():
+    import asyncio
+
+    from agno.verifiers._gate import arun_checks, run_checks
+
+    seen = {}
+
+    def wants_workflow(run_output, workflow):
+        seen["workflow"] = workflow
+        return True
+
+    def wants_agent(run_output, agent):
+        seen["agent"] = agent
+        return True
+
+    owner = _fake_workflow()
+    result = run_checks([check(wants_workflow), check(wants_agent)], run_output=object(), owner=owner)
+    assert result.passed is True
+    assert seen["workflow"] is owner
+    assert seen["agent"] is None
+
+    seen.clear()
+    result = asyncio.run(arun_checks([check(wants_workflow), check(wants_agent)], run_output=object(), owner=owner))
+    assert result.passed is True
+    assert seen["workflow"] is owner
+    assert seen["agent"] is None
+
+
+def test_run_when_predicate_owner_is_kind_matched():
+    from agno.verifiers._gate import run_checks
+
+    seen = {}
+
+    def predicate(team, workflow):
+        seen["team"] = team
+        seen["workflow"] = workflow
+        return True
+
+    owner = _fake_team()
+    result = run_checks([check(lambda run_output: True, run_when=predicate)], run_output=object(), owner=owner)
+    assert result.passed is True
+    assert seen["team"] is owner
+    assert seen["workflow"] is None
+
+
+# ---------------------------------------------------------------------------
+# check() overrides only the knobs it was passed
+# ---------------------------------------------------------------------------
+
+
+def test_check_preserves_declared_policy_for_knobs_not_passed():
+    shell = ShellVerifier("exit 1", required=False, name="advisory shell")
+    wrapped = check(shell, rerun=1)
+    assert wrapped.required is False, "a knob not passed to check() must keep the target's declaration"
+    assert wrapped.rerun == 1
+    assert wrapped.fatal is False
+
+    def predicate(verdicts):
+        return True
+
+    def lint(run_output):
+        return True
+
+    lint.required = False
+    lint.run_when = predicate
+    wrapped = check(lint, rerun=2)
+    assert wrapped.required is False
+    assert wrapped.run_when is predicate
+    assert wrapped.rerun == 2
+
+
+def test_check_explicit_knobs_still_override_declared_policy():
+    shell = ShellVerifier("exit 1", required=False)
+    assert check(shell, required=True).required is True
+    assert check(shell, run_when=None).run_when is None
+
+
+def test_check_fatal_over_a_declared_advisory_is_rejected():
+    shell = ShellVerifier("exit 1", required=False)
+    with pytest.raises(ValueError, match="fatal=True contradicts required=False"):
+        check(shell, fatal=True)

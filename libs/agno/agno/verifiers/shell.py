@@ -122,6 +122,13 @@ class ShellVerifier:
         run_when: Optional[Callable[..., Any]] = None,
         fatal: bool = False,
     ) -> None:
+        if isinstance(timeout_s, bool) or not isinstance(timeout_s, (int, float)):
+            raise TypeError(
+                f"ShellVerifier timeout_s must be a positive number of seconds, got {type(timeout_s).__name__}"
+            )
+        if not timeout_s > 0:
+            # `not >` rather than `<=` so NaN is rejected too.
+            raise ValueError(f"ShellVerifier timeout_s must be positive, got {timeout_s!r}")
         self.command = command
         self.cwd = cwd
         self.timeout_s = timeout_s
@@ -240,6 +247,7 @@ class ShellVerifier:
                 self.command,
                 cwd=self.cwd,
                 env=self._env(),
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 **popen_kwargs,

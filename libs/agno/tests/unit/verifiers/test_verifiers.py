@@ -658,3 +658,128 @@ def test_a_sync_def_averify_is_used_as_the_sync_half():
     guarded = coerce_verifier(OddlyNamed())
     assert guarded.verify(None).passed is True
     assert asyncio.run(guarded.averify(None)).passed is True
+
+
+# ---------------------------------------------------------------------------
+# Owner-named parameters are kind-matched, never aliased
+# ---------------------------------------------------------------------------
+
+
+def test_owner_param_of_a_different_kind_arrives_as_none():
+    class Team:
+        pass
+
+    seen = {}
+
+    def wants_agent(run_output, agent):
+        seen["agent"] = agent
+        return True
+
+    def wants_team(run_output, team):
+        seen["team"] = team
+        return True
+
+    owner = Team()
+    assert verifier(wants_agent).verify(object(), owner=owner).passed is True
+    assert seen["agent"] is None, "a Team owner must never arrive under the agent name"
+    assert verifier(wants_team).verify(object(), owner=owner).passed is True
+    assert seen["team"] is owner
+
+
+@pytest.mark.asyncio
+async def test_owner_param_kind_matching_holds_on_the_async_path():
+    class Workflow:
+        pass
+
+    seen = {}
+
+    def wants_workflow(run_output, workflow, agent):
+        seen["workflow"] = workflow
+        seen["agent"] = agent
+        return True
+
+    owner = Workflow()
+    assert (await verifier(wants_workflow).averify(object(), owner=owner)).passed is True
+    assert seen["workflow"] is owner
+    assert seen["agent"] is None
+
+
+def test_wrapped_object_owner_param_is_kind_matched():
+    class Team:
+        pass
+
+    seen = {}
+
+    class WantsAgent:
+        name = "wants_agent"
+
+        def verify(self, run_output, agent, team):
+            seen["agent"] = agent
+            seen["team"] = team
+            return True
+
+    owner = Team()
+    assert coerce_verifier(WantsAgent()).verify(object(), owner=owner).passed is True
+    assert seen["agent"] is None
+    assert seen["team"] is owner
+
+
+def test_kwargs_catch_all_gets_the_owner_under_its_kind_even_when_another_owner_name_is_declared():
+    class Team:
+        pass
+
+    seen = {}
+
+    def check_fn(agent, **kwargs):
+        seen["agent"] = agent
+        seen.update(kwargs)
+        return True
+
+    owner = Team()
+    assert verifier(check_fn).verify(object(), owner=owner).passed is True
+    assert seen["agent"] is None
+    assert seen["team"] is owner
+
+
+# ---------------------------------------------------------------------------
+# ShellVerifier: stdin parity and timeout validation
+# ---------------------------------------------------------------------------
+
+
+def test_shell_async_child_does_not_inherit_stdin_and_matches_sync(tmp_path):
+    """Both twins must hand the child a closed stdin. Run them inside a child that HAS real
+    stdin: pytest's own stdin is already closed, so an in-process assertion passes whether
+    or not the verifier redirects stdin at all."""
+    import textwrap
+
+    script = tmp_path / "stdin_twins.py"
+    script.write_text(
+        textwrap.dedent("""
+        import asyncio
+        from agno.verifiers import ShellVerifier
+        v = ShellVerifier("read -r line && exit 3 || exit 7", timeout_s=10)
+        sync_verdict = v.verify(None)
+        async_verdict = asyncio.run(v.averify(None))
+        print("SYNC", sync_verdict.data["returncode"], "ASYNC", async_verdict.data["returncode"], flush=True)
+        """)
+    )
+    env = {**os.environ, "PYTHONPATH": os.pathsep.join(filter(None, [os.environ.get("PYTHONPATH"), os.getcwd()]))}
+    proc = subprocess.run(
+        [sys.executable, str(script)],
+        input=b"a line neither twin's child may consume\n",
+        capture_output=True,
+        env=env,
+        timeout=60,
+    )
+    # exit 7 on both = each read hit EOF. exit 3 anywhere = that twin's child got real stdin.
+    assert b"SYNC 7 ASYNC 7" in proc.stdout, proc.stdout + proc.stderr
+
+
+def test_shell_timeout_must_be_a_positive_number():
+    for not_a_number in (None, "10", True):
+        with pytest.raises(TypeError, match="timeout_s"):
+            ShellVerifier("exit 0", timeout_s=not_a_number)
+    for not_positive in (0, -1, 0.0, float("nan")):
+        with pytest.raises(ValueError, match="timeout_s"):
+            ShellVerifier("exit 0", timeout_s=not_positive)
+    assert ShellVerifier("exit 0", timeout_s=1).verify(None).passed is True

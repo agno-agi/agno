@@ -103,7 +103,12 @@ async def _ashould_run(
 
 
 def _stamp(verdict: Verdict, v: Any, index: int) -> Verdict:
-    return verdict.named(getattr(v, "name", "") or f"verifier {index}").stamped(required=getattr(v, "required", True))
+    # skipped=False unconditionally: this verdict came from a check that ran. Only the
+    # loop's own run_when branch records a skip; a returned skipped=True would make a
+    # required failure non-gating and pass the attempt vacuously.
+    return verdict.named(getattr(v, "name", "") or f"verifier {index}").stamped(
+        required=getattr(v, "required", True), skipped=False
+    )
 
 
 def run_checks(

@@ -12,17 +12,25 @@ import sys
 import textwrap
 import time
 import tracemalloc
+from typing import Any, AsyncIterator, Iterator, List
 
 import pytest
 
+from agno.agent import Agent
+from agno.models.base import Model
+from agno.models.response import ModelResponse
+from agno.run.base import RunStatus
 from agno.verifiers import (
     REPORT_CAP_BYTES,
     ScorerVerifier,
     ShellVerifier,
     Verdict,
     VerificationAttempt,
+    VerificationConfig,
+    check,
     verifier,
 )
+from agno.verifiers._gate import arun_checks, run_checks
 from agno.verifiers.types import ELISION, cap_text
 
 # ---------------------------------------------------------------------------
@@ -264,3 +272,100 @@ def test_mixed_nesting_through_to_thread_does_not_deadlock_the_bridge(tmp_path):
         child.communicate()
         raise AssertionError("the bridge deadlocked on mixed sync/async nesting through to_thread")
     assert "RESULT True" in out, out
+
+
+# ---------------------------------------------------------------------------
+# A check cannot skip itself: only the loop's run_when branch marks a skip
+# ---------------------------------------------------------------------------
+
+
+class _ScriptedModel(Model):
+    def __init__(self, script: List[ModelResponse]) -> None:
+        super().__init__(id="scripted", name="scripted", provider="test")
+        self.script = list(script)
+        self.calls = 0
+
+    def __deepcopy__(self, memo: Any) -> "_ScriptedModel":
+        return self
+
+    def _next(self) -> ModelResponse:
+        response = self.script[min(self.calls, len(self.script) - 1)]
+        self.calls += 1
+        return response
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next()
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next()
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield self._next()
+
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
+        yield self._next()
+
+    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
+
+
+def test_check_returned_skipped_failure_still_gates_through_the_agent():
+    def sneaky(run_output):
+        return Verdict(passed=False, report="broken, but claims it was skipped", skipped=True)
+
+    model = _ScriptedModel(
+        [ModelResponse(role="assistant", content="claimed"), ModelResponse(role="assistant", content="claimed again")]
+    )
+    agent = Agent(model=model, verifiers=[sneaky], verification=VerificationConfig(max_attempts=2))
+    out = agent.run("go")
+    assert model.calls == 2, "a required failure must re-enter the model, however the check flagged itself"
+    assert out.status == RunStatus.unverified
+    assert out.verification.status == "unverified"
+    for attempt in out.verification.attempts:
+        assert attempt.passed is False
+        assert attempt.verdicts[0].skipped is False
+    reports = [m for m in (out.messages or []) if m.role == "user" and "<verification" in str(m.content)]
+    assert len(reports) == 1
+    assert "[FAIL] sneaky: broken, but claims it was skipped" in str(reports[0].content)
+    assert "[SKIP]" not in str(reports[0].content)
+
+
+def test_run_when_skip_is_still_recorded_and_non_gating():
+    def never_runs(run_output):
+        raise AssertionError("run_when said no; the check must not run")
+
+    model = _ScriptedModel([ModelResponse(role="assistant", content="done")])
+    agent = Agent(
+        model=model,
+        verifiers=[lambda run_output: True, check(never_runs, run_when=lambda verdicts: False)],
+    )
+    out = agent.run("go")
+    assert model.calls == 1
+    assert out.verification.status == "verified"
+    skipped_verdict = out.verification.attempts[0].verdicts[1]
+    assert skipped_verdict.skipped is True
+    assert skipped_verdict.passed is True
+
+
+def test_run_checks_stamps_skipped_false_on_a_verdict_the_check_returned():
+    def sneaky(run_output):
+        return Verdict(passed=False, report="failing", skipped=True)
+
+    result = run_checks([verifier(sneaky)], run_output=object())
+    assert result.passed is False
+    assert result.verdicts[0].skipped is False
+    assert result.verdicts[0].gates is True
+
+
+@pytest.mark.asyncio
+async def test_arun_checks_stamps_skipped_false_on_a_verdict_the_check_returned():
+    async def sneaky(run_output):
+        return Verdict(passed=False, report="failing", skipped=True)
+
+    result = await arun_checks([verifier(sneaky)], run_output=object())
+    assert result.passed is False
+    assert result.verdicts[0].skipped is False
+    assert result.verdicts[0].gates is True

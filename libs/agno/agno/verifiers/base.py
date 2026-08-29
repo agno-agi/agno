@@ -179,8 +179,9 @@ class _ArgMap:
     """By-name argument routing for one verifier callable, resolved once at construction.
 
     Allowed parameter names: run_output, run_context, agent, team, workflow, session.
-    `agent`, `team` and `workflow` all receive the mount's owner — a check written for one
-    mount runs on another, receiving None where that mount has no such owner. A parameter
+    The mount's owner arrives under the name matching its kind (`agent`, `team` or
+    `workflow`); the other owner names arrive as None — a check written for one mount runs
+    on another, and its owner guard sees None, never an object of the wrong kind. A parameter
     outside the set with no default raises TypeError here, at construction: a typo in a
     verifier signature must surface immediately, not silently starve the check on every
     attempt. A parameter outside the set that has a default is simply never filled. A
@@ -227,14 +228,16 @@ class _ArgMap:
         """The (args, kwargs) for one call."""
         if self._uninspectable:
             return (run_output,), {}
-        values = {
+        values: Dict[str, Any] = {
             "run_output": run_output,
             "run_context": run_context,
-            "agent": owner,
-            "team": owner,
-            "workflow": owner,
+            "agent": None,
+            "team": None,
+            "workflow": None,
             "session": session,
         }
+        if owner is not None:
+            values[_owner_key(owner)] = owner
         if extras:
             values.update(extras)
         args = tuple(values[name] for name in self._positional)
@@ -246,8 +249,9 @@ class _ArgMap:
             for name, value in (extras or {}).items():
                 kwargs.setdefault(name, value)
             routed = set(kwargs) | set(self._positional)
-            if "agent" not in routed and "team" not in routed and "workflow" not in routed:
-                kwargs[_owner_key(owner)] = owner
+            owner_key = _owner_key(owner)
+            if owner_key not in routed:
+                kwargs[owner_key] = owner
         return args, kwargs
 
 
@@ -434,14 +438,18 @@ def coerce_verifier(obj: Any) -> Verifier:
     raise ValueError(f"pass a Verifier, a callable, or wrap a Scorer in ScorerVerifier; got {type(obj).__name__}")
 
 
+# Distinguishes "knob not passed" from every value a caller could pass, None included.
+_UNSET: Any = object()
+
+
 def check(
     target: Any,
     *,
     name: Optional[str] = None,
-    required: bool = True,
-    rerun: int = 0,
-    run_when: Optional[Callable[..., Any]] = None,
-    fatal: bool = False,
+    required: bool = _UNSET,
+    rerun: int = _UNSET,
+    run_when: Optional[Callable[..., Any]] = _UNSET,
+    fatal: bool = _UNSET,
 ) -> Verifier:
     """A check with its per-check policy — the wrapper that gives a bare callable (or any
     Verifier) the same policy surface the shipped verifiers take as constructor kwargs.
@@ -454,11 +462,17 @@ def check(
     recorded as skipped and does not gate. ``fatal=True`` ends the run immediately on a
     failure — for checks whose failure makes retrying pointless.
 
-    Returns a fresh wrapper, so stamping policy here never mutates a shared instance.
+    Only knobs passed explicitly override the target: a policy attribute the target already
+    declares (a ShellVerifier built with ``required=False``, a protocol object with a
+    ``run_when``) survives a ``check()`` wrap that does not mention it. Returns a fresh
+    wrapper, so stamping policy here never mutates a shared instance.
     """
     label = name or str(getattr(target, "name", None) or getattr(target, "__name__", type(target).__name__))
-    validate_policy(rerun, run_when, label=f"check {label!r}")
-    _reject_contradictory(bool(required), bool(fatal), label=f"check {label!r}")
+    validate_policy(
+        rerun if rerun is not _UNSET else 0,
+        run_when if run_when is not _UNSET else None,
+        label=f"check {label!r}",
+    )
     coerced = coerce_verifier(target)
     if coerced is target:
         # An already-coerced target passes through coercion by identity; stamping it in
@@ -466,10 +480,19 @@ def check(
         coerced = copy.copy(coerced)
     if name:
         coerced.name = name  # type: ignore[misc]
-    coerced.required = bool(required)  # type: ignore[attr-defined]
-    coerced.rerun = int(rerun)  # type: ignore[attr-defined]
-    coerced.run_when = run_when  # type: ignore[attr-defined]
-    coerced.fatal = bool(fatal)  # type: ignore[attr-defined]
+    if required is not _UNSET:
+        coerced.required = bool(required)  # type: ignore[attr-defined]
+    if rerun is not _UNSET:
+        coerced.rerun = int(rerun)  # type: ignore[attr-defined]
+    if run_when is not _UNSET:
+        coerced.run_when = run_when  # type: ignore[attr-defined]
+    if fatal is not _UNSET:
+        coerced.fatal = bool(fatal)  # type: ignore[attr-defined]
+    # On the merged policy, not just the passed knobs: fatal=True over a target declared
+    # advisory is as contradictory as passing both at once.
+    _reject_contradictory(
+        bool(getattr(coerced, "required", True)), bool(getattr(coerced, "fatal", False)), label=f"check {label!r}"
+    )
     return coerced
 
 

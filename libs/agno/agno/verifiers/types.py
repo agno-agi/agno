@@ -75,7 +75,9 @@ class Verdict:
     `__post_init__` so no caller can exceed it. `data` is for programmatic consumers and is
     never rendered to the model. `required` and `skipped` are stamped by the loop from the
     check's policy: an advisory (required=False) failure is reported but never gates the
-    outcome, and a skipped check (its run_when said no) is recorded without running.
+    outcome, and a skipped check (its run_when said no) is recorded without running. A check
+    cannot skip itself: the loop stamps skipped=False onto any verdict a check returned,
+    because a returned skipped=True on a failure would pass the attempt vacuously.
     """
 
     passed: bool
@@ -113,11 +115,12 @@ class Verdict:
             return self
         return replace(self, name=name)
 
-    def stamped(self, required: bool) -> "Verdict":
-        """A copy carrying the check's policy. Never mutates in place."""
-        if self.required == required:
+    def stamped(self, required: bool, skipped: bool) -> "Verdict":
+        """A copy carrying the loop's stamp: the check's `required` policy and the loop's
+        own knowledge of whether the check ran. Never mutates in place."""
+        if self.required == required and self.skipped == skipped:
             return self
-        return replace(self, required=required)
+        return replace(self, required=required, skipped=skipped)
 
     def to_dict(self) -> Dict[str, Any]:
         return {

@@ -291,3 +291,24 @@ class TestUnverifiedStatus:
         assert canonical_run_status("UNVERIFIED") == "UNVERIFIED"
         assert canonical_run_status(RunStatus.unverified) == "UNVERIFIED"
         assert RunStatus("UNVERIFIED") is RunStatus.unverified
+
+
+class TestVerdictStamp:
+    def test_stamp_clears_a_check_supplied_skip(self):
+        v = Verdict(passed=False, report="failing", skipped=True)
+        assert v.gates is False
+        stamped = v.stamped(required=True, skipped=False)
+        assert stamped is not v, "stamped never mutates in place"
+        assert stamped.skipped is False
+        assert stamped.gates is True
+        assert v.skipped is True
+
+    def test_stamp_is_identity_when_nothing_changes(self):
+        v = Verdict(passed=True, required=False, skipped=False)
+        assert v.stamped(required=False, skipped=False) is v
+
+    def test_stamp_can_mark_a_loop_skip(self):
+        v = Verdict(passed=True)
+        stamped = v.stamped(required=True, skipped=True)
+        assert stamped.skipped is True
+        assert stamped.gates is False
