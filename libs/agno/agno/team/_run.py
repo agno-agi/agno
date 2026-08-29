@@ -9507,6 +9507,13 @@ async def _acontinue_run(
                     run_context, run_response=run_response, run_id=run_id, session=team_session
                 )
 
+                # Resolve dependencies — mirrors the sync continue path
+                # (`_continue_run`) and the agent async continue path; without
+                # this, an async continuation runs with the raw callables still
+                # in `run_context.dependencies`.
+                if run_context.dependencies is not None:
+                    await _aresolve_run_dependencies(team, run_context=run_context)
+
                 # Resolve run_response from run_id if needed
                 if run_response is None and run_id is not None:
                     runs = team_session.runs or []
@@ -9987,6 +9994,13 @@ async def _acontinue_run_stream(
                 _restore_continue_context_metadata_team(
                     run_context, run_response=run_response, run_id=run_id, session=team_session
                 )
+
+                # Resolve dependencies — mirrors the sync continue path
+                # (`_continue_run`) and the agent async continue path; without
+                # this, an async continuation runs with the raw callables still
+                # in `run_context.dependencies`.
+                if run_context.dependencies is not None:
+                    await _aresolve_run_dependencies(team, run_context=run_context)
 
                 # Resolve run_response from run_id if needed
                 if run_response is None and run_id is not None:
