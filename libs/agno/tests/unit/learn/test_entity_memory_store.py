@@ -12,6 +12,18 @@ import pytest
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.stores.entity_memory import EntityMemoryStore
+from agno.learn.utils import build_learning_id
+
+
+def _owner_matches(row_user_id: Any, filter_user_id: Any) -> bool:
+    """Whether a row's owner column matches a user filter.
+
+    user_id is a string column, and the backends compare a non-string filter
+    against its stored string form.
+    """
+    if filter_user_id is None:
+        return True
+    return row_user_id is not None and str(row_user_id) == str(filter_user_id)
 
 
 class RecordingLearningDb:
@@ -33,7 +45,8 @@ class RecordingLearningDb:
                 and row.get("entity_id") == entity_id
                 and row.get("entity_type") == entity_type
                 and row.get("namespace") == namespace
-                and (user_id is None or row.get("user_id") == user_id)
+                # None means unfiltered, like the real adapters' conditional WHERE.
+                and _owner_matches(row.get("user_id"), user_id)
             ):
                 return row
         return None
@@ -41,6 +54,10 @@ class RecordingLearningDb:
     def upsert_learning(self, id: str, **kwargs: Any) -> None:
         existing = self.rows.get(id, {})
         row = {**existing, **kwargs, "learning_id": id}
+        # user_id is a string column in every backend that stores learnings, so
+        # a non-string user id reads back as its str().
+        if row.get("user_id") is not None:
+            row["user_id"] = str(row["user_id"])
         self._clock += 1
         row["updated_at"] = self._clock
         self.rows[id] = row
@@ -59,7 +76,7 @@ class RecordingLearningDb:
             and (entity_id is None or row.get("entity_id") == entity_id)
             and (entity_type is None or row.get("entity_type") == entity_type)
             and (namespace is None or row.get("namespace") == namespace)
-            and (user_id is None or row.get("user_id") == user_id)
+            and _owner_matches(row.get("user_id"), user_id)
         ]
         rows.sort(key=lambda r: r.get("updated_at", 0), reverse=True)
         if limit is not None:
@@ -68,6 +85,9 @@ class RecordingLearningDb:
 
     def delete_learning(self, id: str) -> bool:
         return self.rows.pop(id, None) is not None
+
+    def get_learning_by_id(self, id: str) -> Optional[Dict[str, Any]]:
+        return self.rows.get(id)
 
     def search_learnings(self, query: str, **kwargs: Any) -> List[Dict[str, Any]]:
         import json
@@ -191,10 +211,16 @@ class TestUserNamespaceIsolation:
 
         assert "Recorded" in first
         assert "Recorded" in second
-        assert sorted(db.rows) == [
-            "entity_user_alice_company_acme",
-            "entity_user_bob_company_acme",
-        ]
+        assert sorted(db.rows) == sorted(
+            [
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+                ),
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="bob"
+                ),
+            ]
+        )
 
         alice = store.get(entity_id="acme", entity_type="company", user_id="alice", namespace="user")
         bob = store.get(entity_id="acme", entity_type="company", user_id="bob", namespace="user")
@@ -224,10 +250,16 @@ class TestUserNamespaceIsolation:
         )
 
         rows = sqlite_db.get_learnings(learning_type="entity_memory", namespace="user")
-        assert sorted(row["learning_id"] for row in rows) == [
-            "entity_user_alice_company_acme",
-            "entity_user_bob_company_acme",
-        ]
+        assert sorted(row["learning_id"] for row in rows) == sorted(
+            [
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+                ),
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="bob"
+                ),
+            ]
+        )
 
         alice = store.get(entity_id="acme", entity_type="company", user_id="alice", namespace="user")
         bob = store.get(entity_id="acme", entity_type="company", user_id="bob", namespace="user")

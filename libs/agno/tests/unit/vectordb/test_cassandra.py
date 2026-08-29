@@ -46,6 +46,8 @@ def vector_db(mock_session, mock_embedder, mock_table):
         assert hasattr(db, "table")
         assert isinstance(db.table, MagicMock)
 
+        db._owner_field_exists = True
+
         yield db
 
 

@@ -18,7 +18,7 @@ from agno.tools.crawl4ai import Crawl4aiTools
 
 # Example 1: All functions enabled with pruning (default behavior)
 agent_full = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         Crawl4aiTools(use_pruning=True)
     ],  # All functions enabled with content pruning
@@ -34,7 +34,7 @@ agent_full = Agent(
 
 # Example 2: Enable specific crawling functions
 agent_basic = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[
         Crawl4aiTools(
             use_pruning=True,
@@ -52,7 +52,7 @@ agent_basic = Agent(
 
 # Example 3: Without pruning
 agent_raw = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[Crawl4aiTools(use_pruning=False)],
     description="You are a web intelligence agent that captures full page content.",
     instructions=[

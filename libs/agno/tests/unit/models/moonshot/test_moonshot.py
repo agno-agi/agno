@@ -207,20 +207,20 @@ def test_file_id_written_back_and_reused():
     message = Message(role="user", content="summarize this", files=[file])
 
     model._format_message(message)
-    assert file.id == "moonshot-file-1"
+    assert file.id == "ms://moonshot-file-1"
 
     model._format_message(message)
     client.files.create.assert_called_once()
 
 
 def test_stale_file_id_falls_back_to_upload():
-    """A pre-set id that Moonshot does not recognize triggers a fresh upload."""
+    """A stored id Moonshot no longer recognizes triggers a fresh upload."""
     client = _mock_client()
     calls = {"n": 0}
 
     def content_stale_then_ok(file_id):
         calls["n"] += 1
-        if file_id == "not-a-moonshot-id":
+        if file_id == "deleted-server-side":
             raise RuntimeError("404 resource_not_found_error")
         result = MagicMock()
         result.text = "EXTRACTED TEXT"
@@ -228,14 +228,28 @@ def test_stale_file_id_falls_back_to_upload():
 
     client.files.content.side_effect = content_stale_then_ok
     model = _model_with_client(client)
-    file = File(content=b"pdf-bytes", filename="doc.pdf", id="not-a-moonshot-id")
+    file = File(content=b"pdf-bytes", filename="doc.pdf", id="ms://deleted-server-side")
     message = Message(role="user", content="summarize this", files=[file])
 
     message_dict = model._format_message(message)
 
     client.files.create.assert_called_once()
-    assert file.id == "moonshot-file-1"
+    assert file.id == "ms://moonshot-file-1"
     assert any("EXTRACTED TEXT" in str(p) for p in message_dict["content"])
+
+
+def test_an_auto_generated_id_is_not_mistaken_for_a_moonshot_id():
+    """File ids are auto-generated UUIDs, so only the ms:// marker means "already uploaded"."""
+    client = _mock_client()
+    model = _model_with_client(client)
+    file = File(content=b"pdf-bytes", filename="doc.pdf")
+    assert file.id  # assigned by the model validator
+
+    model._format_message(Message(role="user", content="summarize this", files=[file]))
+
+    # The uuid was never offered to Moonshot as one of its own ids
+    assert all(call.kwargs.get("file_id", "").startswith("moonshot-") for call in client.files.content.call_args_list)
+    client.files.create.assert_called_once()
 
 
 def test_failed_upload_attaches_nothing():
