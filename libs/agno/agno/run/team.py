@@ -759,6 +759,8 @@ class TeamRunOutput:
     session_id: Optional[str] = None
     parent_run_id: Optional[str] = None
     user_id: Optional[str] = None
+    # Id of the compaction record governing this run's model view; None when no record was active.
+    compaction_id: Optional[str] = None
 
     # Input media and messages from user
     input: Optional[TeamRunInput] = None

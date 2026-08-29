@@ -231,6 +231,64 @@ def set_result_store(agent: Agent) -> None:
     agent._result_store_setting = agent.offload_tool_results
 
 
+def set_compaction(agent: Agent) -> None:
+    """Resolve ``agent.compaction`` into the config the runs use.
+
+    The public setting keeps whatever the caller passed; ``True`` resolves to a default
+    ``Compaction()``. Nonsensical explicit knob values raise here, at init, not mid-run.
+    """
+    # Compaction and tool-result compression cannot run together: elision subsumes what
+    # compression does, and running both would double-spend model calls and interleave two
+    # rewrite mechanisms over the same tool messages. Refuse the combination loudly.
+    if agent.compaction and (agent.compress_tool_results or agent.compression_manager is not None):
+        raise ValueError(
+            "compaction and compress_tool_results cannot be enabled together: "
+            "compaction already elides old tool results in the model view. Disable one of the two."
+        )
+    if not agent.compaction:
+        agent._compaction = None
+        return
+
+    from agno.compaction import Compaction
+
+    setting = agent.compaction
+    if setting is True:
+        config = agent._compaction if isinstance(agent._compaction, Compaction) else Compaction()
+    elif isinstance(setting, Compaction):
+        config = setting
+    else:
+        raise TypeError("compaction must be True, False, None or a Compaction instance")
+    agent._compaction = config
+
+    # Surface explicit config errors now: the same limits are re-resolved per run (the active
+    # model's window can change under a fallback).
+    config.resolve_limits(getattr(agent.model, "context_window", None) if agent.model is not None else None)
+
+    from agno.offload.setup import _warn_once
+
+    window_explicit = getattr(agent, "_history_window_explicit", False)
+    ignored = [
+        name
+        for name, value in (
+            ("num_history_runs", agent.num_history_runs if window_explicit else None),
+            ("num_history_messages", agent.num_history_messages if window_explicit else None),
+            ("max_tool_calls_from_history", agent.max_tool_calls_from_history),
+        )
+        if value is not None
+    ]
+    if ignored:
+        _warn_once(agent, f"compaction owns history retention; ignoring {', '.join(ignored)}")
+
+    # An agent with neither id nor name gets a random id per process, so its compaction chain
+    # would orphan on every restart (full history again, then a re-fold from scratch).
+    if agent.id is None and agent.name is None:
+        _warn_once(
+            agent,
+            "compaction is set on an agent with no id or name; set one so its compaction "
+            "records survive process restarts",
+        )
+
+
 def _initialize_session_state(
     session_state: Dict[str, Any],
     user_id: Optional[str] = None,
@@ -287,6 +345,9 @@ def get_models(agent: Agent) -> None:
 def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
     set_default_model(agent)
     set_debug(agent, debug_mode=debug_mode)
+    # Before set_id: the unstable-owner check needs to see whether the user set an id or name.
+    if agent.compaction or agent._compaction is not None:
+        set_compaction(agent)
     set_id(agent)
     set_telemetry(agent)
     set_checkpoint(agent)

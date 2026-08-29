@@ -1182,23 +1182,32 @@ def get_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        history: List[Message] = session.get_messages(
-            last_n_runs=agent.num_history_runs,
-            limit=agent.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            agent_id=agent.id if agent.team_id is not None else None,
-        )
+        if agent._compaction is not None:
+            # Compaction owns retention: history is the active record's summary plus everything
+            # after its boundary, not a run-count window.
+            from agno.agent._compaction import add_compacted_history
 
-        if len(history) > 0:
-            history_copy = [copy_history_message(msg) for msg in history]
+            add_compacted_history(agent, run_messages=run_messages, session=session, skip_role=skip_role)
+            if run_messages.compaction_record is not None:
+                run_response.compaction_id = run_messages.compaction_record.id  # type: ignore[attr-defined]
+        else:
+            history: List[Message] = session.get_messages(
+                last_n_runs=agent.num_history_runs,
+                limit=agent.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
+                agent_id=agent.id if agent.team_id is not None else None,
+            )
 
-            # Filter tool calls from history if limit is set (before adding to run_messages)
-            if agent.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+            if len(history) > 0:
+                history_copy = [copy_history_message(msg) for msg in history]
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+                # Filter tool calls from history if limit is set (before adding to run_messages)
+                if agent.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            run_messages.messages += history_copy
+                log_debug(f"Adding {len(history_copy)} messages from history")
+
+                run_messages.messages += history_copy
 
     # 4. Add user message to run_messages
     user_message: Optional[Message] = None
@@ -1388,23 +1397,32 @@ async def aget_run_messages(
             agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
         )
 
-        history: List[Message] = session.get_messages(
-            last_n_runs=agent.num_history_runs,
-            limit=agent.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            agent_id=agent.id if agent.team_id is not None else None,
-        )
+        if agent._compaction is not None:
+            # Compaction owns retention: history is the active record's summary plus everything
+            # after its boundary, not a run-count window.
+            from agno.agent._compaction import aadd_compacted_history
 
-        if len(history) > 0:
-            history_copy = [copy_history_message(msg) for msg in history]
+            await aadd_compacted_history(agent, run_messages=run_messages, session=session, skip_role=skip_role)
+            if run_messages.compaction_record is not None:
+                run_response.compaction_id = run_messages.compaction_record.id  # type: ignore[attr-defined]
+        else:
+            history: List[Message] = session.get_messages(
+                last_n_runs=agent.num_history_runs,
+                limit=agent.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
+                agent_id=agent.id if agent.team_id is not None else None,
+            )
 
-            # Filter tool calls from history if limit is set (before adding to run_messages)
-            if agent.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+            if len(history) > 0:
+                history_copy = [copy_history_message(msg) for msg in history]
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+                # Filter tool calls from history if limit is set (before adding to run_messages)
+                if agent.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            run_messages.messages += history_copy
+                log_debug(f"Adding {len(history_copy)} messages from history")
+
+                run_messages.messages += history_copy
 
     # 4. Add user message to run_messages
     user_message: Optional[Message] = None

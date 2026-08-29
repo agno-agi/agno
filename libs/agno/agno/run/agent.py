@@ -632,6 +632,8 @@ class RunOutput:
     parent_run_id: Optional[str] = None
     workflow_id: Optional[str] = None
     user_id: Optional[str] = None
+    # Id of the compaction record governing this run's model view; None when no record was active.
+    compaction_id: Optional[str] = None
 
     # Input media and messages from user
     input: Optional[RunInput] = None

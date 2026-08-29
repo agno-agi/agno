@@ -105,8 +105,15 @@ class TestCompactionRecord:
     def test_ids_and_timestamps(self):
         record = CompactionRecord.create("manual")
         assert record.id.startswith("cmp_")
-        assert isinstance(record.created_at, int)
+        assert isinstance(record.created_at, float)
+        assert record.created_at > 0
         assert record.created_by_run_id is None
+
+    def test_sub_second_creation_order_preserved(self):
+        # Two passes inside one second must keep creation order in the chain.
+        first = CompactionRecord.create("threshold")
+        second = CompactionRecord.create("threshold")
+        assert sorted([second, first], key=record_sort_key) == [first, second]
 
     def test_deterministic_json(self):
         import json

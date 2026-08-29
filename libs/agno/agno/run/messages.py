@@ -19,6 +19,8 @@ class RunMessages:
     system_message: Optional[Message] = None
     user_message: Optional[Message] = None
     extra_messages: Optional[List[Message]] = None
+    # The compaction record the build applied, if any — handed to the run's compaction state.
+    compaction_record: Optional[object] = None
 
     def get_input_messages(self) -> List[Message]:
         """Get the input messages for the model."""

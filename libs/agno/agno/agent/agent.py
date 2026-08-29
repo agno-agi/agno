@@ -51,6 +51,7 @@ from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 
 if TYPE_CHECKING:
+    from agno.compaction import Compaction
     from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -364,6 +365,12 @@ class Agent:
     # inherits a team's store as a member; False keeps offloading off there too.
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
+    # --- Context Compaction ---
+    # Keep model input under the context window by folding old conversation into a running
+    # summary. True uses the defaults; a Compaction object sets the knobs. While set, compaction
+    # owns history retention (num_history_runs and friends are ignored).
+    compaction: Union[bool, "Compaction", None] = False
+
     # --- Debug ---
     # Enable debug logs
     debug_mode: bool = False
@@ -414,6 +421,7 @@ class Agent:
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
+        compaction: Union[bool, "Compaction", None] = False,
         add_history_to_context: bool = False,
         num_history_runs: Optional[int] = None,
         num_history_messages: Optional[int] = None,
@@ -550,9 +558,17 @@ class Agent:
         # The setting the store was built from, so a changed setting rebuilds it
         self._result_store_setting: Union[bool, "ResultStore", None] = None
 
+        # Context compaction settings
+        self.compaction = compaction
+        # The resolved config the runs use (compaction=True becomes a default Compaction here)
+        self._compaction: Optional["Compaction"] = None
+
         self.add_history_to_context = add_history_to_context
         self.num_history_runs = num_history_runs
         self.num_history_messages = num_history_messages
+        # Whether the caller set a history window explicitly (the compaction retention warning
+        # names only fields the user actually set; the num_history_runs=3 default below is not one).
+        self._history_window_explicit = num_history_runs is not None or num_history_messages is not None
         if self.num_history_messages is not None and self.num_history_runs is not None:
             log_warning(
                 "num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs."

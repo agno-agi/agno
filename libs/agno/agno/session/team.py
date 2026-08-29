@@ -137,6 +137,7 @@ class TeamSession:
         skip_statuses: Optional[List[RunStatus]] = None,
         skip_history_messages: bool = True,
         skip_member_messages: bool = True,
+        after_run_id: Optional[str] = None,
     ) -> List[Message]:
         """Returns the messages belonging to the session that fit the given criteria.
 
@@ -149,6 +150,8 @@ class TeamSession:
             skip_statuses: Skip messages with these statuses.
             skip_history_messages: Skip messages that were tagged as history in previous runs.
             skip_member_messages: Skip messages created by members of the team.
+            after_run_id: Skip runs positioned before the run with this id; the run itself is
+                included. An unknown id keeps all runs (a safe superset).
 
         Returns:
             A list of Messages belonging to the session.
@@ -206,6 +209,13 @@ class TeamSession:
         if skip_member_messages:
             # Filter for the top-level runs (main team runs or agent runs when sharing session)
             session_runs = [run for run in session_runs if run.parent_run_id is None]  # type: ignore
+
+        # Skip runs before a compaction boundary run, so pre-boundary runs are never flattened
+        if after_run_id is not None:
+            for index, run in enumerate(session_runs):
+                if run.run_id == after_run_id:
+                    session_runs = session_runs[index:]
+                    break
 
         # Filter by status
         session_runs = [run for run in session_runs if hasattr(run, "status") and run.status not in skip_statuses]  # type: ignore

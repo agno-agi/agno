@@ -40,7 +40,9 @@ class CompactionRecord:
     """
 
     id: str = ""
-    created_at: int = 0  # epoch seconds, matching session-row timestamps
+    # Epoch seconds. Sub-second precision matters: successive passes inside one second would
+    # otherwise sort by random id and scramble the chain order L1 walks.
+    created_at: float = 0.0
     # Set iff the fold segment includes the creating run's own (non-history) messages; None for
     # build-time, manual, and post-run passes, which cover only completed runs and are always valid.
     created_by_run_id: Optional[str] = None
@@ -66,7 +68,7 @@ class CompactionRecord:
     ) -> "CompactionRecord":
         return cls(
             id="cmp_" + str(uuid4()),
-            created_at=int(time()),
+            created_at=time(),
             created_by_run_id=created_by_run_id,
             reason=reason,
             previous_id=previous_id,
@@ -93,7 +95,7 @@ class CompactionRecord:
     def from_dict(cls, data: Dict[str, Any]) -> "CompactionRecord":
         return cls(
             id=data.get("id", ""),
-            created_at=data.get("created_at", 0),
+            created_at=float(data.get("created_at") or 0.0),
             created_by_run_id=data.get("created_by_run_id"),
             reason=data.get("reason", "threshold"),
             summary=data.get("summary"),
@@ -335,9 +337,12 @@ def prepare_pass(
     call_instructions: Optional[str] = None,
     untrusted_instructions: Optional[str] = None,
     allow_tool_batch_heads: bool = True,
+    elision_target_tokens: Optional[int] = None,
 ) -> Optional[PassPlan]:
-    """Decide what a pass does: elide, and fold only if the elided view is still over trigger.
+    """Decide what a pass does: elide, and fold only if the elided view is still over target.
 
+    The target defaults to the hard trigger; a soft-trigger (background) pass passes the soft
+    trigger instead, so an early pass folds rather than declaring victory below the hard line.
     Pure over the given list — no model call, no persistence. Returns None when there is nothing
     to do or no valid cut exists (the pass aborts rather than cutting unsafely)."""
     from agno.compaction._cut import choose_boundary, choose_watermark, keep_tail_start, leading_system_count
@@ -396,7 +401,8 @@ def prepare_pass(
         watermark_advanced = watermark_id is not None and watermark_id != previous_watermark and _elidable_count(
             messages, watermark_id, config.elide_exclude_tools
         ) > _elidable_count(messages, previous_watermark, config.elide_exclude_tools)
-        if elided_estimate <= limits.trigger_tokens:
+        target = elision_target_tokens if elision_target_tokens is not None else limits.trigger_tokens
+        if elided_estimate <= target:
             if not watermark_advanced:
                 return None
             return PassPlan(
