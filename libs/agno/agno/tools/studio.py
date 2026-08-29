@@ -731,8 +731,12 @@ class StudioTools(Toolkit):
         function list, not a live session, so each such toolkit is connected on a
         short-lived private event loop and released again before that loop goes
         away: close() keeps the registered functions, and a released toolkit
-        reconnects per run, while a session left bound to the dead private loop
-        would break the toolkit's later tool calls in this process.
+        attached to a component as an MCPTools instance reconnects per run,
+        while a session left bound to the dead private loop would break the
+        toolkit's later tool calls in this process. (A component rehydrated
+        from the DB carries bare Functions, which no run path reconnects:
+        standalone dispatch of the built component still needs the registry
+        toolkit connected by a server lifespan or the eval runner's mcp_tools.)
 
         The dedicated thread serves every caller shape at once: a sync Studio
         tool on a worker thread (no loop in this thread, but one running

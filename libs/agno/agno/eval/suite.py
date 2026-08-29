@@ -910,6 +910,11 @@ async def acli(
                     cancelled = exc
             except BaseException:
                 pass
+            if cancelled is None and _genuinely_cancelled():
+                # The real MCPTools.close() swallows everything it is handed,
+                # a delivered cancel included -- the task-level counter is the
+                # only trace left of it.
+                cancelled = asyncio.CancelledError()
         if cancelled is not None:
             raise cancelled
 

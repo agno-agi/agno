@@ -1299,7 +1299,13 @@ class StubMCPTool:
     mirrors the real MCPTools flag acli uses to decide ownership."""
 
     def __init__(
-        self, connect_error=None, hang=False, pre_initialized=False, leaves_uninitialized=False, close_hang=False
+        self,
+        connect_error=None,
+        hang=False,
+        pre_initialized=False,
+        leaves_uninitialized=False,
+        close_hang=False,
+        close_swallows_cancel=False,
     ):
         self.events = []
         self.loops = []
@@ -1310,6 +1316,7 @@ class StubMCPTool:
         self._hang = hang
         self._leaves_uninitialized = leaves_uninitialized
         self._close_hang = close_hang
+        self._close_swallows_cancel = close_swallows_cancel
 
     async def connect(self):
         self.loops.append(asyncio.get_running_loop())
@@ -1327,6 +1334,13 @@ class StubMCPTool:
         self.close_started.set()
         if self._close_hang:
             await asyncio.Event().wait()
+        if self._close_swallows_cancel:
+            # The real MCPTools.close() ends in `except BaseException: pass`,
+            # so a cancel delivered mid-teardown vanishes inside it.
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                pass
         self.events.append("close")
 
     async def _safe_cleanup(self):
@@ -1430,6 +1444,48 @@ def test_acli_cancel_during_close_still_propagates(monkeypatch):
         asyncio.run(main())
 
     assert after.events == ["connect", "close"]
+
+
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
+def test_acli_cancel_swallowed_by_close_still_propagates(monkeypatch):
+    # The real MCPTools.close() swallows a delivered cancel entirely, so the
+    # teardown loop never sees a CancelledError -- acli must notice via the
+    # task's cancelling counter, finish releasing, and still exit cancelled.
+    _install_fake_evals(monkeypatch)
+    swallowing = StubMCPTool(close_swallows_cancel=True)
+    after = StubMCPTool()
+
+    async def main():
+        task = asyncio.ensure_future(acli([_make_case()], argv=[], mcp_tools=[swallowing, after]))
+        await swallowing.close_started.wait()
+        task.cancel()
+        await task
+
+    with pytest.raises(asyncio.CancelledError):
+        asyncio.run(main())
+
+    assert swallowing.events == ["connect", "close"]  # its close ran to completion
+    assert after.events == ["connect", "close"]  # the rest were still released
+
+
+def test_real_mcp_close_swallows_a_delivered_cancel():
+    # Pins the contract the teardown loop compensates for: close() eats even a
+    # CancelledError raised from its teardown internals and returns normally.
+    pytest.importorskip("mcp")
+    from agno.tools.mcp import MCPTools as RealMCPTools
+
+    tool = RealMCPTools(url="https://docs.example.com/mcp")
+    tool._initialized = True
+
+    class CancellingContext:
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            raise asyncio.CancelledError()
+
+    tool._session_context = CancellingContext()
+
+    asyncio.run(tool.close())  # must not raise
+
+    assert tool.initialized is False
 
 
 @pytest.mark.skipif(sys.version_info < (3, 11), reason="Task.cancelling() needed to tell a real cancel apart")
