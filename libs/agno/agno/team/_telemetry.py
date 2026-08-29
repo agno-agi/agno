@@ -35,9 +35,7 @@ def get_telemetry_data(team: "Team") -> Dict[str, Any]:
         "has_knowledge": team.knowledge is not None,
         "has_tools": team.tools is not None,
         "has_learnings": team._learning is not None,
-        # getattr: Team does not carry a verifiers field yet; this reports it the
-        # moment the field lands without breaking before then.
-        "has_verifiers": getattr(team, "verifiers", None) is not None,
+        "has_verifiers": team.verifiers is not None,
     }
 
 

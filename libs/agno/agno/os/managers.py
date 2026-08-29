@@ -245,11 +245,14 @@ class EventsBuffer:
                 "created_at": current_time,
                 "last_updated": current_time,
             }
-        elif self.run_metadata.get(run_id, {}).get("status") == RunStatus.paused:
+        elif self.run_metadata.get(run_id, {}).get("status") in (RunStatus.paused, RunStatus.unverified):
             # A continue reuses the paused run's id, so an event arriving on a
             # paused entry means a new producer took the run over. The pause's
             # status and completed_at would let the cleanup pass reclaim a live
             # run and would route /resume to replay instead of subscribing.
+            # UNVERIFIED is continuable under the same id too (a continue
+            # restarts the verification budget on the same stream), so its
+            # entry takes the same flip.
             self.run_metadata[run_id]["status"] = RunStatus.running
             self.run_metadata[run_id].pop("completed_at", None)
 

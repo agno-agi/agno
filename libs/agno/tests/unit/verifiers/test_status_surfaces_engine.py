@@ -186,5 +186,9 @@ def test_agent_telemetry_reports_has_verifiers():
 def test_team_telemetry_reports_has_verifiers():
     team = Team(name="team", members=[Agent(name="member")])
     data = get_team_telemetry_data(team)
-    # Team carries no verifiers field yet; the payload must still report the key.
     assert data["has_verifiers"] is False
+
+
+def test_team_telemetry_reports_has_verifiers_true_with_verifiers():
+    team = Team(name="team", members=[Agent(name="member")], verifiers=[lambda run_output: True])
+    assert get_team_telemetry_data(team)["has_verifiers"] is True

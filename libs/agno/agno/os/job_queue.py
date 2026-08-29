@@ -757,10 +757,12 @@ class QueueWorker:
         """Settle a swept ticket to MATCH an already-settled run row.
 
         Reads the run row's status; when the leg actually finished
-        (COMPLETED/CANCELLED) the ticket settles to the same status and the
-        stream carries the WINNING terminal (stamped with the swept attempt's
-        generation - a live zombie's own same-generation terminal still wins
-        later, finished-work-wins). When the leg PAUSED, the ticket parks
+        (COMPLETED/CANCELLED/UNVERIFIED) the ticket settles to match - an
+        UNVERIFIED row settles the ticket as completed, executed to
+        settlement - and the stream carries the WINNING terminal (stamped
+        with the swept attempt's generation - a live zombie's own
+        same-generation terminal still wins later, finished-work-wins).
+        When the leg PAUSED, the ticket parks
         back to paused - the pause sentinel already stands on the stream, and
         the continue door then finds a paused ticket, so durable continuation
         works again. Returns False when the row is genuinely unsettled

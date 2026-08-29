@@ -8,6 +8,6 @@
 
 **Description:** GitWorktreeFingerprint + stop_on_noop=True over a scratch git repo; verifier requires CHANGELOG.md. The model created the file on attempt 0 (noop False, passed True); verified/passed.
 
-**Result:** Success. The noop-terminates-run leg is pinned by the unit suite.
+**Result:** Success. The noop-terminates-run leg is pinned by libs/agno/tests/unit/verifiers/test_gate_noop.py (a failed no-op attempt ends the run with stop_reason "noop" without burning the remaining budget).
 
 ---
