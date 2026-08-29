@@ -42,7 +42,7 @@ async def test_workflow_async_stream_closes_executor_stream_before_session_save(
     )
 
     async def fake_load_or_create_session(*args, **kwargs):
-        return session, {}
+        return session, {}, None
 
     async def fake_save_session(session):
         order.append("session_saved")
