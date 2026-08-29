@@ -51,7 +51,7 @@ from agno.models.fallback import FallbackConfig
 from agno.models.message import Message
 
 if TYPE_CHECKING:
-    from agno.compaction import Compaction
+    from agno.compaction import Compaction, CompactionRecord
     from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -1053,6 +1053,32 @@ class Agent:
         user_id: Optional[str] = None,
     ) -> Optional[Union[AgentSession, TeamSession, WorkflowSession]]:
         return await _session.aget_session(self, session_id=session_id, user_id=user_id)
+
+    def compact(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        instructions: Optional[str] = None,
+    ) -> Optional["CompactionRecord"]:
+        """Compact a session now: fold everything older than the keep tail into the running
+        summary and persist the record. Returns None when there is nothing to fold. Requires a
+        db and compaction enabled on the agent."""
+        from agno.agent import _compaction
+
+        return _compaction.compact_session(self, session_id=session_id, user_id=user_id, instructions=instructions)
+
+    async def acompact(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        instructions: Optional[str] = None,
+    ) -> Optional["CompactionRecord"]:
+        """Async variant of compact."""
+        from agno.agent import _compaction
+
+        return await _compaction.acompact_session(
+            self, session_id=session_id, user_id=user_id, instructions=instructions
+        )
 
     def save_session(self, session: Union[AgentSession, TeamSession, WorkflowSession]) -> None:
         return _session.save_session(self, session=session)

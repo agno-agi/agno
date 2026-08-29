@@ -473,6 +473,103 @@ async def aadd_compacted_history(
     run_messages.compaction_record = record
 
 
+def compact_session(
+    agent: "Agent",
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    instructions: Optional[str] = None,
+) -> Optional[CompactionRecord]:
+    """The /compact analog: fold everything older than the keep tail, host-side, outside a run.
+
+    Skips the trigger check entirely; returns None only when there is nothing to fold. Operator
+    instructions are trusted and may narrow retention for this pass."""
+    if agent.db is None:
+        raise ValueError("agent.compact() requires a db: there is no durable session to compact")
+    agent.initialize_agent()
+    if agent._compaction is None:
+        raise ValueError("agent.compact() requires compaction to be enabled on the agent")
+    config = agent._compaction
+    limits = resolve_limits(agent)
+    session = agent.get_session(session_id=session_id, user_id=user_id)
+    if session is None:
+        raise ValueError(f"Session not found: {session_id}")
+
+    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+    history, record, chain = load_compacted_history(agent, session, skip_role)
+    plan = prepare_pass(
+        config,
+        limits,
+        history,
+        reason="manual",
+        previous_record=record,
+        created_by_run_id=None,
+        notice_inputs=compaction_notice_inputs(agent, session.session_id),
+        call_instructions=instructions,
+        allow_tool_batch_heads=agent.store_tool_messages,
+    )
+    if plan is None:
+        return None
+    new_record = complete_pass(
+        plan,
+        config=config,
+        model=summarizer_model(agent),
+        summarizer_window=getattr(summarizer_model(agent), "context_window", None),
+    )
+    stamp_run_attribution(session, new_record)
+    _commit_record(session, agent.id or "", new_record)
+    from agno.agent import _session
+
+    _session.save_session(agent, session=session)
+    return new_record
+
+
+async def acompact_session(
+    agent: "Agent",
+    session_id: Optional[str] = None,
+    user_id: Optional[str] = None,
+    instructions: Optional[str] = None,
+) -> Optional[CompactionRecord]:
+    """Async twin of compact_session."""
+    if agent.db is None:
+        raise ValueError("agent.compact() requires a db: there is no durable session to compact")
+    agent.initialize_agent()
+    if agent._compaction is None:
+        raise ValueError("agent.compact() requires compaction to be enabled on the agent")
+    config = agent._compaction
+    limits = resolve_limits(agent)
+    session = await agent.aget_session(session_id=session_id, user_id=user_id)
+    if session is None:
+        raise ValueError(f"Session not found: {session_id}")
+
+    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+    history, record, chain = load_compacted_history(agent, session, skip_role)
+    plan = prepare_pass(
+        config,
+        limits,
+        history,
+        reason="manual",
+        previous_record=record,
+        created_by_run_id=None,
+        notice_inputs=await acompaction_notice_inputs(agent, session.session_id),
+        call_instructions=instructions,
+        allow_tool_batch_heads=agent.store_tool_messages,
+    )
+    if plan is None:
+        return None
+    new_record = await acomplete_pass(
+        plan,
+        config=config,
+        model=summarizer_model(agent),
+        summarizer_window=getattr(summarizer_model(agent), "context_window", None),
+    )
+    stamp_run_attribution(session, new_record)
+    _commit_record(session, agent.id or "", new_record)
+    from agno.agent import _session
+
+    await _session.asave_session(agent, session=session)
+    return new_record
+
+
 def make_run_state(
     agent: "Agent",
     session: "AgentSession",

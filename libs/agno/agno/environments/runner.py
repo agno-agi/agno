@@ -497,6 +497,7 @@ _ISOLATE_FIELD_ACTIONS: Dict[str, str] = {
     "memory_manager": "fresh-db-rebind",  # per-user state: reads come from the attempt's empty db
     "session_summary_manager": "isolated-copy",  # resolution binds the attempt model on the copy
     "compression_manager": "isolated-copy",
+    "compaction": "isolated-copy",
     "fallback_config": "cache-off-copies",
     "reasoning_agent": "recursive-isolate",
     "save_response_to_file": "nulled",
@@ -848,6 +849,13 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
     session_summary_manager = getattr(agent, "session_summary_manager", None)
     if session_summary_manager is not None:
         agent.session_summary_manager = _isolated_manager_copy(session_summary_manager)
+
+    compaction = getattr(agent, "compaction", None)
+    if compaction is not None and not isinstance(compaction, bool):
+        agent.compaction = _isolated_manager_copy(compaction)
+    if compaction:
+        # Force re-resolution so the attempt uses the isolated (or fresh default) config.
+        agent._compaction = None
 
     # -- inputs: global read-only stores keep the caller's data -------------
     learning = getattr(agent, "learning", None)
