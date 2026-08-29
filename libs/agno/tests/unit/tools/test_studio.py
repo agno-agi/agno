@@ -809,18 +809,22 @@ class TestMCPToolkitPersistence:
 class MCPTools(Toolkit):
     """Stub carrying the contract Studio's on-demand connect depends on:
     functions appear at connect() and survive close(), initialized flips with
-    the session, and a failed connect logs and returns instead of raising.
-    Named MCPTools on purpose -- Studio detects MCP toolkits by class name so
-    the optional mcp extra is never imported."""
+    the session, close() skips uninitialized toolkits (so a failed connect
+    needs _safe_cleanup), and an unreachable server can surface as a raised
+    CancelledError escaping connect()'s own fail-soft handler. Named MCPTools
+    on purpose -- Studio detects MCP toolkits by class name so the optional
+    mcp extra is never imported."""
 
-    def __init__(self, name="agno_docs", connect_succeeds=True, tool_count=1, **kwargs):
+    def __init__(self, name="agno_docs", connect_succeeds=True, tool_count=1, connect_error=None, **kwargs):
         super().__init__(name=name, **kwargs)
         self.timeout_seconds = 5
         self._initialized = False
         self._connect_succeeds = connect_succeeds
         self._tool_count = tool_count
+        self._connect_error = connect_error
         self.connect_count = 0
         self.close_count = 0
+        self.safe_cleanup_count = 0
 
     @property
     def initialized(self) -> bool:
@@ -828,9 +832,11 @@ class MCPTools(Toolkit):
 
     async def connect(self, force: bool = False) -> None:
         self.connect_count += 1
+        if self._connect_error is not None:
+            raise self._connect_error
         if not self._connect_succeeds:
-            # The real connect() is fail-soft: it logs the error and returns,
-            # leaving the toolkit empty.
+            # The real connect() is fail-soft for ordinary errors: it logs and
+            # returns, leaving the toolkit empty.
             return
         for index in range(self._tool_count):
             suffix = "" if index == 0 else f"_{index}"
@@ -851,6 +857,9 @@ class MCPTools(Toolkit):
     async def close(self) -> None:
         self.close_count += 1
         self._initialized = False
+
+    async def _safe_cleanup(self) -> None:
+        self.safe_cleanup_count += 1
 
 
 class TestMCPToolkitOnDemandConnect:
@@ -936,6 +945,38 @@ class TestMCPToolkitOnDemandConnect:
         assert "agno_docs" in error["message"]
         assert db.get_component("docs-agent") is None
         assert toolkit.connect_count == 1
+        # close() skips uninitialized toolkits, so a failed connect is cleaned
+        # up through _safe_cleanup -- otherwise partially-entered transport
+        # contexts would poison the next connect() attempt.
+        assert toolkit.safe_cleanup_count == 1
+        assert toolkit.close_count == 0
+
+    def test_cancelled_error_from_connect_is_contained(self, db):
+        """The mcp client surfaces an unreachable server as CancelledError,
+        which escapes connect()'s own fail-soft handler. Studio must clean the
+        toolkit up, keep connecting the rest of the list, and still refuse."""
+        broken = MCPTools(name="agno_docs", connect_error=asyncio.CancelledError())
+        working = MCPTools(name="agno_search")
+        registry = Registry(
+            name="MCP OnDemand Registry",
+            tools=[broken, working],
+            models=[OpenAIResponses(id="gpt-5.5")],
+            dbs=[db],
+        )
+        studio = StudioTools(registry=registry, db=db)
+
+        error = _error(
+            studio.create_agent(name="docs-agent", instructions="i", tool_names=["agno_docs", "agno_search"])
+        )
+
+        assert error["code"] == "invalid_request"
+        assert "agno_docs" in error["message"]
+        assert "agno_search" not in error["message"]
+        assert broken.safe_cleanup_count == 1
+        assert broken.close_count == 0
+        # The failure did not kill the connect pass mid-list.
+        assert working.connect_count == 1
+        assert not working.initialized
 
     def test_connect_that_finds_no_tools_refuses_and_releases(self, db):
         toolkit = MCPTools(tool_count=0)

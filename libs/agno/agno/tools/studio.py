@@ -738,22 +738,49 @@ class StudioTools(Toolkit):
                 await result
 
         async def _connect_and_release() -> None:
+            # BaseException, not Exception: the mcp client surfaces an
+            # unreachable server as CancelledError out of its cancel scopes,
+            # which would otherwise escape connect()'s own fail-soft handler,
+            # skip its cleanup, and kill this thread mid-list. Cancellation
+            # cannot mean anything else here -- this coroutine is the only
+            # thing this private loop ever runs.
             for toolkit in pending:
                 try:
                     await _call(toolkit.connect)
-                except Exception as exc:
-                    log_warning(f"Error connecting MCP toolkit '{toolkit.name}': {exc}")
+                except BaseException as exc:
+                    log_warning(f"Error connecting MCP toolkit '{toolkit.name}': {exc!r}")
                 finally:
                     try:
-                        await _call(toolkit.close)
-                    except Exception:
+                        if getattr(toolkit, "initialized", False):
+                            await _call(toolkit.close)
+                        else:
+                            # A failed connect can leave partially-entered
+                            # transport contexts on the toolkit (close() skips
+                            # uninitialized toolkits); left in place they poison
+                            # the next connect() attempt on a live loop.
+                            safe_cleanup = getattr(toolkit, "_safe_cleanup", None)
+                            if safe_cleanup is not None:
+                                await _call(safe_cleanup)
+                    except BaseException:
                         pass
 
         def _run() -> None:
+            loop = asyncio.new_event_loop()
+            # A failed connect can leave the mcp client's transport async
+            # generators mid-run; their aclose() errors during loop shutdown
+            # are unactionable stderr noise on this throwaway loop -- the
+            # failure itself is already logged per toolkit above.
+            loop.set_exception_handler(lambda _loop, context: log_debug(f"MCP connect loop cleanup: {context}"))
             try:
-                asyncio.run(_connect_and_release())
-            except Exception as exc:
-                log_warning(f"Error connecting MCP toolkits: {exc}")
+                loop.run_until_complete(_connect_and_release())
+            except BaseException as exc:
+                log_warning(f"Error connecting MCP toolkits: {exc!r}")
+            finally:
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except BaseException:
+                    pass
+                loop.close()
 
         # If the join times out, the guard in _resolve_tools reports the still-empty
         # toolkits; a connect that completes late cleans itself up via the close()
