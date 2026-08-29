@@ -188,6 +188,9 @@ class RunEvent(str, Enum):
     compression_started = "CompressionStarted"
     compression_completed = "CompressionCompleted"
 
+    compaction_started = "CompactionStarted"
+    compaction_completed = "CompactionCompleted"
+
     followups_started = "FollowupsStarted"
     followups_completed = "FollowupsCompleted"
 
@@ -500,6 +503,29 @@ class CompressionCompletedEvent(BaseAgentRunEvent):
 
 
 @dataclass
+class CompactionStartedEvent(BaseAgentRunEvent):
+    """Event sent when a context-compaction pass starts"""
+
+    event: str = RunEvent.compaction_started.value
+    reason: Optional[str] = None
+    tokens_before: Optional[int] = None
+
+
+@dataclass
+class CompactionCompletedEvent(BaseAgentRunEvent):
+    """Event sent when a context-compaction record becomes active. Numbers only, never summary text."""
+
+    event: str = RunEvent.compaction_completed.value
+    reason: Optional[str] = None
+    tokens_before: Optional[int] = None
+    tokens_after: Optional[int] = None
+    messages_folded: Optional[int] = None
+    record_id: Optional[str] = None
+    duration_ms: Optional[int] = None
+    still_over_trigger: Optional[bool] = None
+
+
+@dataclass
 class FollowupsStartedEvent(BaseAgentRunEvent):
     event: str = RunEvent.followups_started.value
 
@@ -555,6 +581,8 @@ RunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    CompactionStartedEvent,
+    CompactionCompletedEvent,
     FollowupsStartedEvent,
     FollowupsCompletedEvent,
     CustomEvent,
@@ -600,6 +628,8 @@ RUN_EVENT_TYPE_REGISTRY = {
     RunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     RunEvent.compression_started.value: CompressionStartedEvent,
     RunEvent.compression_completed.value: CompressionCompletedEvent,
+    RunEvent.compaction_started.value: CompactionStartedEvent,
+    RunEvent.compaction_completed.value: CompactionCompletedEvent,
     RunEvent.followups_started.value: FollowupsStartedEvent,
     RunEvent.followups_completed.value: FollowupsCompletedEvent,
     RunEvent.custom_event.value: CustomEvent,

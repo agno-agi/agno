@@ -39,6 +39,8 @@ from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutputEvent
 from agno.session import AgentSession
 from agno.tools.function import Function
 from agno.utils.events import (
+    create_compaction_completed_event,
+    create_compaction_started_event,
     create_compression_completed_event,
     create_compression_started_event,
     create_followups_completed_event,
@@ -1115,6 +1117,42 @@ def handle_model_response_stream(
                     )
                 continue
 
+            # Handle compaction events
+            if model_response_event.event == ModelResponseEvent.compaction_started.value:
+                if stream_events:
+                    stats = model_response_event.compaction_stats or {}
+                    yield handle_event(  # type: ignore
+                        create_compaction_started_event(
+                            from_run_response=run_response,
+                            reason=stats.get("reason"),
+                            tokens_before=stats.get("tokens_before"),
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            if model_response_event.event == ModelResponseEvent.compaction_completed.value:
+                if stream_events:
+                    stats = model_response_event.compaction_stats or {}
+                    yield handle_event(  # type: ignore
+                        create_compaction_completed_event(
+                            from_run_response=run_response,
+                            reason=stats.get("reason"),
+                            tokens_before=stats.get("tokens_before"),
+                            tokens_after=stats.get("tokens_after"),
+                            messages_folded=stats.get("messages_folded"),
+                            record_id=stats.get("record_id"),
+                            duration_ms=stats.get("duration_ms"),
+                            still_over_trigger=stats.get("still_over_trigger"),
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
             # Handle compression events
             if model_response_event.event == ModelResponseEvent.compression_started.value:
                 if stream_events:
@@ -1272,6 +1310,42 @@ async def ahandle_model_response_stream(
                             reasoning_tokens=model_response_event.reasoning_tokens,
                             cache_read_tokens=model_response_event.cache_read_tokens,
                             cache_write_tokens=model_response_event.cache_write_tokens,
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            # Handle compaction events
+            if model_response_event.event == ModelResponseEvent.compaction_started.value:
+                if stream_events:
+                    stats = model_response_event.compaction_stats or {}
+                    yield handle_event(  # type: ignore
+                        create_compaction_started_event(
+                            from_run_response=run_response,
+                            reason=stats.get("reason"),
+                            tokens_before=stats.get("tokens_before"),
+                        ),
+                        run_response,
+                        events_to_skip=agent.events_to_skip,  # type: ignore
+                        store_events=agent.store_events,
+                    )
+                continue
+
+            if model_response_event.event == ModelResponseEvent.compaction_completed.value:
+                if stream_events:
+                    stats = model_response_event.compaction_stats or {}
+                    yield handle_event(  # type: ignore
+                        create_compaction_completed_event(
+                            from_run_response=run_response,
+                            reason=stats.get("reason"),
+                            tokens_before=stats.get("tokens_before"),
+                            tokens_after=stats.get("tokens_after"),
+                            messages_folded=stats.get("messages_folded"),
+                            record_id=stats.get("record_id"),
+                            duration_ms=stats.get("duration_ms"),
+                            still_over_trigger=stats.get("still_over_trigger"),
                         ),
                         run_response,
                         events_to_skip=agent.events_to_skip,  # type: ignore

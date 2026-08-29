@@ -469,6 +469,7 @@ class AgentSessionDetailSchema(BaseModel):
     agent_data: Optional[dict] = Field(None, description="Agent-specific data")
     metrics: Optional[dict] = Field(None, description="Session metrics")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
+    compaction: Optional[dict] = Field(None, description="Context-compaction record chains, keyed by owner")
     chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
@@ -492,6 +493,7 @@ class AgentSessionDetailSchema(BaseModel):
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,  # type: ignore
             metadata=session.metadata,
+            compaction=session.session_data.get("compaction") if session.session_data else None,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=to_utc_datetime(created_at),
             updated_at=to_utc_datetime(updated_at),
@@ -508,6 +510,7 @@ class TeamSessionDetailSchema(BaseModel):
     metrics: Optional[dict] = Field(None, description="Session metrics")
     team_data: Optional[dict] = Field(None, description="Team-specific data")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
+    compaction: Optional[dict] = Field(None, description="Context-compaction record chains, keyed by owner")
     chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
@@ -532,6 +535,7 @@ class TeamSessionDetailSchema(BaseModel):
             else None,
             metrics=session.session_data.get("session_metrics", {}) if session.session_data else None,
             metadata=session.metadata,
+            compaction=session.session_data.get("compaction") if session.session_data else None,
             chat_history=[message.to_dict() for message in session.get_chat_history()],
             created_at=to_utc_datetime(created_at),
             updated_at=to_utc_datetime(updated_at),
@@ -565,7 +569,14 @@ class WorkflowSessionDetailSchema(BaseModel):
             workflow_id=session.workflow_id,
             workflow_name=session.workflow_name,
             session_name=session_name,
-            session_data=session.session_data,
+            # Whitelist like the agent/team schemas: session-level internals must not leak raw.
+            session_data={
+                key: value
+                for key, value in (session.session_data or {}).items()
+                if key in ("session_state", "session_metrics", "session_name")
+            }
+            if session.session_data
+            else None,
             session_state=session.session_data.get("session_state", None) if session.session_data else None,
             workflow_data=session.workflow_data,
             metadata=session.metadata,
@@ -621,6 +632,9 @@ class RunSchema(BaseModel):
     last_checkpoint_at_message_index: Optional[int] = Field(
         None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
     )
+    compaction_id: Optional[str] = Field(
+        None, description="Id of the compaction record governing this run's model view"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "RunSchema":
@@ -659,6 +673,7 @@ class RunSchema(BaseModel):
             forked_from_session_id=run_dict.get("forked_from_session_id"),
             regenerated_from=run_dict.get("regenerated_from"),
             last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
+            compaction_id=run_dict.get("compaction_id"),
         )
 
 
@@ -708,6 +723,9 @@ class TeamRunSchema(BaseModel):
     last_checkpoint_at_message_index: Optional[int] = Field(
         None, description="Message index of the most recent mid-run checkpoint (checkpoint='tool-batch' runs)"
     )
+    compaction_id: Optional[str] = Field(
+        None, description="Id of the compaction record governing this run's model view"
+    )
 
     @classmethod
     def from_dict(cls, run_dict: Dict[str, Any]) -> "TeamRunSchema":
@@ -744,6 +762,7 @@ class TeamRunSchema(BaseModel):
             forked_from_session_id=run_dict.get("forked_from_session_id"),
             regenerated_from=run_dict.get("regenerated_from"),
             last_checkpoint_at_message_index=run_dict.get("last_checkpoint_at_message_index"),
+            compaction_id=run_dict.get("compaction_id"),
         )
 
 

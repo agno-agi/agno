@@ -172,6 +172,9 @@ class TeamRunEvent(str, Enum):
     compression_started = "TeamCompressionStarted"
     compression_completed = "TeamCompressionCompleted"
 
+    compaction_started = "TeamCompactionStarted"
+    compaction_completed = "TeamCompactionCompleted"
+
     followups_started = "TeamFollowupsStarted"
     followups_completed = "TeamFollowupsCompleted"
 
@@ -512,6 +515,29 @@ class CompressionCompletedEvent(BaseTeamRunEvent):
 
 
 @dataclass
+class CompactionStartedEvent(BaseTeamRunEvent):
+    """Event sent when a context-compaction pass starts"""
+
+    event: str = TeamRunEvent.compaction_started.value
+    reason: Optional[str] = None
+    tokens_before: Optional[int] = None
+
+
+@dataclass
+class CompactionCompletedEvent(BaseTeamRunEvent):
+    """Event sent when a context-compaction record becomes active. Numbers only, never summary text."""
+
+    event: str = TeamRunEvent.compaction_completed.value
+    reason: Optional[str] = None
+    tokens_before: Optional[int] = None
+    tokens_after: Optional[int] = None
+    messages_folded: Optional[int] = None
+    record_id: Optional[str] = None
+    duration_ms: Optional[int] = None
+    still_over_trigger: Optional[bool] = None
+
+
+@dataclass
 class FollowupsStartedEvent(BaseTeamRunEvent):
     event: str = TeamRunEvent.followups_started.value
 
@@ -671,6 +697,8 @@ TeamRunOutputEvent = Union[
     ModelRequestCompletedEvent,
     CompressionStartedEvent,
     CompressionCompletedEvent,
+    CompactionStartedEvent,
+    CompactionCompletedEvent,
     FollowupsStartedEvent,
     FollowupsCompletedEvent,
     TaskIterationStartedEvent,
@@ -720,6 +748,8 @@ TEAM_RUN_EVENT_TYPE_REGISTRY = {
     TeamRunEvent.model_request_completed.value: ModelRequestCompletedEvent,
     TeamRunEvent.compression_started.value: CompressionStartedEvent,
     TeamRunEvent.compression_completed.value: CompressionCompletedEvent,
+    TeamRunEvent.compaction_started.value: CompactionStartedEvent,
+    TeamRunEvent.compaction_completed.value: CompactionCompletedEvent,
     TeamRunEvent.followups_started.value: FollowupsStartedEvent,
     TeamRunEvent.followups_completed.value: FollowupsCompletedEvent,
     TeamRunEvent.task_iteration_started.value: TaskIterationStartedEvent,

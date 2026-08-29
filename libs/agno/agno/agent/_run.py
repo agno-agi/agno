@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 from agno.agent._init import _initialize_session_state
 from agno.agent._run_options import resolve_run_options
 from agno.agent._session import initialize_session, update_session_metrics
-from agno.agent._compaction import compaction_state_kwargs
+from agno.agent._compaction import compaction_state_kwargs, record_compaction_events
 from agno.agent._tools import result_store_kwargs
 from agno.exceptions import (
     InputCheckError,
@@ -554,6 +554,7 @@ def _run(
                     ),
                 )
 
+                record_compaction_events(agent, run_response)
                 # Check for cancellation after model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1691,6 +1692,7 @@ async def _arun(
                     ),
                 )
 
+                record_compaction_events(agent, run_response)
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3795,6 +3797,7 @@ def _continue_run(
                     ),
                 )
 
+                record_compaction_events(agent, run_response)
                 # Check for cancellation after model processing
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -5024,6 +5027,7 @@ async def _acontinue_run(
                         run_context=run_context,
                     ),
                 )
+                record_compaction_events(agent, run_response)
                 # Check for cancellation after model call
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 

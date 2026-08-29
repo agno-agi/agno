@@ -473,6 +473,43 @@ async def aadd_compacted_history(
     run_messages.compaction_record = record
 
 
+def record_compaction_events(agent: "Agent", run_response) -> None:
+    """Convert buffered pass events into stored run events on the non-streaming path.
+
+    Streaming runs bridge marker events live; non-streaming has no live channel, so whatever the
+    loop buffered is converted after the call returns and lands in run_response.events under
+    store_events."""
+    state = getattr(run_response, "_compaction_state", None)
+    if state is None or not state.event_buffer:
+        return
+    from agno.utils.events import (
+        create_compaction_completed_event,
+        create_compaction_started_event,
+        handle_event,
+    )
+
+    for item in state.event_buffer:
+        if item.get("type") == "started":
+            event = create_compaction_started_event(
+                from_run_response=run_response,
+                reason=item.get("reason"),
+                tokens_before=item.get("tokens_before"),
+            )
+        else:
+            event = create_compaction_completed_event(
+                from_run_response=run_response,
+                reason=item.get("reason"),
+                tokens_before=item.get("tokens_before"),
+                tokens_after=item.get("tokens_after"),
+                messages_folded=item.get("messages_folded"),
+                record_id=item.get("record_id"),
+                duration_ms=item.get("duration_ms"),
+                still_over_trigger=item.get("still_over_trigger"),
+            )
+        handle_event(event, run_response, events_to_skip=agent.events_to_skip, store_events=agent.store_events)
+    state.event_buffer.clear()
+
+
 def compact_session(
     agent: "Agent",
     session_id: Optional[str] = None,
