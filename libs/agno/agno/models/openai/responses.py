@@ -1270,11 +1270,12 @@ class OpenAIResponses(Model):
 
             # Handle reasoning output items
             elif output.type == "reasoning":
-                # Save encrypted reasoning content for ZDR mode
-                if self.store is False:
-                    if model_response.provider_data is None:
-                        model_response.provider_data = {}
-                    model_response.provider_data["reasoning_output"] = output.model_dump(exclude_none=True)
+                # Always kept: a later request that re-sends this turn's function_call without
+                # previous_response_id chaining (ZDR mode, or a compacted view) must pair it
+                # with this reasoning item or the API rejects the input.
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["reasoning_output"] = output.model_dump(exclude_none=True)
 
                 if reasoning_summaries := getattr(output, "summary", None):
                     for summary in reasoning_summaries:
@@ -1389,14 +1390,14 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
 
-            # Handle reasoning output items for ZDR mode (store=False)
-            if self.store is False:
-                for out in getattr(stream_event.response, "output", []) or []:
-                    if getattr(out, "type", None) == "reasoning":
-                        if hasattr(out, "encrypted_content"):
-                            if model_response.provider_data is None:
-                                model_response.provider_data = {}
-                            model_response.provider_data["reasoning_output"] = out.model_dump(exclude_none=True)
+            # Handle reasoning output items. Always kept: a later request that re-sends this
+            # turn's function_call without previous_response_id chaining (ZDR mode, or a
+            # compacted view) must pair it with this reasoning item or the API rejects the input.
+            for out in getattr(stream_event.response, "output", []) or []:
+                if getattr(out, "type", None) == "reasoning":
+                    if model_response.provider_data is None:
+                        model_response.provider_data = {}
+                    model_response.provider_data["reasoning_output"] = out.model_dump(exclude_none=True)
 
             # Add metrics
             if stream_event.response.usage is not None:
