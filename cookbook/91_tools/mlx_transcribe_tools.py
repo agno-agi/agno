@@ -41,7 +41,7 @@ if __name__ == "__main__":
 
     agent = Agent(
         name="Transcription Agent",
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         tools=[MLXTranscribeTools(base_dir=audio_storage_dir)],
         instructions=[
             "To transcribe an audio file, use the `transcribe` tool with the name of the audio file as the argument.",

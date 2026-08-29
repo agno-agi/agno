@@ -176,6 +176,7 @@ todoist = ["todoist-api-python"]
 trafilatura = ["trafilatura"]
 twelvelabs = ["twelvelabs>=1.2.8"]
 valyu = ["valyu"]
+wavespeed = ["wavespeed"]
 webex = ["webexpythonsdk"]
 whatsapp-crypto = ["cryptography>=41.0"]
 yfinance = ["yfinance"]
@@ -339,6 +340,7 @@ tools = [
   "agno[trafilatura]",
   "agno[twelvelabs]",
   "agno[valyu]",
+  "agno[wavespeed]",
   "agno[webex]",
   "agno[whatsapp-crypto]",
   "agno[yfinance]",
@@ -676,6 +678,7 @@ module = [
   "valyu.*",
   "vertexai.*",
   "voyageai.*",
+  "wavespeed.*",
   "weaviate.*",
   "web3.*",
   "webexpythonsdk.*",

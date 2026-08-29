@@ -11,7 +11,7 @@ Driven through the real run/continue_run pipeline with a scripted offline model.
 
 import asyncio
 import json
-from typing import Any, AsyncIterator, Iterator, List, Optional, Tuple
+from typing import Any, AsyncIterator, Iterator, List, Optional, Tuple, Union
 
 import pytest
 
@@ -25,9 +25,13 @@ from agno.team import Team
 
 
 class ScriptedModel(Model):
-    """Returns one scripted ModelResponse per provider call, in order."""
+    """Returns one scripted ModelResponse per provider call, in order.
 
-    def __init__(self, script: List[ModelResponse]) -> None:
+    An Exception in the script is raised in its slot instead of returned, to
+    script a transient provider failure.
+    """
+
+    def __init__(self, script: List[Union[ModelResponse, Exception]]) -> None:
         super().__init__(id="scripted", name="scripted", provider="test")
         self.script = list(script)
         self.calls = 0
@@ -38,6 +42,8 @@ class ScriptedModel(Model):
     def _next(self) -> ModelResponse:
         response = self.script[min(self.calls, len(self.script) - 1)]
         self.calls += 1
+        if isinstance(response, Exception):
+            raise response
         return response
 
     def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
@@ -268,6 +274,141 @@ def test_team_continuation_rebinds_context_and_dependencies():
         expected = run_output.run_id
         assert context_run_id == expected
         assert dependency == f"ns::{expected}", f"team run {expected}: dependency resolved against {dependency}"
+
+
+@pytest.mark.parametrize("mode", ["async", "async_stream"])
+def test_team_async_continuation_rebinds_context_and_dependencies(mode):
+    """The async team twins: acontinue_run resolves dependencies through _asetup_session,
+    which runs before the continuation forks. Resolving there hands every factory the
+    PARENT's run_id, so the leader's tool sees run_id=child paired with a parent-scoped
+    dependency."""
+    from agno.run.team import TeamRunOutput
+
+    seen: List[Tuple[Optional[str], Optional[str]]] = []
+    member = Agent(name="member", model=ScriptedModel([_text("member done")]))
+    team = Team(
+        members=[member],
+        model=ScriptedModel(_probe_script()),
+        tools=[_dependency_probe(seen)],
+        dependencies={"ns": _namespace_dependency},
+    )
+    first = team.run("probe once")
+    if mode == "async":
+        continued = asyncio.run(team.acontinue_run(run_response=first, input="probe again"))
+    else:
+
+        async def _consume() -> Optional[TeamRunOutput]:
+            output: Optional[TeamRunOutput] = None
+            async for event in team.acontinue_run(
+                run_response=first, input="probe again", stream=True, yield_run_output=True
+            ):
+                if isinstance(event, TeamRunOutput):
+                    output = event
+            return output
+
+        continued = asyncio.run(_consume())
+
+    assert continued is not None
+    assert continued.run_id != first.run_id, "the team continuation did not fork a sibling run"
+    assert len(seen) == 2
+    for run_output, (context_run_id, dependency) in zip((first, continued), seen):
+        expected = run_output.run_id
+        assert context_run_id == expected
+        assert dependency == f"ns::{expected}", f"team run {expected}: dependency resolved against {dependency}"
+
+
+def _retry_probe_script() -> List[Union[ModelResponse, Exception]]:
+    """First run completes; the continuation's first attempt dies in the provider call
+    and the retry runs the probe."""
+    return [
+        _tool_call("probe_state", "call-1"),
+        _text("first run done"),
+        RuntimeError("transient provider failure"),
+        _tool_call("probe_state", "call-2"),
+        _text("continuation done"),
+    ]
+
+
+@pytest.mark.parametrize("mode", ["async", "async_stream"])
+def test_agent_async_continue_retry_resolves_dependencies_against_the_executing_fork(mode):
+    """A transient model failure re-enters the retry loop, which forks AGAIN — the first
+    fork is abandoned. The dependency factories were already consumed against the
+    abandoned fork, so without re-resolving from the unresolved values the run that
+    actually completes executes with the abandoned fork's dependency."""
+    seen: List[Tuple[Optional[str], Optional[str]]] = []
+    agent = Agent(
+        model=ScriptedModel(_retry_probe_script()),
+        tools=[_dependency_probe(seen)],
+        dependencies={"ns": _namespace_dependency},
+        retries=1,
+        delay_between_retries=0,
+    )
+    first = agent.run("probe once")
+    if mode == "async":
+        continued = asyncio.run(agent.acontinue_run(run_response=first, input="probe again"))
+    else:
+
+        async def _consume() -> Optional[RunOutput]:
+            output: Optional[RunOutput] = None
+            async for event in agent.acontinue_run(
+                run_response=first, input="probe again", stream=True, yield_run_output=True
+            ):
+                if isinstance(event, RunOutput):
+                    output = event
+            return output
+
+        continued = asyncio.run(_consume())
+
+    assert continued is not None
+    assert continued.run_id != first.run_id
+    assert len(seen) == 2, f"expected one probe per completed model loop, got {seen}"
+    context_run_id, dependency = seen[1]
+    assert context_run_id == continued.run_id
+    assert dependency == f"ns::{continued.run_id}", (
+        f"the completing run {continued.run_id} executed with a dependency scoped to an abandoned fork: {dependency}"
+    )
+
+
+@pytest.mark.parametrize("mode", ["async", "async_stream"])
+def test_team_async_continue_retry_resolves_dependencies_against_the_executing_fork(mode):
+    """The team twin of the retry test above."""
+    from agno.run.team import TeamRunOutput
+
+    seen: List[Tuple[Optional[str], Optional[str]]] = []
+    member = Agent(name="member", model=ScriptedModel([_text("member done")]))
+    team = Team(
+        members=[member],
+        model=ScriptedModel(_retry_probe_script()),
+        tools=[_dependency_probe(seen)],
+        dependencies={"ns": _namespace_dependency},
+        retries=1,
+        delay_between_retries=0,
+    )
+    first = team.run("probe once")
+    if mode == "async":
+        continued = asyncio.run(team.acontinue_run(run_response=first, input="probe again"))
+    else:
+
+        async def _consume() -> Optional[TeamRunOutput]:
+            output: Optional[TeamRunOutput] = None
+            async for event in team.acontinue_run(
+                run_response=first, input="probe again", stream=True, yield_run_output=True
+            ):
+                if isinstance(event, TeamRunOutput):
+                    output = event
+            return output
+
+        continued = asyncio.run(_consume())
+
+    assert continued is not None
+    assert continued.run_id != first.run_id
+    assert len(seen) == 2, f"expected one probe per completed model loop, got {seen}"
+    context_run_id, dependency = seen[1]
+    assert context_run_id == continued.run_id
+    assert dependency == f"ns::{continued.run_id}", (
+        f"the completing team run {continued.run_id} executed with a dependency scoped to "
+        f"an abandoned fork: {dependency}"
+    )
 
 
 def test_team_rebind_cannot_blank_the_session_id():

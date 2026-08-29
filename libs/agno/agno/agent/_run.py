@@ -1445,11 +1445,16 @@ def run_dispatch(
         files=file_artifacts,
     )
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Read the existing session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata.
+    from copy import deepcopy
+
     from agno.agent._storage import read_or_create_session, update_metadata
 
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+    # so the session layer keeps the session's own values (agent < session < call-site).
+    session_metadata = deepcopy(agent_session.metadata)
     update_metadata(agent, session=agent_session)
 
     # Resolve all run options centrally
@@ -1464,6 +1469,7 @@ def run_dispatch(
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
         output_schema=output_schema,
     )
 
@@ -3035,18 +3041,25 @@ def arun_dispatch(  # type: ignore
         files=file_artifacts,
     )
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Read the existing session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata.
     # Note: arun_dispatch is NOT async, so we can only pre-read with a sync DB.
-    # For async DB, _arun/_arun_stream will handle the session read themselves.
+    # For async DB, _arun/_arun_stream read the session AFTER options are resolved,
+    # so session metadata does not reach this run's resolved options there.
+    from copy import deepcopy
+
     from agno.agent._init import has_async_db
     from agno.agent._storage import update_metadata
 
     _pre_session: Optional[AgentSession] = None
+    _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
         from agno.agent._storage import read_or_create_session
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+        # so the session layer keeps the session's own values (agent < session < call-site).
+        _session_metadata = deepcopy(_pre_session.metadata)
         update_metadata(agent, session=_pre_session)
 
     # Resolve all run options centrally
@@ -3061,6 +3074,7 @@ def arun_dispatch(  # type: ignore
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=_session_metadata,
         output_schema=output_schema,
     )
 
@@ -3630,7 +3644,12 @@ def continue_run_dispatch(
     agent.initialize_agent(debug_mode=debug_mode)
 
     # Read existing session from storage
+    from copy import deepcopy
+
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+    # so the session layer keeps the session's own values (agent < session < call-site).
+    session_metadata = deepcopy(agent_session.metadata)
     update_metadata(agent, session=agent_session)
 
     # Fall back to the owner the run paused with, so the resume retrieves under the same scope
@@ -3664,6 +3683,7 @@ def continue_run_dispatch(
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
     )
 
     # Initialize run context
@@ -4596,16 +4616,24 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Pre-read the session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata. Only possible with a sync DB:
+    # with an async DB the session is read inside _arun AFTER options are
+    # resolved, so session metadata does not reach this run's resolved options.
     from agno.agent._init import has_async_db
 
     _session_state: Dict[str, Any] = {}
     _pre_session: Optional[AgentSession] = None
+    _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
+        from copy import deepcopy
+
         from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+        # so the session layer keeps the session's own values (agent < session < call-site).
+        _session_metadata = deepcopy(_pre_session.metadata)
         update_metadata(agent, session=_pre_session)
         _session_state = load_session_state(agent, session=_pre_session, session_state={})
 
@@ -4623,6 +4651,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=_session_metadata,
     )
 
     # Prepare arguments for the model
@@ -5040,6 +5069,12 @@ async def _acontinue_run(
     log_debug(f"Agent Run Continue: {run_response.run_id if run_response else run_id}", center=True)  # type: ignore
     agent_session: Optional[AgentSession] = None
 
+    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
+    # callable factories with their results in place. Keep the unresolved values so a
+    # retry re-resolves against the fork it actually executes instead of reusing values
+    # scoped to the abandoned previous fork.
+    unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+
     # Resolve retry parameters
     try:
         num_attempts = agent.retries + 1
@@ -5050,6 +5085,9 @@ async def _acontinue_run(
                 run_messages: Optional[RunMessages] = None
                 if attempt > 0:
                     log_debug(f"Retrying Agent acontinue_run {run_id}. Attempt {attempt + 1} of {num_attempts}...")
+                    if unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                        run_context.dependencies.clear()
+                        run_context.dependencies.update(unresolved_dependencies)
 
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
@@ -5598,6 +5636,12 @@ async def _acontinue_run_stream(
 
     agent_session: Optional[AgentSession] = None
 
+    # Each retry attempt forks its own sibling run, and resolving dependencies replaces
+    # callable factories with their results in place. Keep the unresolved values so a
+    # retry re-resolves against the fork it actually executes instead of reusing values
+    # scoped to the abandoned previous fork.
+    unresolved_dependencies = dict(run_context.dependencies) if isinstance(run_context.dependencies, dict) else None
+
     # Resolve retry parameters
     try:
         num_attempts = agent.retries + 1
@@ -5606,6 +5650,9 @@ async def _acontinue_run_stream(
                 # Bind run_messages early — cancellation can fire before run_messages
                 # is built, and the cancellation handler reads it.
                 run_messages: Optional[RunMessages] = None
+                if attempt > 0 and unresolved_dependencies is not None and isinstance(run_context.dependencies, dict):
+                    run_context.dependencies.clear()
+                    run_context.dependencies.update(unresolved_dependencies)
                 # 1. Read existing session from db
                 agent_session = await aread_or_create_session(agent, session_id=session_id, user_id=user_id)
 
