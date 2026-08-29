@@ -1,6 +1,11 @@
-from unittest.mock import Mock, patch
+import sys
+from unittest.mock import MagicMock, Mock, patch
 
 from agno.knowledge.document.base import Document
+
+if "litellm" not in sys.modules:
+    sys.modules["litellm"] = MagicMock()
+
 from agno.knowledge.reranker.litellm import LiteLLMReranker
 
 
@@ -82,3 +87,33 @@ def test_build_request(mock_litellm):
     assert request["model"] == "cohere/rerank-multilingual-v3.0"
     assert request["query"] == "test query"
     assert request["documents"] == ["doc1", "doc2"]
+
+
+@patch("agno.knowledge.reranker.litellm.litellm")
+def test_rerank_negative_and_out_of_bounds_index(mock_litellm):
+    """Test that negative and out-of-bounds indices are ignored"""
+    mock_response = Mock()
+    mock_result1 = Mock()
+    mock_result1.index = -1
+    mock_result1.relevance_score = 0.95
+    mock_result2 = Mock()
+    mock_result2.index = 0
+    mock_result2.relevance_score = 0.8
+    mock_result3 = Mock()
+    mock_result3.index = 99
+    mock_result3.relevance_score = 0.99
+    mock_result4 = Mock()
+    mock_result4.index = None
+    mock_result4.relevance_score = 0.5
+    mock_response.results = [mock_result1, mock_result2, mock_result3, mock_result4]
+
+    mock_litellm.rerank.return_value = mock_response
+
+    docs = [Document(content="doc 0"), Document(content="doc 1")]
+    rr = LiteLLMReranker(model="cohere/rerank-multilingual-v3.0")
+    ranked = rr.rerank("query", docs)
+
+    assert len(ranked) == 1
+    assert ranked[0].content == "doc 0"
+    assert ranked[0].reranking_score == 0.8
+

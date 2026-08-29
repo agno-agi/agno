@@ -60,7 +60,7 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 def main() -> None:
-    knowledge.insert(name="Agno Docs",url="https://docs.agno.com/agents/overview.md")
+    knowledge.insert(name="Agno Docs", url="https://docs.agno.com/agents/overview.md")
     agent.print_response("What is the purpose of an Agno Agent?")
 
 

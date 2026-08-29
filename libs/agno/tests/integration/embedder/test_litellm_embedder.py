@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("litellm")
+
 from agno.knowledge.embedder.litellm import LiteLLMEmbedder
 
 

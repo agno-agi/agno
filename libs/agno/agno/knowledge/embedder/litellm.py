@@ -146,6 +146,12 @@ class LiteLLMEmbedder(Embedder):
                     for item in response.data:
                         embeddings.append(self._item_embedding(item))
 
+                if len(embeddings) < len(batch):
+                    log_warning(
+                        f"LiteLLM returned {len(embeddings)} embeddings for {len(batch)} texts; padding with empty vectors."
+                    )
+                    embeddings.extend([[] for _ in range(len(batch) - len(embeddings))])
+
                 usage = self._extract_usage(response)
                 all_embeddings.extend(embeddings)
                 all_usage.extend([usage] * len(embeddings))

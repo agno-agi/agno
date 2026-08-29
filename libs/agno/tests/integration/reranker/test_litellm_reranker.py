@@ -1,5 +1,7 @@
 import pytest
 
+pytest.importorskip("litellm")
+
 from agno.knowledge.document.base import Document
 from agno.knowledge.reranker.litellm import LiteLLMReranker
 

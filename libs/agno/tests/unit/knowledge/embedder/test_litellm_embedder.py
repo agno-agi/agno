@@ -1,6 +1,10 @@
-from unittest.mock import AsyncMock, Mock, patch
+import sys
+from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
 import pytest
+
+if "litellm" not in sys.modules:
+    sys.modules["litellm"] = MagicMock()
 
 from agno.knowledge.embedder.litellm import LiteLLMEmbedder
 
@@ -175,3 +179,47 @@ def test_build_request_with_params(mock_litellm):
     assert request["api_key"] == "test-key"
     assert request["api_base"] == "https://custom.api.com"
     assert request["encoding_format"] == "float"
+
+
+@patch("agno.knowledge.embedder.litellm.litellm")
+@pytest.mark.asyncio
+async def test_async_batch_embeddings_short_response(mock_litellm):
+    """Test that short batch responses are padded to preserve alignment"""
+    mock_response = Mock()
+    mock_data_item = Mock()
+    mock_data_item.embedding = [0.1, 0.2, 0.3]
+    mock_response.data = [mock_data_item]
+    mock_response.usage = None
+
+    mock_litellm.aembedding = AsyncMock(return_value=mock_response)
+
+    embedder = LiteLLMEmbedder(id="openai/text-embedding-3-small", batch_size=10)
+    texts = ["Text 1", "Text 2", "Text 3"]
+    embeddings, usages = await embedder.async_get_embeddings_batch_and_usage(texts)
+
+    assert len(embeddings) == 3
+    assert embeddings[0] == [0.1, 0.2, 0.3]
+    assert embeddings[1] == []
+    assert embeddings[2] == []
+    assert len(usages) == 3
+
+
+@patch("agno.knowledge.embedder.litellm.litellm")
+@pytest.mark.asyncio
+async def test_async_batch_embeddings_empty_data(mock_litellm):
+    """Test that empty data responses are padded to preserve alignment"""
+    mock_response = Mock()
+    mock_response.data = []
+    mock_response.usage = None
+
+    mock_litellm.aembedding = AsyncMock(return_value=mock_response)
+
+    embedder = LiteLLMEmbedder(id="openai/text-embedding-3-small", batch_size=10)
+    texts = ["Text 1", "Text 2"]
+    embeddings, usages = await embedder.async_get_embeddings_batch_and_usage(texts)
+
+    assert len(embeddings) == 2
+    assert embeddings[0] == []
+    assert embeddings[1] == []
+    assert len(usages) == 2
+

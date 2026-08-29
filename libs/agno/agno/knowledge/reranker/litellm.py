@@ -71,7 +71,7 @@ class LiteLLMReranker(Reranker):
                 try:
                     idx = getattr(r, "index", None)
                     score = getattr(r, "relevance_score", None)
-                    if idx is None or idx >= len(documents):
+                    if idx is None or idx < 0 or idx >= len(documents):
                         continue
                     doc = documents[idx]
                     doc.reranking_score = score
