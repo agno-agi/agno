@@ -37,7 +37,18 @@ workspace_agent = Agent(
 
 @tool(
     name="ask_workspace",
+    title="Ask the Workspace Agent",
     description="Ask the workspace agent a question",
+    # A custom tool publishes whatever it declares here and nothing more, so state all
+    # three hints: a client that finds one missing falls back to a protocol default,
+    # and a directory submission is rejected outright for leaving any of them unset.
+    # These are true of this tool: the run persists a session (not read-only), it only
+    # appends (nothing destroyed), and the agent calls a model over the network.
+    annotations={
+        "readOnlyHint": False,
+        "destructiveHint": False,
+        "openWorldHint": True,
+    },
 )
 async def ask_workspace(question: str) -> str:
     """Route one question through the workspace agent."""

@@ -80,6 +80,7 @@ def tool_presentation(
     annotations: Optional[Mapping[str, Any]],
     defaults: Optional[Mapping[str, Any]] = None,
     fallback_title: Optional[str] = None,
+    source: str = "annotations",
 ) -> "tuple[Optional[str], Optional[Dict[str, Any]]]":
     """The ``(title, annotations)`` a tool publishes, resolved and merged in one place.
 
@@ -88,7 +89,14 @@ def tool_presentation(
     not two -- whichever the developer wrote fills both, so no client can be shown a
     different name than another. Every surface that registers a tool goes through here,
     so the next one added cannot fill only one slot.
+
+    Annotations are re-validated here, not only where they were first written. A
+    carrier's dict stays mutable after it is validated -- ``Function.from_callable``
+    hands back a Function precisely so callers can adjust it, and a frozen marker's
+    dict is still a dict -- so publication, not construction, is the last point at
+    which an unknown key can still be caught before a client sees it.
     """
+    annotations = validate_tool_annotations(annotations, source)
     from_annotations = (annotations or {}).get("title")
     resolved_title = (
         title or (from_annotations if isinstance(from_annotations, str) else None) or fallback_title or None

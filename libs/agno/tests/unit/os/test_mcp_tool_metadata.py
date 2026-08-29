@@ -241,6 +241,43 @@ def test_validation_stores_a_copy_so_a_later_edit_cannot_smuggle_a_key_in():
     assert marker.annotations == {"readOnlyHint": True}
 
 
+async def test_an_annotation_written_after_construction_is_still_caught():
+    """Construction-time validation cannot be the only gate: from_callable hands back a
+    Function precisely so callers can adjust it, and it accepts no annotations, so
+    assignment is the only way to annotate one. Publication is the last point a typo
+    can be caught before a client sees it."""
+
+    def lookup(city: str) -> str:
+        """Look something up."""
+        return "x"
+
+    fn = Function.from_callable(lookup)
+    fn.annotations = {"readonlyHint": True}  # never passed through a validator
+
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(default_tools=False, tools=[fn]))
+
+    with pytest.raises(ValueError) as excinfo:
+        await _tools_by_name(os)
+
+    assert "readonlyHint" in str(excinfo.value)
+    assert "'readOnlyHint'" in str(excinfo.value)
+
+
+async def test_an_annotation_mutated_in_place_is_still_caught():
+    """The dict a validated carrier holds stays mutable; only re-reading it at publish
+    time sees what it actually says now."""
+    agent = _agent()
+    marker = agent.as_tool(annotations={"readOnlyHint": True})
+    marker.annotations["destructivehint"] = True  # in place, after validation
+
+    os = AgentOS(agents=[agent], mcp=MCPConfig(default_tools=False, tools=[marker]))
+
+    with pytest.raises(ValueError) as excinfo:
+        await _tools_by_name(os)
+
+    assert "destructivehint" in str(excinfo.value)
+
+
 def test_function_validates_its_annotations_too():
     with pytest.raises(ValueError):
         Function(name="f", annotations={"readonlyHint": True})
@@ -392,14 +429,16 @@ async def test_presentation_is_never_duck_typed_off_a_non_function_tool():
 # openWorldHint). A wrong hint is worse than a missing one -- a reviewer tests these
 # against real behaviour -- so every value is pinned per tool rather than checked for
 # presence. The run tools reach an open world because the component they run may call
-# anything; the config and session tools only read this deployment's own state.
+# anything, and cancel_run does because cancelling a REMOTE component's run is an
+# outbound call to that deployment; the config and session tools only read storage
+# this deployment owns.
 _BUILTIN_HINTS = {
     "get_agentos_config": (True, False, False),
     "run_agent": (False, True, True),
     "run_team": (False, True, True),
     "run_workflow": (False, True, True),
     "continue_run": (False, True, True),
-    "cancel_run": (False, True, False),
+    "cancel_run": (False, True, True),
     "get_sessions": (True, False, False),
     "get_session_runs": (True, False, False),
 }

@@ -79,6 +79,11 @@ _BUILTIN_TOOL_NAMES: Dict[str, frozenset] = {
 # client -- it falls back to a protocol default -- and a directory submission scan
 # rejects a tool that leaves any of the three unset, so a hint the server declines to
 # state is a hint someone else answers on its behalf.
+#
+# openWorldHint asks whether a tool can reach a system this deployment does not own.
+# The run tools can, because the component they run may call anything, and so can
+# cancel_run: cancelling a Remote* component's run is an outbound HTTP call to that
+# deployment. The config and session tools only read storage this deployment owns.
 _EXPOSED_COMPONENT_ANNOTATIONS: Dict[str, Any] = {
     "readOnlyHint": False,
     "destructiveHint": True,
@@ -129,7 +134,9 @@ def _builtin_tool_registrar(mcp: FastMCP, enabled_tags: set):
     def register(*args: Any, **kwargs: Any):
         tags = kwargs.get("tags") or set()
         if tags & enabled_tags:
-            title, annotations = tool_presentation(kwargs.get("title"), kwargs.get("annotations"))
+            title, annotations = tool_presentation(
+                kwargs.get("title"), kwargs.get("annotations"), source=f"built-in tool {kwargs.get('name')!r}"
+            )
             if annotations is not None:
                 kwargs["annotations"] = annotations
             return mcp.tool(*args, **kwargs)
@@ -199,7 +206,9 @@ def _custom_tool_presentation(tool: Any) -> "tuple[Optional[str], Optional[ToolA
 
     if not isinstance(tool, Function):
         return None, None
-    title, annotations = tool_presentation(tool.title, tool.annotations)
+    title, annotations = tool_presentation(
+        tool.title, tool.annotations, source=f"@tool(annotations=...) on {tool.name!r}"
+    )
     return title, (ToolAnnotations(**annotations) if annotations else None)
 
 
@@ -1478,6 +1487,7 @@ def _register_exposed_components(
             annotations_override,
             defaults=_EXPOSED_COMPONENT_ANNOTATIONS,
             fallback_title=component_name or tool_name,
+            source=f'as_tool(annotations=...) on {singular} "{component_id}"',
         )
         mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
@@ -1830,7 +1840,7 @@ def build_mcp_server(
             "run_id, its session_id, and exactly one of agent_id / team_id / workflow_id."
         ),
         tags={"core", "lifecycle"},
-        annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": False},
+        annotations={"readOnlyHint": False, "destructiveHint": True, "idempotentHint": True, "openWorldHint": True},
     )  # type: ignore
     async def cancel_run(
         run_id: str,

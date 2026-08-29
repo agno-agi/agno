@@ -86,6 +86,12 @@ destroys nothing), `continue_run` false/true/true, `cancel_run` false/true/false
 (it writes this deployment's own run state and reaches nothing external).
 `deep_research` ran to COMPLETED.
 
+Re-run again the same day after `cancel_run` was corrected to
+`openWorldHint` true (cancelling a Remote* component's run is an outbound
+call to that deployment, so "reaches nothing external" was wrong): the four
+tools published false/true/true, false/true/true, false/true/true, and
+false/false/true respectively, with no hint left unset.
+
 ---
 
 ### basic.py
@@ -134,6 +140,10 @@ called `ask_workspace` through a FastMCP streamable-HTTP client with a live
 
 **Result:** The server exposed exactly one tool, `ask_workspace`, with no
 built-ins. The call returned the requested exact response, `custom MCP works`.
+Re-run on 2026-08-30 after the example began declaring its presentation: the
+tool published title "Ask the Workspace Agent" and all three hints
+(`readOnlyHint` false -- the run persists a session, `destructiveHint` false,
+`openWorldHint` true -- the agent calls a model over the network).
 
 ---
 
