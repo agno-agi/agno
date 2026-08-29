@@ -726,12 +726,7 @@ class StudioTools(Toolkit):
         pending: List[Toolkit] = []
         seen: Set[int] = set()
         for tool in resolved:
-            if (
-                isinstance(tool, Toolkit)
-                and not tool.functions
-                and id(tool) not in seen
-                and _is_mcp_toolkit(tool)
-            ):
+            if isinstance(tool, Toolkit) and not tool.functions and id(tool) not in seen and _is_mcp_toolkit(tool):
                 seen.add(id(tool))
                 pending.append(tool)
         if not pending:
