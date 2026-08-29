@@ -28,6 +28,7 @@ from uuid import uuid4
 from pydantic import BaseModel
 
 from agno.agent._tools import result_store_kwargs
+from agno.team._compaction import compaction_state_kwargs, record_compaction_events
 from agno.exceptions import (
     InputCheckError,
     OutputCheckError,
@@ -395,11 +396,13 @@ def _run_tasks(
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
                 **result_store_kwargs(team),
+                **compaction_state_kwargs(team, session=session, run_response=run_response, run_messages=run_messages),
                 after_tool_results=build_team_after_tool_results_callback(
                     team, run_response, session, run_messages, run_context
                 ),
             )
 
+            record_compaction_events(team, run_response)
             raise_if_cancelled(run_response.run_id)  # type: ignore
 
             # Update run response
@@ -1263,12 +1266,16 @@ def _run(
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
                     **result_store_kwargs(team),
+                    **compaction_state_kwargs(
+                        team, session=session, run_response=run_response, run_messages=run_messages
+                    ),
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
                 )
 
                 # Check for cancellation after model call
+                record_compaction_events(team, run_response)
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
@@ -2292,11 +2299,15 @@ async def _arun_tasks(
                 send_media_to_model=team.send_media_to_model,
                 compression_manager=team.compression_manager if team.compress_tool_results else None,
                 **result_store_kwargs(team),
+                **compaction_state_kwargs(
+                    team, session=team_session, run_response=run_response, run_messages=run_messages
+                ),
                 after_tool_results=abuild_team_after_tool_results_callback(
                     team, run_response, team_session, run_messages, run_context
                 ),
             )  # type: ignore
 
+            record_compaction_events(team, run_response)
             await araise_if_cancelled(run_response.run_id)  # type: ignore
 
             # Update run response
@@ -3250,12 +3261,16 @@ async def _arun(
                     run_response=run_response,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
                     **result_store_kwargs(team),
+                    **compaction_state_kwargs(
+                        team, session=team_session, run_response=run_response, run_messages=run_messages
+                    ),
                     after_tool_results=abuild_team_after_tool_results_callback(
                         team, run_response, team_session, run_messages, run_context
                     ),
                 )  # type: ignore
 
                 # Check for cancellation after model call
+                record_compaction_events(team, run_response)
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # If an output model is provided, generate output using the output model
@@ -4790,6 +4805,10 @@ def _cleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
+    if getattr(run_response, "_compaction_state", None) is not None:
+        from agno.team._compaction import drain_compaction_state_at_persist
+
+        drain_compaction_state_at_persist(team, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
@@ -4873,6 +4892,10 @@ async def _acleanup_and_store(
 
     # Add scrubbed RunOutput to Team Session
     session.upsert_run(run_response=storage_copy)
+    if getattr(run_response, "_compaction_state", None) is not None:
+        from agno.team._compaction import drain_compaction_state_at_persist
+
+        drain_compaction_state_at_persist(team, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
 
     # Calculate session metrics
@@ -5019,6 +5042,10 @@ def _persist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
+    if getattr(run_response, "_compaction_state", None) is not None:
+        from agno.team._compaction import drain_compaction_state_at_persist
+
+        drain_compaction_state_at_persist(team, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(team, session=session, run_response=run_response)
 
@@ -5079,6 +5106,10 @@ async def _apersist_team_run_in_session(
         storage_copy.session_state = run_context.session_state
 
     session.upsert_run(run_response=storage_copy)
+    if getattr(run_response, "_compaction_state", None) is not None:
+        from agno.team._compaction import drain_compaction_state_at_persist
+
+        drain_compaction_state_at_persist(team, run_response, session, storage_copy)
     run_index = resolve_run_index(session, storage_copy)
     update_session_metrics(team, session=session, run_response=run_response)
 
@@ -6988,11 +7019,13 @@ async def _ahandle_model_response_for_continue(
         send_media_to_model=team.send_media_to_model,
         compression_manager=team.compression_manager if team.compress_tool_results else None,
         **result_store_kwargs(team),
+        **compaction_state_kwargs(team, session=team_session, run_response=run_response, run_messages=run_messages),
         after_tool_results=abuild_team_after_tool_results_callback(
             team, run_response, team_session, run_messages, run_context
         ),
     )
 
+    record_compaction_events(team, run_response)
     await araise_if_cancelled(run_response.run_id)  # type: ignore
 
     await agenerate_response_with_output_model(team, model_response, run_messages, run_response=run_response)
@@ -8349,11 +8382,15 @@ def _continue_run(
                     send_media_to_model=team.send_media_to_model,
                     compression_manager=team.compression_manager if team.compress_tool_results else None,
                     **result_store_kwargs(team),
+                    **compaction_state_kwargs(
+                        team, session=session, run_response=run_response, run_messages=run_messages
+                    ),
                     after_tool_results=build_team_after_tool_results_callback(
                         team, run_response, session, run_messages, run_context
                     ),
                 )
 
+                record_compaction_events(team, run_response)
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
                 # Parse with output/parser models if needed

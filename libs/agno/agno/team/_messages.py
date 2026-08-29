@@ -1025,30 +1025,39 @@ def _get_run_messages(
         # to preserve conversation continuity.
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
 
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
+        if team._compaction is not None:
+            # Compaction owns retention: history is the active record's summary plus everything
+            # after its boundary, not a run-count window.
+            from agno.team._compaction import add_compacted_history
 
-        if len(history) > 0:
-            history_copy = [copy_history_message(msg) for msg in history]
+            add_compacted_history(team, run_messages=run_messages, session=session, skip_role=skip_role)
+            if run_messages.compaction_record is not None:
+                run_response.compaction_id = run_messages.compaction_record.id  # type: ignore[attr-defined]
+        else:
+            history = session.get_messages(
+                last_n_runs=team.num_history_runs,
+                limit=team.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
+                team_id=team.id if team.parent_team_id is not None else None,
+            )
 
-            # Refresh pre-signed URLs for media loaded from history
-            if team.media_storage is not None:
-                from agno.utils.media_offload import refresh_messages_media
+            if len(history) > 0:
+                history_copy = [copy_history_message(msg) for msg in history]
 
-                refresh_messages_media(history_copy, team.media_storage)
+                # Refresh pre-signed URLs for media loaded from history
+                if team.media_storage is not None:
+                    from agno.utils.media_offload import refresh_messages_media
 
-            # Filter tool calls from history messages
-            if team.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+                    refresh_messages_media(history_copy, team.media_storage)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+                # Filter tool calls from history messages
+                if team.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, team.max_tool_calls_from_history)
 
-            # Extend the messages with the history
-            run_messages.messages += history_copy
+                log_debug(f"Adding {len(history_copy)} messages from history")
+
+                # Extend the messages with the history
+                run_messages.messages += history_copy
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
     # 5.1 Build user message if message is None, str or list
@@ -1159,30 +1168,40 @@ async def _aget_run_messages(
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
         skip_role = team.system_message_role if team.system_message_role not in ["user", "assistant", "tool"] else None
-        history = session.get_messages(
-            last_n_runs=team.num_history_runs,
-            limit=team.num_history_messages,
-            skip_roles=[skip_role] if skip_role else None,
-            team_id=team.id if team.parent_team_id is not None else None,
-        )
 
-        if len(history) > 0:
-            history_copy = [copy_history_message(msg) for msg in history]
+        if team._compaction is not None:
+            # Compaction owns retention: history is the active record's summary plus everything
+            # after its boundary, not a run-count window.
+            from agno.team._compaction import aadd_compacted_history
 
-            # Refresh pre-signed URLs for media loaded from history
-            if team.media_storage is not None:
-                from agno.utils.media_offload import arefresh_messages_media
+            await aadd_compacted_history(team, run_messages=run_messages, session=session, skip_role=skip_role)
+            if run_messages.compaction_record is not None:
+                run_response.compaction_id = run_messages.compaction_record.id  # type: ignore[attr-defined]
+        else:
+            history = session.get_messages(
+                last_n_runs=team.num_history_runs,
+                limit=team.num_history_messages,
+                skip_roles=[skip_role] if skip_role else None,
+                team_id=team.id if team.parent_team_id is not None else None,
+            )
 
-                await arefresh_messages_media(history_copy, team.media_storage)
+            if len(history) > 0:
+                history_copy = [copy_history_message(msg) for msg in history]
 
-            # Filter tool calls from history messages
-            if team.max_tool_calls_from_history is not None:
-                filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+                # Refresh pre-signed URLs for media loaded from history
+                if team.media_storage is not None:
+                    from agno.utils.media_offload import arefresh_messages_media
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+                    await arefresh_messages_media(history_copy, team.media_storage)
 
-            # Extend the messages with the history
-            run_messages.messages += history_copy
+                # Filter tool calls from history messages
+                if team.max_tool_calls_from_history is not None:
+                    filter_tool_calls(history_copy, team.max_tool_calls_from_history)
+
+                log_debug(f"Adding {len(history_copy)} messages from history")
+
+                # Extend the messages with the history
+                run_messages.messages += history_copy
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
     # 5.1 Build user message if message is None, str or list

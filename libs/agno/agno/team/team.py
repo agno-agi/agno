@@ -43,6 +43,7 @@ from agno.models.message import Message
 from agno.models.response import ModelResponse
 
 if TYPE_CHECKING:
+    from agno.compaction import Compaction, CompactionRecord
     from agno.offload.store import ResultStore
 from agno.registry.registry import Registry
 from agno.run import RunContext, RunStatus
@@ -347,6 +348,12 @@ class Team:
     # sub-team inherits the parent's store; False keeps offloading off there too.
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None
 
+    # --- Context Compaction ---
+    # Keep the leader's model input under the context window by folding old conversation into a
+    # running summary. True uses the defaults; a Compaction object sets the knobs. While set,
+    # compaction owns history retention (num_history_runs and friends are ignored).
+    compaction: Union[bool, "Compaction", None] = False
+
     # --- Team History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
@@ -554,6 +561,7 @@ class Team:
         compress_tool_results: bool = False,
         compression_manager: Optional["CompressionManager"] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
+        compaction: Union[bool, "Compaction", None] = False,
         metadata: Optional[Dict[str, Any]] = None,
         reasoning_model: Optional[Union[Model, str]] = None,
         reasoning_agent: Optional[Agent] = None,
@@ -673,6 +681,7 @@ class Team:
             compress_tool_results=compress_tool_results,
             compression_manager=compression_manager,
             offload_tool_results=offload_tool_results,
+            compaction=compaction,
             metadata=metadata,
             reasoning_model=reasoning_model,
             reasoning_agent=reasoning_agent,
@@ -1687,6 +1696,32 @@ class Team:
         user_id: Optional[str] = None,
     ) -> Optional[TeamSession]:
         return await _session.aget_session(self, session_id=session_id, user_id=user_id)
+
+    def compact(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        instructions: Optional[str] = None,
+    ) -> Optional["CompactionRecord"]:
+        """Compact a session now: fold everything older than the keep tail into the running
+        summary and persist the record. Returns None when there is nothing to fold. Requires a
+        db and compaction enabled on the team."""
+        from agno.team import _compaction
+
+        return _compaction.compact_session(self, session_id=session_id, user_id=user_id, instructions=instructions)
+
+    async def acompact(
+        self,
+        session_id: Optional[str] = None,
+        user_id: Optional[str] = None,
+        instructions: Optional[str] = None,
+    ) -> Optional["CompactionRecord"]:
+        """Async variant of compact."""
+        from agno.team import _compaction
+
+        return await _compaction.acompact_session(
+            self, session_id=session_id, user_id=user_id, instructions=instructions
+        )
 
     def save_session(self, session: TeamSession) -> None:
         return _session.save_session(self, session=session)

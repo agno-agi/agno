@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from agno.compaction import Compaction
     from agno.learn.machine import LearningMachine
     from agno.offload.store import ResultStore
     from agno.team.mode import TeamMode
@@ -158,6 +159,7 @@ def __init__(
     compress_tool_results: bool = False,
     compression_manager: Optional["CompressionManager"] = None,
     offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
+    compaction: Union[bool, "Compaction", None] = False,
     metadata: Optional[Dict[str, Any]] = None,
     reasoning_model: Optional[Union[Model, str]] = None,
     reasoning_agent: Optional[Agent] = None,
@@ -240,6 +242,9 @@ def __init__(
     team.add_history_to_context = add_history_to_context
     team.num_history_runs = num_history_runs
     team.num_history_messages = num_history_messages
+    # Whether the caller set a history window explicitly (the compaction retention warning
+    # names only fields the user actually set; the num_history_runs=3 default below is not one).
+    team._history_window_explicit = num_history_runs is not None or num_history_messages is not None
     if team.num_history_messages is not None and team.num_history_runs is not None:
         log_warning("num_history_messages and num_history_runs cannot be set at the same time. Using num_history_runs.")
         team.num_history_messages = None
@@ -344,6 +349,11 @@ def __init__(
     team._result_store = None
     team._inherited_result_store = None
     team._result_store_setting = None
+
+    # Context compaction settings
+    team.compaction = compaction
+    # The resolved config the runs use (compaction=True becomes a default Compaction here)
+    team._compaction = None
 
     team.metadata = metadata
 
@@ -692,6 +702,64 @@ def _ensure_result_store(team: "Team") -> None:
     _set_result_store(team)
 
 
+def _set_compaction(team: "Team") -> None:
+    """Resolve ``team.compaction`` into the config the runs use.
+
+    The public setting keeps whatever the caller passed; ``True`` resolves to a default
+    ``Compaction()``. Nonsensical explicit knob values raise here, at init, not mid-run.
+    """
+    # Compaction and tool-result compression cannot run together: elision subsumes what
+    # compression does, and running both would double-spend model calls and interleave two
+    # rewrite mechanisms over the same tool messages. Refuse the combination loudly.
+    if team.compaction and (team.compress_tool_results or team.compression_manager is not None):
+        raise ValueError(
+            "compaction and compress_tool_results cannot be enabled together: "
+            "compaction already elides old tool results in the model view. Disable one of the two."
+        )
+    if not team.compaction:
+        team._compaction = None
+        return
+
+    from agno.compaction import Compaction
+
+    setting = team.compaction
+    if setting is True:
+        config = team._compaction if isinstance(team._compaction, Compaction) else Compaction()
+    elif isinstance(setting, Compaction):
+        config = setting
+    else:
+        raise TypeError("compaction must be True, False, None or a Compaction instance")
+    team._compaction = config
+
+    # Surface explicit config errors now: the same limits are re-resolved per run (the active
+    # model's window can change under a fallback).
+    config.resolve_limits(getattr(team.model, "context_window", None) if team.model is not None else None)
+
+    from agno.offload.setup import _warn_once
+
+    window_explicit = getattr(team, "_history_window_explicit", False)
+    ignored = [
+        name
+        for name, value in (
+            ("num_history_runs", team.num_history_runs if window_explicit else None),
+            ("num_history_messages", team.num_history_messages if window_explicit else None),
+            ("max_tool_calls_from_history", team.max_tool_calls_from_history),
+        )
+        if value is not None
+    ]
+    if ignored:
+        _warn_once(team, f"compaction owns history retention; ignoring {', '.join(ignored)}")
+
+    # A team with neither id nor name gets a random id per process, so its compaction chain
+    # would orphan on every restart (full history again, then a re-fold from scratch).
+    if team.id is None and team.name is None:
+        _warn_once(
+            team,
+            "compaction is set on a team with no id or name; set one so its compaction "
+            "records survive process restarts",
+        )
+
+
 def _set_compression_manager(team: "Team") -> None:
     if team.compress_tool_results and team.compression_manager is None:
         team.compression_manager = CompressionManager(
@@ -856,6 +924,10 @@ def initialize_team(team: "Team", debug_mode: Optional[bool] = None) -> None:
 
     # Set debug mode
     _set_debug(team, debug_mode=debug_mode)
+
+    # Before set_id: the unstable-owner check needs to see whether the user set an id or name.
+    if team.compaction or team._compaction is not None:
+        _set_compaction(team)
 
     # Set the team ID if not set
     team.set_id()

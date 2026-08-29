@@ -217,6 +217,13 @@ def _determine_tools_for_model(
         _tools.append(get_read_result_function(team, run_context=run_context, async_mode=async_mode))
         _tools.append(get_search_result_function(team, run_context=run_context, async_mode=async_mode))
 
+    # Compaction status/scheduling tools
+    if team._compaction is not None and team._compaction.expose_tools:
+        from agno.compaction._tools import get_compact_run_function, get_compact_status_function
+
+        _tools.append(get_compact_status_function(team, run_context=run_context, async_mode=async_mode))
+        _tools.append(get_compact_run_function(team, run_context=run_context, async_mode=async_mode))
+
     if team.search_past_sessions:
         _tools.append(
             _search_past_sessions_function(
