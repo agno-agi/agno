@@ -14,7 +14,9 @@ import pytest
 
 pytest.importorskip("fastmcp")
 
+import json  # noqa: E402
 import tempfile  # noqa: E402
+from base64 import b64decode  # noqa: E402
 from typing import List, Optional, Union  # noqa: E402
 
 from fastmcp import Client, Context  # noqa: E402
@@ -22,13 +24,13 @@ from fastmcp import Client, Context  # noqa: E402
 import agno.os.mcp as mcp_mod  # noqa: E402
 from agno.agent import Agent  # noqa: E402
 from agno.db.sqlite import SqliteDb  # noqa: E402
-from agno.media import Image  # noqa: E402
+from agno.media import Audio, File, Image  # noqa: E402
 from agno.os import AgentOS, MCPConfig  # noqa: E402
 from agno.os.mcp import build_mcp_server  # noqa: E402
 from agno.run import RunContext  # noqa: E402
 from agno.team.team import Team  # noqa: E402
 from agno.tools import Toolkit, tool  # noqa: E402
-from agno.tools.function import Function  # noqa: E402
+from agno.tools.function import Function, ToolResult  # noqa: E402
 
 
 def _agent(id: str = "demo-agent") -> Agent:
@@ -708,3 +710,308 @@ async def test_the_refusal_names_every_gate_the_function_sets():
 
     assert "requires_confirmation" in str(excinfo.value)
     assert "external_execution" in str(excinfo.value)
+
+
+# ==================== Schemas the signature cannot express ====================
+
+
+async def test_a_declared_schema_is_published_verbatim_for_a_kwargs_entrypoint():
+    """A dynamic toolkit carries its schema on the Function, not in the signature.
+
+    ``MCPTools`` copies each remote tool's ``inputSchema`` and ``ApifyTools`` describes an
+    actor's inputs separately; both dispatch through ``**kwargs``. FastMCP refuses to
+    introspect that -- "Functions with **kwargs are not supported as tools" -- and the
+    refusal takes the whole server down, so the declared schema is handed over directly.
+    """
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string", "description": "what to search"}, "limit": {"type": "integer"}},
+        "required": ["query"],
+    }
+
+    class Dynamic(Toolkit):
+        def __init__(self):
+            super().__init__(name="dynamic")
+
+            def run_actor(**kwargs) -> str:
+                return json.dumps(kwargs, sort_keys=True)
+
+            self.functions["run_actor"] = Function(
+                name="run_actor", description="Run the actor.", parameters=schema, entrypoint=run_actor
+            )
+
+    os = _os(Dynamic())
+    published = (await _tools_by_name(os))["run_actor"]
+    assert published.inputSchema == schema
+    async with Client(build_mcp_server(os)) as client:
+        result = await client.call_tool("run_actor", {"query": "hi", "limit": 3})
+        assert json.loads(result.content[0].text) == {"limit": 3, "query": "hi"}
+
+
+async def test_a_declared_schema_still_drops_what_the_server_fills():
+    """A hand-written schema does not get to publish a framework parameter."""
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "run_context": {"type": "object"}},
+        "required": ["query", "run_context"],
+    }
+
+    class Dynamic(Toolkit):
+        def __init__(self):
+            super().__init__(name="dyn2")
+
+            def run_actor(**kwargs) -> str:
+                return json.dumps(sorted(kwargs))
+
+            self.functions["run_actor"] = Function(
+                name="run_actor", description="Run it.", parameters=schema, entrypoint=run_actor
+            )
+
+    published = (await _tools_by_name(_os(Dynamic())))["run_actor"]
+    assert sorted(published.inputSchema["properties"]) == ["query"]
+    assert published.inputSchema["required"] == ["query"]
+
+
+async def test_a_vestigial_kwargs_catch_all_is_dropped_rather_than_refused():
+    """Named parameters beside a ``**kwargs`` still describe the tool.
+
+    ``EmailTools.email_user(subject, body, **kwargs)`` declares no schema of its own, so
+    there is nothing to publish in place of the signature -- and the catch-all alone made
+    FastMCP refuse the whole server. An MCP caller sends a JSON object, which binds to the
+    named parameters, so dropping the catch-all costs nothing.
+    """
+    from agno.tools.email import EmailTools
+
+    published = (await _tools_by_name(_os(EmailTools())))["email_user"]
+    assert sorted(published.inputSchema["properties"]) == ["body", "subject"]
+    assert sorted(published.inputSchema["required"]) == ["body", "subject"]
+
+
+# ==================== ToolResult becomes MCP content ====================
+
+_PNG = bytes.fromhex(
+    "89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000a49444154789c63600000"
+    "020001000005fe02fa0000000049454e44ae426082"
+)
+_WAV = b"RIFF$\x00\x00\x00WAVEfmt \x10\x00\x00\x00\x01\x00\x01\x00D\xac\x00\x00\x88X\x01\x00\x02\x00\x10\x00data\x00\x00\x00\x00"
+
+
+async def test_raw_image_and_audio_bytes_become_mcp_content_blocks():
+    """Raw media is not JSON. Without conversion every call raises, mid-flight.
+
+    ``PydanticSerializationError: invalid utf-8 sequence of 1 bytes from index 0`` -- the
+    tool lists fine and fails only when someone calls it.
+    """
+
+    class Studio(Toolkit):
+        def __init__(self):
+            super().__init__(name="studio", tools=[self.render])
+
+        def render(self, prompt: str) -> ToolResult:
+            """Render a picture and read it aloud."""
+            return ToolResult(
+                content=f"rendered {prompt}",
+                images=[Image(content=_PNG, mime_type="image/png")],
+                audios=[Audio(content=_WAV, mime_type="audio/wav")],
+            )
+
+    async with Client(build_mcp_server(_os(Studio()))) as client:
+        result = await client.call_tool("render", {"prompt": "a cat"})
+
+    assert [type(block).__name__ for block in result.content] == ["TextContent", "ImageContent", "AudioContent"]
+    text, image, audio = result.content
+    assert text.text == "rendered a cat"
+    assert image.mimeType == "image/png"
+    assert b64decode(image.data) == _PNG
+    assert audio.mimeType == "audio/wav"
+    assert b64decode(audio.data) == _WAV
+    # The answer is mirrored in structuredContent, as the run tools already do.
+    assert result.structured_content["content"] == "rendered a cat"
+
+
+async def test_an_async_tool_result_is_converted_too():
+    """The wrapper has two branches; a toolkit's async variant is the preferred surface."""
+
+    class AsyncStudio(Toolkit):
+        def __init__(self):
+            super().__init__(name="async_studio", tools=[self.arender])
+
+        async def arender(self, prompt: str) -> ToolResult:
+            """Render asynchronously."""
+            return ToolResult(content=f"async {prompt}", images=[Image(content=_PNG, mime_type="image/png")])
+
+    async with Client(build_mcp_server(_os(AsyncStudio()))) as client:
+        result = await client.call_tool("arender", {"prompt": "a cat"})
+
+    assert [type(block).__name__ for block in result.content] == ["TextContent", "ImageContent"]
+    assert result.content[0].text == "async a cat"
+    assert b64decode(result.content[1].data) == _PNG
+
+
+async def test_a_text_only_tool_result_reads_as_its_answer():
+    """Otherwise the caller reads the serialized model instead of the answer."""
+
+    class Plain(Toolkit):
+        def __init__(self):
+            super().__init__(name="plain", tools=[self.ask])
+
+        def ask(self, q: str) -> ToolResult:
+            """Answer a question."""
+            return ToolResult(content=f"answer: {q}", metadata={"source": "cache"})
+
+    async with Client(build_mcp_server(_os(Plain()))) as client:
+        result = await client.call_tool("ask", {"q": "hi"})
+
+    assert [type(block).__name__ for block in result.content] == ["TextContent"]
+    assert result.content[0].text == "answer: hi"
+    assert result.structured_content == {"content": "answer: hi", "metadata": {"source": "cache"}}
+
+
+async def test_files_and_video_travel_as_embedded_resources():
+    """MCP types text, images and audio; everything else carrying bytes is a blob."""
+
+    class Generator(Toolkit):
+        def __init__(self):
+            super().__init__(name="generator", tools=[self.make])
+
+        def make(self, name: str) -> ToolResult:
+            """Generate a file."""
+            return ToolResult(
+                content="generated",
+                files=[File(content=b"col_a,col_b\n1,2\n", mime_type="text/csv", filename=name)],
+            )
+
+    async with Client(build_mcp_server(_os(Generator()))) as client:
+        result = await client.call_tool("make", {"name": "rows.csv"})
+
+    assert [type(block).__name__ for block in result.content] == ["TextContent", "EmbeddedResource"]
+    resource = result.content[1].resource
+    assert resource.mimeType == "text/csv"
+    assert b64decode(resource.blob) == b"col_a,col_b\n1,2\n"
+    assert "rows.csv" in str(resource.uri)
+
+
+async def test_a_url_only_artifact_is_skipped_rather_than_faked():
+    """The bytes are not in hand, and fetching them is not this layer's job."""
+
+    class Linker(Toolkit):
+        def __init__(self):
+            super().__init__(name="linker", tools=[self.find])
+
+        def find(self, q: str) -> ToolResult:
+            """Find a picture."""
+            return ToolResult(content="found one", images=[Image(url="https://example.test/a.png")])
+
+    async with Client(build_mcp_server(_os(Linker()))) as client:
+        result = await client.call_tool("find", {"q": "cat"})
+
+    assert [type(block).__name__ for block in result.content] == ["TextContent"]
+    assert result.content[0].text == "found one"
+
+
+async def test_a_shipped_tool_result_toolkit_round_trips():
+    """End to end on a shipped toolkit, which is where this actually bit."""
+    from agno.tools.file_generation import FileGenerationTools
+
+    os = _os(FileGenerationTools())
+    assert "generate_text_file" in await _tools_by_name(os)
+    async with Client(build_mcp_server(os)) as client:
+        result = await client.call_tool("generate_text_file", {"content": "hello", "filename": "a.txt"})
+
+    kinds = [type(block).__name__ for block in result.content]
+    assert kinds[0] == "TextContent" and "EmbeddedResource" in kinds
+    # The answer, not a dump of the ToolResult model.
+    assert result.content[0].text.startswith("Text file 'a.txt' generated")
+
+
+# ==================== Toolkit lifecycle ====================
+
+
+async def test_a_connect_requiring_toolkit_publishes_the_functions_it_already_has():
+    """``_requires_connect`` toolkits register at construction and connect on use.
+
+    ``PostgresTools`` is the shipped example: its functions exist before any connection,
+    and each one calls ``_ensure_connection`` itself. The MCP path does not connect for
+    it, and does not need to.
+    """
+
+    class Connectable(Toolkit):
+        def __init__(self):
+            super().__init__(name="connectable", tools=[self.read_row])
+            self._requires_connect = True
+            self.connections = 0
+
+        def connect(self):
+            self.connections += 1
+
+        def read_row(self, table: str) -> str:
+            """Read a row, connecting on demand."""
+            if not self.connections:
+                self.connect()
+            return f"{table}:{self.connections}"
+
+    kit = Connectable()
+    os = _os(kit)
+    assert set(await _tools_by_name(os)) == {"read_row"}
+    async with Client(build_mcp_server(os)) as client:
+        assert (await client.call_tool("read_row", {"table": "t"})).content[0].text == "t:1"
+
+
+async def test_a_toolkit_that_discovers_during_connect_is_refused_by_name():
+    """Nothing is published, so say which knob actually applies.
+
+    ``MCPTools`` registers its tools inside ``connect()``. The MCP server does not run a
+    toolkit's connection lifecycle, so such a toolkit reaches registration empty -- and the
+    advice has to name connecting, not the filters, which cannot conjure a function.
+    """
+
+    class LateBound(Toolkit):
+        def __init__(self):
+            super().__init__(name="late")
+            self.connected = False
+
+        def connect(self):
+            self.connected = True
+            self.register(self.discovered)
+
+        def discovered(self, q: str) -> str:
+            """Only exists after connect()."""
+            return q
+
+    kit = LateBound()
+    with pytest.raises(ValueError) as excinfo:
+        build_mcp_server(_os(kit))
+
+    message = str(excinfo.value)
+    assert "registers no functions" in message
+    assert "connect" in message.lower()
+    assert kit.connected is False
+
+    # Connected first, it publishes normally -- the documented way to serve one today.
+    kit.connect()
+    assert set(await _tools_by_name(_os(kit))) == {"discovered"}
+
+
+# ==================== State across calls ====================
+
+
+async def test_a_stateful_method_gets_a_fresh_context_per_call():
+    """Each MCP call is its own run: isolated, and deliberately not continuous.
+
+    ``ReasoningTools.think`` accumulates into ``run_context.session_state``. An MCP call has
+    no run behind it, so every call is handed a fresh context -- two calls cannot see each
+    other, and neither can two callers. Pinning it here because the isolation is the safe
+    half of the trade and the discontinuity is the documented cost: nothing silently
+    inherits another call's state.
+    """
+    from agno.tools.reasoning import ReasoningTools
+
+    os = _os(ReasoningTools())
+    async with Client(build_mcp_server(os)) as client:
+        first = (await client.call_tool("think", {"title": "one", "thought": "alpha"})).content[0].text
+        second = (await client.call_tool("think", {"title": "two", "thought": "beta"})).content[0].text
+
+    assert "alpha" in first and "beta" in second
+    # The second call neither sees nor renumbers after the first.
+    assert "alpha" not in second
+    assert first.startswith("Step 1:") and second.startswith("Step 1:")

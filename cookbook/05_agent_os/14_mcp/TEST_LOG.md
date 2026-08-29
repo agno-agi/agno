@@ -237,6 +237,8 @@ rejected by FastMCP as an unexpected keyword argument, which is the point of
 hiding it rather than merely omitting it from the docs. The server was stopped
 and the SQLite file removed afterwards.
 
+---
+
 ## Validation
 
 - All three credential-independent server/client paths completed with live

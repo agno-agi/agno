@@ -104,7 +104,14 @@ class MCPConfig(BaseModel):
     # An MCP call runs the tool directly, so the approval step a Function can declare
     # (``requires_confirmation``, ``requires_user_input``, ``external_execution``) would be
     # skipped. Such a tool is refused when the server is built rather than published
-    # without its gate.
+    # without its gate. The rest of ``FunctionCall``'s machinery is inert here for the same
+    # reason and is NOT refused: tool hooks, pre/post hooks, and result caching
+    # (``cache_results``) simply do not run on this surface.
+    #
+    # A tool returning an Agno ``ToolResult`` has it rendered as MCP content -- the answer
+    # as text, images and audio as their own block types, videos and files as embedded
+    # blob resources -- rather than JSON-serialized, which loses the answer in a dump of
+    # the model and fails outright on raw bytes.
     tools: Optional[List[Any]] = None
 
     # Master switch for the 8 default tools. Set to False to ship only your own
