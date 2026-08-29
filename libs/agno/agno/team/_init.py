@@ -970,3 +970,19 @@ def _disconnect_connectable_tools(team: "Team") -> None:
             except Exception as e:
                 log_warning(f"Error disconnecting tool: {str(e)}")
     team._connectable_tools_initialized_on_run = []
+
+
+async def _adisconnect_connectable_tools(team: "Team") -> None:
+    """Disconnect tools that require connection management in async execution."""
+    for tool in team._connectable_tools_initialized_on_run:  # type: ignore[union-attr]
+        try:
+            aclose = getattr(tool, "aclose", None)
+            if callable(aclose):
+                await aclose()
+                continue
+            close = getattr(tool, "close", None)
+            if callable(close):
+                close()
+        except Exception as e:
+            log_warning(f"Error disconnecting tool: {str(e)}")
+    team._connectable_tools_initialized_on_run = []

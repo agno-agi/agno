@@ -384,3 +384,19 @@ def disconnect_connectable_tools(agent: Agent) -> None:
             except Exception as e:
                 log_warning(f"Error disconnecting tool: {str(e)}")
     agent._connectable_tools_initialized_on_run = []
+
+
+async def adisconnect_connectable_tools(agent: Agent) -> None:
+    """Disconnect tools that require connection management in async execution."""
+    for tool in agent._connectable_tools_initialized_on_run:
+        try:
+            aclose = getattr(tool, "aclose", None)
+            if callable(aclose):
+                await aclose()
+                continue
+            close = getattr(tool, "close", None)
+            if callable(close):
+                close()
+        except Exception as e:
+            log_warning(f"Error disconnecting tool: {str(e)}")
+    agent._connectable_tools_initialized_on_run = []

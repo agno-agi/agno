@@ -2133,7 +2133,7 @@ async def _arun_tasks(
     the goal is complete or max_iterations is reached.
     """
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _adisconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._managers import _astart_learning_task, _astart_memory_task
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
@@ -2471,7 +2471,7 @@ async def _arun_tasks(
         return run_response
 
     finally:
-        _disconnect_connectable_tools(team)
+        await _adisconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)
         # Cancel background tasks on error
         for task in (memory_task, learning_task):
@@ -2509,7 +2509,7 @@ async def _arun_tasks_stream(
     for each iteration.
     """
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _adisconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._managers import _astart_learning_task, _astart_memory_task
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
@@ -3020,7 +3020,7 @@ async def _arun_tasks_stream(
         yield run_error
 
     finally:
-        _disconnect_connectable_tools(team)
+        await _adisconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)
 
         # Cancel background tasks on error
@@ -3075,7 +3075,7 @@ async def _arun(
     13. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _adisconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._managers import _astart_learning_task, _astart_memory_task
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
@@ -3425,7 +3425,7 @@ async def _arun(
                 return run_response
     finally:
         # Always disconnect connectable tools
-        _disconnect_connectable_tools(team)
+        await _adisconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)
 
         # Cancel background task on error (await_for_open_threads handles waiting on success)
@@ -3787,7 +3787,7 @@ async def _arun_stream(
     10. Cleanup and store (scrub, add to session, calculate metrics, save session)
     """
     from agno.team._hooks import _aexecute_post_hooks, _aexecute_pre_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _adisconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._managers import _astart_learning_task, _astart_memory_task
     from agno.team._messages import _aget_run_messages
     from agno.team._response import (
@@ -4247,7 +4247,7 @@ async def _arun_stream(
 
     finally:
         # Always disconnect connectable tools
-        _disconnect_connectable_tools(team)
+        await _adisconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)
 
         # Cancel background task on error (await_for_thread_tasks_stream handles waiting on success)
@@ -9457,7 +9457,7 @@ async def _acontinue_run(
 ) -> TeamRunOutput:
     """Continue a paused team run (async, non-streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _adisconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._telemetry import alog_team_telemetry
     from agno.team._tools import _aget_learning_tools, _check_and_refresh_mcp_tools, _determine_tools_for_model
 
@@ -9906,7 +9906,7 @@ async def _acontinue_run(
                 return run_response
 
     finally:
-        _disconnect_connectable_tools(team)
+        await _adisconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)  # type: ignore
         if run_response and run_response.run_id:
             await acleanup_run(run_response.run_id)
@@ -9937,7 +9937,7 @@ async def _acontinue_run_stream(
 ) -> AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]:
     """Continue a paused team run (async, streaming)."""
     from agno.team._hooks import _aexecute_post_hooks
-    from agno.team._init import _disconnect_connectable_tools, _disconnect_mcp_tools
+    from agno.team._init import _adisconnect_connectable_tools, _disconnect_mcp_tools
     from agno.team._response import (
         _ahandle_model_response_stream,
         agenerate_response_with_output_model_stream,
@@ -10622,7 +10622,7 @@ async def _acontinue_run_stream(
                     yield run_response
 
     finally:
-        _disconnect_connectable_tools(team)
+        await _adisconnect_connectable_tools(team)
         await _disconnect_mcp_tools(team)  # type: ignore
         if run_response and run_response.run_id:
             await acleanup_run(run_response.run_id)
