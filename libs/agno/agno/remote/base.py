@@ -424,18 +424,29 @@ class BaseRemote:
         else:
             raise ValueError(f"Invalid protocol: {protocol}")
 
-    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
-        """Publish this remote component as a tool with its own model-facing name and
-        description, for surfaces that turn components into tools -- today the AgentOS
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this remote component as a tool with its own model-facing name,
+        description, title, and behaviour annotations, for surfaces that turn components into tools -- today the AgentOS
         MCP server: ``MCPConfig(tools=[remote.as_tool(name=..., description=...)])``.
-        Both overrides are optional. A remote component's id comes from the remote
+        Every override is optional. A remote component's id comes from the remote
         deployment, so ``name=`` is how the local deployment renames the published
         tool without touching that id (which remains the continue_run handle and the
         scope segment).
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
         """
         from agno.tools.component import ComponentTool
 
-        return ComponentTool(component=self, name=name, description=description)
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     def get_os_client(self) -> "AgentOSClient":
         """Get an AgentOSClient for fetching remote configuration.

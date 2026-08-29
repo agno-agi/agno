@@ -734,19 +734,31 @@ class Workflow:
                 "History won't be persisted. Add a database to persist runs across executions. "
             )
 
-    def as_tool(self, name: Optional[str] = None, description: Optional[str] = None) -> "ComponentTool":
-        """Publish this workflow as a tool with its own model-facing name and description.
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this workflow as a tool with its own model-facing name, description,
+        title, and behaviour annotations.
 
         Returns a declarative :class:`~agno.tools.component.ComponentTool` marker
         for surfaces that turn components into tools -- today the AgentOS MCP server:
-        ``MCPConfig(tools=[brief.as_tool(name="ask_brief", description=...)])``. Both
-        overrides are optional; the tool name must be a valid tool identifier (start
+        ``MCPConfig(tools=[brief.as_tool(name="ask_brief", description=...)])``. Every
+        override is optional; the tool name must be a valid tool identifier (start
         with a letter or underscore, then letters/digits/hyphens/underscores). The
         workflow id remains the continue_run handle and the scope segment.
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
         """
         from agno.tools.component import ComponentTool
 
-        return ComponentTool(component=self, name=name, description=description)
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     def set_id(self) -> None:
         if self.id is None:

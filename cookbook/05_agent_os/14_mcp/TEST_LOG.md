@@ -8,7 +8,8 @@ Tested on 2026-07-24 against Agno source commit
 `MCPConfig` / `default_tools` spellings (behavior unchanged; the old spellings
 remain accepted aliases). Re-run LIVE on 2026-08-28 after the lifecycle
 ride-along and the review-round fixes landed; the entry below records the
-2026-08-28 run.
+2026-08-28 run. Re-run LIVE again on 2026-08-30 after tool presentation
+metadata (`title`, `annotations`) landed -- see the entry below the first.
 
 ### agents_as_tools.py
 
@@ -37,6 +38,59 @@ recalled "Earth", proving live session continuity through the exposed tool.
 The same re-run verified the publication bound on the riding pair:
 `cancel_run` acted on the published `researcher` but refused an id outside
 the publication list with the "published components" error.
+
+---
+
+### agents_as_tools.py (tool presentation metadata)
+
+**Status:** PASS
+
+**Test mode:** LIVE (2026-08-30)
+
+**Description:** Re-ran the checked-in server after `title` / `annotations`
+landed on `as_tool`, and drove it with a FastMCP streamable-HTTP client:
+listed tools and read the presentation each one publishes, then called both
+exposed tools.
+
+**Result:** `tools/list` returned `chief`, `deep_research`, `continue_run`,
+`cancel_run`. `chief` (bare) titled itself from the agent name and carried
+the published-component defaults (`readOnlyHint` false, `destructiveHint`
+true, `openWorldHint` true). `deep_research` carried the cookbook's
+`title="Deep Research"` and its annotation override (`readOnlyHint` true,
+`destructiveHint` false) merged over those defaults, with `openWorldHint`
+still true from the default. Every tool's title also appeared in
+`annotations.title`, so a client reading either slot shows the same name.
+`deep_research` then ran to COMPLETED with a minted session and answered the
+question; `chief` ran to COMPLETED.
+
+---
+
+### agents_as_tools.py (corrected annotations)
+
+**Status:** PASS
+
+**Test mode:** LIVE (2026-08-30, second run)
+
+**Description:** Re-ran after two corrections: the cookbook's `deep_research`
+override no longer claims `readOnlyHint` (a run writes a session row and a run
+row, so the claim was false), and every tool the server composes now states all
+three of `readOnlyHint`, `destructiveHint`, and `openWorldHint` rather than
+leaving the ones that "do not apply" unset.
+
+**Result:** `tools/list` returned `chief`, `deep_research`, `continue_run`,
+`cancel_run`, and every one carried all three hints with no gaps:
+`chief` false/true/true (published-component defaults), `deep_research`
+false/false/true plus `idempotentHint` false (its override now refines the
+default instead of contradicting it -- it appends to its own session and
+destroys nothing), `continue_run` false/true/true, `cancel_run` false/true/false
+(it writes this deployment's own run state and reaches nothing external).
+`deep_research` ran to COMPLETED.
+
+Re-run again the same day after `cancel_run` was corrected to
+`openWorldHint` true (cancelling a Remote* component's run is an outbound
+call to that deployment, so "reaches nothing external" was wrong): the four
+tools published false/true/true, false/true/true, false/true/true, and
+false/false/true respectively, with no hint left unset.
 
 ---
 
@@ -86,6 +140,10 @@ called `ask_workspace` through a FastMCP streamable-HTTP client with a live
 
 **Result:** The server exposed exactly one tool, `ask_workspace`, with no
 built-ins. The call returned the requested exact response, `custom MCP works`.
+Re-run on 2026-08-30 after the example began declaring its presentation: the
+tool published title "Ask the Workspace Agent" and all three hints
+(`readOnlyHint` false -- the run persists a session, `destructiveHint` false,
+`openWorldHint` true -- the agent calls a model over the network).
 
 ---
 
