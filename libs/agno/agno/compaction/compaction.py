@@ -328,6 +328,9 @@ class PassPlan:
     call_instructions: Optional[str] = None
     untrusted_instructions: Optional[str] = None
     segment_message_count: int = 0
+    # Prepare-time estimate of the post-pass view (kept slice; the fold's summary pair is added at
+    # record time). A live in-run activation overwrites the stat with the gauge's real reading.
+    tokens_after_estimate: Optional[int] = None
 
 
 def prepare_pass(
@@ -428,6 +431,7 @@ def prepare_pass(
                 previous_summary=previous_record.summary if previous_record else None,
                 notice=notice if notice else (previous_record.notice if previous_record else None),
                 tokens_before=tokens_before,
+                tokens_after_estimate=elided_estimate,
             )
 
     boundary_index = choose_boundary(
@@ -443,6 +447,11 @@ def prepare_pass(
     rendered = render_segment(segment)
     if not rendered.strip():
         return None
+    kept_trial = CompactionRecord()
+    kept_trial.elision_watermark_message_id = watermark_id
+    kept_tokens = estimate_tokens(
+        build_view(messages[:lead] + messages[boundary_index:], kept_trial, elide_exclude_tools=config.elide_exclude_tools)
+    )
     return PassPlan(
         reason=reason,
         created_by_run_id=created_by_run_id,
@@ -458,6 +467,7 @@ def prepare_pass(
         call_instructions=call_instructions,
         untrusted_instructions=untrusted_instructions,
         segment_message_count=len(segment),
+        tokens_after_estimate=kept_tokens,
     )
 
 
@@ -487,6 +497,17 @@ def _record_from_plan(
         "summarizer_model_id": model_id,
         "duration_ms": duration_ms,
     }
+    if plan.tokens_after_estimate is not None:
+        tokens_after = plan.tokens_after_estimate
+        if not plan.elision_only:
+            from agno.compaction._tokens import estimate_tokens
+            from agno.compaction._view import notice_message, summary_message
+
+            injected = [summary_message(record)]
+            if record.notice:
+                injected.append(notice_message(record))
+            tokens_after += estimate_tokens(injected)
+        record.stats["tokens_after"] = tokens_after
     return record
 
 

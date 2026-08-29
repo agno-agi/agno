@@ -176,6 +176,29 @@ class TestCompletePass:
         assert record.stats["tokens_before"] == plan.tokens_before
         assert len(model.calls) == 1
 
+    def test_fold_record_estimates_tokens_after(self):
+        # Records that never activate in-run (build-time and next-run commits) still carry a
+        # usable tokens_after: the kept slice plus the injected summary pair, estimated at
+        # completion. An in-run activation later overwrites it with the gauge's live reading.
+        config, plan = self._fold_plan()
+        record = complete_pass(plan, config=config, model=StubModel())
+        tokens_after = record.stats["tokens_after"]
+        assert tokens_after is not None and tokens_after > 0
+        assert tokens_after < plan.tokens_before
+
+    def test_elision_only_record_estimates_tokens_after(self):
+        config, limits = small_config()
+        messages = [Message(role="system", content="sys")]
+        for index in range(4):
+            messages += tool_batch(f"c{index}", 500)
+        messages.append(user(long_text(100)))
+        plan = prepare_pass(config, limits, messages, reason="threshold")
+        assert plan is not None and plan.elision_only
+        record = complete_pass(plan, config=config, model=None)
+        tokens_after = record.stats["tokens_after"]
+        assert tokens_after is not None and 0 < tokens_after <= limits.trigger_tokens
+        assert tokens_after < plan.tokens_before
+
     def test_async_twin(self):
         import asyncio
 
