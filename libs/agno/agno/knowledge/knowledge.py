@@ -2210,6 +2210,23 @@ class Knowledge(RemoteKnowledge):
 
         for source_url, source_docs in docs_by_source.items():
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
+            if child.id == content.id:
+                # A document whose URL is the insert URL itself (e.g. an llms.txt overview)
+                # hashes to the site row's own id. Its vectors stay under the site hash as
+                # before; it must not become a child row or the prune pass would eat the site.
+                if error is None:
+                    self._prepare_documents_for_insert(source_docs, content.id, calculate_sizes=True)  # type: ignore[arg-type]
+                    try:
+                        owner_kwargs = strict_user_id_kwarg(self.vector_db.async_insert, content.user_id)
+                        await self.vector_db.async_insert(
+                            content.content_hash,  # type: ignore[arg-type]
+                            documents=source_docs,
+                            filters=strip_agno_metadata(content.metadata),
+                            **owner_kwargs,
+                        )
+                    except Exception as e:
+                        log_error(f"Error inserting overview document from {source_url}: {str(e)}")
+                continue
             child_ids.append(child.id)  # type: ignore[arg-type]
             if source_kind is None and doc_source:
                 source_kind = doc_source
@@ -2283,6 +2300,8 @@ class Knowledge(RemoteKnowledge):
 
         # Pages that left the site since the previous run disappear with it
         current_ids = set(child_ids)
+        if content.id:
+            current_ids.add(content.id)  # never prune the site row itself
         for stale_id in previous_children:
             if stale_id not in current_ids:
                 try:
@@ -2317,6 +2336,21 @@ class Knowledge(RemoteKnowledge):
 
         for source_url, source_docs in docs_by_source.items():
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
+            if child.id == content.id:
+                # See the matching branch in _aload_url_page_groups.
+                if error is None:
+                    self._prepare_documents_for_insert(source_docs, content.id, calculate_sizes=True)  # type: ignore[arg-type]
+                    try:
+                        owner_kwargs = strict_user_id_kwarg(self.vector_db.insert, content.user_id)
+                        self.vector_db.insert(
+                            content.content_hash,  # type: ignore[arg-type]
+                            documents=source_docs,
+                            filters=strip_agno_metadata(content.metadata),
+                            **owner_kwargs,
+                        )
+                    except Exception as e:
+                        log_error(f"Error inserting overview document from {source_url}: {str(e)}")
+                continue
             child_ids.append(child.id)  # type: ignore[arg-type]
             if source_kind is None and doc_source:
                 source_kind = doc_source
@@ -2390,6 +2424,8 @@ class Knowledge(RemoteKnowledge):
 
         # Pages that left the site since the previous run disappear with it
         current_ids = set(child_ids)
+        if content.id:
+            current_ids.add(content.id)  # never prune the site row itself
         for stale_id in previous_children:
             if stale_id not in current_ids:
                 try:

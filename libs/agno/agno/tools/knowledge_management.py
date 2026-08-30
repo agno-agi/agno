@@ -116,10 +116,14 @@ class KnowledgeManagementTools(Toolkit):
         content = Content(url=url, user_id=owner)
         return generate_id(self.knowledge._build_content_hash(content))
 
-    def _predict_text_row_id(self, name: str, metadata: Optional[Dict[str, Any]], owner: Optional[str]) -> str:
+    def _predict_text_row_id(
+        self, name: str, text: str, metadata: Optional[Dict[str, Any]], owner: Optional[str]
+    ) -> str:
+        # Mirror the Content shape ainsert(text_content=...) builds — the file_data branch of
+        # the hash only engages when content is non-empty, so the real text goes in.
         content = Content(
             name=name,
-            file_data=FileData(content="", type="Text"),
+            file_data=FileData(content=text, type="Text"),
             metadata=strip_agno_metadata(metadata),
             user_id=owner,
         )
@@ -225,7 +229,7 @@ class KnowledgeManagementTools(Toolkit):
         owner = self._owner_id(run_context)
         try:
             self.knowledge.insert(name=name, text_content=text, metadata=metadata, user_id=owner)
-            row_id = self._predict_text_row_id(name, metadata, owner)
+            row_id = self._predict_text_row_id(name, text, metadata, owner)
             return json.dumps({"ok": True, "id": row_id, "name": name})
         except Exception as e:
             log_error(f"ingest_text failed for {name}: {e}")
@@ -247,7 +251,7 @@ class KnowledgeManagementTools(Toolkit):
         owner = self._owner_id(run_context)
         try:
             await self.knowledge.ainsert(name=name, text_content=text, metadata=metadata, user_id=owner)
-            row_id = self._predict_text_row_id(name, metadata, owner)
+            row_id = self._predict_text_row_id(name, text, metadata, owner)
             return json.dumps({"ok": True, "id": row_id, "name": name})
         except Exception as e:
             log_error(f"ingest_text failed for {name}: {e}")
@@ -280,7 +284,9 @@ class KnowledgeManagementTools(Toolkit):
                     }
                 )
             else:
-                other.append({"id": row.id, "name": row.name, "type": row.file_type, "status": self._status_value(row.status)})
+                other.append(
+                    {"id": row.id, "name": row.name, "type": row.file_type, "status": self._status_value(row.status)}
+                )
         if host:
             needle = host.lower()
             sites = [site for site in sites if needle in (site["name"] or "").lower()]

@@ -54,7 +54,9 @@ operator = Agent(
 # Run Demo
 # ---------------------------------------------------------------------------
 async def main() -> None:
-    await operator.aprint_response("Load https://docs.agno.com into the knowledge base.")
+    await operator.aprint_response(
+        "Load https://docs.agno.com into the knowledge base."
+    )
     await operator.aprint_response("What do we have loaded now?")
 
 

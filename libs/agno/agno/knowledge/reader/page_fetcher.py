@@ -85,9 +85,7 @@ class PageFetcher(Protocol):
 
     def fetch_many(self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None) -> List[FetchedPage]: ...
 
-    async def afetch_many(
-        self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None
-    ) -> List[FetchedPage]: ...
+    async def afetch_many(self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None) -> List[FetchedPage]: ...
 
 
 def extract_page_text(html: str) -> str:
@@ -160,9 +158,7 @@ class HttpxPageFetcher:
         with httpx.Client(timeout=self.timeout, proxy=self.proxy, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
             return [self._fetch_one(client, url, allowed_hosts) for url in urls]
 
-    async def afetch_many(
-        self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None
-    ) -> List[FetchedPage]:
+    async def afetch_many(self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None) -> List[FetchedPage]:
         guard = make_async_redirect_guard(allowed_hosts)
         event_hooks = {"request": [guard]} if guard else None
         semaphore = asyncio.Semaphore(self.concurrency)
@@ -239,9 +235,7 @@ class ParallelPageFetcher:
 
     # --- async ---
 
-    async def afetch_many(
-        self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None
-    ) -> List[FetchedPage]:
+    async def afetch_many(self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None) -> List[FetchedPage]:
         if self.backend is None:
             return await self.fallback.afetch_many(urls, allowed_hosts=allowed_hosts)
 
@@ -271,9 +265,7 @@ class ParallelPageFetcher:
                         pages = await self.backend.afetch_many(batch, max_chars=self.max_chars)  # type: ignore[union-attr]
                         state["consecutive_rate_limits"] = 0
                         for page in pages:
-                            page.attempts = attempts + [
-                                {"extractor": page.extractor, "outcome": page.error or "ok"}
-                            ]
+                            page.attempts = attempts + [{"extractor": page.extractor, "outcome": page.error or "ok"}]
                         return pages
                     except RateLimited as e:
                         attempts.append({"extractor": self.extractor_id, "outcome": "rate-limited"})
@@ -300,8 +292,10 @@ class ParallelPageFetcher:
             return pages
 
         batches = [fetchable[i : i + self.batch_size] for i in range(0, len(fetchable), self.batch_size)]
+        fallback_extractor = getattr(self.fallback, "extractor_id", "httpx")
         for batch_pages in await asyncio.gather(*[fetch_batch(batch) for batch in batches]):
-            retry_urls = [page.url for page in batch_pages if not page.ok]
+            # Pages the fallback already produced have nowhere further to fall
+            retry_urls = [page.url for page in batch_pages if not page.ok and page.extractor != fallback_extractor]
             retry_pages: Dict[str, FetchedPage] = {}
             if retry_urls:
                 # Pages the provider could not serve fall through to the fallback one level.
@@ -309,7 +303,7 @@ class ParallelPageFetcher:
                     retry_pages[fallback_page.url] = fallback_page
             for page in batch_pages:
                 replacement = retry_pages.get(page.url)
-                if replacement is not None and page.extractor != getattr(self.fallback, "extractor_id", "httpx"):
+                if replacement is not None:
                     replacement.attempts = page.attempts + replacement.attempts
                     results[page.url] = replacement
                 else:
@@ -347,9 +341,7 @@ class ParallelPageFetcher:
                         batch_pages = self.backend.fetch_many(batch, max_chars=self.max_chars)
                         consecutive_rate_limits = 0
                         for page in batch_pages:
-                            page.attempts = attempts + [
-                                {"extractor": page.extractor, "outcome": page.error or "ok"}
-                            ]
+                            page.attempts = attempts + [{"extractor": page.extractor, "outcome": page.error or "ok"}]
                         break
                     except RateLimited as e:
                         attempts.append({"extractor": self.extractor_id, "outcome": "rate-limited"})
@@ -372,14 +364,16 @@ class ParallelPageFetcher:
                 for page in batch_pages:
                     page.attempts = attempts + page.attempts
 
-            retry_urls = [page.url for page in batch_pages if not page.ok]
+            fallback_extractor = getattr(self.fallback, "extractor_id", "httpx")
+            # Pages the fallback already produced have nowhere further to fall
+            retry_urls = [page.url for page in batch_pages if not page.ok and page.extractor != fallback_extractor]
             retry_pages: Dict[str, FetchedPage] = {}
             if retry_urls:
                 for fallback_page in self.fallback.fetch_many(retry_urls, allowed_hosts=allowed_hosts):
                     retry_pages[fallback_page.url] = fallback_page
             for page in batch_pages:
                 replacement = retry_pages.get(page.url)
-                if replacement is not None and page.extractor != getattr(self.fallback, "extractor_id", "httpx"):
+                if replacement is not None:
                     replacement.attempts = page.attempts + replacement.attempts
                     results[page.url] = replacement
                 else:

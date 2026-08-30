@@ -561,9 +561,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
-        parent_id: Optional[str] = Query(
-            default=None, description="Only page rows of this site row (exact id match)"
-        ),
+        parent_id: Optional[str] = Query(default=None, description="Only page rows of this site row (exact id match)"),
     ) -> PaginatedResponse[ContentResponseSchema]:
         knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
@@ -587,9 +585,7 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
             )
             matched = [
-                content
-                for content in all_contents
-                if get_agno_metadata(content.metadata, "parent_id") == parent_id
+                content for content in all_contents if get_agno_metadata(content.metadata, "parent_id") == parent_id
             ]
             count = len(matched)
             page_number = page or 1

@@ -62,8 +62,8 @@ def canonical_page_url(url: str) -> str:
         if path.endswith(suffix):
             path = path[: -len(suffix)]
             break
-    if path != "/":
-        path = path.rstrip("/")
+    # The site root's two spellings ("" and "/") must canonicalise identically
+    path = path.rstrip("/")
 
     scheme = (parsed.scheme or "https").lower()
     host = (parsed.netloc or "").lower()

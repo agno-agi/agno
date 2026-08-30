@@ -167,9 +167,7 @@ class ParallelMCPBackend(ContextBackend):
             if content:
                 pages.append(FetchedPage(url=url, content=content, title=title, extractor=self.extractor_id))
             else:
-                pages.append(
-                    FetchedPage(url=url, error=errors_by_url.get(url, "empty"), extractor=self.extractor_id)
-                )
+                pages.append(FetchedPage(url=url, error=errors_by_url.get(url, "empty"), extractor=self.extractor_id))
         return pages
 
     async def afetch_many(self, urls: list, *, max_chars: int = 50_000) -> list:
@@ -213,7 +211,9 @@ class ParallelMCPBackend(ContextBackend):
         if result.isError:
             if rate_limit_from_text(text):
                 raise RateLimited(text[:300])
-            return [FetchedPage(url=url, error=(text or "tool error")[:300], extractor=self.extractor_id) for url in urls]
+            return [
+                FetchedPage(url=url, error=(text or "tool error")[:300], extractor=self.extractor_id) for url in urls
+            ]
 
         try:
             payload = json.loads(text) if text else {}
