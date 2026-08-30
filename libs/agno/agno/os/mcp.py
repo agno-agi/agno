@@ -202,7 +202,6 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
     names: Dict[str, str] = {}
     for tool in entries:
         if isinstance(tool, Toolkit):
-            _reject_unconnected_toolkit(tool)
             # ``get_async_functions()`` is the merged surface with async variants
             # preferred -- the same set an agent running in async mode would get --
             # already filtered by the toolkit's include_tools/exclude_tools.
@@ -227,43 +226,6 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
         names[name] = label
         taken[name] = label
     return names
-
-
-def _reject_unconnected_toolkit(toolkit: Any) -> None:
-    """Refuse a toolkit that declares it needs a connection this server never opens.
-
-    An agent connects a ``_requires_connect`` toolkit before its first call and closes it
-    afterwards. The MCP server runs each tool call directly and has no equivalent moment,
-    so a toolkit relying on that lifecycle runs unconnected and is never torn down.
-    ``CodeMode`` is the sharp case: its kernel is keyed by ``session_id``, and an MCP call
-    mints a fresh one every time, so a deployment would start a kernel per call, lose the
-    state each one was for, and never flush a snapshot.
-
-    A toolkit that reports a live connection is served: ``PostgresTools`` connected by the
-    deployer is exactly as usable here as anywhere. One that cannot report one is refused
-    rather than quietly half-working -- the deployer can still publish its functions
-    individually, which says "I know what this needs" in a way passing the toolkit does not.
-    """
-    if not getattr(toolkit, "_requires_connect", False):
-        return
-    try:
-        connected = bool(getattr(toolkit, "is_connected", False))
-    except Exception:
-        connected = False
-    if connected:
-        return
-    if hasattr(type(toolkit), "is_connected"):
-        remedy = f'Connect it before the server is built ("{toolkit.name}".connect()), or drop it from tools=.'
-    else:
-        remedy = (
-            "It cannot report a live connection, so this server cannot know it is usable. Pass the "
-            "functions you want individually (tools=[*toolkit.get_async_functions().values()]) if you "
-            "are managing its lifecycle yourself."
-        )
-    raise ValueError(
-        f'MCPConfig.tools got toolkit "{toolkit.name}", which requires a connection the MCP server does '
-        f"not manage: it runs each tool call directly, so connect() and close() never fire. {remedy}"
-    )
 
 
 def _collision_free_advice(colliding_name: str, enabled_tags: "Optional[set]") -> str:

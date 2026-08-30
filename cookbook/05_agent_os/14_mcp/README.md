@@ -147,11 +147,13 @@ authorization: without `AgentOS(authorization=True, ...)` there is no JWT
 subject, the resolved caller is `None`, and every client shares one identity.
 Configure authorization before serving a toolkit whose data is per-user.
 
-A toolkit that declares it needs a connection (`_requires_connect`) is refused
-unless it reports a live one: this server runs each call directly, so
-`connect()` and `close()` never fire. Connect it before building the server, or
-publish its functions individually (`tools=[*kit.get_async_functions().values()]`)
-and own the lifecycle yourself.
+This server runs each tool call directly, so a toolkit's `connect()` and
+`close()` never fire and every call is handed a fresh `RunContext`. The shipped
+connection-managing toolkits (`PostgresTools`, `RedshiftTools`) connect
+themselves on use and are unaffected. A toolkit whose state is keyed on the run
+is not: `CodeMode` keys its kernel by `session_id`, so over MCP it would start a
+kernel per call and accumulate nothing. Serve that one over REST, where a run
+owns the session.
 
 A tool whose approval gate this surface cannot honour is refused at startup
 rather than published without it. `requires_confirmation`, `requires_user_input`

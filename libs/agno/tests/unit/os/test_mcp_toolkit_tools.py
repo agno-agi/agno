@@ -1030,80 +1030,46 @@ async def test_a_shipped_tool_result_toolkit_round_trips():
 # ==================== Toolkit lifecycle ====================
 
 
-class Connectable(Toolkit):
-    """A toolkit that reports whether it is connected, as PostgresTools does."""
+async def test_a_connect_requiring_toolkit_is_served_and_connects_on_use():
+    """``_requires_connect`` is not a refusal: the shipped ones connect themselves.
 
-    def __init__(self, connected: bool = False):
-        super().__init__(name="connectable", tools=[self.read_row])
-        self._requires_connect = True
-        self._connected = connected
+    ``PostgresTools`` and ``RedshiftTools`` both route every method through
+    ``_ensure_connection``, so a cold instance works here exactly as it works anywhere.
+    The MCP server opens no connection and closes none -- see the module docs for what
+    that costs a toolkit whose lifecycle is not self-managing.
+    """
 
-    @property
-    def is_connected(self) -> bool:
-        return self._connected
+    class Connectable(Toolkit):
+        def __init__(self):
+            super().__init__(name="connectable", tools=[self.read_row])
+            self._requires_connect = True
+            self.connections = 0
 
-    def connect(self):
-        self._connected = True
+        @property
+        def is_connected(self) -> bool:
+            return self.connections > 0
 
-    def read_row(self, table: str) -> str:
-        """Read a row."""
-        return f"{table}:ok"
+        def connect(self):
+            self.connections += 1
 
+        def read_row(self, table: str) -> str:
+            """Read a row, connecting on demand."""
+            if not self.is_connected:
+                self.connect()
+            return f"{table}:{self.connections}"
 
-async def test_an_unconnected_toolkit_is_refused_with_the_call_that_frees_it():
-    """The server opens no connection and closes none, so it will not serve one blind."""
-    with pytest.raises(ValueError) as excinfo:
-        build_mcp_server(_os(Connectable()))
-
-    message = str(excinfo.value)
-    assert "requires a connection" in message
-    assert "connect()" in message
-
-
-async def test_a_connected_toolkit_is_served():
-    """Connected by the deployer, it is as usable here as anywhere."""
     kit = Connectable()
-    kit.connect()
-
     os = _os(kit)
     assert set(await _tools_by_name(os)) == {"read_row"}
     async with Client(build_mcp_server(os)) as client:
-        assert (await client.call_tool("read_row", {"table": "t"})).content[0].text == "t:ok"
+        assert (await client.call_tool("read_row", {"table": "t"})).content[0].text == "t:1"
 
 
-async def test_a_toolkit_that_cannot_report_a_connection_is_refused_outright():
-    """``CodeMode`` is the sharp case, and connecting it would not make it correct.
-
-    Its kernel is keyed by ``session_id`` and an MCP call mints a fresh one every time, so
-    a deployment would start a kernel per call and lose the state each one was for. There
-    is nothing to check, so the refusal names the escape hatch instead: publish the
-    functions individually and own the lifecycle yourself.
-    """
-
-    class KernelLike(Toolkit):
-        def __init__(self):
-            super().__init__(name="kernel", tools=[self.execute])
-            self._requires_connect = True
-
-        def execute(self, code: str) -> str:
-            """Run a cell."""
-            return code
-
-    kit = KernelLike()
-    with pytest.raises(ValueError) as excinfo:
-        build_mcp_server(_os(kit))
-    assert "cannot report a live connection" in str(excinfo.value)
-
-    # The escape hatch the message names really works.
-    assert set(await _tools_by_name(_os(*kit.get_async_functions().values()))) == {"execute"}
-
-
-async def test_the_shipped_connect_requiring_toolkit_behaves_the_same_way():
-    """PostgresTools is the one shipped toolkit that declares it needs a connection."""
+async def test_the_shipped_connect_requiring_toolkit_is_served_cold():
+    """PostgresTools is the shipped case, and it is not refused."""
     from agno.tools.postgres import PostgresTools
 
-    with pytest.raises(ValueError, match="requires a connection"):
-        build_mcp_server(_os(PostgresTools()))
+    assert "run_query" in await _tools_by_name(_os(PostgresTools()))
 
 
 async def test_a_toolkit_that_discovers_during_connect_is_refused_by_name():

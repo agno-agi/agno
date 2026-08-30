@@ -62,10 +62,12 @@ class MCPConfig(BaseModel):
     #   - a ``Toolkit`` -- flattened into one MCP tool per method, the way an agent
     #     takes it apart. Narrow the published set with the toolkit's own
     #     ``include_tools``/``exclude_tools``; each flattened name goes through the
-    #     same collision check as a hand-written custom tool. A toolkit that declares
-    #     ``_requires_connect`` is refused unless it reports a live connection: this
-    #     server runs each call directly, so connect()/close() never fire. Connect it
-    #     first, or publish its functions individually and own the lifecycle;
+    #     same collision check as a hand-written custom tool. This server runs each call
+    #     directly, so a toolkit's ``connect()``/``close()`` never fire: the shipped
+    #     ``_requires_connect`` toolkits (``PostgresTools``, ``RedshiftTools``) connect
+    #     themselves on use and are unaffected, but one whose state is keyed on the run
+    #     (``CodeMode``, whose kernel is keyed by ``session_id``) gets a fresh identity
+    #     every call and will not accumulate anything -- serve those over REST instead;
     #   - an ``Agent`` / ``Team`` / ``Workflow`` instance -- exposed as a tool named
     #     after its id, described by the component's own description;
     #   - ``component.as_tool(name=..., description=...)`` -- the same exposure with a
