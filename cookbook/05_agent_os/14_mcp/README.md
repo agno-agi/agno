@@ -147,6 +147,12 @@ authorization: without `AgentOS(authorization=True, ...)` there is no JWT
 subject, the resolved caller is `None`, and every client shares one identity.
 Configure authorization before serving a toolkit whose data is per-user.
 
+A toolkit that declares it needs a connection (`_requires_connect`) is refused
+unless it reports a live one: this server runs each call directly, so
+`connect()` and `close()` never fire. Connect it before building the server, or
+publish its functions individually (`tools=[*kit.get_async_functions().values()]`)
+and own the lifecycle yourself.
+
 A tool whose approval gate this surface cannot honour is refused at startup
 rather than published without it. `requires_confirmation`, `requires_user_input`
 and `external_execution` all live in the call path an MCP request bypasses, so

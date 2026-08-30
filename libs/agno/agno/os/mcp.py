@@ -22,6 +22,7 @@ from typing import (
 from uuid import uuid4
 
 from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.http import (
     StarletteWithLifespan,
 )
@@ -54,6 +55,7 @@ from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
 from agno.tools.annotations import tool_presentation
 from agno.utils.schema import (
+    AGNO_INJECTED_PARAMS,
     IDENTITY_INJECTED_PARAMS,
     annotation_binds,
     annotation_reaches,
@@ -200,6 +202,7 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
     names: Dict[str, str] = {}
     for tool in entries:
         if isinstance(tool, Toolkit):
+            _reject_unconnected_toolkit(tool)
             # ``get_async_functions()`` is the merged surface with async variants
             # preferred -- the same set an agent running in async mode would get --
             # already filtered by the toolkit's include_tools/exclude_tools.
@@ -224,6 +227,43 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
         names[name] = label
         taken[name] = label
     return names
+
+
+def _reject_unconnected_toolkit(toolkit: Any) -> None:
+    """Refuse a toolkit that declares it needs a connection this server never opens.
+
+    An agent connects a ``_requires_connect`` toolkit before its first call and closes it
+    afterwards. The MCP server runs each tool call directly and has no equivalent moment,
+    so a toolkit relying on that lifecycle runs unconnected and is never torn down.
+    ``CodeMode`` is the sharp case: its kernel is keyed by ``session_id``, and an MCP call
+    mints a fresh one every time, so a deployment would start a kernel per call, lose the
+    state each one was for, and never flush a snapshot.
+
+    A toolkit that reports a live connection is served: ``PostgresTools`` connected by the
+    deployer is exactly as usable here as anywhere. One that cannot report one is refused
+    rather than quietly half-working -- the deployer can still publish its functions
+    individually, which says "I know what this needs" in a way passing the toolkit does not.
+    """
+    if not getattr(toolkit, "_requires_connect", False):
+        return
+    try:
+        connected = bool(getattr(toolkit, "is_connected", False))
+    except Exception:
+        connected = False
+    if connected:
+        return
+    if hasattr(type(toolkit), "is_connected"):
+        remedy = f'Connect it before the server is built ("{toolkit.name}".connect()), or drop it from tools=.'
+    else:
+        remedy = (
+            "It cannot report a live connection, so this server cannot know it is usable. Pass the "
+            "functions you want individually (tools=[*toolkit.get_async_functions().values()]) if you "
+            "are managing its lifecycle yourself."
+        )
+    raise ValueError(
+        f'MCPConfig.tools got toolkit "{toolkit.name}", which requires a connection the MCP server does '
+        f"not manage: it runs each tool call directly, so connect() and close() never fire. {remedy}"
+    )
 
 
 def _collision_free_advice(colliding_name: str, enabled_tags: "Optional[set]") -> str:
@@ -478,19 +518,33 @@ def _declares_own_schema(tool: Any, entrypoint: Callable) -> bool:
     return isinstance(parameters, dict) and bool(parameters.get("properties"))
 
 
-def _declared_parameters(tool: Any, hidden: "Dict[str, _Hidden]", toolkit: Any = None) -> "Dict[str, Any]":
-    """The Function's declared schema, minus anything the server owns.
+def _declared_parameters(tool: Any, entrypoint: Callable, hidden: "Dict[str, _Hidden]") -> "Dict[str, Any]":
+    """The Function's declared schema, minus the names the server fills itself.
 
-    Dropped by NAME as well as by whatever the signature hid, because a declared schema
-    reaches this point precisely when the signature could not describe the tool: a
-    ``**kwargs`` entrypoint has no ``run_context`` parameter for the signature rules to
-    catch, so a schema naming one would publish an identity key for the caller to fill.
-    Dropped rather than injected -- the schema describes a remote tool's inputs, and
-    nothing here knows the body wants a RunContext.
+    Only two things are removed, and both are ones the caller could not have meant.
+    Whatever the signature hid is dropped because the wrapper injects it, and the
+    ``_agno_``-prefixed channels are dropped because they are agno's own wire names.
+
+    The bare identity names are deliberately NOT dropped. A declared schema reaches this
+    point because the signature could not describe the tool -- typically a remote tool's
+    own ``inputSchema``, proxied through ``MCPTools`` -- and ``agent`` or ``team`` there
+    belongs to the far side. Removing them hid a legitimate argument from the model while
+    a client could still send it: FastMCP validates against the declared schema (see
+    ``_schema_validator``) but the name never reached anything of agno's either way.
+
+    The catch-all's own name goes too. agno derives a property literally named after it
+    from a Google-style ``Args:`` docstring, and publishing a required ``kwargs`` of
+    unspecified type describes nothing a caller can fill.
     """
-    owned = set(hidden) | set(IDENTITY_INJECTED_PARAMS)
-    if toolkit is None:
-        owned.add("user_id")
+    owned = set(hidden) | set(AGNO_INJECTED_PARAMS)
+    try:
+        owned.update(
+            name
+            for name, param in inspect.signature(entrypoint).parameters.items()
+            if param.kind is inspect.Parameter.VAR_KEYWORD
+        )
+    except (ValueError, TypeError):
+        pass
 
     declared = deepcopy(tool.parameters)
     properties = {name: schema for name, schema in declared.get("properties", {}).items() if name not in owned}
@@ -501,6 +555,41 @@ def _declared_parameters(tool: Any, hidden: "Dict[str, _Hidden]", toolkit: Any =
     else:
         declared.pop("required", None)
     return declared
+
+
+def _schema_validator(schema: "Dict[str, Any]") -> "Optional[Callable[[Dict[str, Any]], None]]":
+    """A checker for arguments against a declared schema, or None if it cannot be built.
+
+    An ordinary tool gets this for free: FastMCP builds a pydantic model from the
+    signature, so a missing argument or a wrong type is rejected before the body runs. A
+    declared schema skips that machinery entirely, which left two tools on the same
+    server disagreeing about whether a malformed call is an error -- and a malformed call
+    from a model is ordinary traffic, not an attack.
+
+    ``jsonschema`` ships with the MCP stack itself, so this costs no new dependency; if it
+    is somehow absent the tool keeps working exactly as it did, unvalidated.
+    """
+    try:
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+    except Exception:
+        return None
+    try:
+        validator = Draft202012Validator(schema)
+    except Exception:
+        # A schema this validator cannot compile is the remote's to fix, not a reason to
+        # refuse the tool: it was serving unvalidated a moment ago.
+        return None
+
+    def validate(arguments: "Dict[str, Any]") -> None:
+        errors = sorted(validator.iter_errors(arguments), key=lambda error: list(error.path))
+        if not errors:
+            return
+        detail = "; ".join(
+            f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}" for error in errors[:5]
+        )
+        raise ToolError(f"Invalid arguments: {detail}")
+
+    return validate
 
 
 def _register_custom_tool(
@@ -544,17 +633,18 @@ def _register_custom_tool(
         returns_tool_result = _returns_tool_result(entrypoint)
         wrapped = _build_mcp_wrapper(entrypoint, hidden, convert_result=returns_tool_result)
         if uses_declared_schema:
-            declared = _declared_parameters(tool, hidden, toolkit)
+            declared = _declared_parameters(tool, entrypoint, hidden)
             # Built directly rather than through ``Tool.from_function``, which would
             # re-derive the schema from a signature that cannot express one.
             tool_obj = FunctionTool(
-                fn=wrapped,
+                fn=_build_mcp_wrapper(
+                    entrypoint, hidden, convert_result=returns_tool_result, validate=_schema_validator(declared)
+                ),
                 name=name,
                 title=title,
                 description=description,
                 annotations=annotations,
                 parameters=declared,
-                output_schema=None,
             )
         else:
             tool_obj = Tool.from_function(
@@ -606,8 +696,9 @@ def _returns_tool_result(fn: Callable) -> bool:
 
     Read from the annotation rather than discovered at call time, because the same
     answer settles two things at once: the result needs converting, and FastMCP must be
-    told NOT to derive an output schema from the ``ToolResult`` model (it would then
-    reject the converted result for not matching it).
+    told NOT to derive an output schema from the ``ToolResult`` model -- otherwise
+    ``tools/list`` advertises a ToolResult-shaped ``outputSchema`` describing something
+    the tool never sends.
     """
     from agno.tools.function import ToolResult
 
@@ -627,7 +718,12 @@ def _converted_result(value: Any) -> Any:
     return value
 
 
-def _build_mcp_wrapper(fn: Callable, hidden: "Dict[str, _Hidden]", convert_result: bool = False) -> Callable:
+def _build_mcp_wrapper(
+    fn: Callable,
+    hidden: "Dict[str, _Hidden]",
+    convert_result: bool = False,
+    validate: "Optional[Callable[[Dict[str, Any]], None]]" = None,
+) -> Callable:
     """Give FastMCP a signature without the framework's parameters, and fill them in.
 
     On the agent-facing path FunctionCall assembles the arguments after the schema is
@@ -642,7 +738,7 @@ def _build_mcp_wrapper(fn: Callable, hidden: "Dict[str, _Hidden]", convert_resul
     Tools with nothing to hide and nothing to convert are returned unchanged, so they
     register exactly as they did before this wrapper existed.
     """
-    if not hidden and not convert_result:
+    if not hidden and not convert_result and validate is None:
         return fn
 
     sig = inspect.signature(fn)
@@ -675,6 +771,10 @@ def _build_mcp_wrapper(fn: Callable, hidden: "Dict[str, _Hidden]", convert_resul
         return annotations
 
     def prepare(args: tuple, kwargs: Dict[str, Any]) -> tuple:
+        if validate is not None and not args:
+            # Before injection, so the schema is checked against what the caller sent
+            # rather than against the framework values it never sees.
+            validate(kwargs)
         if args and positional_names and len(args) <= len(positional_names):
             names = positional_names[: len(args)]
             if not any(name in kwargs for name in names):

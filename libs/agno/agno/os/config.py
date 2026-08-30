@@ -62,7 +62,10 @@ class MCPConfig(BaseModel):
     #   - a ``Toolkit`` -- flattened into one MCP tool per method, the way an agent
     #     takes it apart. Narrow the published set with the toolkit's own
     #     ``include_tools``/``exclude_tools``; each flattened name goes through the
-    #     same collision check as a hand-written custom tool;
+    #     same collision check as a hand-written custom tool. A toolkit that declares
+    #     ``_requires_connect`` is refused unless it reports a live connection: this
+    #     server runs each call directly, so connect()/close() never fire. Connect it
+    #     first, or publish its functions individually and own the lifecycle;
     #   - an ``Agent`` / ``Team`` / ``Workflow`` instance -- exposed as a tool named
     #     after its id, described by the component's own description;
     #   - ``component.as_tool(name=..., description=...)`` -- the same exposure with a
@@ -110,8 +113,9 @@ class MCPConfig(BaseModel):
     #
     # A tool returning an Agno ``ToolResult`` has it rendered as MCP content -- the answer
     # as text, images and audio as their own block types, videos and files as embedded
-    # blob resources -- rather than JSON-serialized, which loses the answer in a dump of
-    # the model and fails outright on raw bytes.
+    # blob resources, and media the tool produced elsewhere as a resource link -- rather
+    # than JSON-serialized, which loses the answer in a dump of the model and fails
+    # outright on raw bytes.
     tools: Optional[List[Any]] = None
 
     # Master switch for the 8 default tools. Set to False to ship only your own

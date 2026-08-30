@@ -13,7 +13,15 @@ from base64 import b64encode
 from typing import Any, Dict, List, Optional, Union
 from urllib.parse import quote
 
-from mcp.types import AudioContent, BlobResourceContents, ContentBlock, EmbeddedResource, ImageContent, TextContent
+from mcp.types import (
+    AudioContent,
+    BlobResourceContents,
+    ContentBlock,
+    EmbeddedResource,
+    ImageContent,
+    ResourceLink,
+    TextContent,
+)
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunOutput
@@ -93,6 +101,31 @@ def _blob_block(artifact: Any, kind: str, default_mime: str) -> Optional[Embedde
     )
 
 
+def _link_block(artifact: Any, kind: str) -> Optional[ResourceLink]:
+    """A link to media the tool produced somewhere else.
+
+    Generation toolkits usually hand back a URL rather than bytes -- Giphy returns the
+    gif's address, Replicate and Luma the rendered file's -- and that URL IS the result.
+    Skipping it leaves the caller holding "generated successfully" and nothing to open.
+    MCP types this exactly: a resource_link points at a resource without inlining it, so
+    the bytes are still not fetched on the server's behalf. Reached only after the
+    inlining path declined, so an artifact holding bytes never arrives here.
+    """
+    url = getattr(artifact, "url", None)
+    if not url:
+        return None
+    try:
+        return ResourceLink(
+            type="resource_link",
+            uri=url,
+            name=str(getattr(artifact, "filename", None) or getattr(artifact, "id", None) or kind),
+            mimeType=getattr(artifact, "mime_type", None),
+        )
+    except Exception:
+        # A url the protocol will not accept as a uri is not worth failing the call over.
+        return None
+
+
 def _media_blocks(run_output: AnyRunOutput) -> List[ContentBlock]:
     """MCP content blocks for generated media that carries raw bytes.
 
@@ -121,31 +154,31 @@ def build_custom_tool_result(result: Any) -> "Any":
     are not valid UTF-8.
 
     Text becomes the first content block, images and audio become their MCP block types,
-    and videos and files travel as embedded blob resources. ``structuredContent`` mirrors
-    the answer under ``content`` alongside the tool's own metadata, matching what the run
-    tools publish. Artifacts holding only a url or filepath are skipped for the same
-    reason as on the run path: the bytes are not in hand.
+    and videos and files travel as embedded blob resources. An artifact that carries only
+    a url becomes a resource_link: generation toolkits return the address rather than the
+    bytes, and that address is the result. ``structuredContent`` mirrors the answer under
+    ``content`` alongside the tool's own metadata, matching what the run tools publish.
     """
     from fastmcp.tools import ToolResult
 
     text = getattr(result, "content", None) or ""
     blocks: List[ContentBlock] = [TextContent(type="text", text=text)]
     for image in getattr(result, "images", None) or []:
-        block = _image_block(image)
+        block = _image_block(image) or _link_block(image, "image")
         if block is not None:
             blocks.append(block)
     for audio in getattr(result, "audios", None) or []:
-        audio_block = _audio_block(audio)
+        audio_block = _audio_block(audio) or _link_block(audio, "audio")
         if audio_block is not None:
             blocks.append(audio_block)
     for video in getattr(result, "videos", None) or []:
         if isinstance(video, Video):
-            video_block = _blob_block(video, "video", _DEFAULT_VIDEO_MIME)
+            video_block = _blob_block(video, "video", _DEFAULT_VIDEO_MIME) or _link_block(video, "video")
             if video_block is not None:
                 blocks.append(video_block)
     for file in getattr(result, "files", None) or []:
         if isinstance(file, File):
-            file_block = _blob_block(file, "file", _DEFAULT_FILE_MIME)
+            file_block = _blob_block(file, "file", _DEFAULT_FILE_MIME) or _link_block(file, "file")
             if file_block is not None:
                 blocks.append(file_block)
 

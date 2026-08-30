@@ -748,28 +748,107 @@ async def test_a_declared_schema_is_published_verbatim_for_a_kwargs_entrypoint()
         assert json.loads(result.content[0].text) == {"limit": 3, "query": "hi"}
 
 
-async def test_a_declared_schema_still_drops_what_the_server_fills():
-    """A hand-written schema does not get to publish a framework parameter."""
-    schema = {
-        "type": "object",
-        "properties": {"query": {"type": "string"}, "run_context": {"type": "object"}},
-        "required": ["query", "run_context"],
-    }
+def _dynamic_toolkit(schema: dict, name: str = "dyn"):
+    """A toolkit shaped like MCPTools: schema on the Function, dispatch through kwargs."""
 
     class Dynamic(Toolkit):
         def __init__(self):
-            super().__init__(name="dyn2")
+            super().__init__(name=name)
 
             def run_actor(**kwargs) -> str:
-                return json.dumps(sorted(kwargs))
+                return json.dumps(kwargs, sort_keys=True)
 
             self.functions["run_actor"] = Function(
                 name="run_actor", description="Run it.", parameters=schema, entrypoint=run_actor
             )
 
-    published = (await _tools_by_name(_os(Dynamic())))["run_actor"]
+    return Dynamic()
+
+
+async def test_a_declared_schema_keeps_names_that_belong_to_the_far_side():
+    """``agent``/``team``/``run_context`` in a proxied schema are the remote's, not agno's.
+
+    A declared schema is reached precisely because the signature could not describe the
+    tool -- typically a remote tool's own ``inputSchema`` coming through ``MCPTools``.
+    Dropping those names hid a legitimate upstream argument from the model. Only the
+    ``_agno_`` channels, which agno alone puts on the wire, are removed.
+    """
+    schema = {
+        "type": "object",
+        "properties": {
+            "agent": {"type": "string", "description": "which upstream agent"},
+            "team": {"type": "string"},
+            "run_context": {"type": "string"},
+            "_agno_agent": {"type": "string"},
+            "query": {"type": "string"},
+        },
+        "required": ["agent", "query"],
+    }
+
+    published = (await _tools_by_name(_os(_dynamic_toolkit(schema, "remote"))))["run_actor"]
+    assert sorted(published.inputSchema["properties"]) == ["agent", "query", "run_context", "team"]
+    assert sorted(published.inputSchema["required"]) == ["agent", "query"]
+
+
+async def test_a_declared_schema_drops_the_catch_all_it_was_declared_through():
+    """agno derives a property named after the catch-all from a Google-style docstring.
+
+    Publishing a required ``kwargs`` of unspecified type describes nothing a caller can fill.
+    """
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "kwargs": {}},
+        "required": ["query", "kwargs"],
+    }
+
+    published = (await _tools_by_name(_os(_dynamic_toolkit(schema, "google_style"))))["run_actor"]
     assert sorted(published.inputSchema["properties"]) == ["query"]
     assert published.inputSchema["required"] == ["query"]
+
+
+async def test_a_declared_schema_is_enforced_like_any_other():
+    """Otherwise two tools on one server disagree about whether a bad call is an error.
+
+    An ordinary tool gets validation free from the signature FastMCP introspects. A
+    declared schema skips that machinery, and a malformed call from a model is ordinary
+    traffic rather than an attack, so the schema is checked before the body runs.
+    """
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+
+    async with Client(build_mcp_server(_os(_dynamic_toolkit(schema, "strict")))) as client:
+        for bad in ({"limit": 1}, {"query": "q", "limit": "not-an-int"}, {"query": "q", "surprise": 1}):
+            result = await client.call_tool("run_actor", bad, raise_on_error=False)
+            assert result.is_error, bad
+            assert "Invalid arguments" in result.content[0].text
+
+        ok = await client.call_tool("run_actor", {"query": "q", "limit": 1})
+        assert json.loads(ok.content[0].text) == {"limit": 1, "query": "q"}
+
+
+async def test_registering_over_mcp_does_not_mutate_the_shared_function():
+    """The same Function object is read by the agent path, which must not see the edit.
+
+    The cookbook hands one toolkit instance to both ``Agent(tools=[...])`` and
+    ``MCPConfig(tools=[...])``, so filtering the declared schema in place would strip
+    parameters from the tool the agent runs.
+    """
+    schema = {
+        "type": "object",
+        "properties": {"query": {"type": "string"}, "_agno_agent": {"type": "string"}},
+        "required": ["query", "_agno_agent"],
+    }
+    kit = _dynamic_toolkit(schema, "shared")
+    function = kit.functions["run_actor"]
+    before = json.dumps(function.parameters, sort_keys=True)
+
+    published = (await _tools_by_name(_os(kit)))["run_actor"]
+    assert sorted(published.inputSchema["properties"]) == ["query"]
+    assert json.dumps(function.parameters, sort_keys=True) == before
 
 
 async def test_a_vestigial_kwargs_catch_all_is_dropped_rather_than_refused():
@@ -827,6 +906,20 @@ async def test_raw_image_and_audio_bytes_become_mcp_content_blocks():
     assert b64decode(audio.data) == _WAV
     # The answer is mirrored in structuredContent, as the run tools already do.
     assert result.structured_content["content"] == "rendered a cat"
+
+
+async def test_a_tool_result_tool_advertises_no_output_schema():
+    """FastMCP would otherwise derive one from the ToolResult model the tool never sends."""
+
+    class Studio(Toolkit):
+        def __init__(self):
+            super().__init__(name="schema_studio", tools=[self.render])
+
+        def render(self, prompt: str) -> ToolResult:
+            """Render a picture."""
+            return ToolResult(content=prompt)
+
+    assert (await _tools_by_name(_os(Studio())))["render"].outputSchema is None
 
 
 async def test_an_async_tool_result_is_converted_too():
@@ -891,8 +984,12 @@ async def test_files_and_video_travel_as_embedded_resources():
     assert "rows.csv" in str(resource.uri)
 
 
-async def test_a_url_only_artifact_is_skipped_rather_than_faked():
-    """The bytes are not in hand, and fetching them is not this layer's job."""
+async def test_a_url_only_artifact_becomes_a_resource_link():
+    """The url IS the result for a generation toolkit; dropping it loses the output.
+
+    Giphy, Replicate, Luma and Fal all hand back an address rather than bytes. A
+    resource_link points at it without the server fetching anything on the caller's behalf.
+    """
 
     class Linker(Toolkit):
         def __init__(self):
@@ -900,13 +997,19 @@ async def test_a_url_only_artifact_is_skipped_rather_than_faked():
 
         def find(self, q: str) -> ToolResult:
             """Find a picture."""
-            return ToolResult(content="found one", images=[Image(url="https://example.test/a.png")])
+            return ToolResult(
+                content="found one",
+                images=[Image(id="gif-1", url="https://example.test/a.gif", mime_type="image/gif")],
+            )
 
     async with Client(build_mcp_server(_os(Linker()))) as client:
         result = await client.call_tool("find", {"q": "cat"})
 
-    assert [type(block).__name__ for block in result.content] == ["TextContent"]
+    assert [type(block).__name__ for block in result.content] == ["TextContent", "ResourceLink"]
     assert result.content[0].text == "found one"
+    link = result.content[1]
+    assert str(link.uri) == "https://example.test/a.gif"
+    assert link.mimeType == "image/gif"
 
 
 async def test_a_shipped_tool_result_toolkit_round_trips():
@@ -927,34 +1030,80 @@ async def test_a_shipped_tool_result_toolkit_round_trips():
 # ==================== Toolkit lifecycle ====================
 
 
-async def test_a_connect_requiring_toolkit_publishes_the_functions_it_already_has():
-    """``_requires_connect`` toolkits register at construction and connect on use.
+class Connectable(Toolkit):
+    """A toolkit that reports whether it is connected, as PostgresTools does."""
 
-    ``PostgresTools`` is the shipped example: its functions exist before any connection,
-    and each one calls ``_ensure_connection`` itself. The MCP path does not connect for
-    it, and does not need to.
-    """
+    def __init__(self, connected: bool = False):
+        super().__init__(name="connectable", tools=[self.read_row])
+        self._requires_connect = True
+        self._connected = connected
 
-    class Connectable(Toolkit):
-        def __init__(self):
-            super().__init__(name="connectable", tools=[self.read_row])
-            self._requires_connect = True
-            self.connections = 0
+    @property
+    def is_connected(self) -> bool:
+        return self._connected
 
-        def connect(self):
-            self.connections += 1
+    def connect(self):
+        self._connected = True
 
-        def read_row(self, table: str) -> str:
-            """Read a row, connecting on demand."""
-            if not self.connections:
-                self.connect()
-            return f"{table}:{self.connections}"
+    def read_row(self, table: str) -> str:
+        """Read a row."""
+        return f"{table}:ok"
 
+
+async def test_an_unconnected_toolkit_is_refused_with_the_call_that_frees_it():
+    """The server opens no connection and closes none, so it will not serve one blind."""
+    with pytest.raises(ValueError) as excinfo:
+        build_mcp_server(_os(Connectable()))
+
+    message = str(excinfo.value)
+    assert "requires a connection" in message
+    assert "connect()" in message
+
+
+async def test_a_connected_toolkit_is_served():
+    """Connected by the deployer, it is as usable here as anywhere."""
     kit = Connectable()
+    kit.connect()
+
     os = _os(kit)
     assert set(await _tools_by_name(os)) == {"read_row"}
     async with Client(build_mcp_server(os)) as client:
-        assert (await client.call_tool("read_row", {"table": "t"})).content[0].text == "t:1"
+        assert (await client.call_tool("read_row", {"table": "t"})).content[0].text == "t:ok"
+
+
+async def test_a_toolkit_that_cannot_report_a_connection_is_refused_outright():
+    """``CodeMode`` is the sharp case, and connecting it would not make it correct.
+
+    Its kernel is keyed by ``session_id`` and an MCP call mints a fresh one every time, so
+    a deployment would start a kernel per call and lose the state each one was for. There
+    is nothing to check, so the refusal names the escape hatch instead: publish the
+    functions individually and own the lifecycle yourself.
+    """
+
+    class KernelLike(Toolkit):
+        def __init__(self):
+            super().__init__(name="kernel", tools=[self.execute])
+            self._requires_connect = True
+
+        def execute(self, code: str) -> str:
+            """Run a cell."""
+            return code
+
+    kit = KernelLike()
+    with pytest.raises(ValueError) as excinfo:
+        build_mcp_server(_os(kit))
+    assert "cannot report a live connection" in str(excinfo.value)
+
+    # The escape hatch the message names really works.
+    assert set(await _tools_by_name(_os(*kit.get_async_functions().values()))) == {"execute"}
+
+
+async def test_the_shipped_connect_requiring_toolkit_behaves_the_same_way():
+    """PostgresTools is the one shipped toolkit that declares it needs a connection."""
+    from agno.tools.postgres import PostgresTools
+
+    with pytest.raises(ValueError, match="requires a connection"):
+        build_mcp_server(_os(PostgresTools()))
 
 
 async def test_a_toolkit_that_discovers_during_connect_is_refused_by_name():
