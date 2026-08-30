@@ -44,8 +44,10 @@ class KnowledgeManagementTools(Toolkit):
         scope: Literal["shared", "user"] = "shared",
         max_pages: int = 50,
         page_fetcher: Optional[Any] = None,
-        enable_ingest: bool = True,
-        enable_remove: bool = True,
+        ingest_url: bool = True,
+        ingest_path: bool = False,
+        ingest_text: bool = True,
+        remove_content: bool = True,
         instructions: Optional[str] = None,
         add_instructions: bool = True,
         **kwargs,
@@ -59,8 +61,14 @@ class KnowledgeManagementTools(Toolkit):
             max_pages: Default page cap for ingest_url (hard cap 500).
             page_fetcher: Optional PageFetcher for ingest_url; default resolves Parallel
                 when available, the built-in fetcher otherwise.
-            enable_ingest: Register the ingest tools.
-            enable_remove: Register remove_content (requires confirmation by default).
+            ingest_url: Register ingest_url, which fetches any URL the server can reach.
+            ingest_path: Register ingest_path. Off by default: it reads any path the server
+                process can read, and under scope="shared" what it loads becomes readable
+                by every agent on this knowledge base.
+            ingest_text: Register ingest_text, which stores text the agent already holds.
+            remove_content: Register remove_content (requires confirmation by default).
+
+        list_content and ingest_status are always registered — they only read.
         """
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeManagementTools")
@@ -76,23 +84,31 @@ class KnowledgeManagementTools(Toolkit):
         self.max_pages = max(1, min(max_pages, _HARD_PAGE_CAP))
         self.page_fetcher = page_fetcher
 
+        # Each flag is named after the tool it registers. They stay locals — assigning one
+        # to self would shadow the method of the same name.
         tools: List[Any] = []
         async_tools: List[Any] = []
-        if enable_ingest:
+        if ingest_url:
             tools.append(self.ingest_url)
             async_tools.append((self.aingest_url, "ingest_url"))
+        if ingest_path:
             tools.append(self.ingest_path)
             async_tools.append((self.aingest_path, "ingest_path"))
+        if ingest_text:
             tools.append(self.ingest_text)
             async_tools.append((self.aingest_text, "ingest_text"))
         tools.append(self.list_content)
         async_tools.append((self.alist_content, "list_content"))
         tools.append(self.ingest_status)
         async_tools.append((self.aingest_status, "ingest_status"))
-        if enable_remove:
+        if remove_content:
             tools.append(self.remove_content)
             async_tools.append((self.aremove_content, "remove_content"))
-            kwargs.setdefault("requires_confirmation_tools", ["remove_content"])
+            # Union, not setdefault: a caller naming other tools must not drop the
+            # confirmation gate on the one tool here that destroys data.
+            kwargs["requires_confirmation_tools"] = list(
+                dict.fromkeys(["remove_content", *(kwargs.get("requires_confirmation_tools") or [])])
+            )
 
         super().__init__(
             name="knowledge_management",
