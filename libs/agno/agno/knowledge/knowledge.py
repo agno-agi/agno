@@ -1806,6 +1806,12 @@ class Knowledge(RemoteKnowledge):
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
+        if previous_children:
+            # The upsert above replaced the row's metadata wholesale. Until this read
+            # finalizes, the row must keep its cascade record: a failed read that lost
+            # the children list would strand every page row on a later site delete.
+            # The ROW is patched, never content.metadata — that is a hash input.
+            await self._astamp_row_children(content, previous_children)
         if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
@@ -1896,6 +1902,13 @@ class Knowledge(RemoteKnowledge):
             return
 
         # 9. Single source - use existing logic with original content hash
+        if read_documents and all((doc.meta_data or {}).get("error") for doc in read_documents):
+            # The reader reported every document as a failed fetch; embedding empty
+            # text and reporting COMPLETED would hide the failure from status polls.
+            content.status = ContentStatus.FAILED
+            content.status_message = str((read_documents[0].meta_data or {}).get("error"))
+            await self._aupdate_content(content)
+            return
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
@@ -1946,6 +1959,9 @@ class Knowledge(RemoteKnowledge):
 
         # 1. Add content to contents database
         self._insert_contents_db(content)
+        if previous_children:
+            # See the matching re-stamp in _aload_from_url.
+            self._stamp_row_children(content, previous_children)
         if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
@@ -2037,12 +2053,32 @@ class Knowledge(RemoteKnowledge):
             return
 
         # 9. Single source - use existing logic with original content hash
+        if read_documents and all((doc.meta_data or {}).get("error") for doc in read_documents):
+            # See the matching guard in _aload_from_url.
+            content.status = ContentStatus.FAILED
+            content.status_message = str((read_documents[0].meta_data or {}).get("error"))
+            self._update_content(content)
+            return
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
         self._handle_vector_db_insert(content, read_documents, upsert)
 
     # --- Per-page rows for multi-page URL reads ---
+
+    async def _astamp_row_children(self, content: Content, children: List[str]) -> None:
+        """Write a children list onto the site ROW without touching content.metadata."""
+        update = Content(id=content.id, user_id=content.user_id)
+        update.metadata = set_agno_metadata(None, "children", children)
+        await self._aupdate_content(update)
+
+    def _stamp_row_children(self, content: Content, children: List[str]) -> None:
+        """Synchronous version of _astamp_row_children."""
+        update = Content(id=content.id, user_id=content.user_id)
+        update.metadata = set_agno_metadata(None, "children", children)
+        self._update_content(update)
+
+    _MULTI_PAGE_READER_IDS = {"SitemapReader": "sitemap", "LLMsTxtReader": "llms_txt", "WebsiteReader": "website"}
 
     async def _aget_previous_children(self, content: Content) -> List[str]:
         """Child-row ids recorded on the site row by the previous run, if any."""
@@ -2154,6 +2190,8 @@ class Knowledge(RemoteKnowledge):
         extractor_counts: Dict[str, int],
         source_kind: Optional[str],
         name_was_auto: bool,
+        reader_id: Optional[str] = None,
+        discovery_incomplete: bool = False,
     ) -> None:
         """Turn the parent row into the site row: aggregate status, children, provenance."""
         if name_was_auto and content.url:
@@ -2166,12 +2204,17 @@ class Knowledge(RemoteKnowledge):
         content.metadata = set_agno_metadata(content.metadata, "children", child_ids)
         content.metadata = set_agno_metadata(content.metadata, "page_count", pages_loaded)
         content.metadata = set_agno_metadata(content.metadata, "auto_named", name_was_auto)
+        if reader_id:
+            # A refresh must re-run the reader that built this site, never a guessed one
+            content.metadata = set_agno_metadata(content.metadata, "reader_id", reader_id)
         if extractor_counts:
             content.metadata = set_agno_metadata(content.metadata, "extractor_counts", extractor_counts)
         if failed:
             content.metadata = set_agno_metadata(content.metadata, "failed", failed[:25])
 
         message = f"{pages_loaded} of {total_pages} pages loaded"
+        if discovery_incomplete:
+            message += "; sitemap discovery incomplete, previous pages kept"
         if failed:
             sample = ", ".join(entry["url"] for entry in failed[:5])
             message += f"; failed: {sample}"
@@ -2202,6 +2245,22 @@ class Knowledge(RemoteKnowledge):
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
+        # The site row owns no page vectors. Clearing its content_id first makes the
+        # 1-to-N transition drop the legacy single-row vectors, and lets the overview
+        # branch below re-insert without stacking chunks run over run.
+        try:
+            clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
+            self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
+        except Exception as e:
+            log_debug(f"Could not clear site-row vectors before per-page load: {e}")
+
+        # A read that could not see every sitemap shard must not treat the missing
+        # shard's pages as removed from the site.
+        discovery_incomplete = any(
+            bool((doc.meta_data or {}).get("discovery_incomplete")) for docs in docs_by_source.values() for doc in docs
+        )
+        reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
+
         child_ids: List[str] = []
         failed: List[Dict[str, str]] = []
         extractor_counts: Dict[str, int] = {}
@@ -2209,6 +2268,9 @@ class Knowledge(RemoteKnowledge):
         source_kind: Optional[str] = None
 
         for source_url, source_docs in docs_by_source.items():
+            for doc in source_docs:
+                if doc.meta_data:
+                    doc.meta_data.pop("discovery_incomplete", None)
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
             if child.id == content.id:
                 # A document whose URL is the insert URL itself (e.g. an llms.txt overview)
@@ -2232,6 +2294,15 @@ class Knowledge(RemoteKnowledge):
                 source_kind = doc_source
 
             if error is not None:
+                # A page that was loaded before keeps its row and vectors: a transient
+                # fetch failure must not demote good, searchable content. The failure is
+                # still surfaced on the site row.
+                if self.contents_db is not None:
+                    previous_digest = await self._aget_child_digest(child.id, content.user_id)
+                    if previous_digest is not None:
+                        failed.append({"url": source_url, "error": error, "stale_kept": "true"})
+                        pages_loaded += 1
+                        continue
                 child.status = ContentStatus.FAILED
                 child.status_message = error
                 await self._ainsert_contents_db(child)
@@ -2289,6 +2360,11 @@ class Knowledge(RemoteKnowledge):
                 log_error(f"Error inserting document from {source_url}: {str(e)}")
                 child.status = ContentStatus.FAILED
                 child.status_message = "Could not embed page"
+                # The digest asserts "this text is indexed" — it must not survive an
+                # embed failure, or the next identical run would skip the embed and
+                # mark the page COMPLETED with no vectors behind it.
+                if child.metadata and isinstance(child.metadata.get("_agno"), dict):
+                    child.metadata["_agno"].pop("content_digest", None)
                 await self._ainsert_contents_db(child)
                 failed.append({"url": source_url, "error": "Could not embed page"})
                 continue
@@ -2298,19 +2374,36 @@ class Knowledge(RemoteKnowledge):
             extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
             pages_loaded += 1
 
-        # Pages that left the site since the previous run disappear with it
+        # Pages that left the site since the previous run disappear with it — but only
+        # when discovery saw the whole site, and a page whose delete failed keeps its
+        # place in the children list so a later run can still reach it.
         current_ids = set(child_ids)
         if content.id:
             current_ids.add(content.id)  # never prune the site row itself
-        for stale_id in previous_children:
-            if stale_id not in current_ids:
-                try:
-                    await self.aremove_content_by_id(stale_id, user_id=content.user_id)
-                except Exception as e:
-                    log_debug(f"Could not remove stale page row {stale_id}: {e}")
+        if not discovery_incomplete:
+            for stale_id in previous_children:
+                if stale_id not in current_ids:
+                    try:
+                        await self.aremove_content_by_id(stale_id, user_id=content.user_id)
+                    except Exception as e:
+                        log_debug(f"Could not remove stale page row {stale_id}: {e}")
+                        child_ids.append(stale_id)
+        else:
+            for stale_id in previous_children:
+                if stale_id not in current_ids:
+                    child_ids.append(stale_id)
 
         self._finalize_site_row_content(
-            content, len(docs_by_source), pages_loaded, child_ids, failed, extractor_counts, source_kind, name_was_auto
+            content,
+            len(docs_by_source),
+            pages_loaded,
+            child_ids,
+            failed,
+            extractor_counts,
+            source_kind,
+            name_was_auto,
+            reader_id=reader_id,
+            discovery_incomplete=discovery_incomplete,
         )
         await self._aupdate_content(content)
 
@@ -2328,6 +2421,18 @@ class Knowledge(RemoteKnowledge):
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
+        # See the matching clear in _aload_url_page_groups.
+        try:
+            clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
+            self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
+        except Exception as e:
+            log_debug(f"Could not clear site-row vectors before per-page load: {e}")
+
+        discovery_incomplete = any(
+            bool((doc.meta_data or {}).get("discovery_incomplete")) for docs in docs_by_source.values() for doc in docs
+        )
+        reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
+
         child_ids: List[str] = []
         failed: List[Dict[str, str]] = []
         extractor_counts: Dict[str, int] = {}
@@ -2335,6 +2440,9 @@ class Knowledge(RemoteKnowledge):
         source_kind: Optional[str] = None
 
         for source_url, source_docs in docs_by_source.items():
+            for doc in source_docs:
+                if doc.meta_data:
+                    doc.meta_data.pop("discovery_incomplete", None)
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
             if child.id == content.id:
                 # See the matching branch in _aload_url_page_groups.
@@ -2356,6 +2464,13 @@ class Knowledge(RemoteKnowledge):
                 source_kind = doc_source
 
             if error is not None:
+                # See the matching last-known-good branch in _aload_url_page_groups.
+                if self.contents_db is not None:
+                    previous_digest = self._get_child_digest(child.id, content.user_id)
+                    if previous_digest is not None:
+                        failed.append({"url": source_url, "error": error, "stale_kept": "true"})
+                        pages_loaded += 1
+                        continue
                 child.status = ContentStatus.FAILED
                 child.status_message = error
                 self._insert_contents_db(child)
@@ -2413,6 +2528,9 @@ class Knowledge(RemoteKnowledge):
                 log_error(f"Error inserting document from {source_url}: {str(e)}")
                 child.status = ContentStatus.FAILED
                 child.status_message = "Could not embed page"
+                # See the matching digest strip in _aload_url_page_groups.
+                if child.metadata and isinstance(child.metadata.get("_agno"), dict):
+                    child.metadata["_agno"].pop("content_digest", None)
                 self._insert_contents_db(child)
                 failed.append({"url": source_url, "error": "Could not embed page"})
                 continue
@@ -2422,19 +2540,34 @@ class Knowledge(RemoteKnowledge):
             extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
             pages_loaded += 1
 
-        # Pages that left the site since the previous run disappear with it
+        # See the matching prune guard in _aload_url_page_groups.
         current_ids = set(child_ids)
         if content.id:
             current_ids.add(content.id)  # never prune the site row itself
-        for stale_id in previous_children:
-            if stale_id not in current_ids:
-                try:
-                    self.remove_content_by_id(stale_id, user_id=content.user_id)
-                except Exception as e:
-                    log_debug(f"Could not remove stale page row {stale_id}: {e}")
+        if not discovery_incomplete:
+            for stale_id in previous_children:
+                if stale_id not in current_ids:
+                    try:
+                        self.remove_content_by_id(stale_id, user_id=content.user_id)
+                    except Exception as e:
+                        log_debug(f"Could not remove stale page row {stale_id}: {e}")
+                        child_ids.append(stale_id)
+        else:
+            for stale_id in previous_children:
+                if stale_id not in current_ids:
+                    child_ids.append(stale_id)
 
         self._finalize_site_row_content(
-            content, len(docs_by_source), pages_loaded, child_ids, failed, extractor_counts, source_kind, name_was_auto
+            content,
+            len(docs_by_source),
+            pages_loaded,
+            child_ids,
+            failed,
+            extractor_counts,
+            source_kind,
+            name_was_auto,
+            reader_id=reader_id,
+            discovery_incomplete=discovery_incomplete,
         )
         self._update_content(content)
 

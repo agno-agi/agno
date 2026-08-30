@@ -99,7 +99,12 @@ class KnowledgeManagementTools(Toolkit):
 
     def _owner_id(self, run_context: Optional[RunContext]) -> Optional[str]:
         if self.scope == "user":
-            return getattr(run_context, "user_id", None)
+            user_id = getattr(run_context, "user_id", None)
+            if not user_id:
+                # Fail closed: scope="user" content silently landing in the shared
+                # bucket would be readable and deletable by everyone.
+                raise ValueError("scope='user' requires the run to have a user_id")
+            return user_id
         return None
 
     def _build_reader(self, max_pages: Optional[int]):
@@ -177,9 +182,9 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok, site_id, name, status, pages, failed (per-URL errors), extractors, seconds.
         """
-        owner = self._owner_id(run_context)
         started = time.monotonic()
         try:
+            owner = self._owner_id(run_context)
             site_id = self._predict_url_row_id(url, owner)
             self.knowledge.insert(url=url, reader=self._build_reader(max_pages), user_id=owner)
             row = self.knowledge.get_content_by_id(site_id, user_id=owner)
@@ -202,9 +207,9 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok, site_id, name, status, pages, failed (per-URL errors), extractors, seconds.
         """
-        owner = self._owner_id(run_context)
         started = time.monotonic()
         try:
+            owner = self._owner_id(run_context)
             site_id = self._predict_url_row_id(url, owner)
             await self.knowledge.ainsert(url=url, reader=self._build_reader(max_pages), user_id=owner)
             row = await self.knowledge.aget_content_by_id(site_id, user_id=owner)
@@ -226,10 +231,13 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok, id, name.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             self.knowledge.insert(name=name, text_content=text, metadata=metadata, user_id=owner)
             row_id = self._predict_text_row_id(name, text, metadata, owner)
+            row = self.knowledge.get_content_by_id(row_id, user_id=owner) if self.knowledge.contents_db else None
+            if row is not None and self._status_value(row.status) == "failed":
+                return json.dumps({"ok": False, "id": row_id, "name": name, "error": row.status_message})
             return json.dumps({"ok": True, "id": row_id, "name": name})
         except Exception as e:
             log_error(f"ingest_text failed for {name}: {e}")
@@ -248,10 +256,13 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok, id, name.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             await self.knowledge.ainsert(name=name, text_content=text, metadata=metadata, user_id=owner)
             row_id = self._predict_text_row_id(name, text, metadata, owner)
+            row = await self.knowledge.aget_content_by_id(row_id, user_id=owner) if self.knowledge.contents_db else None
+            if row is not None and self._status_value(row.status) == "failed":
+                return json.dumps({"ok": False, "id": row_id, "name": name, "error": row.status_message})
             return json.dumps({"ok": True, "id": row_id, "name": name})
         except Exception as e:
             log_error(f"ingest_text failed for {name}: {e}")
@@ -304,8 +315,8 @@ class KnowledgeManagementTools(Toolkit):
             JSON: sites (site_id, name, pages, failed, status, updated_at), other documents,
             and the total row count.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             rows: List[Content] = []
             page = 1
             while True:
@@ -330,8 +341,8 @@ class KnowledgeManagementTools(Toolkit):
             JSON: sites (site_id, name, pages, failed, status, updated_at), other documents,
             and the total row count.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             rows = []
             page = 1
             while True:
@@ -354,8 +365,8 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok, site_id, name, status, status_message, pages, failed, extractors.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             row = self.knowledge.get_content_by_id(site_id, user_id=owner)
             return self._site_report(row, site_id)
         except Exception as e:
@@ -371,8 +382,8 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok, site_id, name, status, status_message, pages, failed, extractors.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             row = await self.knowledge.aget_content_by_id(site_id, user_id=owner)
             return self._site_report(row, site_id)
         except Exception as e:
@@ -393,12 +404,15 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok and the id removed.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             row = self.knowledge.get_content_by_id(content_id, user_id=owner)
             if row is None:
                 return self._error(f"content {content_id} not found")
             self.knowledge.remove_content_by_id(content_id, user_id=owner)
+            if self.knowledge.contents_db and self.knowledge.get_content_by_id(content_id, user_id=owner) is not None:
+                # The core silently refuses some deletes (e.g. shared content under a scoped owner)
+                return self._error(f"content {content_id} was not removed (not permitted for this scope)")
             return json.dumps({"ok": True, "removed": content_id, "name": row.name})
         except Exception as e:
             log_error(f"remove_content failed for {content_id}: {e}")
@@ -414,12 +428,18 @@ class KnowledgeManagementTools(Toolkit):
         Returns:
             JSON: ok and the id removed.
         """
-        owner = self._owner_id(run_context)
         try:
+            owner = self._owner_id(run_context)
             row = await self.knowledge.aget_content_by_id(content_id, user_id=owner)
             if row is None:
                 return self._error(f"content {content_id} not found")
             await self.knowledge.aremove_content_by_id(content_id, user_id=owner)
+            if (
+                self.knowledge.contents_db
+                and await self.knowledge.aget_content_by_id(content_id, user_id=owner) is not None
+            ):
+                # The core silently refuses some deletes (e.g. shared content under a scoped owner)
+                return self._error(f"content {content_id} was not removed (not permitted for this scope)")
             return json.dumps({"ok": True, "removed": content_id, "name": row.name})
         except Exception as e:
             log_error(f"remove_content failed for {content_id}: {e}")

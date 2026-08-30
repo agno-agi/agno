@@ -10,6 +10,7 @@ import time
 from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
+
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -229,7 +230,10 @@ async def test_ainsert_removed_page_deletes_its_row_and_vectors(vector_db, tmp_p
 
     await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
 
-    assert deleted == [(removed_id, None)]
+    # The multi-page load clears the site row's own content_id first (legacy-vector
+    # hygiene), then removes the departed page.
+    assert deleted[-1] == (removed_id, None)
+    assert (removed_id, None) in deleted
     rows = _rows(kb)
     assert removed_id not in {row.id for row in rows}
     site = _site_row(rows)
@@ -466,3 +470,165 @@ async def test_upsert_false_still_refreshes_changed_page(vector_db, tmp_path):
 
     assert len(vector_db.writes) == 1
     assert {doc.meta_data["url"] for doc in vector_db.inserted_documents} == {PAGE_TWO}
+
+
+# ---------------------------------------------------------------------------
+# Failure-mode hardening (review round: fail closed, keep ownership)
+# ---------------------------------------------------------------------------
+
+
+class RaisingReader(FakePagesReader):
+    """Raises on read, standing in for a transient reader failure mid-refresh."""
+
+    def read(self, obj, name=None, password=None):
+        raise RuntimeError("transient reader failure")
+
+    async def async_read(self, obj, name=None, password=None):
+        raise RuntimeError("transient reader failure")
+
+
+class IncompleteDiscoveryReader(FakePagesReader):
+    """Marks every document as coming from an incomplete sitemap discovery."""
+
+    def read(self, obj, name=None, password=None):
+        documents = super().read(obj, name=name, password=password)
+        for doc in documents:
+            doc.meta_data["discovery_incomplete"] = True
+        return documents
+
+
+async def test_failed_refresh_keeps_children_on_site_row(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    site = _site_row(_rows(kb))
+    previous_children = get_agno_metadata(site.metadata, "children")
+
+    # Reader failures are caught by the load path: the row lands FAILED, nothing raises
+    await kb.ainsert(url=SITE_URL, reader=RaisingReader({}))
+
+    row = await kb.aget_content_by_id(site.id)
+    assert row.status == "failed"
+    # The cascade record survives the failed read, so a site delete still reaches the pages
+    assert get_agno_metadata(row.metadata, "children") == previous_children
+    await kb.aremove_content_by_id(site.id)
+    rows, count = await kb.aget_content()
+    assert count == 0
+
+
+async def test_embed_failure_does_not_persist_digest(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    original_insert = vector_db.async_insert
+    fail = {"active": True}
+
+    async def failing_insert(content_hash, documents=None, filters=None, **kwargs):
+        if fail["active"] and any(doc.meta_data.get("url") == PAGE_TWO for doc in documents):
+            raise RuntimeError("embed down")
+        return await original_insert(content_hash, documents=documents, filters=filters)
+
+    vector_db.async_insert = failing_insert
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    failed_child = next(row for row in _rows(kb) if get_agno_metadata(row.metadata, "source_url") == PAGE_TWO)
+    assert failed_child.status == "failed"
+    assert get_agno_metadata(failed_child.metadata, "content_digest") is None
+
+    # Same text again with a healthy embedder: the page must re-embed, not flip to
+    # completed on a digest recorded by the failed run
+    fail["active"] = False
+    _clear_writes(vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    healed = next(row for row in _rows(kb) if get_agno_metadata(row.metadata, "source_url") == PAGE_TWO)
+    assert healed.status == "completed"
+    assert any(doc.meta_data.get("url") == PAGE_TWO for doc in vector_db.inserted_documents)
+
+
+async def test_incomplete_discovery_suppresses_prune(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    # A read that lost a sitemap shard reports only page one, flagged incomplete
+    await kb.ainsert(url=SITE_URL, reader=IncompleteDiscoveryReader({PAGE_ONE: "guide text"}))
+
+    rows = _rows(kb)
+    kept = {get_agno_metadata(row.metadata, "source_url") for row in rows} - {None}
+    assert PAGE_TWO in kept, "a missing shard's pages must not be treated as removed"
+    site = _site_row(rows)
+    assert "discovery incomplete" in site.status_message
+    # The transport flag never reaches vector metadata
+    assert not any("discovery_incomplete" in (doc.meta_data or {}) for doc in vector_db.inserted_documents)
+
+
+async def test_fetch_failure_keeps_last_known_good_page(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: None}))
+
+    rows = _rows(kb)
+    kept = next(row for row in rows if get_agno_metadata(row.metadata, "source_url") == PAGE_TWO)
+    assert kept.status == "completed", "a transient fetch failure must not demote a loaded page"
+    site = _site_row(rows)
+    failures = get_agno_metadata(site.metadata, "failed")
+    assert failures and failures[0]["url"] == PAGE_TWO and failures[0].get("stale_kept") == "true"
+
+
+async def test_all_pages_failed_single_group_marks_row_failed(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+
+    await kb.ainsert(url="https://docs.x.com/only", reader=FakePagesReader({PAGE_ONE: None}))
+
+    rows, count = await kb.aget_content()
+    assert count == 1
+    assert rows[0].status == "failed"
+    assert PAGE_ERROR in (rows[0].status_message or "")
+    assert vector_db.writes == []
+
+
+async def test_single_row_site_growing_to_pages_clears_legacy_vectors(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page"}))
+    parent_id = _rows(kb)[0].id
+
+    deleted = []
+    original_delete = vector_db.delete_by_content_id
+
+    def recording_delete(content_id, user_id=None):
+        deleted.append(content_id)
+        return original_delete(content_id)
+
+    vector_db.delete_by_content_id = recording_delete
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page", PAGE_TWO: "second"}))
+
+    assert parent_id in deleted, "the legacy single-row vectors must not stay searchable under the site row"
+
+
+async def test_prune_failure_keeps_stale_child_in_children(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    site = _site_row(_rows(kb))
+    stale_ids = set(get_agno_metadata(site.metadata, "children"))
+
+    original_delete = vector_db.delete_by_content_id
+
+    def failing_delete(content_id, user_id=None):
+        raise RuntimeError("adapter down")
+
+    vector_db.delete_by_content_id = failing_delete
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text"}))
+    vector_db.delete_by_content_id = original_delete
+
+    site = _site_row(_rows(kb))
+    children = set(get_agno_metadata(site.metadata, "children"))
+    # The page whose delete failed keeps its place in the cascade record
+    assert stale_ids - children == set(), f"lost ownership of {stale_ids - children}"
+
+
+async def test_site_row_records_reader_id(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    reader = FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"})
+    reader.__class__ = type("SitemapReader", (FakePagesReader,), {})
+
+    await kb.ainsert(url=SITE_URL, reader=reader)
+
+    site = _site_row(_rows(kb))
+    assert get_agno_metadata(site.metadata, "reader_id") == "sitemap"

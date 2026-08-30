@@ -819,8 +819,20 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                 status_code=400, detail="Content row cannot be matched back to its source; re-ingest the URL instead"
             )
 
-        source_type = get_agno_metadata(existing.metadata, "source_type")
-        reader_id = "sitemap" if source_type in ("sitemap", "page") else None
+        # A refresh must re-run the reader that built this row — refreshing an
+        # llms.txt site with the sitemap (or text) reader would rewrite and prune
+        # its pages. Rows record their reader at finalize; without a record, only
+        # the unambiguous sitemap kinds may be inferred.
+        reader_id = get_agno_metadata(existing.metadata, "reader_id")
+        if not isinstance(reader_id, str) or not reader_id:
+            source_type = get_agno_metadata(existing.metadata, "source_type")
+            if source_type in ("sitemap", "page"):
+                reader_id = "sitemap"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Content row does not record which reader built it; re-ingest the URL instead",
+                )
         background_tasks.add_task(process_content, knowledge, content, reader_id, None, None, None)
         return ContentResponseSchema(id=content_id, name=existing.name, status=ContentStatus.PROCESSING)
 

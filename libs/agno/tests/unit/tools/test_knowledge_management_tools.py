@@ -699,3 +699,98 @@ class TestRefreshContentRoute:
 
         assert response.status_code == 400
         process_content.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Review-round hardening: fail-closed scope, honest envelopes, reader identity
+# ---------------------------------------------------------------------------
+
+
+def test_user_scope_without_user_id_fails_closed():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb, scope="user")
+
+    report = json.loads(asyncio.run(toolkit.aingest_text(_ctx(user_id=None), name="secret", text="private notes")))
+
+    def rows_or_empty():
+        try:
+            return _rows(db_file)
+        except sqlite3.OperationalError:
+            return []  # nothing was ever written, so the table does not exist
+
+    assert report["ok"] is False
+    assert "user_id" in report["error"]
+    assert rows_or_empty() == [], "nothing may land in the shared bucket when user scope has no user"
+    sync_report = json.loads(toolkit.ingest_text(_ctx(user_id=None), name="secret", text="private notes"))
+    assert sync_report["ok"] is False and rows_or_empty() == []
+
+
+def test_ingest_text_reports_failed_row():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb)
+
+    def failing_insert(*args, **kwargs):
+        raise RuntimeError("embed down")
+
+    kb.vector_db.insert = failing_insert
+    kb.vector_db.async_insert = failing_insert
+
+    report = json.loads(toolkit.ingest_text(_ctx(), name="doomed", text="text"))
+
+    assert report["ok"] is False, "a FAILED row must not be reported as ok"
+    rows = _rows(db_file)
+    assert rows and rows[0][1] == "doomed"
+
+
+def test_remove_content_reports_refused_delete():
+    kb, db_file = _make_kb()
+    # A shared row (user_id None): core refuses a scoped delete of shared content
+    kb.insert(name="shared-doc", text_content="for everyone", user_id=None)
+    toolkit = _make_toolkit(kb, scope="user")
+    row_id = _rows(db_file)[0][0]
+
+    report = json.loads(toolkit.remove_content(_ctx(user_id="alice"), row_id))
+
+    assert report["ok"] is False
+    assert "not removed" in report["error"]
+    assert _rows(db_file), "the shared row must still exist"
+
+
+class TestRefreshReaderIdentity:
+    def test_refresh_uses_recorded_reader_id(self):
+        content_hash = "stable-hash"
+        content_id = generate_id(content_hash)
+        knowledge = _mock_router_knowledge()
+        knowledge._build_content_hash = MagicMock(return_value=content_hash)
+        existing = _content(
+            content_id,
+            "x.com",
+            metadata={"_agno": {"source_url": "https://x.com/llms.txt", "source_type": "url", "reader_id": "llms_txt"}},
+        )
+        knowledge.aget_content_by_id = AsyncMock(return_value=existing)
+        client = _build_client(knowledge)
+
+        with patch("agno.os.routers.knowledge.knowledge.process_content", new=AsyncMock()) as process_content:
+            response = client.post(f"/knowledge/content/{content_id}/refresh")
+
+        assert response.status_code == 202
+        assert process_content.await_args.args[2] == "llms_txt"
+
+    def test_refresh_without_reader_record_refuses_to_guess(self):
+        content_hash = "stable-hash"
+        content_id = generate_id(content_hash)
+        knowledge = _mock_router_knowledge()
+        knowledge._build_content_hash = MagicMock(return_value=content_hash)
+        # An llms.txt-shaped row with no reader record: guessing would rewrite the site
+        existing = _content(
+            content_id,
+            "x.com",
+            metadata={"_agno": {"source_url": "https://x.com/llms.txt", "source_type": "url"}},
+        )
+        knowledge.aget_content_by_id = AsyncMock(return_value=existing)
+        client = _build_client(knowledge)
+
+        response = client.post(f"/knowledge/content/{content_id}/refresh")
+
+        assert response.status_code == 400
+        assert "re-ingest" in response.json()["detail"]

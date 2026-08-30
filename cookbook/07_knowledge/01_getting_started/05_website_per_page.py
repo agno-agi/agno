@@ -18,6 +18,7 @@ A bare sitemap URL selects this reader automatically:
 import asyncio
 
 from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.sitemap_reader import SitemapReader
@@ -27,8 +28,11 @@ from agno.vectordb.qdrant import Qdrant
 # ---------------------------------------------------------------------------
 # Create Knowledge
 # ---------------------------------------------------------------------------
+# The contents db is what holds the per-page rows (and the digests that make
+# re-ingest refresh only changed pages) — without it, only vectors are stored.
 knowledge = Knowledge(
     name="Agno Docs",
+    contents_db=SqliteDb(db_file="tmp/agno_docs_contents.db"),
     vector_db=Qdrant(
         collection="website-pages",
         url="http://localhost:6333",

@@ -36,9 +36,11 @@ _SITEMAP_PATH_HINTS = ("sitemap", ".xml")
 _GZIP_MAGIC = b"\x1f\x8b"
 
 # The discovery generator yields URLs to fetch and receives their bodies (or None on
-# failure); it returns (page_urls, sitemap_url). One implementation, driven by both the
-# sync and async transports.
-_DiscoveryGen = Generator[str, Optional[bytes], Tuple[List[str], Optional[str]]]
+# failure); it returns (page_urls, sitemap_url, incomplete). One implementation, driven
+# by both the sync and async transports. ``incomplete`` is True when a child sitemap of
+# an index could not be fetched or parsed — its pages are silently absent, so a caller
+# reconciling against a previous read must not treat them as removed.
+_DiscoveryGen = Generator[str, Optional[bytes], Tuple[List[str], Optional[str], bool]]
 
 
 def _default_allowed_hosts(host: str) -> List[str]:
@@ -169,9 +171,10 @@ class SitemapReader(Reader):
         """Find the sitemap for ``url`` and collect its page URLs.
 
         Yields each URL it needs fetched and receives the body (None on failure). Returns
-        ``(page_urls, sitemap_url)`` — pages in document order, deduplicated on canonical
-        form, host-filtered, bounded by ``max_pages``; ``sitemap_url`` is None when no
-        sitemap was found and the read falls back to the single page at ``url``.
+        ``(page_urls, sitemap_url, incomplete)`` — pages in document order, deduplicated
+        on canonical form, host-filtered, bounded by ``max_pages``; ``sitemap_url`` is
+        None when no sitemap was found and the read falls back to the single page at
+        ``url``; ``incomplete`` is True when an index child could not be fetched/parsed.
         """
         parsed_url = urlparse(url)
         robots_body = yield f"{parsed_url.scheme}://{parsed_url.netloc}/robots.txt"
@@ -189,6 +192,7 @@ class SitemapReader(Reader):
             is_index, locs = parsed
             pending: List[str] = list(locs) if is_index and self.follow_index else []
             page_locs: List[str] = [] if is_index else list(locs)
+            incomplete = False
             visited = {canonical_page_url(candidate)}
             while pending and len(page_locs) < self.max_pages:
                 child = pending.pop(0)
@@ -202,6 +206,8 @@ class SitemapReader(Reader):
                 child_raw = yield child
                 child_parsed = self._parse_sitemap(child_raw) if child_raw is not None else None
                 if child_parsed is None:
+                    # This shard's pages are absent from the read, not from the site
+                    incomplete = True
                     continue
                 child_is_index, child_locs = child_parsed
                 if child_is_index:
@@ -222,15 +228,17 @@ class SitemapReader(Reader):
                 pages.append(loc)
                 if len(pages) >= self.max_pages:
                     break
-            return pages, candidate
+            return pages, candidate, incomplete
 
-        return [url], None
+        return [url], None, False
 
     # ------------------------------------------------------------------
     # Documents
     # ------------------------------------------------------------------
 
-    def _build_documents(self, pages: List[FetchedPage], source_kind: str) -> List[Document]:
+    def _build_documents(
+        self, pages: List[FetchedPage], source_kind: str, discovery_incomplete: bool = False
+    ) -> List[Document]:
         documents: List[Document] = []
         for page in pages:
             url_key = canonical_page_url(page.url)
@@ -245,6 +253,10 @@ class SitemapReader(Reader):
             }
             if page.attempts:
                 meta["attempts"] = page.attempts
+            if discovery_incomplete:
+                # Read by the insert path (and stripped there): pages missing from this
+                # read may still exist on the site.
+                meta["discovery_incomplete"] = True
             if not page.ok:
                 meta["error"] = page.error or "empty"
                 documents.append(Document(name=name, id=url_key, meta_data=meta, content=""))
@@ -283,11 +295,11 @@ class SitemapReader(Reader):
                         body = None
                     request_url = discovery.send(body)
             except StopIteration as stop:
-                page_urls, sitemap_url = stop.value
+                page_urls, sitemap_url, incomplete = stop.value
 
         source_kind = "sitemap" if sitemap_url else "page"
         fetched = self.page_fetcher.fetch_many(page_urls, allowed_hosts=allowed_hosts)
-        return self._build_documents(fetched, source_kind)
+        return self._build_documents(fetched, source_kind, discovery_incomplete=incomplete)
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
         allowed_hosts = self._hosts_for(url)
@@ -308,8 +320,8 @@ class SitemapReader(Reader):
                         body = None
                     request_url = discovery.send(body)
             except StopIteration as stop:
-                page_urls, sitemap_url = stop.value
+                page_urls, sitemap_url, incomplete = stop.value
 
         source_kind = "sitemap" if sitemap_url else "page"
         fetched = await self.page_fetcher.afetch_many(page_urls, allowed_hosts=allowed_hosts)
-        return self._build_documents(fetched, source_kind)
+        return self._build_documents(fetched, source_kind, discovery_incomplete=incomplete)

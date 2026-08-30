@@ -144,7 +144,7 @@ class ParallelMCPBackend(ContextBackend):
     extractor_id = "parallel_mcp"
     fetch_batch_limit = 20  # web_fetch takes up to 20 URLs per request
 
-    def _pages_from_fetch_payload(self, urls: list, payload: dict) -> list:
+    def _pages_from_fetch_payload(self, urls: list, payload: dict, max_chars: int = 50_000) -> list:
         from agno.knowledge.reader.page_fetcher import FetchedPage
 
         by_url: dict = {}
@@ -165,7 +165,10 @@ class ParallelMCPBackend(ContextBackend):
                 content = entry.get("full_content") or "\n".join(entry.get("excerpts") or [])
                 title = entry.get("title")
             if content:
-                pages.append(FetchedPage(url=url, content=content, title=title, extractor=self.extractor_id))
+                # The MCP tool has no per-page size parameter, so the cap is applied here
+                pages.append(
+                    FetchedPage(url=url, content=content[:max_chars], title=title, extractor=self.extractor_id)
+                )
             else:
                 pages.append(FetchedPage(url=url, error=errors_by_url.get(url, "empty"), extractor=self.extractor_id))
         return pages
@@ -221,7 +224,7 @@ class ParallelMCPBackend(ContextBackend):
             payload = {}
         if not isinstance(payload, dict):
             payload = {}
-        return self._pages_from_fetch_payload(list(urls), payload)
+        return self._pages_from_fetch_payload(list(urls), payload, max_chars=max_chars)
 
     def fetch_many(self, urls: list, *, max_chars: int = 50_000) -> list:
         """Sync variant: runs :meth:`afetch_many` on a private event loop in a worker thread.

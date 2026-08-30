@@ -184,6 +184,13 @@ class HttpxPageFetcher:
 class ParallelPageFetcher:
     """Parallel's extraction API with the built-in fetcher as the per-page fallback.
 
+    ``allowed_hosts`` is enforced on the submitted URL; the provider fetches on its own
+    infrastructure and may follow a site's redirects, which this client cannot observe or
+    veto (unlike the built-in fetcher, whose redirect guard blocks off-host hops). A page
+    behind an off-host redirect comes back labeled with the submitted URL. Use
+    ``HttpxPageFetcher`` when redirect-boundary enforcement matters more than extraction
+    quality.
+
     The backend is resolved once, at construction, silently: the keyed SDK when
     ``PARALLEL_API_KEY`` (or ``api_key``) is set and ``parallel`` is importable, else the
     keyless MCP endpoint when ``mcp`` is importable, else this fetcher *is* the built-in

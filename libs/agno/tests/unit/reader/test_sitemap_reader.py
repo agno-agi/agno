@@ -571,3 +571,39 @@ def test_reader_factory_sitemap(monkeypatch):
         assert isinstance(url_reader, SitemapReader)
     finally:
         ReaderFactory.clear_cache()
+
+
+# ----------------------------------------------------------------------
+# Incomplete discovery (a lost shard must not read as removed content)
+# ----------------------------------------------------------------------
+
+
+def test_failed_index_child_marks_documents_discovery_incomplete():
+    routes = {
+        "https://example.com/sitemap.xml": (
+            sitemapindex_xml("https://example.com/sitemap-a.xml", "https://example.com/sitemap-b.xml"),
+            "application/xml",
+        ),
+        "https://example.com/sitemap-a.xml": (urlset_xml("https://example.com/page-a"), "application/xml"),
+        # sitemap-b.xml is unrouted -> 404: an entire shard is missing from this read
+        "https://example.com/page-a": (html_page("A", "Alpha content"), "text/html"),
+    }
+    with mock_site(routes):
+        documents = make_reader().read("https://example.com/sitemap.xml")
+
+    assert documents, "the reachable shard's pages are still read"
+    assert all(doc.meta_data.get("discovery_incomplete") is True for doc in documents), (
+        "every document must carry the incomplete-discovery flag so the insert path suppresses pruning"
+    )
+
+
+def test_complete_discovery_carries_no_incomplete_flag():
+    routes = {
+        "https://example.com/sitemap.xml": (urlset_xml("https://example.com/page-a"), "application/xml"),
+        "https://example.com/page-a": (html_page("A", "Alpha content"), "text/html"),
+    }
+    with mock_site(routes):
+        documents = make_reader().read("https://example.com/sitemap.xml")
+
+    assert documents
+    assert all("discovery_incomplete" not in doc.meta_data for doc in documents)
