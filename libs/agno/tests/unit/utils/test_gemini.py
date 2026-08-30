@@ -738,3 +738,34 @@ def test_inject_header_overrides_existing_x_goog_api_client():
     params = {"http_options": {"headers": {"x-goog-api-client": "stale/0.0.0"}}}
     result = inject_agno_client_header(params)
     assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+
+def test_convert_schema_integer_enum_coerced_to_strings():
+    """Integer enums (e.g. from IntEnum or Literal[1, 2, 3] parameters) must be
+    coerced to strings instead of failing Schema's List[str] validation."""
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "description": "A size choice",
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.type == "STRING"
+    assert result.enum == ["1", "2", "3"]
+
+
+def test_convert_schema_integer_enum_default_coerced():
+    """A default that points at an enum value is coerced alongside the values."""
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "default": 2,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.enum == ["1", "2", "3"]
+    assert result.default == "2"

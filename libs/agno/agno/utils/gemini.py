@@ -258,7 +258,13 @@ def convert_schema(
 
     # Handle enum types
     if "enum" in schema_dict:
-        enum_values = schema_dict["enum"]
+        # The type is coerced to STRING, so non-string enum values (e.g. integer
+        # enums from IntEnum or Literal[1, 2, 3] tool parameters) must be coerced
+        # as well, otherwise Schema's List[str] validation rejects them.
+        raw_enum = schema_dict["enum"]
+        enum_values = [str(value) for value in raw_enum]
+        if default is not None and default in raw_enum:
+            default = str(default)
         return Schema(type=GeminiType.STRING, enum=enum_values, description=description, default=default, title=title)
 
     if schema_type == "object":
