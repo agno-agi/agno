@@ -6,9 +6,8 @@ from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
-from agno.models.metrics import RunMetrics
+from agno.metrics import RunMetrics
 from agno.session.workflow import WorkflowSession
-from agno.utils.log import log_warning
 from agno.utils.media import (
     reconstruct_audio_list,
     reconstruct_files,
@@ -16,20 +15,6 @@ from agno.utils.media import (
     reconstruct_videos,
 )
 from agno.utils.timer import Timer
-
-_session_state_param_deprecation_warned: set = set()
-
-
-def warn_session_state_param_deprecated(func: Any, component: str) -> None:
-    """Warn once per function that the injected session_state parameter is deprecated."""
-    key = component + ":" + getattr(func, "__name__", repr(func))
-    if key in _session_state_param_deprecation_warned:
-        return
-    _session_state_param_deprecation_warned.add(key)
-    log_warning(
-        f"The 'session_state' parameter for {component} is deprecated and will be removed in a future release. "
-        "Accept 'run_context: RunContext' and use 'run_context.session_state' instead."
-    )
 
 
 class OnReject(str, Enum):
@@ -102,6 +87,9 @@ class HumanReview:
     user_input_message: Optional[str] = None
     user_input_schema: Optional[List[Dict[str, Any]]] = None
 
+    # Route selection (Router only): allow the user to pick more than one route
+    allow_multiple_selections: bool = False
+
     # Post-execution output review (Step, Router only)
     requires_output_review: Union[bool, Any] = False  # Union[bool, Callable[[StepOutput], bool]]
     output_review_message: Optional[str] = None
@@ -133,6 +121,7 @@ class HumanReview:
             "requires_user_input": self.requires_user_input,
             "user_input_message": self.user_input_message,
             "user_input_schema": self.user_input_schema,
+            "allow_multiple_selections": self.allow_multiple_selections,
             "requires_output_review": self.requires_output_review
             if isinstance(self.requires_output_review, bool)
             else True,
@@ -155,6 +144,7 @@ class HumanReview:
             requires_user_input=data.get("requires_user_input", False),
             user_input_message=data.get("user_input_message"),
             user_input_schema=data.get("user_input_schema"),
+            allow_multiple_selections=data.get("allow_multiple_selections", False),
             requires_output_review=data.get("requires_output_review", False),
             output_review_message=data.get("output_review_message"),
             requires_iteration_review=data.get("requires_iteration_review", False),

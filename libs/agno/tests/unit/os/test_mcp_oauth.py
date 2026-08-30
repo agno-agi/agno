@@ -175,7 +175,7 @@ async def _obtain_oauth_token(client: httpx.AsyncClient, scope: str = "agents:ru
 
 
 def test_mcp_auth_requires_mcp_server():
-    with pytest.raises(ValueError, match="mcp_server=True"):
+    with pytest.raises(ValueError, match="mcp=True"):
         AgentOS(agents=[_agent()], mcp_auth=_oauth_provider())
 
 

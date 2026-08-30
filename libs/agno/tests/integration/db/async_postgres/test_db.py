@@ -83,7 +83,7 @@ async def test_create_metrics_table_with_constraints(async_postgres_db_real):
         )
         rows = result.fetchall()
         constraints = [row[0] for row in rows]
-        assert any("uq_metrics_date_period" in c for c in constraints)
+        assert any("uq_metrics_user_date_period" in c for c in constraints)
 
 
 @pytest.mark.asyncio
