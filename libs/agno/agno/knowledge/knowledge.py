@@ -800,10 +800,13 @@ class Knowledge(RemoteKnowledge):
     ) -> bool:
         """Remove one content row and its vectors; cascades through a site row's pages.
 
-        Returns False when nothing was removed (ownership refused it) or when the vector
-        store reported a failed delete — in that case the contents row and its place in
-        the parent's cascade record are kept, so a later attempt can still reach the
-        vectors instead of orphaning them.
+        Returns False when nothing was removed (ownership refused it), when the vector
+        store reported a failed delete for a row that records indexed content, or when
+        part of a site's cascade failed — the affected rows and their place in the
+        parent's cascade record are kept, so a later attempt can still reach the
+        vectors instead of orphaning them. A False from the vector store for a row with
+        no recorded indexed content (site parents, legacy rows) is a zero-match no-op,
+        not a failure — several adapters answer False for both.
         """
         from agno.vectordb import VectorDb
 
@@ -825,13 +828,18 @@ class Knowledge(RemoteKnowledge):
         # parent-list maintenance below.
         seen = _seen if _seen is not None else set()
         seen.add(content_id)
-        all_removed = True
+        surviving_children: List[str] = []
         children = get_agno_metadata(content.metadata, "children") if content else None
         if isinstance(children, list):
             for child_id in children:
                 if isinstance(child_id, str) and child_id not in seen:
                     if not self.remove_content_by_id(child_id, user_id=user_id, _seen=seen):
-                        all_removed = False
+                        surviving_children.append(child_id)
+        if surviving_children and content is not None:
+            # Some pages could not be removed: the parent stays as the retry anchor,
+            # its cascade record narrowed to what actually survives.
+            self._stamp_row_children(content, surviving_children)
+            return False
 
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -839,24 +847,25 @@ class Knowledge(RemoteKnowledge):
                 if content is None and self.contents_db is not None:
                     content = self.get_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
-                    self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                    lightrag_deleted = self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                    if lightrag_deleted is False:
+                        log_debug(f"LightRAG delete failed for content {content_id}; keeping the row for retry")
+                        return False
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
                 # Backends without per-user isolation accept ``user_id`` as a no-op.
-                # Adapters report operational failures as False — the row must then stay,
-                # or the vectors become permanently orphaned but still searchable.
                 deleted = self.vector_db.delete_by_content_id(
                     content_id, **strict_user_id_kwarg(self.vector_db.delete_by_content_id, user_id)
                 )
-                if deleted is False:
+                if deleted is False and self._false_delete_is_failure(content):
                     log_debug(f"Vector delete failed for content {content_id}; keeping the row for retry")
                     return False
 
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
             self._drop_from_parent_children(content, content_id, user_id, seen)
-        return all_removed
+        return True
 
     def _drop_from_parent_children(
         self, content: Optional[Content], content_id: str, user_id: Optional[str], seen: Set[str]
@@ -914,13 +923,17 @@ class Knowledge(RemoteKnowledge):
         # See the matching cascade in ``remove_content_by_id``.
         seen = _seen if _seen is not None else set()
         seen.add(content_id)
-        all_removed = True
+        surviving_children: List[str] = []
         children = get_agno_metadata(content.metadata, "children") if content else None
         if isinstance(children, list):
             for child_id in children:
                 if isinstance(child_id, str) and child_id not in seen:
                     if not await self.aremove_content_by_id(child_id, user_id=user_id, _seen=seen):
-                        all_removed = False
+                        surviving_children.append(child_id)
+        if surviving_children and content is not None:
+            # See the matching branch in ``remove_content_by_id``.
+            await self._astamp_row_children(content, surviving_children)
+            return False
 
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -928,7 +941,10 @@ class Knowledge(RemoteKnowledge):
                 if content is None and self.contents_db is not None:
                     content = await self.aget_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
-                    self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                    lightrag_deleted = self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                    if lightrag_deleted is False:
+                        log_debug(f"LightRAG delete failed for content {content_id}; keeping the row for retry")
+                        return False
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
@@ -936,7 +952,7 @@ class Knowledge(RemoteKnowledge):
                 deleted = self.vector_db.delete_by_content_id(
                     content_id, **strict_user_id_kwarg(self.vector_db.delete_by_content_id, user_id)
                 )
-                if deleted is False:
+                if deleted is False and self._false_delete_is_failure(content):
                     log_debug(f"Vector delete failed for content {content_id}; keeping the row for retry")
                     return False
 
@@ -946,19 +962,45 @@ class Knowledge(RemoteKnowledge):
             else:
                 self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
             await self._adrop_from_parent_children(content, content_id, user_id, seen)
+        return True
+
+    def remove_all_content(self, user_id: Optional[str] = None) -> bool:
+        """Remove every deletable row. Returns False when any removal failed (see
+        ``remove_content_by_id``); the failed rows are kept for retry."""
+        contents, _ = self.get_content(user_id=user_id)
+        all_removed = True
+        for content in contents:
+            if content.id is not None and not self._content_is_shared(content, user_id):
+                if self.get_content_by_id(content.id, user_id=user_id) is None:
+                    continue  # already removed by an earlier row's cascade
+                if not self.remove_content_by_id(content.id, user_id=user_id):
+                    all_removed = False
         return all_removed
 
-    def remove_all_content(self, user_id: Optional[str] = None):
-        contents, _ = self.get_content(user_id=user_id)
-        for content in contents:
-            if content.id is not None and not self._content_is_shared(content, user_id):
-                self.remove_content_by_id(content.id, user_id=user_id)
-
-    async def aremove_all_content(self, user_id: Optional[str] = None):
+    async def aremove_all_content(self, user_id: Optional[str] = None) -> bool:
+        """Async version of :meth:`remove_all_content`."""
         contents, _ = await self.aget_content(user_id=user_id)
+        all_removed = True
         for content in contents:
             if content.id is not None and not self._content_is_shared(content, user_id):
-                await self.aremove_content_by_id(content.id, user_id=user_id)
+                if await self.aget_content_by_id(content.id, user_id=user_id) is None:
+                    continue  # already removed by an earlier row's cascade
+                if not await self.aremove_content_by_id(content.id, user_id=user_id):
+                    all_removed = False
+        return all_removed
+
+    @staticmethod
+    def _false_delete_is_failure(content: Optional[Content]) -> bool:
+        """Whether a False from ``delete_by_content_id`` means the delete failed.
+
+        Adapter return semantics are mixed: some return False on operational failure,
+        others (Chroma, LanceDB, Weaviate) on a zero-match no-op. The two are told apart
+        by what this side knows: a row that records indexed content
+        (``_agno.content_digest``) owns vectors, so a False there is a failure and the
+        row is kept for retry. Any other row — a site parent, which owns no page
+        vectors, or a legacy row — treats False as the no-op it usually is.
+        """
+        return content is not None and isinstance(get_agno_metadata(content.metadata, "content_digest"), str)
 
     @staticmethod
     def _content_is_shared(content: Content, user_id: Optional[str]) -> bool:
@@ -1826,7 +1868,7 @@ class Knowledge(RemoteKnowledge):
 
         # A multi-page re-ingest needs the previous run's child-row ids to delete pages that
         # left the site; the upsert below overwrites them, so capture first.
-        previous_children = await self._aget_previous_children(content)
+        previous_children, had_previous_row = await self._aget_previous_children(content)
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
@@ -1942,6 +1984,7 @@ class Knowledge(RemoteKnowledge):
                 previous_children,
                 name_was_auto,
                 discovery_incomplete=discovery_incomplete,
+                legacy_promotion=had_previous_row and not previous_children,
             )
             return
 
@@ -1999,7 +2042,7 @@ class Knowledge(RemoteKnowledge):
 
         # A multi-page re-ingest needs the previous run's child-row ids to delete pages that
         # left the site; the upsert below overwrites them, so capture first.
-        previous_children = self._get_previous_children(content)
+        previous_children, had_previous_row = self._get_previous_children(content)
 
         # 1. Add content to contents database
         self._insert_contents_db(content)
@@ -2110,6 +2153,7 @@ class Knowledge(RemoteKnowledge):
                 previous_children,
                 name_was_auto,
                 discovery_incomplete=discovery_incomplete,
+                legacy_promotion=had_previous_row and not previous_children,
             )
             return
 
@@ -2141,28 +2185,34 @@ class Knowledge(RemoteKnowledge):
 
     _MULTI_PAGE_READER_IDS = {"SitemapReader": "sitemap", "LLMsTxtReader": "llms_txt", "WebsiteReader": "website"}
 
-    async def _aget_previous_children(self, content: Content) -> List[str]:
-        """Child-row ids recorded on the site row by the previous run, if any."""
+    async def _aget_previous_children(self, content: Content) -> Tuple[List[str], bool]:
+        """``(child ids recorded by the previous run, whether a previous row existed)``.
+
+        A row that existed with no children is a legacy single row about to be promoted
+        to a site row — its vectors live under the row's own id and must be cleared.
+        """
         if self.contents_db is None or not content.id:
-            return []
+            return [], False
         if isinstance(self.contents_db, AsyncBaseDb):
             row = await self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
         else:
             row = self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
         if row is None:
-            return []
+            return [], False
         children = get_agno_metadata(row.metadata, "children")
-        return [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
+        parsed = [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
+        return parsed, True
 
-    def _get_previous_children(self, content: Content) -> List[str]:
+    def _get_previous_children(self, content: Content) -> Tuple[List[str], bool]:
         """Synchronous version of _aget_previous_children."""
         if self.contents_db is None or not content.id or isinstance(self.contents_db, AsyncBaseDb):
-            return []
+            return [], False
         row = self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
         if row is None:
-            return []
+            return [], False
         children = get_agno_metadata(row.metadata, "children")
-        return [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
+        parsed = [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
+        return parsed, True
 
     async def _aget_child_digest(self, child_id: Optional[str], user_id: Optional[str]) -> Optional[str]:
         """The stored page-text digest of a child row, or None when the row does not exist."""
@@ -2293,6 +2343,7 @@ class Knowledge(RemoteKnowledge):
         previous_children: List[str],
         name_was_auto: bool,
         discovery_incomplete: bool = False,
+        legacy_promotion: bool = False,
     ) -> None:
         """Land a multi-page read as one content row per page under the site row.
 
@@ -2309,14 +2360,23 @@ class Knowledge(RemoteKnowledge):
 
         # The site row owns no page vectors. Clearing its content_id first makes the
         # 1-to-N transition drop the legacy single-row vectors, and lets the overview
-        # branch below re-insert without stacking chunks run over run.
+        # branch below re-insert without stacking chunks run over run. On an ordinary
+        # re-ingest there is nothing to clear, so a False is a zero-match no-op; during
+        # a promotion (a legacy row growing into a site) the legacy vectors are real,
+        # and inserting page rows beside them would leave stale content searchable —
+        # a failed clear aborts the promotion for a later retry.
         try:
             clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
             cleared = self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
-            if cleared is False:
-                log_debug("Vector store reported a failed clear of the site row's legacy vectors")
+            clear_failed = cleared is False and legacy_promotion
         except Exception as e:
             log_debug(f"Could not clear site-row vectors before per-page load: {e}")
+            clear_failed = legacy_promotion
+        if clear_failed:
+            content.status = ContentStatus.FAILED
+            content.status_message = "Could not clear the row's previous vectors; re-run to retry"
+            await self._aupdate_content(content)
+            return
 
         reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
 
@@ -2474,20 +2534,26 @@ class Knowledge(RemoteKnowledge):
         previous_children: List[str],
         name_was_auto: bool,
         discovery_incomplete: bool = False,
+        legacy_promotion: bool = False,
     ) -> None:
         """Synchronous version of _aload_url_page_groups."""
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
 
-        # See the matching clear in _aload_url_page_groups.
+        # See the matching clear-and-abort in _aload_url_page_groups.
         try:
             clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
             cleared = self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
-            if cleared is False:
-                log_debug("Vector store reported a failed clear of the site row's legacy vectors")
+            clear_failed = cleared is False and legacy_promotion
         except Exception as e:
             log_debug(f"Could not clear site-row vectors before per-page load: {e}")
+            clear_failed = legacy_promotion
+        if clear_failed:
+            content.status = ContentStatus.FAILED
+            content.status_message = "Could not clear the row's previous vectors; re-run to retry"
+            self._update_content(content)
+            return
 
         reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
 

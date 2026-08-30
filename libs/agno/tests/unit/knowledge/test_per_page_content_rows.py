@@ -764,3 +764,163 @@ async def test_prune_honors_false_returning_adapter(vector_db, tmp_path):
     site = _site_row(_rows(kb))
     children = set(get_agno_metadata(site.metadata, "children"))
     assert stale_ids <= children, "a page whose vector delete failed keeps its place for retry"
+
+
+# ---------------------------------------------------------------------------
+# Review round 3: deletion-contract semantics
+# ---------------------------------------------------------------------------
+
+
+from conftest import StubVectorDb  # noqa: E402 - fixture class shared with the suite
+
+
+class ZeroMatchFalseVectorDb(StubVectorDb):
+    """Chroma/LanceDB/Weaviate-shaped: delete_by_content_id answers False when zero
+    vectors matched, True when something was deleted."""
+
+    def delete_by_content_id(self, content_id, user_id=None):
+        remaining = [doc for doc in self.inserted_documents + self.upserted_documents if doc.content_id != content_id]
+        matched = len(remaining) != len(self.inserted_documents) + len(self.upserted_documents)
+        self.inserted_documents = [doc for doc in self.inserted_documents if doc.content_id != content_id]
+        self.upserted_documents = [doc for doc in self.upserted_documents if doc.content_id != content_id]
+        return matched
+
+
+async def test_vectorless_site_parent_deletes_cleanly_on_zero_match_false_adapter_async(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    site = _site_row(_rows(kb))
+
+    removed = await kb.aremove_content_by_id(site.id)
+
+    assert removed is True, "a zero-match False on the vectorless parent is a no-op, not a failure"
+    rows, count = await kb.aget_content()
+    assert count == 0
+    assert vector_db.inserted_documents == []
+
+
+def test_vectorless_site_parent_deletes_cleanly_on_zero_match_false_adapter_sync(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    site = _site_row(_rows(kb))
+
+    removed = kb.remove_content_by_id(site.id)
+
+    assert removed is True
+    rows, count = kb.get_content()
+    assert count == 0
+
+
+async def test_partial_cascade_failure_preserves_parent_async(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    rows = _rows(kb)
+    site = _site_row(rows)
+    failing_id = next(row.id for row in rows if get_agno_metadata(row.metadata, "source_url") == PAGE_TWO)
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False if cid == failing_id else True
+    removed = await kb.aremove_content_by_id(site.id)
+
+    assert removed is False
+    site_row = await kb.aget_content_by_id(site.id)
+    assert site_row is not None, "the parent stays as the retry anchor"
+    assert get_agno_metadata(site_row.metadata, "children") == [failing_id]
+    assert await kb.aget_content_by_id(failing_id) is not None
+
+    # Retry with a healthy adapter reconciles fully
+    vector_db.delete_by_content_id = lambda cid, user_id=None: True
+    assert await kb.aremove_content_by_id(site.id) is True
+    _, count = await kb.aget_content()
+    assert count == 0
+
+
+def test_partial_cascade_failure_preserves_parent_sync(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    rows = _rows(kb)
+    site = _site_row(rows)
+    failing_id = next(row.id for row in rows if get_agno_metadata(row.metadata, "source_url") == PAGE_TWO)
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False if cid == failing_id else True
+    removed = kb.remove_content_by_id(site.id)
+
+    assert removed is False
+    site_row = kb.get_content_by_id(site.id)
+    assert site_row is not None
+    assert get_agno_metadata(site_row.metadata, "children") == [failing_id]
+
+
+async def test_legacy_promotion_aborts_when_clear_fails_async(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page"}))
+    row = _rows(kb)[0]
+
+    def failing_clear(content_id, user_id=None):
+        raise RuntimeError("adapter down")
+
+    vector_db.delete_by_content_id = failing_clear
+    inserted_before = len(vector_db.inserted_documents)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page", PAGE_TWO: "second"}))
+
+    refreshed = await kb.aget_content_by_id(row.id)
+    assert refreshed.status == "failed"
+    assert "previous vectors" in (refreshed.status_message or "")
+    assert len(vector_db.inserted_documents) == inserted_before, "no child vectors beside uncleared legacy ones"
+
+
+def test_legacy_promotion_aborts_when_clear_fails_sync(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page"}))
+    row = _rows(kb)[0]
+
+    vector_db.delete_by_content_id = lambda content_id, user_id=None: False  # operational False mid-promotion
+    inserted_before = len(vector_db.inserted_documents)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page", PAGE_TWO: "second"}))
+
+    refreshed = kb.get_content_by_id(row.id)
+    assert refreshed.status == "failed"
+    assert len(vector_db.inserted_documents) == inserted_before
+
+
+async def test_ordinary_reingest_tolerates_zero_match_false_clear(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    # The site row owns no vectors: its clear answers False and that must not fail the read
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    assert _site_row(_rows(kb)).status == "completed"
+
+
+async def test_remove_all_content_aggregates_failures_async(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    rows = _rows(kb)
+    failing_id = next(row.id for row in rows if get_agno_metadata(row.metadata, "source_url") == PAGE_TWO)
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False if cid == failing_id else True
+    result = await kb.aremove_all_content()
+
+    assert result is False
+    assert await kb.aget_content_by_id(failing_id) is not None
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: True
+    assert await kb.aremove_all_content() is True
+    _, count = await kb.aget_content()
+    assert count == 0
+
+
+def test_remove_all_content_aggregates_failures_sync(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    rows = _rows(kb)
+    failing_id = next(row.id for row in rows if get_agno_metadata(row.metadata, "source_url") == PAGE_TWO)
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False if cid == failing_id else True
+    assert kb.remove_all_content() is False
+    assert kb.get_content_by_id(failing_id) is not None

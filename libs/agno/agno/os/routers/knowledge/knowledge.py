@@ -759,7 +759,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         # Admins clear everything; a non-admin clears only their own rows, never shared ones.
         scoped_user_id = get_scoped_user_id(request)
-        await knowledge.aremove_all_content(user_id=scoped_user_id)
+        all_removed = await knowledge.aremove_all_content(user_id=scoped_user_id)
+        if all_removed is False:
+            raise HTTPException(status_code=500, detail="Some content was not fully removed; vector deletion failed")
         return "success"
 
     @router.post(

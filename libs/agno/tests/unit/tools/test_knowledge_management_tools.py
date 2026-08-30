@@ -838,3 +838,25 @@ class TestDeleteContentRouteVectorFailure:
         response = client.delete("/knowledge/content/row-1")
 
         assert response.status_code == 200
+
+
+class TestDeleteAllRouteAggregation:
+    def test_delete_all_returns_500_when_any_removal_fails(self):
+        knowledge = _mock_router_knowledge()
+        knowledge.aremove_all_content = AsyncMock(return_value=False)
+        client = _build_client(knowledge)
+
+        response = client.delete("/knowledge/content")
+
+        assert response.status_code == 500
+        assert "not fully removed" in response.json()["detail"]
+
+    def test_delete_all_succeeds_when_aggregate_is_true(self):
+        knowledge = _mock_router_knowledge()
+        knowledge.aremove_all_content = AsyncMock(return_value=True)
+        client = _build_client(knowledge)
+
+        response = client.delete("/knowledge/content")
+
+        assert response.status_code == 200
+        assert response.json() == "success"
