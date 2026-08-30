@@ -12,8 +12,12 @@ The provider can swap between backends without changing its agent interface.
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
+from typing import TYPE_CHECKING
 
 from agno.context.provider import Status
+
+if TYPE_CHECKING:
+    from agno.tools import Toolkit
 
 
 class ContextBackend(ABC):
@@ -26,7 +30,7 @@ class ContextBackend(ABC):
     async def astatus(self) -> Status: ...
 
     @abstractmethod
-    def get_tools(self) -> list: ...
+    def get_tools(self) -> list[Toolkit]: ...
 
     async def asetup(self) -> None:
         """Setup any resources the backend needs. Default: no-op.
