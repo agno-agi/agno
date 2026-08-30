@@ -1014,7 +1014,7 @@ async def test_a_url_only_artifact_becomes_a_resource_link():
 
 async def test_a_shipped_tool_result_toolkit_round_trips():
     """End to end on a shipped toolkit, which is where this actually bit."""
-    from agno.tools.file_generation import FileGenerationTools
+    from agno.tools.file import FileGenerationTools
 
     os = _os(FileGenerationTools())
     assert "generate_text_file" in await _tools_by_name(os)

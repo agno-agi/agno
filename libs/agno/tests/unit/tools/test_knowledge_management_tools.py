@@ -29,7 +29,7 @@ from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.run import RunContext
-from agno.tools.knowledge_management import KnowledgeManagementTools
+from agno.tools.knowledge import KnowledgeManagementTools
 from agno.utils.string import generate_id
 from agno.vectordb.base import VectorDb
 
@@ -149,6 +149,9 @@ def _make_kb():
 
 
 def _make_toolkit(kb: Knowledge, **kwargs) -> KnowledgeManagementTools:
+    # Behaviour tests drive every tool, ingest_path included. The constructor defaults are
+    # pinned by the registration tests instead.
+    kwargs.setdefault("ingest_path", True)
     toolkit = KnowledgeManagementTools(knowledge=kb, **kwargs)
     toolkit._build_reader = lambda max_pages: TwoPageReader()  # type: ignore[method-assign]
     return toolkit
@@ -171,13 +174,23 @@ def _rows(db_file: str):
 # ---------------------------------------------------------------------------
 
 
-def test_registration_default_exposes_all_tools_sync_and_async():
+def test_registration_default_exposes_every_tool_but_ingest_path():
     kb, _ = _make_kb()
     toolkit = KnowledgeManagementTools(knowledge=kb)
 
-    expected = ["ingest_url", "ingest_path", "ingest_text", "list_content", "ingest_status", "remove_content"]
+    expected = ["ingest_url", "ingest_text", "list_content", "ingest_status", "remove_content"]
     assert list(toolkit.functions.keys()) == expected
     assert list(toolkit.async_functions.keys()) == expected
+
+
+def test_ingest_path_is_off_by_default_and_opts_in():
+    kb, _ = _make_kb()
+
+    assert "ingest_path" not in KnowledgeManagementTools(knowledge=kb).functions
+
+    toolkit = KnowledgeManagementTools(knowledge=kb, ingest_path=True)
+    assert "ingest_path" in toolkit.functions
+    assert "ingest_path" in toolkit.async_functions
 
 
 def test_remove_content_requires_confirmation_by_default():
@@ -191,21 +204,41 @@ def test_remove_content_requires_confirmation_by_default():
     assert not toolkit.functions["list_content"].requires_confirmation
 
 
-def test_enable_remove_false_drops_tool_and_sets_no_confirmation_flag():
+def test_caller_supplied_confirmation_list_keeps_remove_content_gated():
     kb, _ = _make_kb()
-    toolkit = KnowledgeManagementTools(knowledge=kb, enable_remove=False)
+    toolkit = KnowledgeManagementTools(knowledge=kb, requires_confirmation_tools=["ingest_url"])
+
+    assert set(toolkit.requires_confirmation_tools) == {"remove_content", "ingest_url"}
+    assert toolkit.functions["remove_content"].requires_confirmation is True
+    assert toolkit.async_functions["remove_content"].requires_confirmation is True
+    assert toolkit.functions["ingest_url"].requires_confirmation is True
+
+
+def test_remove_content_false_drops_tool_and_sets_no_confirmation_flag():
+    kb, _ = _make_kb()
+    toolkit = KnowledgeManagementTools(knowledge=kb, remove_content=False)
 
     assert "remove_content" not in toolkit.functions
     assert "remove_content" not in toolkit.async_functions
     assert toolkit.requires_confirmation_tools == []
 
 
-def test_enable_ingest_false_drops_ingest_tools():
+def test_ingest_flags_false_drop_the_write_tools():
     kb, _ = _make_kb()
-    toolkit = KnowledgeManagementTools(knowledge=kb, enable_ingest=False)
+    toolkit = KnowledgeManagementTools(knowledge=kb, ingest_url=False, ingest_text=False)
 
     assert list(toolkit.functions.keys()) == ["list_content", "ingest_status", "remove_content"]
     assert list(toolkit.async_functions.keys()) == ["list_content", "ingest_status", "remove_content"]
+
+
+def test_enable_flags_are_gone_and_fail_loudly():
+    # 2.x-era enable_* kwargs must not reach Toolkit and be silently ignored — a swallowed
+    # enable_ingest=False would register the write tools the caller thinks it disabled.
+    kb, _ = _make_kb()
+    with pytest.raises(TypeError):
+        KnowledgeManagementTools(knowledge=kb, enable_ingest=False)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        KnowledgeManagementTools(knowledge=kb, enable_remove=False)  # type: ignore[call-arg]
 
 
 def test_requires_knowledge():

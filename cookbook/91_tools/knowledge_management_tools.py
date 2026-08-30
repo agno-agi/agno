@@ -23,7 +23,7 @@ from agno.db.sqlite import SqliteDb
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.tools.knowledge_management import KnowledgeManagementTools
+from agno.tools.knowledge import KnowledgeManagementTools
 from agno.vectordb.qdrant import Qdrant
 
 # ---------------------------------------------------------------------------
@@ -45,7 +45,11 @@ knowledge = Knowledge(
 operator = Agent(
     name="Knowledge Operator",
     model=OpenAIResponses(id="gpt-5.6-luna"),
-    tools=[KnowledgeManagementTools(knowledge=knowledge, max_pages=25)],
+    # ingest_path reads any path the server process can read, so it is off by default.
+    # Turn it on only where the operator is trusted with the machine's filesystem.
+    tools=[
+        KnowledgeManagementTools(knowledge=knowledge, max_pages=25, ingest_path=True)
+    ],
     markdown=True,
 )
 
