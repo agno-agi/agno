@@ -2843,6 +2843,13 @@ class Model(ABC):
         async def process_async_generator(result, generator_id):
             function_call_success, function_call_timer, function_call, function_execution_result = result
             function_call_output = ""
+            # A tool can fan out to several agents and yield their content
+            # deltas interleaved (e.g. delegate_task_to_members with
+            # delegate_to_all_members). Accumulating in arrival order garbles
+            # the tool result mid-sentence, so each stream's deltas stay
+            # contiguous, keyed by the event's run_id, in first-arrival order.
+            streamed_content_parts: List[str] = []
+            streamed_part_index: Dict[str, int] = {}
 
             try:
                 async for item in function_call.result:
@@ -2851,10 +2858,18 @@ class Model(ABC):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
-                                function_call_output += item.content.model_dump_json()
+                                chunk = item.content.model_dump_json()
                             else:
                                 # Capture output
-                                function_call_output += item.content or ""
+                                chunk = item.content or ""
+
+                            run_key = item.run_id or ""
+                            part_index = streamed_part_index.get(run_key)
+                            if part_index is None:
+                                streamed_part_index[run_key] = len(streamed_content_parts)
+                                streamed_content_parts.append(chunk)
+                            else:
+                                streamed_content_parts[part_index] += chunk
 
                             if function_call.function.show_result and item.content is not None:
                                 await event_queue.put(ModelResponse(content=item.content))
@@ -2882,6 +2897,14 @@ class Model(ABC):
                         function_call_output += str(item)
                         if function_call.function.show_result and item is not None:
                             await event_queue.put(ModelResponse(content=str(item)))
+
+                # Join the per-stream parts after any directly captured output so
+                # interleaved sibling streams read as separate blocks
+                if streamed_content_parts:
+                    streamed_output = "\n\n".join(streamed_content_parts)
+                    function_call_output = (
+                        f"{function_call_output}\n\n{streamed_output}" if function_call_output else streamed_output
+                    )
 
                 # Store the final output for this generator
                 async_generator_outputs[generator_id] = (result, function_call_output, None)
