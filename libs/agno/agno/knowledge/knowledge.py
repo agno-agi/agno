@@ -941,7 +941,9 @@ class Knowledge(RemoteKnowledge):
                 if content is None and self.contents_db is not None:
                     content = await self.aget_content_by_id(content_id, user_id=user_id)
                 if content and content.external_id:
-                    lightrag_deleted = self.vector_db.delete_by_external_id(content.external_id)  # type: ignore
+                    # The sync wrapper runs asyncio.run and cannot be called from a
+                    # running event loop (e.g. under the REST server)
+                    lightrag_deleted = await self.vector_db.async_delete_by_external_id(content.external_id)  # type: ignore
                     if lightrag_deleted is False:
                         log_debug(f"LightRAG delete failed for content {content_id}; keeping the row for retry")
                         return False
@@ -990,17 +992,31 @@ class Knowledge(RemoteKnowledge):
         return all_removed
 
     @staticmethod
-    def _false_delete_is_failure(content: Optional[Content]) -> bool:
+    def _row_owns_vectors(content: Optional[Content]) -> bool:
+        """Whether this row is recorded as owning indexed vectors.
+
+        ``_agno.vectors_indexed`` is written at every successful vector insert (text,
+        file, single-page, and per-page rows alike); ``_agno.content_digest`` is the
+        page-row form of the same evidence and is stripped when an embed fails.
+        """
+        if content is None:
+            return False
+        if get_agno_metadata(content.metadata, "vectors_indexed") is True:
+            return True
+        return isinstance(get_agno_metadata(content.metadata, "content_digest"), str)
+
+    @classmethod
+    def _false_delete_is_failure(cls, content: Optional[Content]) -> bool:
         """Whether a False from ``delete_by_content_id`` means the delete failed.
 
         Adapter return semantics are mixed: some return False on operational failure,
-        others (Chroma, LanceDB, Weaviate) on a zero-match no-op. The two are told apart
-        by what this side knows: a row that records indexed content
-        (``_agno.content_digest``) owns vectors, so a False there is a failure and the
-        row is kept for retry. Any other row — a site parent, which owns no page
-        vectors, or a legacy row — treats False as the no-op it usually is.
+        others (Chroma, LanceDB, Weaviate) on a zero-match no-op. The two are told
+        apart by what this side persisted: a row recorded as owning vectors treats
+        False as a failure and is kept for retry; a row with no such record — a site
+        parent, or a row whose indexing never succeeded — treats False as the no-op
+        it usually is.
         """
-        return content is not None and isinstance(get_agno_metadata(content.metadata, "content_digest"), str)
+        return cls._row_owns_vectors(content)
 
     @staticmethod
     def _content_is_shared(content: Content, user_id: Optional[str]) -> bool:
@@ -1868,7 +1884,7 @@ class Knowledge(RemoteKnowledge):
 
         # A multi-page re-ingest needs the previous run's child-row ids to delete pages that
         # left the site; the upsert below overwrites them, so capture first.
-        previous_children, had_previous_row = await self._aget_previous_children(content)
+        previous_children, previous_row_owned_vectors = await self._aget_previous_children(content)
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
@@ -1984,7 +2000,7 @@ class Knowledge(RemoteKnowledge):
                 previous_children,
                 name_was_auto,
                 discovery_incomplete=discovery_incomplete,
-                legacy_promotion=had_previous_row and not previous_children,
+                legacy_promotion=previous_row_owned_vectors and not previous_children,
             )
             return
 
@@ -2042,7 +2058,7 @@ class Knowledge(RemoteKnowledge):
 
         # A multi-page re-ingest needs the previous run's child-row ids to delete pages that
         # left the site; the upsert below overwrites them, so capture first.
-        previous_children, had_previous_row = self._get_previous_children(content)
+        previous_children, previous_row_owned_vectors = self._get_previous_children(content)
 
         # 1. Add content to contents database
         self._insert_contents_db(content)
@@ -2153,7 +2169,7 @@ class Knowledge(RemoteKnowledge):
                 previous_children,
                 name_was_auto,
                 discovery_incomplete=discovery_incomplete,
-                legacy_promotion=had_previous_row and not previous_children,
+                legacy_promotion=previous_row_owned_vectors and not previous_children,
             )
             return
 
@@ -2185,12 +2201,24 @@ class Knowledge(RemoteKnowledge):
 
     _MULTI_PAGE_READER_IDS = {"SitemapReader": "sitemap", "LLMsTxtReader": "llms_txt", "WebsiteReader": "website"}
 
-    async def _aget_previous_children(self, content: Content) -> Tuple[List[str], bool]:
-        """``(child ids recorded by the previous run, whether a previous row existed)``.
+    @staticmethod
+    def _parse_previous_row(row) -> Tuple[List[str], bool]:
+        """``(children, owned_vectors)`` from a previous run's row.
 
-        A row that existed with no children is a legacy single row about to be promoted
-        to a site row — its vectors live under the row's own id and must be cleared.
+        A row that owned vectors and has no children is a legacy single row about to
+        be promoted to a site row — its vectors live under its own id and must be
+        cleared first. A row without that positive evidence (for example a FAILED
+        first ingest) is not a promotion, so a later healthy run can proceed.
         """
+        children = get_agno_metadata(row.metadata, "children")
+        parsed = [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
+        owned = get_agno_metadata(row.metadata, "vectors_indexed") is True or isinstance(
+            get_agno_metadata(row.metadata, "content_digest"), str
+        )
+        return parsed, owned
+
+    async def _aget_previous_children(self, content: Content) -> Tuple[List[str], bool]:
+        """``(previous child ids, previous row owned vectors)`` — see _parse_previous_row."""
         if self.contents_db is None or not content.id:
             return [], False
         if isinstance(self.contents_db, AsyncBaseDb):
@@ -2199,9 +2227,7 @@ class Knowledge(RemoteKnowledge):
             row = self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
         if row is None:
             return [], False
-        children = get_agno_metadata(row.metadata, "children")
-        parsed = [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
-        return parsed, True
+        return self._parse_previous_row(row)
 
     def _get_previous_children(self, content: Content) -> Tuple[List[str], bool]:
         """Synchronous version of _aget_previous_children."""
@@ -2210,9 +2236,7 @@ class Knowledge(RemoteKnowledge):
         row = self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
         if row is None:
             return [], False
-        children = get_agno_metadata(row.metadata, "children")
-        parsed = [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
-        return parsed, True
+        return self._parse_previous_row(row)
 
     async def _aget_child_digest(self, child_id: Optional[str], user_id: Optional[str]) -> Optional[str]:
         """The stored page-text digest of a child row, or None when the row does not exist."""
@@ -2303,6 +2327,7 @@ class Knowledge(RemoteKnowledge):
         name_was_auto: bool,
         reader_id: Optional[str] = None,
         discovery_incomplete: bool = False,
+        site_owns_vectors: bool = False,
     ) -> None:
         """Turn the parent row into the site row: aggregate status, children, provenance."""
         if name_was_auto and content.url:
@@ -2315,6 +2340,8 @@ class Knowledge(RemoteKnowledge):
         content.metadata = set_agno_metadata(content.metadata, "children", child_ids)
         content.metadata = set_agno_metadata(content.metadata, "page_count", pages_loaded)
         content.metadata = set_agno_metadata(content.metadata, "auto_named", name_was_auto)
+        if site_owns_vectors:
+            content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
         if reader_id:
             # A refresh must re-run the reader that built this site, never a guessed one
             content.metadata = set_agno_metadata(content.metadata, "reader_id", reader_id)
@@ -2385,6 +2412,7 @@ class Knowledge(RemoteKnowledge):
         extractor_counts: Dict[str, int] = {}
         pages_loaded = 0
         source_kind: Optional[str] = None
+        site_owns_vectors = False
 
         for source_url, source_docs in docs_by_source.items():
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
@@ -2402,6 +2430,7 @@ class Knowledge(RemoteKnowledge):
                             filters=strip_agno_metadata(content.metadata),
                             **owner_kwargs,
                         )
+                        site_owns_vectors = True
                     except Exception as e:
                         log_error(f"Error inserting overview document from {source_url}: {str(e)}")
                 continue
@@ -2429,6 +2458,7 @@ class Knowledge(RemoteKnowledge):
                 previous_digest = await self._aget_child_digest(child.id, content.user_id)
                 if previous_digest is not None and previous_digest == digest:
                     child.status = ContentStatus.COMPLETED
+                    child.metadata = set_agno_metadata(child.metadata, "vectors_indexed", True)
                     await self._ainsert_contents_db(child)
                     extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
                     pages_loaded += 1
@@ -2486,6 +2516,7 @@ class Knowledge(RemoteKnowledge):
                 continue
 
             child.status = ContentStatus.COMPLETED
+            child.metadata = set_agno_metadata(child.metadata, "vectors_indexed", True)
             await self._ainsert_contents_db(child)
             extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
             pages_loaded += 1
@@ -2522,6 +2553,7 @@ class Knowledge(RemoteKnowledge):
             name_was_auto,
             reader_id=reader_id,
             discovery_incomplete=discovery_incomplete,
+            site_owns_vectors=site_owns_vectors,
         )
         await self._aupdate_content(content)
 
@@ -2562,6 +2594,7 @@ class Knowledge(RemoteKnowledge):
         extractor_counts: Dict[str, int] = {}
         pages_loaded = 0
         source_kind: Optional[str] = None
+        site_owns_vectors = False
 
         for source_url, source_docs in docs_by_source.items():
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
@@ -2577,6 +2610,7 @@ class Knowledge(RemoteKnowledge):
                             filters=strip_agno_metadata(content.metadata),
                             **owner_kwargs,
                         )
+                        site_owns_vectors = True
                     except Exception as e:
                         log_error(f"Error inserting overview document from {source_url}: {str(e)}")
                 continue
@@ -2602,6 +2636,7 @@ class Knowledge(RemoteKnowledge):
                 previous_digest = self._get_child_digest(child.id, content.user_id)
                 if previous_digest is not None and previous_digest == digest:
                     child.status = ContentStatus.COMPLETED
+                    child.metadata = set_agno_metadata(child.metadata, "vectors_indexed", True)
                     self._insert_contents_db(child)
                     extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
                     pages_loaded += 1
@@ -2657,6 +2692,7 @@ class Knowledge(RemoteKnowledge):
                 continue
 
             child.status = ContentStatus.COMPLETED
+            child.metadata = set_agno_metadata(child.metadata, "vectors_indexed", True)
             self._insert_contents_db(child)
             extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
             pages_loaded += 1
@@ -2691,6 +2727,7 @@ class Knowledge(RemoteKnowledge):
             name_was_auto,
             reader_id=reader_id,
             discovery_incomplete=discovery_incomplete,
+            site_owns_vectors=site_owns_vectors,
         )
         self._update_content(content)
 
@@ -3382,6 +3419,9 @@ class Knowledge(RemoteKnowledge):
                 await self._aupdate_content(content)
                 return
 
+        # The row now provably owns vectors; deletion reads this marker to tell an
+        # operational False apart from a zero-match no-op.
+        content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
         content.status = ContentStatus.COMPLETED
         await self._aupdate_content(content)
 
@@ -3440,6 +3480,8 @@ class Knowledge(RemoteKnowledge):
                 self._update_content(content)
                 return
 
+        # See the matching marker in _ahandle_vector_db_insert.
+        content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
         content.status = ContentStatus.COMPLETED
         self._update_content(content)
 

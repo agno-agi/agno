@@ -6,16 +6,19 @@ left the site is deleted, a failed page gets a FAILED row and is retried next ru
 and deleting the site row cascades to its page rows and their vectors.
 """
 
+import asyncio
 import time
 from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
 from agno.db.sqlite import SqliteDb
+from agno.knowledge.content import Content
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.types import ContentType
 from agno.knowledge.utils import get_agno_metadata
+from agno.utils.string import generate_id
 
 SITE_URL = "https://docs.x.com/sitemap.xml"
 PAGE_ONE = "https://docs.x.com/guide"
@@ -924,3 +927,125 @@ def test_remove_all_content_aggregates_failures_sync(vector_db, tmp_path):
     vector_db.delete_by_content_id = lambda cid, user_id=None: False if cid == failing_id else True
     assert kb.remove_all_content() is False
     assert kb.get_content_by_id(failing_id) is not None
+
+
+# ---------------------------------------------------------------------------
+# Review round 4: persisted vector ownership, failed-first-ingest recovery, async LightRAG
+# ---------------------------------------------------------------------------
+
+
+async def test_text_row_operational_false_keeps_row_async(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(name="doc", text_content="important text")
+    row = _rows(kb)[0]
+    assert get_agno_metadata(row.metadata, "vectors_indexed") is True, "successful inserts persist ownership"
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False  # operational failure
+    removed = await kb.aremove_content_by_id(row.id)
+
+    assert removed is False
+    assert await kb.aget_content_by_id(row.id) is not None, "the row must stay while its vectors exist"
+    assert await kb.aremove_all_content() is False, "bulk removal reports the failure"
+
+
+def test_text_row_operational_false_keeps_row_sync(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(name="doc", text_content="important text")
+    row = _rows(kb)[0]
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False
+    removed = kb.remove_content_by_id(row.id)
+
+    assert removed is False
+    assert kb.get_content_by_id(row.id) is not None
+    assert kb.remove_all_content() is False
+
+
+async def test_failed_first_ingest_recovers_on_zero_match_false_adapter_async(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    # Outage first ingest: FAILED row, no children, no vectors — not a legacy promotion
+    await kb.ainsert(url=SITE_URL, reader=EmptyReader({}))
+    assert _rows(kb)[0].status == "failed"
+
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    site = _site_row(_rows(kb))
+    assert site.status == "completed", "a healthy retry must not be mistaken for a failed legacy clear"
+    assert len(get_agno_metadata(site.metadata, "children")) == 2
+
+
+def test_failed_first_ingest_recovers_on_zero_match_false_adapter_sync(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=EmptyReader({}))
+    assert _rows(kb)[0].status == "failed"
+
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    assert _site_row(_rows(kb)).status == "completed"
+
+
+class AsyncLightRag:
+    """LightRag-shaped adapter: sync delete wrapper uses asyncio.run (fails inside a
+    running loop); the async path must await async_delete_by_external_id instead."""
+
+    def __init__(self) -> None:
+        self.async_deleted: List[str] = []
+        self.delete_result = True
+
+    def exists(self) -> bool:
+        return True
+
+    def create(self) -> None:
+        return None
+
+    def update_metadata(self, content_id: str, metadata: dict) -> None:
+        return None
+
+    def delete_by_external_id(self, external_id: str) -> bool:
+        asyncio.run(self._noop())  # what the real adapter does — raises inside a loop
+        return True
+
+    async def _noop(self) -> None:
+        return None
+
+    async def async_delete_by_external_id(self, external_id: str) -> bool:
+        self.async_deleted.append(external_id)
+        return self.delete_result
+
+
+AsyncLightRag.__name__ = "LightRag"
+
+
+async def test_async_lightrag_removal_awaits_async_delete(tmp_path):
+    lightrag = AsyncLightRag()
+    kb = Knowledge(name="t", vector_db=lightrag, contents_db=SqliteDb(db_file=str(tmp_path / "c.db")))
+    content = Content(name="doc", user_id=None)
+    content.content_hash = kb._build_content_hash(content)
+    content.id = generate_id(content.content_hash)
+    await kb._ainsert_contents_db(content)
+    # external_id lands the way the LightRag load path writes it: through the update
+    await kb.apatch_content(Content(id=content.id, external_id="ext-1"))
+
+    removed = await kb.aremove_content_by_id(content.id)
+
+    assert removed is True
+    assert lightrag.async_deleted == ["ext-1"], "the async path must await async_delete_by_external_id"
+    assert await kb.aget_content_by_id(content.id) is None
+
+
+async def test_async_lightrag_removal_honors_false(tmp_path):
+    lightrag = AsyncLightRag()
+    lightrag.delete_result = False
+    kb = Knowledge(name="t", vector_db=lightrag, contents_db=SqliteDb(db_file=str(tmp_path / "c.db")))
+    content = Content(name="doc", user_id=None)
+    content.content_hash = kb._build_content_hash(content)
+    content.id = generate_id(content.content_hash)
+    await kb._ainsert_contents_db(content)
+    await kb.apatch_content(Content(id=content.id, external_id="ext-1"))
+
+    removed = await kb.aremove_content_by_id(content.id)
+
+    assert removed is False
+    assert await kb.aget_content_by_id(content.id) is not None
