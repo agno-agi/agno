@@ -175,7 +175,7 @@ def test_registration_default_exposes_all_tools_sync_and_async():
     kb, _ = _make_kb()
     toolkit = KnowledgeManagementTools(knowledge=kb)
 
-    expected = ["ingest_url", "ingest_text", "list_content", "ingest_status", "remove_content"]
+    expected = ["ingest_url", "ingest_path", "ingest_text", "list_content", "ingest_status", "remove_content"]
     assert list(toolkit.functions.keys()) == expected
     assert list(toolkit.async_functions.keys()) == expected
 
@@ -877,3 +877,218 @@ class TestRemoteParentIdFilter:
 
         assert response.status_code == 501
         assert "parent_id" in response.json()["detail"]
+
+
+# ===========================================================================
+# ingest_path (files and folders) and refresh-by-path
+# ===========================================================================
+
+
+def _make_folder() -> str:
+    folder = tempfile.mkdtemp()
+    with open(os.path.join(folder, "a.txt"), "w") as handle:
+        handle.write("alpha file text")
+    with open(os.path.join(folder, "b.txt"), "w") as handle:
+        handle.write("beta file text")
+    return folder
+
+
+def test_ingest_path_folder_sync_reports_and_writes_rows():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb)
+    folder = _make_folder()
+
+    report = json.loads(toolkit.ingest_path(_ctx(), folder))
+
+    assert report["ok"] is True
+    assert report["status"] == "completed"
+    assert report["status_message"] == "2 of 2 files loaded"
+    assert report["pages"] == 2
+    assert report["page_rows"] == 2
+    assert report["failed"] == []
+    assert isinstance(report["seconds"], (int, float))
+
+    rows = _rows(db_file)
+    assert len(rows) == 3  # one folder row + two file rows
+    assert report["site_id"] in {row[0] for row in rows}
+    folder_row = kb.get_content_by_id(report["site_id"])
+    assert folder_row is not None
+    assert folder_row.name == os.path.basename(folder)
+    assert {row[1] for row in rows} == {os.path.basename(folder), "a.txt", "b.txt"}
+
+
+def test_aingest_path_folder_reports_and_writes_rows():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb)
+    folder = _make_folder()
+
+    report = json.loads(asyncio.run(toolkit.aingest_path(_ctx(), folder)))
+
+    assert report["ok"] is True
+    assert report["status_message"] == "2 of 2 files loaded"
+    assert report["pages"] == 2
+    assert report["page_rows"] == 2
+    assert "seconds" in report
+    rows = _rows(db_file)
+    assert len(rows) == 3
+    assert report["site_id"] in {row[0] for row in rows}
+
+
+def test_ingest_path_single_file_reports_matching_row():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb)
+    file_path = os.path.join(tempfile.mkdtemp(), "solo.txt")
+    with open(file_path, "w") as handle:
+        handle.write("solo file text")
+
+    report = json.loads(toolkit.ingest_path(_ctx(), file_path))
+
+    assert report["ok"] is True
+    assert report["status"] == "completed"
+    # A single file has no children, so the folder-only fields stay unset.
+    assert report["pages"] is None
+    assert "page_rows" not in report
+    rows = _rows(db_file)
+    assert len(rows) == 1
+    assert report["site_id"] == rows[0][0]
+    assert report["name"] == rows[0][1] == "solo.txt"
+
+
+def test_aingest_path_single_file_reports_matching_row():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb)
+    file_path = os.path.join(tempfile.mkdtemp(), "solo.txt")
+    with open(file_path, "w") as handle:
+        handle.write("solo file text")
+
+    report = json.loads(asyncio.run(toolkit.aingest_path(_ctx(), file_path)))
+
+    assert report["ok"] is True
+    rows = _rows(db_file)
+    assert len(rows) == 1
+    assert report["site_id"] == rows[0][0]
+
+
+def test_ingest_path_user_scope_writes_run_user_id():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb, scope="user")
+    folder = _make_folder()
+
+    report = json.loads(toolkit.ingest_path(_ctx(user_id="alice"), folder))
+
+    assert report["ok"] is True
+    rows = _rows(db_file)
+    assert len(rows) == 3
+    assert all(row[2] == "alice" for row in rows)
+    folder_row = kb.get_content_by_id(report["site_id"], user_id="alice")
+    assert folder_row is not None and folder_row.user_id == "alice"
+
+
+def test_ingest_path_missing_path_returns_error_envelope():
+    kb, db_file = _make_kb()
+    toolkit = _make_toolkit(kb)
+    missing = os.path.join(tempfile.mkdtemp(), "gone")
+    predicted = toolkit._predict_path_row_id(missing, None)
+
+    def rows_or_empty():
+        try:
+            return _rows(db_file)
+        except sqlite3.OperationalError:
+            return []  # nothing was ever written, so the table does not exist
+
+    # The toolkit pre-checks existence and names the real problem, writing nothing
+    report = json.loads(toolkit.ingest_path(_ctx(), missing))
+    assert report == {"ok": False, "error": f"path does not exist: {missing}"}
+    assert rows_or_empty() == []
+
+    areport = json.loads(asyncio.run(toolkit.aingest_path(_ctx(), missing)))
+    assert areport == {"ok": False, "error": f"path does not exist: {missing}"}
+    assert rows_or_empty() == []
+    assert predicted  # id prediction stays stable for callers that stored it
+
+
+def test_ingest_path_error_returns_envelope():
+    kb, _ = _make_kb()
+    toolkit = _make_toolkit(kb)
+
+    def boom(**kwargs):
+        raise RuntimeError("disk exploded")
+
+    kb.insert = boom  # type: ignore[method-assign]
+    real_dir = tempfile.mkdtemp()
+    result = json.loads(toolkit.ingest_path(_ctx(), real_dir))
+    assert result == {"ok": False, "error": "disk exploded"}
+
+
+def test_list_content_groups_folder_like_site():
+    kb, _ = _make_kb()
+    toolkit = _make_toolkit(kb)
+    folder = _make_folder()
+    report = json.loads(toolkit.ingest_path(_ctx(), folder))
+
+    listing = json.loads(toolkit.list_content(_ctx()))
+
+    assert listing["total_rows"] == 3
+    assert listing["other"] == []  # file rows are grouped away, never listed as other
+    assert len(listing["sites"]) == 1
+    site = listing["sites"][0]
+    assert site["site_id"] == report["site_id"]
+    assert site["name"] == os.path.basename(folder)
+    assert site["pages"] == 2
+    assert site["failed"] == 0
+    assert site["status"] == "completed"
+
+
+class TestRefreshByPathRoute:
+    def test_refresh_path_row_schedules_background_ingest(self):
+        content_hash = "stable-hash"
+        content_id = generate_id(content_hash)
+        knowledge = _mock_router_knowledge()
+        knowledge._build_content_hash = MagicMock(return_value=content_hash)
+        existing = _content(
+            content_id,
+            "product-docs",
+            metadata={"_agno": {"source_path": "/data/product-docs", "source_type": "folder"}},
+        )
+        knowledge.aget_content_by_id = AsyncMock(return_value=existing)
+        client = _build_client(knowledge)
+
+        with patch("agno.os.routers.knowledge.knowledge.process_content", new=AsyncMock()) as process_content:
+            response = client.post(f"/knowledge/content/{content_id}/refresh")
+
+        assert response.status_code == 202
+        body = response.json()
+        assert body["id"] == content_id
+        assert body["status"] == "processing"
+
+        # The background task re-ingests the reconstructed Content from its recorded path
+        process_content.assert_awaited_once()
+        args = process_content.await_args.args
+        assert args[0] is knowledge
+        reconstructed = args[1]
+        assert reconstructed.path == "/data/product-docs"
+        assert reconstructed.url is None
+        assert reconstructed.id == content_id
+        assert reconstructed.user_id is None
+        assert reconstructed.metadata is None  # only _agno bookkeeping was stored
+        # Path refreshes pick readers by file extension, never a recorded URL reader
+        assert args[2] is None
+
+    def test_refresh_unmatchable_path_row_returns_400(self):
+        # The stored id cannot be reproduced from the row's fields -> explicit 400, no task
+        knowledge = _mock_router_knowledge()
+        knowledge._build_content_hash = MagicMock(return_value="different-hash")
+        existing = _content(
+            "path-id-that-wont-match",
+            "product-docs",
+            metadata={"_agno": {"source_path": "/data/product-docs"}},
+        )
+        knowledge.aget_content_by_id = AsyncMock(return_value=existing)
+        client = _build_client(knowledge)
+
+        with patch("agno.os.routers.knowledge.knowledge.process_content", new=AsyncMock()) as process_content:
+            response = client.post("/knowledge/content/path-id-that-wont-match/refresh")
+
+        assert response.status_code == 400
+        assert "re-ingest the path" in response.json()["detail"]
+        process_content.assert_not_awaited()

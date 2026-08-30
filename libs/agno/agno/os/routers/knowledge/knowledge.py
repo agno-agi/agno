@@ -802,6 +802,26 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             raise HTTPException(status_code=403, detail="Cannot refresh shared content")
 
         source_url = get_agno_metadata(existing.metadata, "source_url")
+        source_path = get_agno_metadata(existing.metadata, "source_path")
+        if (not isinstance(source_url, str) or not source_url) and isinstance(source_path, str) and source_path:
+            # A folder (or folder-file) row: re-ingest from its recorded path. The row id
+            # is reproducible from the same Content shape the original insert hashed.
+            for candidate_name in (None, existing.name):
+                candidate = Content(
+                    name=candidate_name,
+                    description=existing.description or None,
+                    path=source_path,
+                    metadata=dict(strip_agno_metadata(existing.metadata) or {}) or None,
+                    user_id=existing.user_id,
+                )
+                candidate.content_hash = knowledge._build_content_hash(candidate)
+                candidate.id = generate_id(candidate.content_hash)
+                if candidate.id == content_id:
+                    background_tasks.add_task(process_content, knowledge, candidate, None, None, None, None)
+                    return ContentResponseSchema(id=content_id, name=existing.name, status=ContentStatus.PROCESSING)
+            raise HTTPException(
+                status_code=400, detail="Content row cannot be matched back to its source; re-ingest the path instead"
+            )
         if not isinstance(source_url, str) or not source_url:
             raise HTTPException(status_code=400, detail="Content has no source URL to refresh from")
 

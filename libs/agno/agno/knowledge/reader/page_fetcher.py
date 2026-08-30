@@ -104,15 +104,41 @@ def extract_page_title(html: str) -> Optional[str]:
     return None
 
 
+def _pdf_page_text(url: str, raw: bytes) -> FetchedPage:
+    """Extract a PDF's text as one page. Needs the ``pdf`` extra; absence is a page
+    error naming the install, never an exception through the read."""
+    import io
+
+    try:
+        from agno.knowledge.reader.pdf_reader import PDFReader
+    except ImportError:
+        return FetchedPage(url=url, error="pdf support requires the `agno[pdf]` extra (pypdf)", extractor="httpx")
+    try:
+        documents = PDFReader(chunk=False).read(io.BytesIO(raw), name=url)
+    except Exception as e:
+        return FetchedPage(url=url, error=f"pdf: {type(e).__name__}: {e}"[:300], extractor="httpx")
+    text = "\n\n".join(doc.content for doc in documents if doc.content)
+    if not text:
+        return FetchedPage(url=url, error="empty", extractor="httpx")
+    return FetchedPage(url=url, content=text, extractor="httpx")
+
+
 def _page_from_response(url: str, response: httpx.Response) -> FetchedPage:
     content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
-    body = response.text
-    if content_type in _TEXT_CONTENT_TYPES:
-        page = FetchedPage(url=url, content=body, extractor="httpx")
-    elif content_type == "text/html" or body.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
-        page = FetchedPage(url=url, content=extract_page_text(body), title=extract_page_title(body), extractor="httpx")
+    if content_type == "application/pdf" or response.content[:5] == b"%PDF-":
+        page = _pdf_page_text(url, response.content)
+        if page.error:
+            return page
     else:
-        return FetchedPage(url=url, error=f"not-html ({content_type or 'unknown content type'})", extractor="httpx")
+        body = response.text
+        if content_type in _TEXT_CONTENT_TYPES:
+            page = FetchedPage(url=url, content=body, extractor="httpx")
+        elif content_type == "text/html" or body.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+            page = FetchedPage(
+                url=url, content=extract_page_text(body), title=extract_page_title(body), extractor="httpx"
+            )
+        else:
+            return FetchedPage(url=url, error=f"not-html ({content_type or 'unknown content type'})", extractor="httpx")
     if not page.content:
         return FetchedPage(url=url, title=page.title, error="empty", extractor="httpx")
     return page

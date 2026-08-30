@@ -57,6 +57,8 @@ async def main() -> None:
     await operator.aprint_response(
         "Load https://docs.agno.com into the knowledge base."
     )
+    # Folders work the same way: one row per file, refreshed by content digest
+    # await operator.aprint_response("Load the folder ./product-docs into the knowledge base.")
     await operator.aprint_response("What do we have loaded now?")
 
 

@@ -1738,24 +1738,7 @@ class Knowledge(RemoteKnowledge):
                 await self._ahandle_vector_db_insert(content, read_documents, upsert)
 
         elif path.is_dir():
-            for file_path in path.iterdir():
-                # Apply include/exclude filtering
-                if not self._should_include_file(str(file_path), include, exclude):
-                    log_debug(f"Skipping file {file_path} due to include/exclude filters")
-                    continue
-
-                file_content = Content(
-                    name=content.name,
-                    path=str(file_path),
-                    metadata=content.metadata,
-                    description=content.description,
-                    reader=content.reader,
-                    user_id=content.user_id,
-                )
-                file_content.content_hash = self._build_content_hash(file_content)
-                file_content.id = generate_id(file_content.content_hash)
-
-                await self._aload_from_path(file_content, upsert, skip_if_exists, include, exclude)
+            await self._aload_dir_as_folder(content, path, upsert, skip_if_exists, include, exclude)
         else:
             log_warning(f"Invalid path: {path}")
 
@@ -1824,24 +1807,7 @@ class Knowledge(RemoteKnowledge):
                 self._handle_vector_db_insert(content, read_documents, upsert)
 
         elif path.is_dir():
-            for file_path in path.iterdir():
-                # Apply include/exclude filtering
-                if not self._should_include_file(str(file_path), include, exclude):
-                    log_debug(f"Skipping file {file_path} due to include/exclude filters")
-                    continue
-
-                file_content = Content(
-                    name=content.name,
-                    path=str(file_path),
-                    metadata=content.metadata,
-                    description=content.description,
-                    reader=content.reader,
-                    user_id=content.user_id,
-                )
-                file_content.content_hash = self._build_content_hash(file_content)
-                file_content.id = generate_id(file_content.content_hash)
-
-                self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
+            self._load_dir_as_folder(content, path, upsert, skip_if_exists, include, exclude)
         else:
             log_warning(f"Invalid path: {path}")
 
@@ -1887,7 +1853,10 @@ class Knowledge(RemoteKnowledge):
         previous_children, previous_row_owned_vectors = await self._aget_previous_children(content)
 
         # 1. Add content to contents database
-        await self._ainsert_contents_db(content)
+        if previous_row_owned_vectors:
+            await self._ainsert_contents_db(content, vectors_indexed=True)
+        else:
+            await self._ainsert_contents_db(content)
         if previous_children:
             # The upsert above replaced the row's metadata wholesale. Until this read
             # finalizes, the row must keep its cascade record: a failed read that lost
@@ -1902,6 +1871,7 @@ class Knowledge(RemoteKnowledge):
             marker.metadata = set_agno_metadata(None, "vectors_indexed", True)
             await self._aupdate_content(marker)
         if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+            content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
@@ -2068,7 +2038,10 @@ class Knowledge(RemoteKnowledge):
         previous_children, previous_row_owned_vectors = self._get_previous_children(content)
 
         # 1. Add content to contents database
-        self._insert_contents_db(content)
+        if previous_row_owned_vectors:
+            self._insert_contents_db(content, vectors_indexed=True)
+        else:
+            self._insert_contents_db(content)
         if previous_children:
             # See the matching re-stamp in _aload_from_url.
             self._stamp_row_children(content, previous_children)
@@ -2078,6 +2051,7 @@ class Knowledge(RemoteKnowledge):
             marker.metadata = set_agno_metadata(None, "vectors_indexed", True)
             self._update_content(marker)
         if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+            content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
@@ -2196,6 +2170,295 @@ class Knowledge(RemoteKnowledge):
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
         self._handle_vector_db_insert(content, read_documents, upsert)
+
+    # --- Per-file rows for folder loads ---
+
+    @staticmethod
+    def _file_digest(file_path) -> Optional[str]:
+        """sha256 of a file's bytes, streamed; None when the file cannot be read."""
+        digest = hashlib.sha256()
+        try:
+            with open(file_path, "rb") as handle:
+                for block in iter(lambda: handle.read(1 << 20), b""):
+                    digest.update(block)
+        except OSError:
+            return None
+        return digest.hexdigest()
+
+    def _prepare_folder_file_content(self, content: Content, file_path) -> Content:
+        """The child Content for one file of a folder load.
+
+        Hash inputs are exactly what the per-file recursion has always used (the
+        caller's name/metadata and the file path), so ids match rows written by
+        earlier releases; display name and ``_agno`` bookkeeping land after the id
+        is fixed, mirroring the page-row ordering rule.
+        """
+        file_content = Content(
+            name=content.name,
+            path=str(file_path),
+            metadata=dict(strip_agno_metadata(content.metadata) or {}) or None,
+            description=content.description,
+            reader=content.reader,
+            user_id=content.user_id,
+        )
+        file_content.content_hash = self._build_content_hash(file_content)
+        file_content.id = generate_id(file_content.content_hash)
+        file_content.name = file_path.name
+        file_content.metadata = set_agno_metadata(file_content.metadata, "source_type", "folder")
+        file_content.metadata = set_agno_metadata(file_content.metadata, "source_path", str(file_path))
+        file_content.metadata = set_agno_metadata(file_content.metadata, "parent_id", content.id)
+        digest = self._file_digest(file_path)
+        if digest:
+            file_content.metadata = set_agno_metadata(file_content.metadata, "content_digest", digest)
+        return file_content
+
+    def _folder_files(self, path, include, exclude) -> Tuple[List, bool]:
+        """``(files, enumeration_failed)`` — every readable file under ``path``, sorted.
+
+        An enumeration failure is indistinguishable from an empty folder, so it is
+        reported and the caller must not prune previously loaded files.
+        """
+        try:
+            files = sorted(entry for entry in Path(path).rglob("*") if entry.is_file())
+        except OSError as e:
+            log_debug(f"Could not enumerate folder {path}: {e}")
+            return [], True
+        return [entry for entry in files if self._should_include_file(str(entry), include, exclude)], False
+
+    async def _aload_dir_as_folder(
+        self,
+        content: Content,
+        path,
+        upsert: bool,
+        skip_if_exists: bool,
+        include: Optional[List[str]],
+        exclude: Optional[List[str]],
+    ) -> None:
+        """Land a directory as a folder row owning one child row per file.
+
+        The file twin of ``_aload_url_page_groups``: unchanged files (by byte digest)
+        refresh their row without re-reading or re-embedding, a file that fails to
+        read gets a FAILED child row without aborting the folder, files that left
+        the folder are pruned under the same bool-honoring rules, and deleting the
+        folder row cascades. The folder row owns no vectors.
+        """
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+        content.file_type = "folder"
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "folder")
+        content.metadata = set_agno_metadata(content.metadata, "source_path", str(path))
+        if not content.name:
+            content.name = Path(path).name or str(path)
+
+        previous_children, _ = await self._aget_previous_children(content)
+        await self._ainsert_contents_db(content)
+        if previous_children:
+            # See the matching re-stamp in _aload_from_url.
+            await self._astamp_row_children(content, previous_children)
+
+        files, enumeration_failed = self._folder_files(path, include, exclude)
+        if enumeration_failed or (not files and previous_children):
+            # An unreadable or suddenly empty folder must not read as "all files removed"
+            content.status = ContentStatus.FAILED
+            content.status_message = (
+                "Could not enumerate folder" if enumeration_failed else "Folder is empty; previous files kept"
+            )
+            await self._aupdate_content(content)
+            return
+
+        child_ids: List[str] = []
+        failed: List[Dict[str, str]] = []
+        files_loaded = 0
+        for file_path in files:
+            file_content = self._prepare_folder_file_content(content, file_path)
+            child_ids.append(file_content.id)  # type: ignore[arg-type]
+
+            digest = get_agno_metadata(file_content.metadata, "content_digest")
+            if digest is None:
+                # The bytes could not be read; ingesting nothing as COMPLETED would hide it
+                file_content.status = ContentStatus.FAILED
+                file_content.status_message = "File could not be read"
+                await self._ainsert_contents_db(file_content)
+                failed.append({"path": str(file_path), "error": "File could not be read"})
+                continue
+            if self.contents_db is not None:
+                previous_digest = await self._aget_child_digest(file_content.id, content.user_id)
+                if previous_digest is not None and previous_digest == digest:
+                    file_content.status = ContentStatus.COMPLETED
+                    file_content.metadata = set_agno_metadata(file_content.metadata, "vectors_indexed", True)
+                    await self._ainsert_contents_db(file_content)
+                    files_loaded += 1
+                    log_debug(f"File unchanged, embedding skipped: {file_path}")
+                    continue
+                if previous_digest is not None:
+                    # Changed file: replace its chunks wholesale, as the page path does,
+                    # so refresh works without adapter upsert support and never stacks
+                    try:
+                        clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
+                        self.vector_db.delete_by_content_id(file_content.id, **clear_kwargs)  # type: ignore[arg-type, union-attr]
+                    except Exception as e:
+                        log_debug(f"Could not clear previous chunks for {file_path}: {e}")
+
+            try:
+                await self._aload_from_path(file_content, upsert, skip_if_exists, include, exclude)
+            except Exception as e:
+                log_error(f"Error reading file {file_path}: {str(e)}")
+                file_content.status = ContentStatus.FAILED
+                file_content.status_message = f"{type(e).__name__}: {e}"[:300]
+                if file_content.metadata and isinstance(file_content.metadata.get("_agno"), dict):
+                    # A digest asserts indexed content; a failed read must not leave one
+                    file_content.metadata["_agno"].pop("content_digest", None)
+                await self._ainsert_contents_db(file_content)
+                failed.append({"path": str(file_path), "error": f"{type(e).__name__}: {e}"[:200]})
+                continue
+            if self.contents_db is None:
+                # Vector-only base: no row to read back; the load not raising is the signal
+                files_loaded += 1
+                continue
+            row = await self.aget_content_by_id(file_content.id, user_id=content.user_id)  # type: ignore[arg-type]
+            if row is not None and self._parse_content_status(row.status) == ContentStatus.COMPLETED:
+                files_loaded += 1
+            else:
+                failed.append({"path": str(file_path), "error": (row.status_message if row else None) or "failed"})
+
+        current_ids = set(child_ids)
+        if content.id:
+            current_ids.add(content.id)
+        for stale_id in previous_children:
+            if stale_id not in current_ids:
+                try:
+                    removed = await self.aremove_content_by_id(stale_id, user_id=content.user_id)
+                except Exception as e:
+                    log_debug(f"Could not remove departed file row {stale_id}: {e}")
+                    removed = False
+                if not removed:
+                    child_ids.append(stale_id)
+
+        self._finalize_site_row_content(
+            content,
+            len(files),
+            files_loaded,
+            child_ids,
+            failed,
+            {},
+            "folder",
+            name_was_auto=False,
+            unit="files",
+        )
+        await self._aupdate_content(content)
+
+    def _load_dir_as_folder(
+        self,
+        content: Content,
+        path,
+        upsert: bool,
+        skip_if_exists: bool,
+        include: Optional[List[str]],
+        exclude: Optional[List[str]],
+    ) -> None:
+        """Synchronous version of _aload_dir_as_folder."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+        content.file_type = "folder"
+        content.metadata = set_agno_metadata(content.metadata, "source_type", "folder")
+        content.metadata = set_agno_metadata(content.metadata, "source_path", str(path))
+        if not content.name:
+            content.name = Path(path).name or str(path)
+
+        previous_children, _ = self._get_previous_children(content)
+        self._insert_contents_db(content)
+        if previous_children:
+            self._stamp_row_children(content, previous_children)
+
+        files, enumeration_failed = self._folder_files(path, include, exclude)
+        if enumeration_failed or (not files and previous_children):
+            content.status = ContentStatus.FAILED
+            content.status_message = (
+                "Could not enumerate folder" if enumeration_failed else "Folder is empty; previous files kept"
+            )
+            self._update_content(content)
+            return
+
+        child_ids: List[str] = []
+        failed: List[Dict[str, str]] = []
+        files_loaded = 0
+        for file_path in files:
+            file_content = self._prepare_folder_file_content(content, file_path)
+            child_ids.append(file_content.id)  # type: ignore[arg-type]
+
+            digest = get_agno_metadata(file_content.metadata, "content_digest")
+            if digest is None:
+                # See the matching guard in _aload_dir_as_folder
+                file_content.status = ContentStatus.FAILED
+                file_content.status_message = "File could not be read"
+                self._insert_contents_db(file_content)
+                failed.append({"path": str(file_path), "error": "File could not be read"})
+                continue
+            if self.contents_db is not None:
+                previous_digest = self._get_child_digest(file_content.id, content.user_id)
+                if previous_digest is not None and previous_digest == digest:
+                    file_content.status = ContentStatus.COMPLETED
+                    file_content.metadata = set_agno_metadata(file_content.metadata, "vectors_indexed", True)
+                    self._insert_contents_db(file_content)
+                    files_loaded += 1
+                    log_debug(f"File unchanged, embedding skipped: {file_path}")
+                    continue
+                if previous_digest is not None:
+                    # See the matching clear in _aload_dir_as_folder
+                    try:
+                        clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
+                        self.vector_db.delete_by_content_id(file_content.id, **clear_kwargs)  # type: ignore[arg-type, union-attr]
+                    except Exception as e:
+                        log_debug(f"Could not clear previous chunks for {file_path}: {e}")
+
+            try:
+                self._load_from_path(file_content, upsert, skip_if_exists, include, exclude)
+            except Exception as e:
+                log_error(f"Error reading file {file_path}: {str(e)}")
+                file_content.status = ContentStatus.FAILED
+                file_content.status_message = f"{type(e).__name__}: {e}"[:300]
+                if file_content.metadata and isinstance(file_content.metadata.get("_agno"), dict):
+                    file_content.metadata["_agno"].pop("content_digest", None)
+                self._insert_contents_db(file_content)
+                failed.append({"path": str(file_path), "error": f"{type(e).__name__}: {e}"[:200]})
+                continue
+            if self.contents_db is None:
+                # See the matching guard in _aload_dir_as_folder
+                files_loaded += 1
+                continue
+            row = self.get_content_by_id(file_content.id, user_id=content.user_id)  # type: ignore[arg-type]
+            if row is not None and self._parse_content_status(row.status) == ContentStatus.COMPLETED:
+                files_loaded += 1
+            else:
+                failed.append({"path": str(file_path), "error": (row.status_message if row else None) or "failed"})
+
+        current_ids = set(child_ids)
+        if content.id:
+            current_ids.add(content.id)
+        for stale_id in previous_children:
+            if stale_id not in current_ids:
+                try:
+                    removed = self.remove_content_by_id(stale_id, user_id=content.user_id)
+                except Exception as e:
+                    log_debug(f"Could not remove departed file row {stale_id}: {e}")
+                    removed = False
+                if not removed:
+                    child_ids.append(stale_id)
+
+        self._finalize_site_row_content(
+            content,
+            len(files),
+            files_loaded,
+            child_ids,
+            failed,
+            {},
+            "folder",
+            name_was_auto=False,
+            unit="files",
+        )
+        self._update_content(content)
 
     # --- Per-page rows for multi-page URL reads ---
 
@@ -2340,6 +2603,7 @@ class Knowledge(RemoteKnowledge):
         reader_id: Optional[str] = None,
         discovery_incomplete: bool = False,
         site_owns_vectors: bool = False,
+        unit: str = "pages",
     ) -> None:
         """Turn the parent row into the site row: aggregate status, children, provenance."""
         if name_was_auto and content.url:
@@ -2362,11 +2626,11 @@ class Knowledge(RemoteKnowledge):
         if failed:
             content.metadata = set_agno_metadata(content.metadata, "failed", failed[:25])
 
-        message = f"{pages_loaded} of {total_pages} pages loaded"
+        message = f"{pages_loaded} of {total_pages} {unit} loaded"
         if discovery_incomplete:
             message += "; sitemap discovery incomplete, previous pages kept"
         if failed:
-            sample = ", ".join(entry["url"] for entry in failed[:5])
+            sample = ", ".join(str(entry.get("url") or entry.get("path")) for entry in failed[:5])
             message += f"; failed: {sample}"
             if len(failed) > 5:
                 message += f" and {len(failed) - 5} more"
@@ -2416,6 +2680,10 @@ class Knowledge(RemoteKnowledge):
             content.status_message = "Could not clear the row's previous vectors; re-run to retry"
             await self._aupdate_content(content)
             return
+        if legacy_promotion:
+            ownership = Content(id=content.id, user_id=content.user_id)
+            ownership.metadata = set_agno_metadata(None, "vectors_indexed", False)
+            await self._aupdate_content(ownership)
 
         reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
 
@@ -2450,16 +2718,18 @@ class Knowledge(RemoteKnowledge):
             if source_kind is None and doc_source:
                 source_kind = doc_source
 
+            previous_digest: Optional[str] = None
+            if self.contents_db is not None:
+                previous_digest = await self._aget_child_digest(child.id, content.user_id)
+
             if error is not None:
                 # A page that was loaded before keeps its row and vectors: a transient
                 # fetch failure must not demote good, searchable content. The failure is
                 # still surfaced on the site row.
-                if self.contents_db is not None:
-                    previous_digest = await self._aget_child_digest(child.id, content.user_id)
-                    if previous_digest is not None:
-                        failed.append({"url": source_url, "error": error, "stale_kept": "true"})
-                        pages_loaded += 1
-                        continue
+                if previous_digest is not None:
+                    failed.append({"url": source_url, "error": error, "stale_kept": "true"})
+                    pages_loaded += 1
+                    continue
                 child.status = ContentStatus.FAILED
                 child.status_message = error
                 await self._ainsert_contents_db(child)
@@ -2467,7 +2737,6 @@ class Knowledge(RemoteKnowledge):
                 continue
 
             if self.contents_db is not None:
-                previous_digest = await self._aget_child_digest(child.id, content.user_id)
                 if previous_digest is not None and previous_digest == digest:
                     child.status = ContentStatus.COMPLETED
                     child.metadata = set_agno_metadata(child.metadata, "vectors_indexed", True)
@@ -2503,11 +2772,23 @@ class Knowledge(RemoteKnowledge):
                     # Replace wholesale: a changed page refreshes without adapter upsert
                     # support, and a row-less vector group (pre-existing orphans) is
                     # adopted without duplicating its chunks.
+                    deleted = None
                     try:
                         delete_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
-                        self.vector_db.delete_by_content_id(child.id, **delete_kwargs)  # type: ignore[arg-type]
+                        deleted = self.vector_db.delete_by_content_id(child.id, **delete_kwargs)  # type: ignore[arg-type]
                     except NotImplementedError:
                         log_debug(f"Vector db cannot clear previous chunks for {source_url}")
+                    if deleted is False and previous_digest is not None:
+                        failed.append(
+                            {
+                                "url": source_url,
+                                "error": "Could not replace previous page vectors",
+                                "stale_kept": "true",
+                            }
+                        )
+                        pages_loaded += 1
+                        log_debug(f"Keeping previous page vectors for retry: {source_url}")
+                        continue
                     await self.vector_db.async_insert(
                         child.content_hash,  # type: ignore[arg-type]
                         documents=source_docs,
@@ -2598,6 +2879,10 @@ class Knowledge(RemoteKnowledge):
             content.status_message = "Could not clear the row's previous vectors; re-run to retry"
             self._update_content(content)
             return
+        if legacy_promotion:
+            ownership = Content(id=content.id, user_id=content.user_id)
+            ownership.metadata = set_agno_metadata(None, "vectors_indexed", False)
+            self._update_content(ownership)
 
         reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
 
@@ -2630,14 +2915,16 @@ class Knowledge(RemoteKnowledge):
             if source_kind is None and doc_source:
                 source_kind = doc_source
 
+            previous_digest: Optional[str] = None
+            if self.contents_db is not None:
+                previous_digest = self._get_child_digest(child.id, content.user_id)
+
             if error is not None:
                 # See the matching last-known-good branch in _aload_url_page_groups.
-                if self.contents_db is not None:
-                    previous_digest = self._get_child_digest(child.id, content.user_id)
-                    if previous_digest is not None:
-                        failed.append({"url": source_url, "error": error, "stale_kept": "true"})
-                        pages_loaded += 1
-                        continue
+                if previous_digest is not None:
+                    failed.append({"url": source_url, "error": error, "stale_kept": "true"})
+                    pages_loaded += 1
+                    continue
                 child.status = ContentStatus.FAILED
                 child.status_message = error
                 self._insert_contents_db(child)
@@ -2645,7 +2932,6 @@ class Knowledge(RemoteKnowledge):
                 continue
 
             if self.contents_db is not None:
-                previous_digest = self._get_child_digest(child.id, content.user_id)
                 if previous_digest is not None and previous_digest == digest:
                     child.status = ContentStatus.COMPLETED
                     child.metadata = set_agno_metadata(child.metadata, "vectors_indexed", True)
@@ -2681,11 +2967,23 @@ class Knowledge(RemoteKnowledge):
                     # Replace wholesale: a changed page refreshes without adapter upsert
                     # support, and a row-less vector group (pre-existing orphans) is
                     # adopted without duplicating its chunks.
+                    deleted = None
                     try:
                         delete_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
-                        self.vector_db.delete_by_content_id(child.id, **delete_kwargs)  # type: ignore[arg-type]
+                        deleted = self.vector_db.delete_by_content_id(child.id, **delete_kwargs)  # type: ignore[arg-type]
                     except NotImplementedError:
                         log_debug(f"Vector db cannot clear previous chunks for {source_url}")
+                    if deleted is False and previous_digest is not None:
+                        failed.append(
+                            {
+                                "url": source_url,
+                                "error": "Could not replace previous page vectors",
+                                "stale_kept": "true",
+                            }
+                        )
+                        pages_loaded += 1
+                        log_debug(f"Keeping previous page vectors for retry: {source_url}")
+                        continue
                     self.vector_db.insert(
                         child.content_hash,  # type: ignore[arg-type]
                         documents=source_docs,
@@ -3353,15 +3651,19 @@ class Knowledge(RemoteKnowledge):
     # PRIVATE - DATABASE METHODS
     # ==========================================
 
-    async def _ainsert_contents_db(self, content: Content):
+    async def _ainsert_contents_db(self, content: Content, vectors_indexed: Optional[bool] = None):
         if self.contents_db:
             content_row = self._build_knowledge_row(content)
+            if vectors_indexed is not None:
+                content_row.metadata = merge_user_metadata(
+                    content_row.metadata, set_agno_metadata(None, "vectors_indexed", vectors_indexed)
+                )
             if isinstance(self.contents_db, AsyncBaseDb):
                 await self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
             else:
                 self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
-    def _insert_contents_db(self, content: Content):
+    def _insert_contents_db(self, content: Content, vectors_indexed: Optional[bool] = None):
         """Synchronously add content to contents database."""
         if self.contents_db:
             if isinstance(self.contents_db, AsyncBaseDb):
@@ -3369,6 +3671,10 @@ class Knowledge(RemoteKnowledge):
                     "_insert_contents_db() is not supported with an async DB. Please use ainsert() with AsyncDb."
                 )
             content_row = self._build_knowledge_row(content)
+            if vectors_indexed is not None:
+                content_row.metadata = merge_user_metadata(
+                    content_row.metadata, set_agno_metadata(None, "vectors_indexed", vectors_indexed)
+                )
             self.contents_db.upsert_knowledge_content(knowledge_row=content_row)
 
     # --- Vector DB Insert Helpers ---

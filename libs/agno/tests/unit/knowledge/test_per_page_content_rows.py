@@ -602,6 +602,7 @@ async def test_single_row_site_growing_to_pages_clears_legacy_vectors(vector_db,
     await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page", PAGE_TWO: "second"}))
 
     assert parent_id in deleted, "the legacy single-row vectors must not stay searchable under the site row"
+    assert get_agno_metadata(_site_row(_rows(kb)).metadata, "vectors_indexed") is False
 
 
 async def test_prune_failure_keeps_stale_child_in_children(vector_db, tmp_path):
@@ -1096,3 +1097,122 @@ def test_aborted_promotion_keeps_ownership_marker_sync(vector_db, tmp_path):
     row = kb.get_content_by_id(legacy_id)
     assert row.status == "failed"
     assert get_agno_metadata(row.metadata, "vectors_indexed") is True
+
+
+# Review round 5: durable vector state and last-known-good page replacement
+# ---------------------------------------------------------------------------
+
+
+async def test_failed_refresh_preserves_vector_ownership_async(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page"}))
+    content_id = _rows(kb)[0].id
+
+    await kb.ainsert(url=SITE_URL, reader=EmptyReader({}))
+
+    row = await kb.aget_content_by_id(content_id)
+    assert row is not None and row.status == "failed"
+    assert get_agno_metadata(row.metadata, "vectors_indexed") is True
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False
+    assert await kb.aremove_content_by_id(content_id) is False
+    assert await kb.aget_content_by_id(content_id) is not None
+
+
+def test_failed_refresh_preserves_vector_ownership_sync(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "only page"}))
+    content_id = _rows(kb)[0].id
+
+    kb.insert(url=SITE_URL, reader=EmptyReader({}))
+
+    row = kb.get_content_by_id(content_id)
+    assert row is not None and row.status == "failed"
+    assert get_agno_metadata(row.metadata, "vectors_indexed") is True
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False
+    assert kb.remove_content_by_id(content_id) is False
+    assert kb.get_content_by_id(content_id) is not None
+
+
+async def test_changed_page_false_delete_keeps_last_known_good_async(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    previous_child = _child_by_url(_rows(kb), PAGE_TWO)
+    previous_digest = get_agno_metadata(previous_child.metadata, "content_digest")
+    original_delete = vector_db.delete_by_content_id
+
+    def fail_page_replacement(content_id, user_id=None):
+        if content_id == previous_child.id:
+            return False
+        return original_delete(content_id, user_id=user_id)
+
+    vector_db.delete_by_content_id = fail_page_replacement
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text v2"}))
+
+    kept = _child_by_url(_rows(kb), PAGE_TWO)
+    assert kept.status == "completed"
+    assert get_agno_metadata(kept.metadata, "content_digest") == previous_digest
+    assert get_agno_metadata(kept.metadata, "vectors_indexed") is True
+    assert [doc.content for doc in vector_db.inserted_documents if doc.meta_data["url"] == PAGE_TWO] == ["api text"]
+    failure = get_agno_metadata(_site_row(_rows(kb)).metadata, "failed")
+    assert failure == [{"url": PAGE_TWO, "error": "Could not replace previous page vectors", "stale_kept": "true"}]
+
+    vector_db.delete_by_content_id = original_delete
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text v2"}))
+    assert [doc.content for doc in vector_db.inserted_documents if doc.meta_data["url"] == PAGE_TWO] == ["api text v2"]
+    assert _site_row(_rows(kb)).status_message == "2 of 2 pages loaded"
+
+
+def test_changed_page_false_delete_keeps_last_known_good_sync(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb()
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    previous_child = _child_by_url(_rows(kb), PAGE_TWO)
+    previous_digest = get_agno_metadata(previous_child.metadata, "content_digest")
+    original_delete = vector_db.delete_by_content_id
+
+    def fail_page_replacement(content_id, user_id=None):
+        if content_id == previous_child.id:
+            return False
+        return original_delete(content_id, user_id=user_id)
+
+    vector_db.delete_by_content_id = fail_page_replacement
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text v2"}))
+
+    kept = _child_by_url(_rows(kb), PAGE_TWO)
+    assert kept.status == "completed"
+    assert get_agno_metadata(kept.metadata, "content_digest") == previous_digest
+    assert get_agno_metadata(kept.metadata, "vectors_indexed") is True
+    assert [doc.content for doc in vector_db.inserted_documents if doc.meta_data["url"] == PAGE_TWO] == ["api text"]
+
+    vector_db.delete_by_content_id = original_delete
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text v2"}))
+    assert [doc.content for doc in vector_db.inserted_documents if doc.meta_data["url"] == PAGE_TWO] == ["api text v2"]
+
+
+async def test_skip_if_exists_records_vector_ownership_async(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb(content_exists=True)
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "already indexed"}), skip_if_exists=True)
+    row = _rows(kb)[0]
+
+    assert row.status == "completed"
+    assert get_agno_metadata(row.metadata, "vectors_indexed") is True
+    assert vector_db.writes == []
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False
+    assert await kb.aremove_content_by_id(row.id) is False
+
+
+def test_skip_if_exists_records_vector_ownership_sync(tmp_path):
+    vector_db = ZeroMatchFalseVectorDb(content_exists=True)
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "already indexed"}), skip_if_exists=True)
+    row = _rows(kb)[0]
+
+    assert row.status == "completed"
+    assert get_agno_metadata(row.metadata, "vectors_indexed") is True
+    assert vector_db.writes == []
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False
+    assert kb.remove_content_by_id(row.id) is False

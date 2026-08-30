@@ -6,6 +6,7 @@ capability into product agents. Everything goes through the Knowledge API — no
 """
 
 import json
+import os
 import time
 from typing import Any, Dict, List, Literal, Optional
 
@@ -80,6 +81,8 @@ class KnowledgeManagementTools(Toolkit):
         if enable_ingest:
             tools.append(self.ingest_url)
             async_tools.append((self.aingest_url, "ingest_url"))
+            tools.append(self.ingest_path)
+            async_tools.append((self.aingest_path, "ingest_path"))
             tools.append(self.ingest_text)
             async_tools.append((self.aingest_text, "ingest_text"))
         tools.append(self.list_content)
@@ -223,6 +226,65 @@ class KnowledgeManagementTools(Toolkit):
             return self._site_report(row, site_id, seconds=time.monotonic() - started)
         except Exception as e:
             log_error(f"ingest_url failed for {url}: {e}")
+            return self._error(str(e))
+
+    def _predict_path_row_id(self, path: str, owner: Optional[str]) -> str:
+        # The same Content shape insert(path=...) builds, so the returned id is the row's
+        content = Content(path=path, user_id=owner)
+        return generate_id(self.knowledge._build_content_hash(content))
+
+    def ingest_path(self, run_context: RunContext, path: str) -> str:
+        """Ingest a local file or folder into the knowledge base.
+
+        A folder lands one row per file (nested folders included) under a folder row;
+        re-running refreshes files whose content changed, retries failed ones, and
+        removes rows for files deleted from the folder. A single file lands as one row.
+
+        Args:
+            path: A file or directory path readable by the server, e.g. /data/product-docs.
+
+        Returns:
+            JSON: ok, site_id (the row to use with ingest_status/remove_content), name,
+            status, status_message, and for folders pages (files loaded) and failed.
+        """
+        started = time.monotonic()
+        try:
+            if not os.path.exists(path):
+                return self._error(f"path does not exist: {path}")
+            owner = self._owner_id(run_context)
+            row_id = self._predict_path_row_id(path, owner)
+            self.knowledge.insert(path=path, user_id=owner)
+            row = self.knowledge.get_content_by_id(row_id, user_id=owner)
+            return self._site_report(row, row_id, seconds=time.monotonic() - started)
+        except Exception as e:
+            log_error(f"ingest_path failed for {path}: {e}")
+            return self._error(str(e))
+
+    async def aingest_path(self, run_context: RunContext, path: str) -> str:
+        """Ingest a local file or folder into the knowledge base.
+
+        A folder lands one row per file (nested folders included) under a folder row;
+        re-running refreshes files whose content changed, retries failed ones, and
+        removes rows for files deleted from the folder. A single file lands as one row.
+
+        Args:
+            path: A file or directory path readable by the server, e.g. /data/product-docs.
+
+        Returns:
+            JSON: ok, site_id (the row to use with ingest_status/remove_content), name,
+            status, status_message, and for folders pages (files loaded) and failed.
+        """
+        started = time.monotonic()
+        try:
+            if not os.path.exists(path):
+                return self._error(f"path does not exist: {path}")
+            owner = self._owner_id(run_context)
+            row_id = self._predict_path_row_id(path, owner)
+            await self.knowledge.ainsert(path=path, user_id=owner)
+            row = await self.knowledge.aget_content_by_id(row_id, user_id=owner)
+            return self._site_report(row, row_id, seconds=time.monotonic() - started)
+        except Exception as e:
+            log_error(f"ingest_path failed for {path}: {e}")
             return self._error(str(e))
 
     def ingest_text(

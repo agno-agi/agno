@@ -481,3 +481,123 @@ def test_rate_limit_from_text():
     assert rate_limit_from_text("HTTP 429 Too Many Requests")
     assert rate_limit_from_text("Rate Limit hit")
     assert not rate_limit_from_text("ok")
+
+
+# --- application/pdf branch ---
+
+
+PDF_TEXT = "Hello PDF"
+
+
+def _build_pdf(text: str) -> bytes:
+    """A minimal one-page PDF with a single Tj text operator; parses with pypdf."""
+    import io
+
+    stream = f"BT /F1 12 Tf 72 720 Td ({text}) Tj ET".encode()
+    objects = [
+        b"<< /Type /Catalog /Pages 2 0 R >>",
+        b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+        b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+        b"/Resources << /Font << /F1 5 0 R >> >> >>",
+        b"<< /Length " + str(len(stream)).encode() + b" >>\nstream\n" + stream + b"\nendstream",
+        b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    ]
+    out = io.BytesIO()
+    out.write(b"%PDF-1.4\n")
+    offsets = []
+    for index, body in enumerate(objects, start=1):
+        offsets.append(out.tell())
+        out.write(f"{index} 0 obj\n".encode() + body + b"\nendobj\n")
+    xref_at = out.tell()
+    out.write(f"xref\n0 {len(objects) + 1}\n".encode())
+    out.write(b"0000000000 65535 f \n")
+    for offset in offsets:
+        out.write(f"{offset:010d} 00000 n \n".encode())
+    out.write(f"trailer\n<< /Size {len(objects) + 1} /Root 1 0 R >>\nstartxref\n{xref_at}\n%%EOF\n".encode())
+    return out.getvalue()
+
+
+def _pdf_site_handler(request: httpx.Request) -> httpx.Response:
+    path = request.url.path
+    if path == "/doc.pdf":
+        return httpx.Response(200, content=_build_pdf(PDF_TEXT), headers={"content-type": "application/pdf"})
+    if path == "/blob":
+        # A real PDF body served without a PDF content type: only the %PDF- magic identifies it.
+        return httpx.Response(200, content=_build_pdf(PDF_TEXT), headers={"content-type": "application/octet-stream"})
+    if path == "/corrupt.pdf":
+        # No %PDF- magic either: only the content type routes this to the PDF branch.
+        return httpx.Response(200, content=b"not really a pdf at all", headers={"content-type": "application/pdf"})
+    return httpx.Response(404, content=b"gone")
+
+
+def test_pdf_response_extracts_text(monkeypatch):
+    _install_transport(monkeypatch, _pdf_site_handler)
+    page = HttpxPageFetcher().fetch_many(["https://example.com/doc.pdf"])[0]
+
+    assert page.ok
+    assert page.error is None
+    assert page.content == PDF_TEXT
+    assert page.title is None
+    assert page.extractor == "httpx"
+    assert page.attempts == [{"extractor": "httpx", "outcome": "ok"}]
+
+
+@pytest.mark.asyncio
+async def test_async_pdf_response_extracts_text(monkeypatch):
+    _install_transport(monkeypatch, _pdf_site_handler)
+    page = (await HttpxPageFetcher().afetch_many(["https://example.com/doc.pdf"]))[0]
+
+    assert page.ok
+    assert page.content == PDF_TEXT
+    assert page.attempts == [{"extractor": "httpx", "outcome": "ok"}]
+
+
+def test_pdf_magic_under_octet_stream_routes_to_pdf_branch(monkeypatch):
+    _install_transport(monkeypatch, _pdf_site_handler)
+    page = HttpxPageFetcher().fetch_many(["https://example.com/blob"])[0]
+
+    assert page.ok
+    assert page.error is None
+    assert page.content == PDF_TEXT
+
+
+def test_corrupt_pdf_body_is_an_error(monkeypatch):
+    _install_transport(monkeypatch, _pdf_site_handler)
+    page = HttpxPageFetcher().fetch_many(["https://example.com/corrupt.pdf"])[0]
+
+    # PDFReader swallows parse errors internally and returns no documents, so a corrupt
+    # body surfaces as "empty" rather than a pdf-prefixed parse error.
+    assert not page.ok
+    assert page.content is None
+    assert page.error == "empty"
+    assert page.attempts == [{"extractor": "httpx", "outcome": "empty"}]
+
+
+def test_pdf_reader_exception_is_a_pdf_error(monkeypatch):
+    class ExplodingReader:
+        def __init__(self, chunk: bool = True):
+            pass
+
+        def read(self, obj, name=None):
+            raise RuntimeError("boom")
+
+    monkeypatch.setattr("agno.knowledge.reader.pdf_reader.PDFReader", ExplodingReader)
+    _install_transport(monkeypatch, _pdf_site_handler)
+    page = HttpxPageFetcher().fetch_many(["https://example.com/doc.pdf"])[0]
+
+    assert not page.ok
+    assert page.content is None
+    assert page.error == "pdf: RuntimeError: boom"
+    assert page.attempts == [{"extractor": "httpx", "outcome": "pdf: RuntimeError: boom"}]
+
+
+def test_missing_pypdf_names_the_extra(monkeypatch):
+    # A None entry in sys.modules makes the lazy import raise ImportError, simulating an
+    # environment without the pdf extra; the read gets a page error, never an exception.
+    monkeypatch.setitem(sys.modules, "agno.knowledge.reader.pdf_reader", None)
+    _install_transport(monkeypatch, _pdf_site_handler)
+    page = HttpxPageFetcher().fetch_many(["https://example.com/doc.pdf"])[0]
+
+    assert not page.ok
+    assert page.error == "pdf support requires the `agno[pdf]` extra (pypdf)"
+    assert page.attempts == [{"extractor": "httpx", "outcome": page.error}]
