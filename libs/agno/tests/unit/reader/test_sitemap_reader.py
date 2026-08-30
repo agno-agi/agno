@@ -607,3 +607,20 @@ def test_complete_discovery_carries_no_incomplete_flag():
 
     assert documents
     assert all("discovery_incomplete" not in doc.meta_data for doc in documents)
+
+
+def test_cap_truncated_read_marks_discovery_incomplete():
+    locs = [f"https://example.com/p{i}" for i in range(6)]
+    routes = {"https://example.com/sitemap.xml": (urlset_xml(*locs), "application/xml")}
+    for loc in locs:
+        routes[loc.replace("https://example.com", "https://example.com")] = (html_page("P", "page body"), "text/html")
+    with mock_site(routes):
+        capped = make_reader(max_pages=3).read("https://example.com/sitemap.xml")
+        full = make_reader(max_pages=10).read("https://example.com/sitemap.xml")
+
+    assert len(capped) == 3
+    assert all(doc.meta_data.get("discovery_incomplete") is True for doc in capped), (
+        "pages beyond the cap still exist on the site; a reconciling caller must not prune them"
+    )
+    assert len(full) == 6
+    assert all("discovery_incomplete" not in doc.meta_data for doc in full)

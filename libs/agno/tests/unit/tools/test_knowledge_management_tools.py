@@ -860,3 +860,20 @@ class TestDeleteAllRouteAggregation:
 
         assert response.status_code == 200
         assert response.json() == "success"
+
+
+class TestRemoteParentIdFilter:
+    def test_parent_id_on_remote_knowledge_returns_501(self):
+        from agno.remote.base import RemoteKnowledge
+
+        knowledge = MagicMock(spec=RemoteKnowledge)
+        knowledge.name = "remote"
+        knowledge.id = "remote-kb"
+        knowledge.db_id = None
+        knowledge.knowledge_id = "remote-kb"
+        client = _build_client(knowledge)
+
+        response = client.get("/knowledge/content", params={"parent_id": "site-1"})
+
+        assert response.status_code == 501
+        assert "parent_id" in response.json()["detail"]

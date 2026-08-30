@@ -566,6 +566,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
+            if parent_id is not None:
+                # Silently returning the unfiltered base would look like a filtered result
+                raise HTTPException(status_code=501, detail="parent_id filtering is not supported for remote knowledge")
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_content(

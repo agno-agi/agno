@@ -1894,6 +1894,13 @@ class Knowledge(RemoteKnowledge):
             # the children list would strand every page row on a later site delete.
             # The ROW is patched, never content.metadata — that is a hash input.
             await self._astamp_row_children(content, previous_children)
+        elif previous_row_owned_vectors:
+            # Same wholesale-upsert hazard for the ownership marker: an aborted legacy
+            # promotion must still be recognized as one on the retry, or the retry runs
+            # unguarded and lands COMPLETED beside stale searchable vectors.
+            marker = Content(id=content.id, user_id=content.user_id)
+            marker.metadata = set_agno_metadata(None, "vectors_indexed", True)
+            await self._aupdate_content(marker)
         if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
@@ -2065,6 +2072,11 @@ class Knowledge(RemoteKnowledge):
         if previous_children:
             # See the matching re-stamp in _aload_from_url.
             self._stamp_row_children(content, previous_children)
+        elif previous_row_owned_vectors:
+            # See the matching marker re-stamp in _aload_from_url.
+            marker = Content(id=content.id, user_id=content.user_id)
+            marker.metadata = set_agno_metadata(None, "vectors_indexed", True)
+            self._update_content(marker)
         if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
             content.status = ContentStatus.COMPLETED
             self._update_content(content)

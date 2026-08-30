@@ -215,9 +215,12 @@ class SitemapReader(Reader):
                 else:
                     page_locs.extend(child_locs)
 
+            if pending:
+                # Shards were never opened because the cap was reached first
+                incomplete = True
             pages: List[str] = []
             seen: set = set()
-            for loc in page_locs:
+            for index, loc in enumerate(page_locs):
                 key = canonical_page_url(loc)
                 if key in seen:
                     continue
@@ -227,6 +230,10 @@ class SitemapReader(Reader):
                     continue
                 pages.append(loc)
                 if len(pages) >= self.max_pages:
+                    if index + 1 < len(page_locs):
+                        # The cap truncated the read: pages beyond it still exist on the
+                        # site, so a reconciling caller must not treat them as removed
+                        incomplete = True
                     break
             return pages, candidate, incomplete
 

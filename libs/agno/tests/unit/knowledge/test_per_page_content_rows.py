@@ -1049,3 +1049,50 @@ async def test_async_lightrag_removal_honors_false(tmp_path):
 
     assert removed is False
     assert await kb.aget_content_by_id(content.id) is not None
+
+
+# ---------------------------------------------------------------------------
+# Post-merge review round: ownership survives aborted promotions
+# ---------------------------------------------------------------------------
+
+
+async def test_aborted_promotion_keeps_ownership_marker_and_guards_retry(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "legacy text"}))
+    legacy_id = _rows(kb)[0].id
+
+    def raising_clear(content_id, user_id=None):
+        raise RuntimeError("adapter down")
+
+    vector_db.delete_by_content_id = raising_clear
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "legacy text", PAGE_TWO: "second"}))
+
+    row = await kb.aget_content_by_id(legacy_id)
+    assert row.status == "failed"
+    # The wholesale upsert must not erase the evidence the retry's promotion guard needs
+    assert get_agno_metadata(row.metadata, "vectors_indexed") is True
+
+    # A retry with the clear still failing stays guarded — no unguarded COMPLETED
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "legacy text", PAGE_TWO: "second"}))
+    assert (await kb.aget_content_by_id(legacy_id)).status == "failed"
+
+    # A healed clear reconciles to a proper site
+    del vector_db.delete_by_content_id
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "legacy text", PAGE_TWO: "second"}))
+    site = await kb.aget_content_by_id(legacy_id)
+    assert site.status == "completed"
+    assert len(get_agno_metadata(site.metadata, "children")) == 2
+
+
+def test_aborted_promotion_keeps_ownership_marker_sync(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "legacy text"}))
+    legacy_id = _rows(kb)[0].id
+
+    vector_db.delete_by_content_id = lambda cid, user_id=None: False
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "legacy text", PAGE_TWO: "second"}))
+
+    row = kb.get_content_by_id(legacy_id)
+    assert row.status == "failed"
+    assert get_agno_metadata(row.metadata, "vectors_indexed") is True
