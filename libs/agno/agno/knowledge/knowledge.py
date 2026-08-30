@@ -18,13 +18,14 @@ from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
 from agno.knowledge.reader import Reader, ReaderFactory
+from agno.knowledge.reader.utils.urls import canonical_page_name, is_sitemap_url
 from agno.knowledge.remote_content.base import BaseStorageConfig
 from agno.knowledge.remote_content.remote_content import (
     RemoteContent,
 )
 from agno.knowledge.remote_knowledge import RemoteKnowledge
 from agno.knowledge.types import ContentType
-from agno.knowledge.utils import merge_user_metadata, set_agno_metadata, strip_agno_metadata
+from agno.knowledge.utils import get_agno_metadata, merge_user_metadata, set_agno_metadata, strip_agno_metadata
 from agno.utils.http import async_fetch_with_retry
 from agno.utils.knowledge import strict_user_id_kwarg
 from agno.utils.log import log_debug, log_error, log_info, log_warning
@@ -794,7 +795,7 @@ class Knowledge(RemoteKnowledge):
     async def apatch_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         return await self._aupdate_content(content, user_id=user_id)
 
-    def remove_content_by_id(self, content_id: str, user_id: Optional[str] = None):
+    def remove_content_by_id(self, content_id: str, user_id: Optional[str] = None, _seen: Optional[Set[str]] = None):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -806,6 +807,20 @@ class Knowledge(RemoteKnowledge):
             # owner's vectors and leave their row behind pointing at nothing
             log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
             return
+
+        if content is None and self.contents_db is not None:
+            content = self.get_content_by_id(content_id, user_id=user_id)
+
+        # A site row owns its page rows: deleting it deletes them and their vectors.
+        # ``_seen`` guards against a metadata cycle and marks the cascade for the
+        # parent-list maintenance below.
+        seen = _seen if _seen is not None else set()
+        seen.add(content_id)
+        children = get_agno_metadata(content.metadata, "children") if content else None
+        if isinstance(children, list):
+            for child_id in children:
+                if isinstance(child_id, str) and child_id not in seen:
+                    self.remove_content_by_id(child_id, user_id=user_id, _seen=seen)
 
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -824,14 +839,68 @@ class Knowledge(RemoteKnowledge):
 
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
+            self._drop_from_parent_children(content, content_id, user_id, seen)
 
-    async def aremove_content_by_id(self, content_id: str, user_id: Optional[str] = None):
+    def _drop_from_parent_children(
+        self, content: Optional[Content], content_id: str, user_id: Optional[str], seen: Set[str]
+    ) -> None:
+        """After a page row is deleted on its own, take its id off the site row's list."""
+        parent_id = get_agno_metadata(content.metadata, "parent_id") if content else None
+        if not isinstance(parent_id, str) or parent_id in seen or self.contents_db is None:
+            return
+        if isinstance(self.contents_db, AsyncBaseDb):
+            return
+        parent_row = self.contents_db.get_knowledge_content(parent_id, user_id=user_id)
+        if parent_row is None:
+            return
+        siblings = get_agno_metadata(parent_row.metadata, "children")
+        if not isinstance(siblings, list) or content_id not in siblings:
+            return
+        update = Content(id=parent_id, user_id=parent_row.user_id)
+        update.metadata = set_agno_metadata(None, "children", [child for child in siblings if child != content_id])
+        self._update_content(update)
+
+    async def _adrop_from_parent_children(
+        self, content: Optional[Content], content_id: str, user_id: Optional[str], seen: Set[str]
+    ) -> None:
+        """Async version of _drop_from_parent_children."""
+        parent_id = get_agno_metadata(content.metadata, "parent_id") if content else None
+        if not isinstance(parent_id, str) or parent_id in seen or self.contents_db is None:
+            return
+        if isinstance(self.contents_db, AsyncBaseDb):
+            parent_row = await self.contents_db.get_knowledge_content(parent_id, user_id=user_id)
+        else:
+            parent_row = self.contents_db.get_knowledge_content(parent_id, user_id=user_id)
+        if parent_row is None:
+            return
+        siblings = get_agno_metadata(parent_row.metadata, "children")
+        if not isinstance(siblings, list) or content_id not in siblings:
+            return
+        update = Content(id=parent_id, user_id=parent_row.user_id)
+        update.metadata = set_agno_metadata(None, "children", [child for child in siblings if child != content_id])
+        await self._aupdate_content(update)
+
+    async def aremove_content_by_id(
+        self, content_id: str, user_id: Optional[str] = None, _seen: Optional[Set[str]] = None
+    ):
         scoped = user_id is not None and self.contents_db is not None
         content = await self.aget_content_by_id(content_id, user_id=user_id) if scoped else None
         if scoped and (content is None or self._content_is_shared(content, user_id)):
             # See the matching guard in ``remove_content_by_id``.
             log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
             return
+
+        if content is None and self.contents_db is not None:
+            content = await self.aget_content_by_id(content_id, user_id=user_id)
+
+        # See the matching cascade in ``remove_content_by_id``.
+        seen = _seen if _seen is not None else set()
+        seen.add(content_id)
+        children = get_agno_metadata(content.metadata, "children") if content else None
+        if isinstance(children, list):
+            for child_id in children:
+                if isinstance(child_id, str) and child_id not in seen:
+                    await self.aremove_content_by_id(child_id, user_id=user_id, _seen=seen)
 
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -853,6 +922,7 @@ class Knowledge(RemoteKnowledge):
                 await self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
             else:
                 self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
+            await self._adrop_from_parent_children(content, content_id, user_id, seen)
 
     def remove_all_content(self, user_id: Optional[str] = None):
         contents, _ = self.get_content(user_id=user_id)
@@ -1212,6 +1282,11 @@ class Knowledge(RemoteKnowledge):
     def website_reader(self) -> Optional[Reader]:
         """Website reader - lazy loaded via factory."""
         return self._get_reader("website")
+
+    @property
+    def sitemap_reader(self) -> Optional[Reader]:
+        """Sitemap reader - lazy loaded via factory."""
+        return self._get_reader("sitemap")
 
     @property
     def firecrawl_reader(self) -> Optional[Reader]:
@@ -1715,13 +1790,19 @@ class Knowledge(RemoteKnowledge):
         content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
         content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
-        # Set name from URL if not provided
+        # Set name from URL if not provided. Whether it was caller-provided decides the
+        # site row's display name for multi-page reads (see _aload_url_page_groups).
+        name_was_auto = not content.name
         if not content.name and content.url:
             from urllib.parse import urlparse
 
             parsed = urlparse(content.url)
             url_path = Path(parsed.path)
             content.name = url_path.name if url_path.name else content.url
+
+        # A multi-page re-ingest needs the previous run's child-row ids to delete pages that
+        # left the site; the upsert below overwrites them, so capture first.
+        previous_children = await self._aget_previous_children(content)
 
         # 1. Add content to contents database
         await self._ainsert_contents_db(content)
@@ -1754,9 +1835,11 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
+        # A bare sitemap URL routes to the sitemap reader, which owns the URL end to end
+        auto_sitemap = content.reader is None and is_sitemap_url(content.url)
         # Skip pre-download when a custom URL-based reader is provided —
         # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
-        skip_download = (
+        skip_download = auto_sitemap or (
             content.reader is not None
             and hasattr(content.reader, "get_supported_content_types")
             and ContentType.URL in content.reader.get_supported_content_types()
@@ -1768,7 +1851,9 @@ class Knowledge(RemoteKnowledge):
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if auto_sitemap:
+            reader = self.sitemap_reader
+        elif file_extension:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
@@ -1802,50 +1887,12 @@ class Knowledge(RemoteKnowledge):
                 docs_by_source[source_url] = []
             docs_by_source[source_url].append(doc)
 
-        # 8. Process each source separately if multiple sources exist
-        if len(docs_by_source) > 1:
-            for source_url, source_docs in docs_by_source.items():
-                # Compute per-document hash based on actual source URL
-                doc_hash = self._build_document_content_hash(source_docs[0], content)
-
-                # Check skip_if_exists for each source individually
-                if self._should_skip(doc_hash, skip_if_exists, user_id=content.user_id):
-                    log_debug(f"Skipping already indexed: {source_url}")
-                    continue
-
-                doc_id = generate_id(doc_hash)
-                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
-
-                # Insert with per-document hash. Resolve the owner scope OUTSIDE the try:
-                # a scoped write against a legacy adapter must fail the ingest (marked FAILED
-                # by _aload_content), not be swallowed per-source and reported COMPLETED.
-                if self.vector_db.upsert_available() and upsert:
-                    owner_kwargs = strict_user_id_kwarg(self.vector_db.async_upsert, content.user_id)
-                    try:
-                        await self.vector_db.async_upsert(
-                            doc_hash,
-                            source_docs,
-                            content.metadata,
-                            **owner_kwargs,
-                        )
-                    except Exception as e:
-                        log_error(f"Error upserting document from {source_url}: {str(e)}")
-                        continue
-                else:
-                    owner_kwargs = strict_user_id_kwarg(self.vector_db.async_insert, content.user_id)
-                    try:
-                        await self.vector_db.async_insert(
-                            doc_hash,
-                            documents=source_docs,
-                            filters=content.metadata,
-                            **owner_kwargs,
-                        )
-                    except Exception as e:
-                        log_error(f"Error inserting document from {source_url}: {str(e)}")
-                        continue
-
-            content.status = ContentStatus.COMPLETED
-            await self._aupdate_content(content)
+        # 8. Multi-page reads land one content row per page, owned by the site row.
+        # A row that is already a site row stays one even when the site shrank to one page.
+        if len(docs_by_source) > 1 or previous_children:
+            await self._aload_url_page_groups(
+                content, docs_by_source, upsert, skip_if_exists, previous_children, name_was_auto
+            )
             return
 
         # 9. Single source - use existing logic with original content hash
@@ -1883,13 +1930,19 @@ class Knowledge(RemoteKnowledge):
         content.metadata = set_agno_metadata(content.metadata, "source_type", "url")
         content.metadata = set_agno_metadata(content.metadata, "source_url", content.url)
 
-        # Set name from URL if not provided
+        # Set name from URL if not provided. Whether it was caller-provided decides the
+        # site row's display name for multi-page reads (see _load_url_page_groups).
+        name_was_auto = not content.name
         if not content.name and content.url:
             from urllib.parse import urlparse
 
             parsed = urlparse(content.url)
             url_path = Path(parsed.path)
             content.name = url_path.name if url_path.name else content.url
+
+        # A multi-page re-ingest needs the previous run's child-row ids to delete pages that
+        # left the site; the upsert below overwrites them, so capture first.
+        previous_children = self._get_previous_children(content)
 
         # 1. Add content to contents database
         self._insert_contents_db(content)
@@ -1923,9 +1976,11 @@ class Knowledge(RemoteKnowledge):
         file_extension = url_path.suffix.lower()
 
         bytes_content = None
+        # A bare sitemap URL routes to the sitemap reader, which owns the URL end to end
+        auto_sitemap = content.reader is None and is_sitemap_url(content.url)
         # Skip pre-download when a custom URL-based reader is provided —
         # it handles the URL directly (e.g. LLMsTxtReader fetches linked pages)
-        skip_download = (
+        skip_download = auto_sitemap or (
             content.reader is not None
             and hasattr(content.reader, "get_supported_content_types")
             and ContentType.URL in content.reader.get_supported_content_types()
@@ -1936,7 +1991,9 @@ class Knowledge(RemoteKnowledge):
 
         # 4. Select reader
         name = content.name if content.name else content.url
-        if file_extension:
+        if auto_sitemap:
+            reader = self.sitemap_reader
+        elif file_extension:
             reader, default_name = self._select_reader_by_extension(file_extension, content.reader)
             if default_name and file_extension == ".csv":
                 name = basename(parsed_url.path) or default_name
@@ -1971,50 +2028,12 @@ class Knowledge(RemoteKnowledge):
                 docs_by_source[source_url] = []
             docs_by_source[source_url].append(doc)
 
-        # 8. Process each source separately if multiple sources exist
-        if len(docs_by_source) > 1:
-            for source_url, source_docs in docs_by_source.items():
-                # Compute per-document hash based on actual source URL
-                doc_hash = self._build_document_content_hash(source_docs[0], content)
-
-                # Check skip_if_exists for each source individually
-                if self._should_skip(doc_hash, skip_if_exists, user_id=content.user_id):
-                    log_debug(f"Skipping already indexed: {source_url}")
-                    continue
-
-                doc_id = generate_id(doc_hash)
-                self._prepare_documents_for_insert(source_docs, doc_id, calculate_sizes=True)
-
-                # Insert with per-document hash. Resolve the owner scope OUTSIDE the try:
-                # a scoped write against a legacy adapter must fail the ingest (marked FAILED
-                # by _load_content), not be swallowed per-source and reported COMPLETED.
-                if self.vector_db.upsert_available() and upsert:
-                    owner_kwargs = strict_user_id_kwarg(self.vector_db.upsert, content.user_id)
-                    try:
-                        self.vector_db.upsert(
-                            doc_hash,
-                            source_docs,
-                            content.metadata,
-                            **owner_kwargs,
-                        )
-                    except Exception as e:
-                        log_error(f"Error upserting document from {source_url}: {str(e)}")
-                        continue
-                else:
-                    owner_kwargs = strict_user_id_kwarg(self.vector_db.insert, content.user_id)
-                    try:
-                        self.vector_db.insert(
-                            doc_hash,
-                            documents=source_docs,
-                            filters=content.metadata,
-                            **owner_kwargs,
-                        )
-                    except Exception as e:
-                        log_error(f"Error inserting document from {source_url}: {str(e)}")
-                        continue
-
-            content.status = ContentStatus.COMPLETED
-            self._update_content(content)
+        # 8. Multi-page reads land one content row per page, owned by the site row.
+        # A row that is already a site row stays one even when the site shrank to one page.
+        if len(docs_by_source) > 1 or previous_children:
+            self._load_url_page_groups(
+                content, docs_by_source, upsert, skip_if_exists, previous_children, name_was_auto
+            )
             return
 
         # 9. Single source - use existing logic with original content hash
@@ -2022,6 +2041,366 @@ class Knowledge(RemoteKnowledge):
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
         self._handle_vector_db_insert(content, read_documents, upsert)
+
+    # --- Per-page rows for multi-page URL reads ---
+
+    async def _aget_previous_children(self, content: Content) -> List[str]:
+        """Child-row ids recorded on the site row by the previous run, if any."""
+        if self.contents_db is None or not content.id:
+            return []
+        if isinstance(self.contents_db, AsyncBaseDb):
+            row = await self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
+        else:
+            row = self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
+        if row is None:
+            return []
+        children = get_agno_metadata(row.metadata, "children")
+        return [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
+
+    def _get_previous_children(self, content: Content) -> List[str]:
+        """Synchronous version of _aget_previous_children."""
+        if self.contents_db is None or not content.id or isinstance(self.contents_db, AsyncBaseDb):
+            return []
+        row = self.contents_db.get_knowledge_content(content.id, user_id=content.user_id)
+        if row is None:
+            return []
+        children = get_agno_metadata(row.metadata, "children")
+        return [child for child in children if isinstance(child, str)] if isinstance(children, list) else []
+
+    async def _aget_child_digest(self, child_id: Optional[str], user_id: Optional[str]) -> Optional[str]:
+        """The stored page-text digest of a child row, or None when the row does not exist."""
+        if self.contents_db is None or not child_id:
+            return None
+        if isinstance(self.contents_db, AsyncBaseDb):
+            row = await self.contents_db.get_knowledge_content(child_id, user_id=user_id)
+        else:
+            row = self.contents_db.get_knowledge_content(child_id, user_id=user_id)
+        if row is None:
+            return None
+        digest = get_agno_metadata(row.metadata, "content_digest")
+        return digest if isinstance(digest, str) else None
+
+    def _get_child_digest(self, child_id: Optional[str], user_id: Optional[str]) -> Optional[str]:
+        """Synchronous version of _aget_child_digest."""
+        if self.contents_db is None or not child_id or isinstance(self.contents_db, AsyncBaseDb):
+            return None
+        row = self.contents_db.get_knowledge_content(child_id, user_id=user_id)
+        if row is None:
+            return None
+        digest = get_agno_metadata(row.metadata, "content_digest")
+        return digest if isinstance(digest, str) else None
+
+    def _prepare_page_child(
+        self, content: Content, source_url: str, source_docs: List[Document]
+    ) -> Tuple[Content, Optional[str], Optional[str], str, Optional[str]]:
+        """Build the child Content for one page's URL group.
+
+        Returns ``(child, digest, error, extractor, source_kind)``. The child's id equals the
+        ``content_id`` its vectors carry (both derive from the per-URL document hash), which
+        is what makes per-page delete reach the vectors. The digest is over the page text
+        before any header injection, so provenance decoration never forces a re-embed.
+        """
+        doc_hash = self._build_document_content_hash(source_docs[0], content)
+        first = source_docs[0]
+        meta = first.meta_data or {}
+        error = meta.get("error")
+        page_text = "".join(doc.content or "" for doc in source_docs)
+        if not error and not page_text:
+            error = "empty"
+        digest = hashlib.sha256(page_text.encode("utf-8", errors="replace")).hexdigest() if not error else None
+
+        # Readers that name pages per page keep their names; a reader that stamped every
+        # document with the read-level name gets a canonical per-page one instead.
+        if first.name and first.name not in (content.name, content.url):
+            child_name = first.name
+        else:
+            child_name = canonical_page_name(source_url)
+
+        user_metadata = strip_agno_metadata(content.metadata)
+        child = Content(
+            id=generate_id(doc_hash),
+            name=child_name,
+            description=content.description,
+            url=source_url,
+            metadata=dict(user_metadata) if user_metadata else None,
+            user_id=content.user_id,
+            content_hash=doc_hash,
+            file_type="url",
+            size=len(page_text.encode("utf-8", errors="replace")) if page_text else None,
+        )
+        source_kind = meta.get("source")
+        extractor = meta.get("extractor") or "unknown"
+        child.metadata = set_agno_metadata(child.metadata, "source_type", source_kind or "url")
+        child.metadata = set_agno_metadata(child.metadata, "source_url", source_url)
+        child.metadata = set_agno_metadata(child.metadata, "parent_id", content.id)
+        child.metadata = set_agno_metadata(child.metadata, "fetched_at", int(time.time()))
+        if meta.get("title"):
+            child.metadata = set_agno_metadata(child.metadata, "title", meta["title"])
+        if meta.get("extractor"):
+            child.metadata = set_agno_metadata(child.metadata, "extractor", meta["extractor"])
+        if meta.get("attempts"):
+            child.metadata = set_agno_metadata(child.metadata, "attempts", meta["attempts"])
+        if digest:
+            child.metadata = set_agno_metadata(child.metadata, "content_digest", digest)
+        return child, digest, (str(error) if error else None), extractor, source_kind
+
+    def _finalize_site_row_content(
+        self,
+        content: Content,
+        total_pages: int,
+        pages_loaded: int,
+        child_ids: List[str],
+        failed: List[Dict[str, str]],
+        extractor_counts: Dict[str, int],
+        source_kind: Optional[str],
+        name_was_auto: bool,
+    ) -> None:
+        """Turn the parent row into the site row: aggregate status, children, provenance."""
+        if name_was_auto and content.url:
+            from urllib.parse import urlparse
+
+            host = urlparse(content.url).netloc
+            if host:
+                content.name = host
+        content.metadata = set_agno_metadata(content.metadata, "source_type", source_kind or "url")
+        content.metadata = set_agno_metadata(content.metadata, "children", child_ids)
+        content.metadata = set_agno_metadata(content.metadata, "page_count", pages_loaded)
+        content.metadata = set_agno_metadata(content.metadata, "auto_named", name_was_auto)
+        if extractor_counts:
+            content.metadata = set_agno_metadata(content.metadata, "extractor_counts", extractor_counts)
+        if failed:
+            content.metadata = set_agno_metadata(content.metadata, "failed", failed[:25])
+
+        message = f"{pages_loaded} of {total_pages} pages loaded"
+        if failed:
+            sample = ", ".join(entry["url"] for entry in failed[:5])
+            message += f"; failed: {sample}"
+            if len(failed) > 5:
+                message += f" and {len(failed) - 5} more"
+        content.status = ContentStatus.COMPLETED if pages_loaded > 0 else ContentStatus.FAILED
+        content.status_message = message
+
+    async def _aload_url_page_groups(
+        self,
+        content: Content,
+        docs_by_source: Dict[str, List[Document]],
+        upsert: bool,
+        skip_if_exists: bool,
+        previous_children: List[str],
+        name_was_auto: bool,
+    ) -> None:
+        """Land a multi-page read as one content row per page under the site row.
+
+        Each page row's id equals its vectors' ``content_id``. A page whose stored text
+        digest is unchanged refreshes its row without re-embedding; a changed page replaces
+        its vectors wholesale (works without adapter upsert support, so the REST route's
+        ``upsert=False`` still refreshes); a page that left the site since the previous run
+        is deleted; a page that failed to fetch gets a FAILED row and is retried next run.
+        ``skip_if_exists`` for page rows therefore means "same URL and same text".
+        """
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        child_ids: List[str] = []
+        failed: List[Dict[str, str]] = []
+        extractor_counts: Dict[str, int] = {}
+        pages_loaded = 0
+        source_kind: Optional[str] = None
+
+        for source_url, source_docs in docs_by_source.items():
+            child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
+            child_ids.append(child.id)  # type: ignore[arg-type]
+            if source_kind is None and doc_source:
+                source_kind = doc_source
+
+            if error is not None:
+                child.status = ContentStatus.FAILED
+                child.status_message = error
+                await self._ainsert_contents_db(child)
+                failed.append({"url": source_url, "error": error})
+                continue
+
+            if self.contents_db is not None:
+                previous_digest = await self._aget_child_digest(child.id, content.user_id)
+                if previous_digest is not None and previous_digest == digest:
+                    child.status = ContentStatus.COMPLETED
+                    await self._ainsert_contents_db(child)
+                    extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
+                    pages_loaded += 1
+                    log_debug(f"Page unchanged, embedding skipped: {source_url}")
+                    continue
+            elif self._should_skip(child.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+                # Vector-only knowledge base: no digest to compare, keep the legacy check
+                log_debug(f"Skipping already indexed: {source_url}")
+                continue
+
+            self._prepare_documents_for_insert(source_docs, child.id, calculate_sizes=True)  # type: ignore[arg-type]
+            vector_metadata = strip_agno_metadata(content.metadata)
+
+            # Resolve the owner scope OUTSIDE the try: a scoped write against a legacy
+            # adapter must fail the ingest (marked FAILED by _aload_content), not be
+            # swallowed per-page and reported COMPLETED.
+            use_upsert = self.vector_db.upsert_available() and upsert
+            owner_kwargs = strict_user_id_kwarg(
+                self.vector_db.async_upsert if use_upsert else self.vector_db.async_insert, content.user_id
+            )
+            try:
+                if use_upsert:
+                    await self.vector_db.async_upsert(
+                        child.content_hash,  # type: ignore[arg-type]
+                        source_docs,
+                        vector_metadata,
+                        **owner_kwargs,
+                    )
+                else:
+                    # Replace wholesale: a changed page refreshes without adapter upsert
+                    # support, and a row-less vector group (pre-existing orphans) is
+                    # adopted without duplicating its chunks.
+                    try:
+                        delete_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
+                        self.vector_db.delete_by_content_id(child.id, **delete_kwargs)  # type: ignore[arg-type]
+                    except NotImplementedError:
+                        log_debug(f"Vector db cannot clear previous chunks for {source_url}")
+                    await self.vector_db.async_insert(
+                        child.content_hash,  # type: ignore[arg-type]
+                        documents=source_docs,
+                        filters=vector_metadata,
+                        **owner_kwargs,
+                    )
+            except Exception as e:
+                log_error(f"Error inserting document from {source_url}: {str(e)}")
+                child.status = ContentStatus.FAILED
+                child.status_message = "Could not embed page"
+                await self._ainsert_contents_db(child)
+                failed.append({"url": source_url, "error": "Could not embed page"})
+                continue
+
+            child.status = ContentStatus.COMPLETED
+            await self._ainsert_contents_db(child)
+            extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
+            pages_loaded += 1
+
+        # Pages that left the site since the previous run disappear with it
+        current_ids = set(child_ids)
+        for stale_id in previous_children:
+            if stale_id not in current_ids:
+                try:
+                    await self.aremove_content_by_id(stale_id, user_id=content.user_id)
+                except Exception as e:
+                    log_debug(f"Could not remove stale page row {stale_id}: {e}")
+
+        self._finalize_site_row_content(
+            content, len(docs_by_source), pages_loaded, child_ids, failed, extractor_counts, source_kind, name_was_auto
+        )
+        await self._aupdate_content(content)
+
+    def _load_url_page_groups(
+        self,
+        content: Content,
+        docs_by_source: Dict[str, List[Document]],
+        upsert: bool,
+        skip_if_exists: bool,
+        previous_children: List[str],
+        name_was_auto: bool,
+    ) -> None:
+        """Synchronous version of _aload_url_page_groups."""
+        from agno.vectordb import VectorDb
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+
+        child_ids: List[str] = []
+        failed: List[Dict[str, str]] = []
+        extractor_counts: Dict[str, int] = {}
+        pages_loaded = 0
+        source_kind: Optional[str] = None
+
+        for source_url, source_docs in docs_by_source.items():
+            child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
+            child_ids.append(child.id)  # type: ignore[arg-type]
+            if source_kind is None and doc_source:
+                source_kind = doc_source
+
+            if error is not None:
+                child.status = ContentStatus.FAILED
+                child.status_message = error
+                self._insert_contents_db(child)
+                failed.append({"url": source_url, "error": error})
+                continue
+
+            if self.contents_db is not None:
+                previous_digest = self._get_child_digest(child.id, content.user_id)
+                if previous_digest is not None and previous_digest == digest:
+                    child.status = ContentStatus.COMPLETED
+                    self._insert_contents_db(child)
+                    extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
+                    pages_loaded += 1
+                    log_debug(f"Page unchanged, embedding skipped: {source_url}")
+                    continue
+            elif self._should_skip(child.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+                # Vector-only knowledge base: no digest to compare, keep the legacy check
+                log_debug(f"Skipping already indexed: {source_url}")
+                continue
+
+            self._prepare_documents_for_insert(source_docs, child.id, calculate_sizes=True)  # type: ignore[arg-type]
+            vector_metadata = strip_agno_metadata(content.metadata)
+
+            # Resolve the owner scope OUTSIDE the try: a scoped write against a legacy
+            # adapter must fail the ingest (marked FAILED by _load_content), not be
+            # swallowed per-page and reported COMPLETED.
+            use_upsert = self.vector_db.upsert_available() and upsert
+            owner_kwargs = strict_user_id_kwarg(
+                self.vector_db.upsert if use_upsert else self.vector_db.insert, content.user_id
+            )
+            try:
+                if use_upsert:
+                    self.vector_db.upsert(
+                        child.content_hash,  # type: ignore[arg-type]
+                        source_docs,
+                        vector_metadata,
+                        **owner_kwargs,
+                    )
+                else:
+                    # Replace wholesale: a changed page refreshes without adapter upsert
+                    # support, and a row-less vector group (pre-existing orphans) is
+                    # adopted without duplicating its chunks.
+                    try:
+                        delete_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
+                        self.vector_db.delete_by_content_id(child.id, **delete_kwargs)  # type: ignore[arg-type]
+                    except NotImplementedError:
+                        log_debug(f"Vector db cannot clear previous chunks for {source_url}")
+                    self.vector_db.insert(
+                        child.content_hash,  # type: ignore[arg-type]
+                        documents=source_docs,
+                        filters=vector_metadata,
+                        **owner_kwargs,
+                    )
+            except Exception as e:
+                log_error(f"Error inserting document from {source_url}: {str(e)}")
+                child.status = ContentStatus.FAILED
+                child.status_message = "Could not embed page"
+                self._insert_contents_db(child)
+                failed.append({"url": source_url, "error": "Could not embed page"})
+                continue
+
+            child.status = ContentStatus.COMPLETED
+            self._insert_contents_db(child)
+            extractor_counts[extractor] = extractor_counts.get(extractor, 0) + 1
+            pages_loaded += 1
+
+        # Pages that left the site since the previous run disappear with it
+        current_ids = set(child_ids)
+        for stale_id in previous_children:
+            if stale_id not in current_ids:
+                try:
+                    self.remove_content_by_id(stale_id, user_id=content.user_id)
+                except Exception as e:
+                    log_debug(f"Could not remove stale page row {stale_id}: {e}")
+
+        self._finalize_site_row_content(
+            content, len(docs_by_source), pages_loaded, child_ids, failed, extractor_counts, source_kind, name_was_auto
+        )
+        self._update_content(content)
 
     async def _aload_from_content(
         self,
@@ -2957,8 +3336,14 @@ class Knowledge(RemoteKnowledge):
                     await self._aupdate_content(content)
                     return
 
+                # The reader is a shared instance; restore its chunking preference after the
+                # unchunked read this store needs.
+                previous_chunk = reader.chunk
                 reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
+                try:
+                    read_documents = reader.read(content.url, name=content.name)
+                finally:
+                    reader.chunk = previous_chunk
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id)
@@ -2966,6 +3351,15 @@ class Knowledge(RemoteKnowledge):
                 if not read_documents:
                     log_error("No documents read from URL")
                     content.status = ContentStatus.FAILED
+                    await self._aupdate_content(content)
+                    return
+
+                # Only the first document would land below; refusing beats silently
+                # ingesting one page of a multi-page read.
+                page_urls = {doc.meta_data.get("url") for doc in read_documents if doc.meta_data} - {None}
+                if len(page_urls) > 1:
+                    content.status = ContentStatus.FAILED
+                    content.status_message = "LightRag does not support multi-page readers"
                     await self._aupdate_content(content)
                     return
 
@@ -3117,8 +3511,14 @@ class Knowledge(RemoteKnowledge):
                     self._update_content(content)
                     return
 
+                # The reader is a shared instance; restore its chunking preference after the
+                # unchunked read this store needs.
+                previous_chunk = reader.chunk
                 reader.chunk = False
-                read_documents = reader.read(content.url, name=content.name)
+                try:
+                    read_documents = reader.read(content.url, name=content.name)
+                finally:
+                    reader.chunk = previous_chunk
                 if not content.id:
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id)
@@ -3126,6 +3526,15 @@ class Knowledge(RemoteKnowledge):
                 if not read_documents:
                     log_error("No documents read from URL")
                     content.status = ContentStatus.FAILED
+                    self._update_content(content)
+                    return
+
+                # Only the first document would land below; refusing beats silently
+                # ingesting one page of a multi-page read.
+                page_urls = {doc.meta_data.get("url") for doc in read_documents if doc.meta_data} - {None}
+                if len(page_urls) > 1:
+                    content.status = ContentStatus.FAILED
+                    content.status_message = "LightRag does not support multi-page readers"
                     self._update_content(content)
                     return
 

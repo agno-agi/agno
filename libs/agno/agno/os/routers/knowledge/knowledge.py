@@ -13,11 +13,13 @@ from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.remote_content.s3 import S3Config
 from agno.knowledge.utils import (
+    get_agno_metadata,
     get_all_chunkers_info,
     get_content_types_to_readers_mapping,
     get_read_time_availability,
     get_readers_availability,
     get_unavailable_chunkers_info,
+    strip_agno_metadata,
 )
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
@@ -559,6 +561,9 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
+        parent_id: Optional[str] = Query(
+            default=None, description="Only page rows of this site row (exact id match)"
+        ),
     ) -> PaginatedResponse[ContentResponseSchema]:
         knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
@@ -575,9 +580,25 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         # Non-admin callers see their own rows plus shared (NULL) ones.
         scoped_user_id = get_scoped_user_id(request)
-        contents, count = await knowledge.aget_content(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
-        )
+        if parent_id is not None:
+            # The contents db cannot filter on metadata, so fetch every row for this base
+            # and page in the route. Site sizes are bounded by the reader's page cap.
+            all_contents, _ = await knowledge.aget_content(
+                sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
+            )
+            matched = [
+                content
+                for content in all_contents
+                if get_agno_metadata(content.metadata, "parent_id") == parent_id
+            ]
+            count = len(matched)
+            page_number = page or 1
+            page_size = limit or 20
+            contents = matched[(page_number - 1) * page_size : page_number * page_size]
+        else:
+            contents, count = await knowledge.aget_content(
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
+            )
 
         return PaginatedResponse(
             data=[
@@ -740,6 +761,72 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         scoped_user_id = get_scoped_user_id(request)
         await knowledge.aremove_all_content(user_id=scoped_user_id)
         return "success"
+
+    @router.post(
+        "/knowledge/content/{content_id}/refresh",
+        response_model=ContentResponseSchema,
+        status_code=202,
+        operation_id="refresh_content",
+        summary="Refresh Content",
+        description=(
+            "Re-ingest a URL-sourced content row from its source. For a site row this refreshes "
+            "changed pages, retries failed ones, and removes pages that left the site."
+        ),
+        responses={
+            202: {"description": "Refresh started"},
+            400: {"description": "Content has no source URL", "model": BadRequestResponse},
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
+    )
+    async def refresh_content(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        content_id: str = Path(..., description="Content ID to refresh"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
+    ) -> ContentResponseSchema:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Refresh is not supported for remote knowledge")
+
+        scoped_user_id = get_scoped_user_id(request)
+        existing = await knowledge.aget_content_by_id(content_id, user_id=scoped_user_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+        if scoped_user_id is not None and existing.user_id is None:
+            raise HTTPException(status_code=403, detail="Cannot refresh shared content")
+
+        source_url = get_agno_metadata(existing.metadata, "source_url")
+        if not isinstance(source_url, str) or not source_url:
+            raise HTTPException(status_code=400, detail="Content has no source URL to refresh from")
+
+        # Rebuild the exact Content the original insert built, so the refresh lands on the
+        # same row. The name is part of the row hash, so try the stored name and the
+        # auto-derived (None) form and keep whichever reproduces this id.
+        user_metadata = strip_agno_metadata(existing.metadata)
+        content: Optional[Content] = None
+        for candidate_name in (None, existing.name):
+            candidate = Content(
+                name=candidate_name,
+                description=existing.description or None,
+                url=source_url,
+                metadata=dict(user_metadata) if user_metadata else None,
+                user_id=existing.user_id,
+            )
+            candidate.content_hash = knowledge._build_content_hash(candidate)
+            candidate.id = generate_id(candidate.content_hash)
+            if candidate.id == content_id:
+                content = candidate
+                break
+        if content is None:
+            raise HTTPException(
+                status_code=400, detail="Content row cannot be matched back to its source; re-ingest the URL instead"
+            )
+
+        source_type = get_agno_metadata(existing.metadata, "source_type")
+        reader_id = "sitemap" if source_type in ("sitemap", "page") else None
+        background_tasks.add_task(process_content, knowledge, content, reader_id, None, None, None)
+        return ContentResponseSchema(id=content_id, name=existing.name, status=ContentStatus.PROCESSING)
 
     @router.get(
         "/knowledge/content/{content_id}/status",
