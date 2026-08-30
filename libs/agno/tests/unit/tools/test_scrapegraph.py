@@ -309,3 +309,64 @@ def test_crawl_start_error(scrapegraph_tools, mock_scrapegraph):
 
     assert result.startswith("Error")
     assert "bad schema" in result
+
+
+def test_default_smartscraper_drops_sensitive_headers_for_unallowed_host(mock_scrapegraph):
+    """Without allowed_domains, credential-style headers must not reach the fetch."""
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}, clear=True):
+        tools = ScrapeGraphTools(
+            headers={
+                "User-Agent": "test-agent",
+                "Authorization": "Bearer secret",
+                "Cookie": "session=abc",
+            }
+        )
+        tools.client = mock_scrapegraph
+        tools.smartscraper("https://unrelated.org/page", "extract titles")
+
+    fetch_config = mock_scrapegraph.extract.call_args.kwargs["fetch_config"]
+    assert "Authorization" not in fetch_config.headers
+    assert "Cookie" not in fetch_config.headers
+    assert fetch_config.headers["User-Agent"] == "test-agent"
+
+
+def test_allowed_host_receives_configured_headers(mock_scrapegraph):
+    """With allowed_domains configured, matching hosts get the full headers."""
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}, clear=True):
+        tools = ScrapeGraphTools(
+            headers={"Authorization": "Bearer secret"},
+            allowed_domains=["example.com"],
+        )
+        tools.client = mock_scrapegraph
+        tools.smartscraper("https://api.example.com/page", "extract titles")
+
+    fetch_config = mock_scrapegraph.extract.call_args.kwargs["fetch_config"]
+    assert fetch_config.headers["Authorization"] == "Bearer secret"
+
+
+def test_allowed_domains_mismatch_returns_error_without_client_call(mock_scrapegraph):
+    """A host outside allowed_domains fails fast and never reaches the client."""
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}, clear=True):
+        tools = ScrapeGraphTools(
+            headers={"Authorization": "Bearer secret"},
+            allowed_domains=["example.com"],
+        )
+        tools.client = mock_scrapegraph
+        result = tools.smartscraper("https://unrelated.org/page", "extract titles")
+
+    assert "not in allowed_domains" in result
+    mock_scrapegraph.extract.assert_not_called()
+
+
+def test_subdomains_of_allowed_domains_are_permitted(mock_scrapegraph):
+    """The allowlist covers subdomains of the configured domains."""
+    with patch.dict("os.environ", {"SGAI_API_KEY": TEST_API_KEY}, clear=True):
+        tools = ScrapeGraphTools(
+            headers={"Authorization": "Bearer secret"},
+            allowed_domains=["example.com"],
+        )
+        tools.client = mock_scrapegraph
+        tools.markdownify("https://docs.example.com/page")
+
+    fetch_config = mock_scrapegraph.scrape.call_args.kwargs["fetch_config"]
+    assert fetch_config.headers["Authorization"] == "Bearer secret"
