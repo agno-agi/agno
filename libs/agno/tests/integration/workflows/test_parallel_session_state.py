@@ -968,6 +968,31 @@ def test_merge_nested_dict_replaced_by_a_scalar():
     assert original == {"config": "disabled"}
 
 
+def test_merge_applies_a_removed_nested_key():
+    """A step that removes a nested key removes it from the merged state"""
+
+    original = {"config": {"a": 1, "b": 2}}
+
+    merge_parallel_session_states(original, [{"config": {"b": 2}}])
+
+    assert original == {"config": {"b": 2}}
+
+
+def test_merge_keeps_a_sibling_addition_next_to_a_removal():
+    """A removal by one step does not drop a key another step added to the same nested dict"""
+
+    original = {"config": {"a": 1, "b": 2}}
+
+    modified_states = [
+        {"config": {"a": 1, "b": 2, "c": 3}},
+        {"config": {"b": 2}},
+    ]
+
+    merge_parallel_session_states(original, modified_states)
+
+    assert original == {"config": {"b": 2, "c": 3}}
+
+
 def test_merge_does_not_apply_unchanged_nested_values():
     """A step that only read the nested state changes nothing"""
 

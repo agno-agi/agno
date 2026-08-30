@@ -24,7 +24,12 @@ def merge_dictionaries(a: Dict[str, Any], b: Dict[str, Any]) -> None:
 _MISSING = object()
 
 
-def _apply_state_changes(target: Dict[str, Any], baseline: Dict[str, Any], modified: Dict[str, Any]) -> None:
+def _apply_state_changes(
+    target: Dict[str, Any],
+    baseline: Dict[str, Any],
+    modified: Dict[str, Any],
+    apply_removals: bool = False,
+) -> None:
     """Apply the keys that modified changed relative to baseline to target, recursing into nested dicts.
 
     Every parallel step works on its own copy of the state, so a step that
@@ -33,17 +38,24 @@ def _apply_state_changes(target: Dict[str, Any], baseline: Dict[str, Any], modif
     changes to the same dict, so a nested dict is descended into and only the
     keys that actually changed are applied.
 
-    A key a step removed cannot be told apart from a key a sibling added, so
-    removals are not propagated.
+    Inside a nested dict, a key that is in baseline and gone from modified was
+    removed by the step, and the removal is applied. Top level keys are only
+    ever added or overwritten, which is how the merge behaved before nested
+    dicts were descended into.
     """
     for key, value in modified.items():
         baseline_value = baseline.get(key, _MISSING)
         target_value = target.get(key, _MISSING)
         if isinstance(value, dict) and isinstance(target_value, dict):
             nested_baseline = baseline_value if isinstance(baseline_value, dict) else {}
-            _apply_state_changes(target_value, nested_baseline, value)
+            _apply_state_changes(target_value, nested_baseline, value, apply_removals=True)
         elif baseline_value is _MISSING or baseline_value != value:
             target[key] = value
+
+    if apply_removals:
+        for key in baseline:
+            if key not in modified:
+                target.pop(key, None)
 
 
 def merge_parallel_session_states(original_state: Dict[str, Any], modified_states: List[Dict[str, Any]]) -> None:
