@@ -230,7 +230,11 @@ class SitemapReader(Reader):
                     break
             return pages, candidate, incomplete
 
-        return [url], None, False
+        # No sitemap could be fetched and parsed anywhere. For a site that never had one
+        # this is the normal single-page mode; for a site that did, it is an outage. The
+        # two are indistinguishable here, so the read is marked incomplete either way —
+        # the insert path then keeps previously loaded pages instead of pruning them.
+        return [url], None, True
 
     # ------------------------------------------------------------------
     # Documents

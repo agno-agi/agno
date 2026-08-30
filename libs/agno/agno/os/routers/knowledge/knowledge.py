@@ -722,7 +722,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             # Non-admins can read shared (unowned) content but not delete it.
             if scoped_user_id is not None and existing.user_id is None:
                 raise HTTPException(status_code=403, detail="Cannot delete shared content")
-            await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
+            removed = await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
+            if removed is False:
+                # The vector store refused the delete; the row is kept so a retry can
+                # still reach the vectors.
+                raise HTTPException(status_code=500, detail="Content was not fully removed; vector deletion failed")
 
         return ContentResponseSchema(
             id=content_id,

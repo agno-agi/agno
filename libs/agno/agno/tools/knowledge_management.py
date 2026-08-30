@@ -63,6 +63,13 @@ class KnowledgeManagementTools(Toolkit):
         """
         if knowledge is None:
             raise ValueError("knowledge must be provided when using KnowledgeManagementTools")
+        if getattr(knowledge, "contents_db", None) is None:
+            # Every tool here reads or writes content rows (status, listing, digests,
+            # cascade delete); on a vector-only base they would silently half-work.
+            raise ValueError(
+                "KnowledgeManagementTools requires a Knowledge with a contents_db "
+                "(e.g. Knowledge(vector_db=..., contents_db=SqliteDb(...)))"
+            )
         self.knowledge = knowledge
         self.scope = scope
         self.max_pages = max(1, min(max_pages, _HARD_PAGE_CAP))
@@ -409,10 +416,9 @@ class KnowledgeManagementTools(Toolkit):
             row = self.knowledge.get_content_by_id(content_id, user_id=owner)
             if row is None:
                 return self._error(f"content {content_id} not found")
-            self.knowledge.remove_content_by_id(content_id, user_id=owner)
-            if self.knowledge.contents_db and self.knowledge.get_content_by_id(content_id, user_id=owner) is not None:
-                # The core silently refuses some deletes (e.g. shared content under a scoped owner)
-                return self._error(f"content {content_id} was not removed (not permitted for this scope)")
+            removed = self.knowledge.remove_content_by_id(content_id, user_id=owner)
+            if removed is False:
+                return self._error(f"content {content_id} was not removed (delete refused or vector store failed)")
             return json.dumps({"ok": True, "removed": content_id, "name": row.name})
         except Exception as e:
             log_error(f"remove_content failed for {content_id}: {e}")
@@ -433,13 +439,9 @@ class KnowledgeManagementTools(Toolkit):
             row = await self.knowledge.aget_content_by_id(content_id, user_id=owner)
             if row is None:
                 return self._error(f"content {content_id} not found")
-            await self.knowledge.aremove_content_by_id(content_id, user_id=owner)
-            if (
-                self.knowledge.contents_db
-                and await self.knowledge.aget_content_by_id(content_id, user_id=owner) is not None
-            ):
-                # The core silently refuses some deletes (e.g. shared content under a scoped owner)
-                return self._error(f"content {content_id} was not removed (not permitted for this scope)")
+            removed = await self.knowledge.aremove_content_by_id(content_id, user_id=owner)
+            if removed is False:
+                return self._error(f"content {content_id} was not removed (delete refused or vector store failed)")
             return json.dumps({"ok": True, "removed": content_id, "name": row.name})
         except Exception as e:
             log_error(f"remove_content failed for {content_id}: {e}")

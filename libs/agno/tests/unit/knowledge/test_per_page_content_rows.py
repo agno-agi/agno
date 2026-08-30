@@ -10,7 +10,6 @@ import time
 from typing import Dict, List, Optional, Tuple
 from unittest import mock
 
-
 from agno.db.sqlite import SqliteDb
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
@@ -632,3 +631,136 @@ async def test_site_row_records_reader_id(vector_db, tmp_path):
 
     site = _site_row(_rows(kb))
     assert get_agno_metadata(site.metadata, "reader_id") == "sitemap"
+
+
+# ---------------------------------------------------------------------------
+# Review round 2: total discovery failure never prunes; vector delete False honored
+# ---------------------------------------------------------------------------
+
+
+class EmptyReader(FakePagesReader):
+    """A read that saw nothing — total outage: every shard failed, zero documents."""
+
+    def read(self, obj, name=None, password=None):
+        return []
+
+
+class FallbackOutageReader(FakePagesReader):
+    """The root sitemap is unreachable: the reader falls back to the single page at the
+    URL, fails to fetch it, and flags the read as incomplete discovery — the exact
+    document shape SitemapReader emits in that state."""
+
+    def read(self, obj, name=None, password=None):
+        return [
+            Document(
+                name=str(obj),
+                meta_data={"url": str(obj), "error": "HTTP 503", "source": "page", "discovery_incomplete": True},
+                content="",
+            )
+        ]
+
+
+def _assert_pages_survive(kb, vector_db):
+    rows = _rows(kb)
+    kept_urls = {get_agno_metadata(row.metadata, "source_url") for row in rows} - {None}
+    assert {PAGE_ONE, PAGE_TWO} <= kept_urls, f"pages lost: {kept_urls}"
+    site = _site_row(rows)
+    children = set(get_agno_metadata(site.metadata, "children") or [])
+    page_row_ids = {row.id for row in rows if get_agno_metadata(row.metadata, "parent_id")}
+    assert page_row_ids <= children, "surviving pages must stay owned by the site row"
+    loaded_row_ids = {
+        row.id for row in rows if get_agno_metadata(row.metadata, "parent_id") and row.status == "completed"
+    }
+    vector_ids = {doc.content_id for doc in vector_db.inserted_documents}
+    assert loaded_row_ids <= vector_ids, "surviving loaded rows must keep their vector groups"
+
+
+async def test_all_shards_failed_refresh_preserves_pages_async(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    await kb.ainsert(url=SITE_URL, reader=EmptyReader({}))
+
+    _assert_pages_survive(kb, vector_db)
+    site = _site_row(_rows(kb))
+    assert site.status == "failed"
+    assert "no documents" in (site.status_message or "")
+    # A later healthy refresh reconciles normally
+    _clear_writes(vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text v2"}))
+    assert _site_row(_rows(kb)).status == "completed"
+    assert {doc.meta_data["url"] for doc in vector_db.inserted_documents} == {PAGE_TWO}
+
+
+def test_all_shards_failed_refresh_preserves_pages_sync(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    kb.insert(url=SITE_URL, reader=EmptyReader({}))
+
+    _assert_pages_survive(kb, vector_db)
+    assert _site_row(_rows(kb)).status == "failed"
+
+
+async def test_root_sitemap_outage_refresh_preserves_pages_async(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    await kb.ainsert(url=SITE_URL, reader=FallbackOutageReader({}))
+
+    _assert_pages_survive(kb, vector_db)
+    site = _site_row(_rows(kb))
+    assert "discovery incomplete" in (site.status_message or "")
+
+
+def test_root_sitemap_outage_refresh_preserves_pages_sync(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+
+    kb.insert(url=SITE_URL, reader=FallbackOutageReader({}))
+
+    _assert_pages_survive(kb, vector_db)
+
+
+async def test_vector_delete_false_keeps_row_and_ownership_async(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    site = _site_row(_rows(kb))
+    child_id = get_agno_metadata(site.metadata, "children")[0]
+
+    vector_db.delete_by_content_id = lambda content_id, user_id=None: False
+    removed = await kb.aremove_content_by_id(child_id)
+
+    assert removed is False
+    assert await kb.aget_content_by_id(child_id) is not None, "the row must stay while its vectors exist"
+    site = _site_row(_rows(kb))
+    assert child_id in get_agno_metadata(site.metadata, "children"), "ownership must survive a failed delete"
+
+
+def test_vector_delete_false_keeps_row_and_ownership_sync(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    kb.insert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    site = _site_row(_rows(kb))
+    child_id = get_agno_metadata(site.metadata, "children")[0]
+
+    vector_db.delete_by_content_id = lambda content_id, user_id=None: False
+    removed = kb.remove_content_by_id(child_id)
+
+    assert removed is False
+    assert kb.get_content_by_id(child_id) is not None
+
+
+async def test_prune_honors_false_returning_adapter(vector_db, tmp_path):
+    kb = _kb(tmp_path, vector_db)
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text", PAGE_TWO: "api text"}))
+    site = _site_row(_rows(kb))
+    stale_ids = set(get_agno_metadata(site.metadata, "children"))
+
+    original_delete = vector_db.delete_by_content_id
+    vector_db.delete_by_content_id = lambda content_id, user_id=None: False
+    await kb.ainsert(url=SITE_URL, reader=FakePagesReader({PAGE_ONE: "guide text"}))
+    vector_db.delete_by_content_id = original_delete
+
+    site = _site_row(_rows(kb))
+    children = set(get_agno_metadata(site.metadata, "children"))
+    assert stale_ids <= children, "a page whose vector delete failed keeps its place for retry"

@@ -794,3 +794,47 @@ class TestRefreshReaderIdentity:
 
         assert response.status_code == 400
         assert "re-ingest" in response.json()["detail"]
+
+
+def test_toolkit_rejects_vector_only_knowledge():
+    knowledge = Knowledge(name="vector-only", vector_db=StubVectorDb())
+
+    with pytest.raises(ValueError, match="contents_db"):
+        KnowledgeManagementTools(knowledge=knowledge)
+
+
+def test_remove_content_reports_vector_store_failure():
+    kb, _ = _make_kb()
+    toolkit = _make_toolkit(kb)
+    report = json.loads(toolkit.ingest_url(_ctx(), SITE_URL))
+
+    kb.vector_db.delete_by_content_id = lambda content_id, user_id=None: False
+    result = json.loads(toolkit.remove_content(_ctx(), report["site_id"]))
+
+    assert result["ok"] is False
+    assert "vector store failed" in result["error"]
+
+
+class TestDeleteContentRouteVectorFailure:
+    def test_delete_returns_500_when_vector_delete_fails(self):
+        knowledge = _mock_router_knowledge()
+        existing = _content("row-1", "docs.example.com", metadata={})
+        knowledge.aget_content_by_id = AsyncMock(return_value=existing)
+        knowledge.aremove_content_by_id = AsyncMock(return_value=False)
+        client = _build_client(knowledge)
+
+        response = client.delete("/knowledge/content/row-1")
+
+        assert response.status_code == 500
+        assert "vector deletion failed" in response.json()["detail"]
+
+    def test_delete_succeeds_when_removal_reports_true(self):
+        knowledge = _mock_router_knowledge()
+        existing = _content("row-1", "docs.example.com", metadata={})
+        knowledge.aget_content_by_id = AsyncMock(return_value=existing)
+        knowledge.aremove_content_by_id = AsyncMock(return_value=True)
+        client = _build_client(knowledge)
+
+        response = client.delete("/knowledge/content/row-1")
+
+        assert response.status_code == 200

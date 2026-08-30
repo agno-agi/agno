@@ -795,7 +795,16 @@ class Knowledge(RemoteKnowledge):
     async def apatch_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
         return await self._aupdate_content(content, user_id=user_id)
 
-    def remove_content_by_id(self, content_id: str, user_id: Optional[str] = None, _seen: Optional[Set[str]] = None):
+    def remove_content_by_id(
+        self, content_id: str, user_id: Optional[str] = None, _seen: Optional[Set[str]] = None
+    ) -> bool:
+        """Remove one content row and its vectors; cascades through a site row's pages.
+
+        Returns False when nothing was removed (ownership refused it) or when the vector
+        store reported a failed delete — in that case the contents row and its place in
+        the parent's cascade record are kept, so a later attempt can still reach the
+        vectors instead of orphaning them.
+        """
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -806,7 +815,7 @@ class Knowledge(RemoteKnowledge):
             # ``delete_by_content_id`` takes no owner, so going ahead would strip another
             # owner's vectors and leave their row behind pointing at nothing
             log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
-            return
+            return False
 
         if content is None and self.contents_db is not None:
             content = self.get_content_by_id(content_id, user_id=user_id)
@@ -816,11 +825,13 @@ class Knowledge(RemoteKnowledge):
         # parent-list maintenance below.
         seen = _seen if _seen is not None else set()
         seen.add(content_id)
+        all_removed = True
         children = get_agno_metadata(content.metadata, "children") if content else None
         if isinstance(children, list):
             for child_id in children:
                 if isinstance(child_id, str) and child_id not in seen:
-                    self.remove_content_by_id(child_id, user_id=user_id, _seen=seen)
+                    if not self.remove_content_by_id(child_id, user_id=user_id, _seen=seen):
+                        all_removed = False
 
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -832,14 +843,20 @@ class Knowledge(RemoteKnowledge):
                 else:
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
-                # Backends without per-user isolation accept ``user_id`` as a no-op
-                self.vector_db.delete_by_content_id(
+                # Backends without per-user isolation accept ``user_id`` as a no-op.
+                # Adapters report operational failures as False — the row must then stay,
+                # or the vectors become permanently orphaned but still searchable.
+                deleted = self.vector_db.delete_by_content_id(
                     content_id, **strict_user_id_kwarg(self.vector_db.delete_by_content_id, user_id)
                 )
+                if deleted is False:
+                    log_debug(f"Vector delete failed for content {content_id}; keeping the row for retry")
+                    return False
 
         if self.contents_db is not None:
             self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
             self._drop_from_parent_children(content, content_id, user_id, seen)
+        return all_removed
 
     def _drop_from_parent_children(
         self, content: Optional[Content], content_id: str, user_id: Optional[str], seen: Set[str]
@@ -882,13 +899,14 @@ class Knowledge(RemoteKnowledge):
 
     async def aremove_content_by_id(
         self, content_id: str, user_id: Optional[str] = None, _seen: Optional[Set[str]] = None
-    ):
+    ) -> bool:
+        """Async version of :meth:`remove_content_by_id` (see there for the return contract)."""
         scoped = user_id is not None and self.contents_db is not None
         content = await self.aget_content_by_id(content_id, user_id=user_id) if scoped else None
         if scoped and (content is None or self._content_is_shared(content, user_id)):
             # See the matching guard in ``remove_content_by_id``.
             log_debug(f"Skipping delete of content {content_id}: not owned by {user_id}")
-            return
+            return False
 
         if content is None and self.contents_db is not None:
             content = await self.aget_content_by_id(content_id, user_id=user_id)
@@ -896,11 +914,13 @@ class Knowledge(RemoteKnowledge):
         # See the matching cascade in ``remove_content_by_id``.
         seen = _seen if _seen is not None else set()
         seen.add(content_id)
+        all_removed = True
         children = get_agno_metadata(content.metadata, "children") if content else None
         if isinstance(children, list):
             for child_id in children:
                 if isinstance(child_id, str) and child_id not in seen:
-                    await self.aremove_content_by_id(child_id, user_id=user_id, _seen=seen)
+                    if not await self.aremove_content_by_id(child_id, user_id=user_id, _seen=seen):
+                        all_removed = False
 
         if self.vector_db is not None:
             if self.vector_db.__class__.__name__ == "LightRag":
@@ -913,9 +933,12 @@ class Knowledge(RemoteKnowledge):
                     log_warning(f"No external_id found for content {content_id}, cannot delete from LightRAG")
             else:
                 # See the matching comment in ``remove_content_by_id``.
-                self.vector_db.delete_by_content_id(
+                deleted = self.vector_db.delete_by_content_id(
                     content_id, **strict_user_id_kwarg(self.vector_db.delete_by_content_id, user_id)
                 )
+                if deleted is False:
+                    log_debug(f"Vector delete failed for content {content_id}; keeping the row for retry")
+                    return False
 
         if self.contents_db is not None:
             if isinstance(self.contents_db, AsyncBaseDb):
@@ -923,6 +946,7 @@ class Knowledge(RemoteKnowledge):
             else:
                 self.contents_db.delete_knowledge_content(content_id, user_id=user_id)
             await self._adrop_from_parent_children(content, content_id, user_id, seen)
+        return all_removed
 
     def remove_all_content(self, user_id: Optional[str] = None):
         contents, _ = self.get_content(user_id=user_id)
@@ -1884,9 +1908,23 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
+        # A reader that returned nothing read nothing: report the failure and leave every
+        # previously loaded page (and its row ownership) untouched. Landing this as
+        # COMPLETED-with-no-vectors — or worse, reconciling it against previous children —
+        # would turn an outage into a site wipe.
+        if not read_documents:
+            content.status = ContentStatus.FAILED
+            content.status_message = "Reader returned no documents"
+            await self._aupdate_content(content)
+            return
+
         # 6. Group documents by source URL for multi-page readers (like WebsiteReader)
         docs_by_source: Dict[str, List[Document]] = {}
+        discovery_incomplete = False
         for doc in read_documents:
+            # Transport-level flag from the reader; consumed here, never embedded
+            if doc.meta_data and doc.meta_data.pop("discovery_incomplete", None):
+                discovery_incomplete = True
             source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
             source_url = source_url or "unknown"
             if source_url not in docs_by_source:
@@ -1897,7 +1935,13 @@ class Knowledge(RemoteKnowledge):
         # A row that is already a site row stays one even when the site shrank to one page.
         if len(docs_by_source) > 1 or previous_children:
             await self._aload_url_page_groups(
-                content, docs_by_source, upsert, skip_if_exists, previous_children, name_was_auto
+                content,
+                docs_by_source,
+                upsert,
+                skip_if_exists,
+                previous_children,
+                name_was_auto,
+                discovery_incomplete=discovery_incomplete,
             )
             return
 
@@ -2035,9 +2079,20 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
+        # See the matching guard in _aload_from_url: an empty read never prunes.
+        if not read_documents:
+            content.status = ContentStatus.FAILED
+            content.status_message = "Reader returned no documents"
+            self._update_content(content)
+            return
+
         # 6. Group documents by source URL for multi-page readers (like WebsiteReader)
         docs_by_source: Dict[str, List[Document]] = {}
+        discovery_incomplete = False
         for doc in read_documents:
+            # Transport-level flag from the reader; consumed here, never embedded
+            if doc.meta_data and doc.meta_data.pop("discovery_incomplete", None):
+                discovery_incomplete = True
             source_url = doc.meta_data.get("url", content.url) if doc.meta_data else content.url
             source_url = source_url or "unknown"
             if source_url not in docs_by_source:
@@ -2048,7 +2103,13 @@ class Knowledge(RemoteKnowledge):
         # A row that is already a site row stays one even when the site shrank to one page.
         if len(docs_by_source) > 1 or previous_children:
             self._load_url_page_groups(
-                content, docs_by_source, upsert, skip_if_exists, previous_children, name_was_auto
+                content,
+                docs_by_source,
+                upsert,
+                skip_if_exists,
+                previous_children,
+                name_was_auto,
+                discovery_incomplete=discovery_incomplete,
             )
             return
 
@@ -2231,6 +2292,7 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool,
         previous_children: List[str],
         name_was_auto: bool,
+        discovery_incomplete: bool = False,
     ) -> None:
         """Land a multi-page read as one content row per page under the site row.
 
@@ -2250,15 +2312,12 @@ class Knowledge(RemoteKnowledge):
         # branch below re-insert without stacking chunks run over run.
         try:
             clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
-            self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
+            cleared = self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
+            if cleared is False:
+                log_debug("Vector store reported a failed clear of the site row's legacy vectors")
         except Exception as e:
             log_debug(f"Could not clear site-row vectors before per-page load: {e}")
 
-        # A read that could not see every sitemap shard must not treat the missing
-        # shard's pages as removed from the site.
-        discovery_incomplete = any(
-            bool((doc.meta_data or {}).get("discovery_incomplete")) for docs in docs_by_source.values() for doc in docs
-        )
         reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
 
         child_ids: List[str] = []
@@ -2268,9 +2327,6 @@ class Knowledge(RemoteKnowledge):
         source_kind: Optional[str] = None
 
         for source_url, source_docs in docs_by_source.items():
-            for doc in source_docs:
-                if doc.meta_data:
-                    doc.meta_data.pop("discovery_incomplete", None)
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
             if child.id == content.id:
                 # A document whose URL is the insert URL itself (e.g. an llms.txt overview)
@@ -2384,9 +2440,11 @@ class Knowledge(RemoteKnowledge):
             for stale_id in previous_children:
                 if stale_id not in current_ids:
                     try:
-                        await self.aremove_content_by_id(stale_id, user_id=content.user_id)
+                        removed = await self.aremove_content_by_id(stale_id, user_id=content.user_id)
                     except Exception as e:
                         log_debug(f"Could not remove stale page row {stale_id}: {e}")
+                        removed = False
+                    if not removed:
                         child_ids.append(stale_id)
         else:
             for stale_id in previous_children:
@@ -2415,6 +2473,7 @@ class Knowledge(RemoteKnowledge):
         skip_if_exists: bool,
         previous_children: List[str],
         name_was_auto: bool,
+        discovery_incomplete: bool = False,
     ) -> None:
         """Synchronous version of _aload_url_page_groups."""
         from agno.vectordb import VectorDb
@@ -2424,13 +2483,12 @@ class Knowledge(RemoteKnowledge):
         # See the matching clear in _aload_url_page_groups.
         try:
             clear_kwargs = strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
-            self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
+            cleared = self.vector_db.delete_by_content_id(content.id, **clear_kwargs)  # type: ignore[arg-type]
+            if cleared is False:
+                log_debug("Vector store reported a failed clear of the site row's legacy vectors")
         except Exception as e:
             log_debug(f"Could not clear site-row vectors before per-page load: {e}")
 
-        discovery_incomplete = any(
-            bool((doc.meta_data or {}).get("discovery_incomplete")) for docs in docs_by_source.values() for doc in docs
-        )
         reader_id = self._MULTI_PAGE_READER_IDS.get(type(content.reader).__name__) if content.reader else None
 
         child_ids: List[str] = []
@@ -2440,9 +2498,6 @@ class Knowledge(RemoteKnowledge):
         source_kind: Optional[str] = None
 
         for source_url, source_docs in docs_by_source.items():
-            for doc in source_docs:
-                if doc.meta_data:
-                    doc.meta_data.pop("discovery_incomplete", None)
             child, digest, error, extractor, doc_source = self._prepare_page_child(content, source_url, source_docs)
             if child.id == content.id:
                 # See the matching branch in _aload_url_page_groups.
@@ -2548,9 +2603,11 @@ class Knowledge(RemoteKnowledge):
             for stale_id in previous_children:
                 if stale_id not in current_ids:
                     try:
-                        self.remove_content_by_id(stale_id, user_id=content.user_id)
+                        removed = self.remove_content_by_id(stale_id, user_id=content.user_id)
                     except Exception as e:
                         log_debug(f"Could not remove stale page row {stale_id}: {e}")
+                        removed = False
+                    if not removed:
                         child_ids.append(stale_id)
         else:
             for stale_id in previous_children:
