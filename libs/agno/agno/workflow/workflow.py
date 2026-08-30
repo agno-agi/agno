@@ -11829,7 +11829,8 @@ def get_workflow_by_id(
         Workflow instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
+        ComponentRehydrationError: If a stored config cannot be reconstructed. In
+            strict mode, this also includes unresolvable registry references.
     """
     from agno.exceptions import ComponentRehydrationError
 
@@ -11857,7 +11858,7 @@ def get_workflow_by_id(
 
         cfg = row.get("config") if isinstance(row, dict) else None
         if cfg is None:
-            raise ValueError(f"Invalid config found for workflow {id}")
+            raise ComponentRehydrationError(f"Invalid config found for workflow '{id}'")
 
         resolved_version = row.get("version")
 
@@ -11867,20 +11868,27 @@ def get_workflow_by_id(
         except NotImplementedError:
             links = []
 
-        # Resolve DB-backed step executors under the same owner scope as the workflow.
-        with component_owner_scope(user_id):
-            workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry, strict=strict)
+        try:
+            # Resolve DB-backed step executors under the same owner scope as the workflow.
+            with component_owner_scope(user_id):
+                workflow = Workflow.from_dict(cfg, db=db, links=links, registry=registry, strict=strict)
 
-        # Ensure workflow.id is set to the component_id
-        workflow.id = id
-        # Only fall back to the caller-provided db if the config didn't
-        # reconstruct one, matching Workflow.load.
-        if workflow.db is None:
-            if strict:
-                from agno.utils.db_fallback import require_db_fallback_matches
+            # Ensure workflow.id is set to the component_id
+            workflow.id = id
+            # Only fall back to the caller-provided db if the config didn't
+            # reconstruct one, matching Workflow.load.
+            if workflow.db is None:
+                if strict:
+                    from agno.utils.db_fallback import require_db_fallback_matches
 
-                require_db_fallback_matches(cfg, db, "workflow", id)
-            workflow.db = db
+                    require_db_fallback_matches(cfg, db, "workflow", id)
+                workflow.db = db
+        except ComponentRehydrationError:
+            raise
+        except Exception as e:
+            raise ComponentRehydrationError(
+                f"Failed to reconstruct workflow '{id}' from stored config: {type(e).__name__}: {e}"
+            ) from e
 
         return workflow
 

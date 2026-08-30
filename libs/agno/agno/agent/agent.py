@@ -1819,7 +1819,8 @@ def get_agent_by_id(
         Agent instance or None.
 
     Raises:
-        ComponentRehydrationError: If strict and a registry reference cannot be resolved.
+        ComponentRehydrationError: If a stored config cannot be reconstructed. In
+            strict mode, this also includes unresolvable registry references.
     """
     from agno.exceptions import ComponentRehydrationError
     from agno.utils.log import log_error
@@ -1846,18 +1847,25 @@ def get_agent_by_id(
 
         cfg = row.get("config") if isinstance(row, dict) else None
         if cfg is None:
-            raise ValueError(f"Invalid config found for agent {id}")
+            raise ComponentRehydrationError(f"Invalid config found for agent '{id}'")
 
-        agent = Agent.from_dict(cfg, registry=registry, strict=strict)
-        agent.id = id
-        # Only fall back to the caller-provided db if the config didn't
-        # reconstruct one, matching Agent.load.
-        if agent.db is None:
-            if strict:
-                from agno.utils.db_fallback import require_db_fallback_matches
+        try:
+            agent = Agent.from_dict(cfg, registry=registry, strict=strict)
+            agent.id = id
+            # Only fall back to the caller-provided db if the config didn't
+            # reconstruct one, matching Agent.load.
+            if agent.db is None:
+                if strict:
+                    from agno.utils.db_fallback import require_db_fallback_matches
 
-                require_db_fallback_matches(cfg, db, "agent", id)
-            agent.db = db
+                    require_db_fallback_matches(cfg, db, "agent", id)
+                agent.db = db
+        except ComponentRehydrationError:
+            raise
+        except Exception as e:
+            raise ComponentRehydrationError(
+                f"Failed to reconstruct agent '{id}' from stored config: {type(e).__name__}: {e}"
+            ) from e
 
         return agent
 
