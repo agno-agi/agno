@@ -7646,6 +7646,13 @@ def continue_run_dispatch(
 
     run_response = cast(TeamRunOutput, run_response)
 
+    _raise_if_stale_paused_over_terminal(
+        run_response,
+        _stored_run_for_continue(team, run_response.run_id, team_session),
+        fork=fork,
+        regenerate=regenerate,
+    )
+
     if run_response.status == RunStatus.cancelled:
         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
@@ -8775,6 +8782,71 @@ def _as_run_status(value: Union[RunStatus, str, None]) -> Union[RunStatus, str, 
         return value
 
 
+def _session_run_by_id(session: Any, run_id: Optional[str]) -> Optional[Any]:
+    """Find a run on an already-loaded session without trusting the caller object."""
+    if session is None or not run_id:
+        return None
+    for candidate in getattr(session, "runs", None) or []:
+        if getattr(candidate, "run_id", None) == run_id:
+            return candidate
+    getter = getattr(session, "get_run", None)
+    if callable(getter):
+        return getter(run_id)
+    return None
+
+
+def _stored_run_for_continue(team: "Team", run_id: Optional[str], session: Any = None) -> Optional[Any]:
+    """Load the durable run row. A cached session can still hold a paused snapshot
+    after another continue completed or cancelled the same run."""
+    if run_id and team.db is not None:
+        getter = getattr(team.db, "get_run", None)
+        if callable(getter):
+            stored = getter(run_id)
+            if stored is not None:
+                return stored
+    return _session_run_by_id(session, run_id)
+
+
+async def _astored_run_for_continue(team: "Team", run_id: Optional[str], session: Any = None) -> Optional[Any]:
+    """Async counterpart of ``_stored_run_for_continue``."""
+    from agno.team._init import _has_async_db
+
+    if run_id and team.db is not None:
+        getter = getattr(team.db, "get_run", None)
+        if callable(getter):
+            stored = await getter(run_id) if _has_async_db(team) else getter(run_id)
+            if stored is not None:
+                return stored
+    return _session_run_by_id(session, run_id)
+
+
+def _raise_if_stale_paused_over_terminal(
+    run_response: Optional[TeamRunOutput],
+    stored_run: Optional[Any],
+    *,
+    fork: bool,
+    regenerate: bool,
+) -> None:
+    """Refuse when a paused caller snapshot would reopen a terminal stored run.
+
+    A caller-held ``run_response`` is a snapshot, not authority for lifecycle
+    state. If the durable row is already COMPLETED or CANCELLED while the
+    object still reads PAUSED, an in-place continue would re-execute a gated
+    tool or erase a cancellation. Explicit fork/regenerate branch off the
+    finished run and stay allowed.
+    """
+    if run_response is None or stored_run is None or fork or regenerate:
+        return
+    stored_status = _as_run_status(getattr(stored_run, "status", None))
+    caller_status = _as_run_status(getattr(run_response, "status", None))
+    if stored_status in (RunStatus.completed, RunStatus.cancelled) and caller_status == RunStatus.paused:
+        raise RunNotContinuableError(
+            f"Cannot continue run {run_response.run_id}: the stored run has status "
+            f"{stored_status.value} and cannot be continued in place from a paused "
+            "caller snapshot. The stored run is unchanged."
+        )
+
+
 async def _acontinue_run_background_stream(
     team: Team,
     run_context: RunContext,
@@ -9516,6 +9588,13 @@ async def _acontinue_run(
 
                 run_response = cast(TeamRunOutput, run_response)
 
+                _raise_if_stale_paused_over_terminal(
+                    run_response,
+                    await _astored_run_for_continue(team, run_response.run_id, team_session),
+                    fork=fork,
+                    regenerate=regenerate,
+                )
+
                 if run_response.status == RunStatus.cancelled:
                     raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
 
@@ -9996,6 +10075,13 @@ async def _acontinue_run_stream(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
 
                 run_response = cast(TeamRunOutput, run_response)
+
+                _raise_if_stale_paused_over_terminal(
+                    run_response,
+                    await _astored_run_for_continue(team, run_response.run_id, team_session),
+                    fork=fork,
+                    regenerate=regenerate,
+                )
 
                 if run_response.status == RunStatus.cancelled:
                     raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
