@@ -19,7 +19,7 @@ from agno.db.sqlite import SqliteDb
 from agno.media.storage.s3 import AsyncS3MediaStorage
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.tools.file_generation import FileGenerationTools
+from agno.tools.file import FileGenerationTools
 from dotenv import load_dotenv
 
 load_dotenv()
