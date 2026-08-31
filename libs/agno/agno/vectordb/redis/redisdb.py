@@ -14,6 +14,7 @@ except ImportError:
     raise ImportError("`redis` and `redisvl` not installed. Please install using `pip install redis redisvl`")
 
 from agno.filters import FilterExpr
+from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -673,6 +674,10 @@ class RedisDb(VectorDb):
                 documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error in vector search: {str(e)}")
             return []
@@ -739,6 +744,10 @@ class RedisDb(VectorDb):
                 documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error in hybrid search: {str(e)}")
             return []

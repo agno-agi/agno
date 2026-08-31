@@ -19,6 +19,7 @@ except ImportError:
     raise ImportError("Weaviate is not installed. Install using 'pip install weaviate-client'.")
 
 from agno.filters import FilterExpr
+from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -612,6 +613,10 @@ class Weaviate(VectorDb):
 
             return search_results
 
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception:
             logger.exception("Error searching for documents")
             return []
@@ -801,6 +806,10 @@ class Weaviate(VectorDb):
 
             return search_results
 
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception:
             logger.exception("Error searching for documents")
             return []

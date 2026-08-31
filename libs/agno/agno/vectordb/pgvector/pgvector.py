@@ -1048,6 +1048,10 @@ class PgVector(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
             return search_results
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error during vector search: {str(e)}")
             return []
@@ -1339,6 +1343,10 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
 
             return search_results
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error during hybrid search: {str(e)}")
             return []

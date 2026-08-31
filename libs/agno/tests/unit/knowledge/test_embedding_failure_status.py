@@ -1,5 +1,6 @@
 """Ingestion must never report success for content that failed to embed."""
 
+import inspect
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -628,3 +629,55 @@ class TestRedactionKeepsDiagnostics:
 
         assert leak not in cleaned
         assert "[redacted]" in cleaned
+
+
+class TestSearchSurfacesQueryEmbeddingFailures:
+    """A failed query embedding must not look like "no matches"."""
+
+    STORES = [
+        ("agno.vectordb.pgvector.pgvector", "PgVector"),
+        ("agno.vectordb.redis.redisdb", "RedisDb"),
+        ("agno.vectordb.valkey.valkeydb", "ValkeyDb"),
+        ("agno.vectordb.weaviate.weaviate", "Weaviate"),
+    ]
+
+    @pytest.mark.parametrize("module_path,class_name", STORES, ids=[s[1] for s in STORES])
+    def test_search_reraises_embedding_error(self, module_path, class_name):
+        import ast
+        import importlib
+
+        try:
+            module = importlib.import_module(module_path)
+        except ImportError as e:
+            pytest.skip(f"{module_path} unavailable: {e}")
+
+        tree = ast.parse(inspect.getsource(module))
+        embed_calls = {
+            "get_embedding",
+            "async_get_embedding",
+            "get_embedding_and_usage",
+            "async_get_embedding_and_usage",
+        }
+        unguarded = []
+        for fn in ast.walk(tree):
+            if not isinstance(fn, (ast.FunctionDef, ast.AsyncFunctionDef)) or "search" not in fn.name:
+                continue
+            for block in ast.walk(fn):
+                if not isinstance(block, ast.Try):
+                    continue
+                embeds = any(
+                    isinstance(n, ast.Call) and getattr(n.func, "attr", None) in embed_calls
+                    for b in block.body
+                    for n in ast.walk(b)
+                )
+                if not embeds:
+                    continue
+                if not any(
+                    isinstance(h.type, ast.Name) and h.type.id == "EmbeddingError" for h in block.handlers
+                ):
+                    unguarded.append(f"{fn.name}@L{block.lineno}")
+
+        assert not unguarded, (
+            f"{class_name} swallows a failed query embedding in {unguarded}, so the caller "
+            "sees an empty result set instead of the reason the search could not run"
+        )

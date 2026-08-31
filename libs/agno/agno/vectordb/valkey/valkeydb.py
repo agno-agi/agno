@@ -30,6 +30,7 @@ except ImportError:
     raise ImportError("`valkey-glide-sync` not installed. Please install it using `pip install valkey-glide-sync`")
 
 from agno.filters import FilterExpr
+from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
@@ -789,6 +790,10 @@ class ValkeyDb(VectorDb):
                 documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error in vector search: {str(e)}")
             return []

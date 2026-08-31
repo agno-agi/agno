@@ -58,10 +58,10 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
-    # Extra attempts when embedding fails during ingestion. Rate limits and transient
-    # network errors are the common case, and an unembedded chunk is unretrievable, so
-    # the write is retried before any failure is reported. Set to 0 to disable.
-    max_embedding_retries: int = 3
+    # Extra attempts when embedding fails during ingestion. Off by default: a retry
+    # re-embeds the whole document, so a late failure in a large file re-bills every
+    # chunk, and concurrent workers retry into the same rate limit they are waiting on.
+    max_embedding_retries: int = 0
     # Seconds before the first retry; each subsequent wait doubles.
     embedding_retry_backoff: float = 1.0
 
