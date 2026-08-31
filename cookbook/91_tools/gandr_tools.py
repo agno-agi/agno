@@ -4,9 +4,10 @@ Get an API key at https://gandr.ai
 The toolkit uses `httpx`, which installs with agno. No extra dependencies are needed.
 """
 
+from pathlib import Path
+
 from agno.agent import Agent
 from agno.tools.gandr import GandrTools
-from agno.utils.audio import write_audio_to_file
 
 # ---------------------------------------------------------------------------
 # Create Agent
@@ -31,8 +32,10 @@ if __name__ == "__main__":
         """
     )
 
-    # Save the generated audio
+    # Save the generated audio. Toolkit artifacts carry raw bytes, so they are
+    # written directly rather than through the base64 audio helper.
     if response.audio:
-        write_audio_to_file(
-            audio=response.audio[0].content, filename="tmp/greeting.mp3"
-        )
+        output_path = Path("tmp/greeting.mp3")
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        output_path.write_bytes(response.audio[0].content)
+        print(f"Audio saved to {output_path}")

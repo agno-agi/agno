@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Union, get_args
 from uuid import uuid4
 
 import httpx
@@ -17,6 +17,8 @@ GandrAudioResponseFormat = Literal[
     "pcm",  # headerless signed 16 bit little endian mono samples at 24000 Hz
 ]
 
+GANDR_AUDIO_RESPONSE_FORMATS = get_args(GandrAudioResponseFormat)
+
 GANDR_VOICES = [
     "gandr-mia",
     "gandr-ava",
@@ -28,11 +30,14 @@ GANDR_VOICES = [
 
 MAX_INPUT_CHARACTERS = 2000
 
-MIME_TYPES = {
+MIME_TYPES: Dict[str, str] = {
     "mp3": "audio/mpeg",
     "wav": "audio/wav",
     "pcm": "audio/pcm",
 }
+
+# pcm is returned headerless, so the sample rate travels on the artifact instead.
+PCM_SAMPLE_RATE = 24000
 
 
 class GandrTools(Toolkit):
@@ -43,7 +48,7 @@ class GandrTools(Toolkit):
         default_voice: str = "gandr-mia",
         response_format: GandrAudioResponseFormat = "mp3",
         base_url: str = "https://tts.gandr.ai",
-        timeout: Optional[float] = None,
+        timeout: float = 60.0,
         enable_text_to_speech: bool = True,
         all: bool = False,
         **kwargs,
@@ -52,6 +57,15 @@ class GandrTools(Toolkit):
 
         if not self.api_key:
             raise ValueError("GANDR_API_KEY not set. Please set the GANDR_API_KEY environment variable.")
+
+        if default_voice not in GANDR_VOICES:
+            raise ValueError(f"Invalid voice '{default_voice}'. Valid options are: {', '.join(GANDR_VOICES)}")
+
+        if response_format not in GANDR_AUDIO_RESPONSE_FORMATS:
+            raise ValueError(
+                f"Invalid response_format '{response_format}'. "
+                f"Valid options are: {', '.join(GANDR_AUDIO_RESPONSE_FORMATS)}"
+            )
 
         self.model_id = model_id
         self.default_voice = default_voice
@@ -83,6 +97,9 @@ class GandrTools(Toolkit):
         Returns:
             ToolResult: A ToolResult containing the generated audio or error message.
         """
+        if not text.strip():
+            return ToolResult(content="Error generating speech: input text is empty.")
+
         if len(text) > MAX_INPUT_CHARACTERS:
             return ToolResult(
                 content=(
@@ -92,9 +109,25 @@ class GandrTools(Toolkit):
                 )
             )
 
+        effective_voice = voice or self.default_voice
+        if effective_voice not in GANDR_VOICES:
+            return ToolResult(
+                content=(
+                    f"Error generating speech: invalid voice '{effective_voice}'. "
+                    f"Valid options are: {', '.join(GANDR_VOICES)}"
+                )
+            )
+
+        effective_format = response_format or self.response_format
+        if effective_format not in GANDR_AUDIO_RESPONSE_FORMATS:
+            return ToolResult(
+                content=(
+                    f"Error generating speech: invalid response_format '{effective_format}'. "
+                    f"Valid options are: {', '.join(GANDR_AUDIO_RESPONSE_FORMATS)}"
+                )
+            )
+
         try:
-            effective_voice = voice or self.default_voice
-            effective_format = response_format or self.response_format
 
             log_info(f"Using voice: {effective_voice} for text_to_speech.")
             log_info(f"Using model: {self.model_id} and response_format: {effective_format} for text_to_speech.")
@@ -112,14 +145,23 @@ class GandrTools(Toolkit):
             )
             response.raise_for_status()
 
-            # The response body streams; httpx reads the full body into bytes here.
+            content_type = response.headers.get("content-type", "")
+            if "audio" not in content_type and "octet-stream" not in content_type:
+                raise ValueError(f"Expected audio response but got content-type '{content_type}': {response.text}")
+
             audio_data = response.content
 
             # Create AudioArtifact
+            artifact_kwargs: Dict[str, Any] = {}
+            if effective_format == "pcm":
+                artifact_kwargs["sample_rate"] = PCM_SAMPLE_RATE
+
             audio_artifact = Audio(
                 id=str(uuid4()),
                 content=audio_data,
-                mime_type=MIME_TYPES.get(effective_format, "audio/mpeg"),
+                mime_type=MIME_TYPES[effective_format],
+                format=effective_format,
+                **artifact_kwargs,
             )
 
             return ToolResult(
