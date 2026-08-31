@@ -260,7 +260,7 @@ class Model(ABC):
                         message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
-                    )
+                    ) from e
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1
 
@@ -308,7 +308,7 @@ class Model(ABC):
                         message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
-                    )
+                    ) from e
 
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1
@@ -359,7 +359,7 @@ class Model(ABC):
                         message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
-                    )
+                    ) from e
 
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1
@@ -412,7 +412,7 @@ class Model(ABC):
                         message=f"Max retries with guidance reached. Error: {e.original_error}",
                         model_name=self.name,
                         model_id=self.id,
-                    )
+                    ) from e
 
                 kwargs.pop("retry_with_guidance", None)
                 kwargs["retries_with_guidance_count"] = current_count + 1

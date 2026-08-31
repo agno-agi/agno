@@ -65,7 +65,7 @@ class GitlabTools(Toolkit):
                 kwargs["private_token"] = self.access_token
             return gitlab.Gitlab(**kwargs)
         except Exception as e:
-            raise ValueError(f"Failed to initialize GitLab client: {e}")
+            raise ValueError(f"Failed to initialize GitLab client: {e}") from e
 
     @staticmethod
     def _safe_get(obj: Any, field: str, default: Any = None) -> Any:

@@ -148,6 +148,21 @@ class TestAWSSESTool:
         assert "Email address is not verified" in str(exc_info.value)
 
     @patch("boto3.client")
+    def test_send_email_preserves_original_exception_as_cause(self, mock_boto_client):
+        """Test that wrapping an AWS error keeps the original exception as its cause."""
+        mock_client = Mock()
+        original_error = RuntimeError("upstream SES failure")
+        mock_client.send_email.side_effect = original_error
+        mock_boto_client.return_value = mock_client
+
+        tool = AWSSESTool(sender_email="sender@example.com", sender_name="Test Sender")
+
+        with pytest.raises(Exception) as exc_info:
+            tool.send_email(subject="Test Subject", body="Test Body", receiver_email="receiver@example.com")
+
+        assert exc_info.value.__cause__ is original_error
+
+    @patch("boto3.client")
     def test_send_email_no_client(self, mock_boto_client):
         """Test email sending when client is not initialized"""
         # Arrange

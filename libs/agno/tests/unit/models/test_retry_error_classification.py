@@ -466,12 +466,13 @@ def test_guidance_count_preserved_across_plain_retries(model_with_guidance_limit
         raise RetryableModelProviderError(retry_guidance_message="Fix your output", original_error="bad output")
 
     with patch.object(model_with_guidance_limit, "invoke", side_effect=mock_invoke):
-        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached") as exc_info:
             model_with_guidance_limit._invoke_with_retry(messages=[MagicMock()], retries_with_guidance_count=1)
 
         # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
         # a reset counter would allow a 3rd invoke instead.
         assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+        assert isinstance(exc_info.value.__cause__, RetryableModelProviderError)
 
 
 @pytest.mark.asyncio
@@ -487,12 +488,13 @@ async def test_async_guidance_count_preserved_across_plain_retries(model_with_gu
         raise RetryableModelProviderError(retry_guidance_message="Fix your output", original_error="bad output")
 
     with patch.object(model_with_guidance_limit, "ainvoke", side_effect=mock_ainvoke):
-        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached") as exc_info:
             await model_with_guidance_limit._ainvoke_with_retry(messages=[MagicMock()], retries_with_guidance_count=1)
 
         # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
         # a reset counter would allow a 3rd invoke instead.
         assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+        assert isinstance(exc_info.value.__cause__, RetryableModelProviderError)
 
 
 def test_stream_guidance_count_preserved_across_plain_retries(model_with_guidance_limit):
@@ -508,7 +510,7 @@ def test_stream_guidance_count_preserved_across_plain_retries(model_with_guidanc
         yield  # make this a generator
 
     with patch.object(model_with_guidance_limit, "invoke_stream", side_effect=mock_invoke_stream):
-        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached") as exc_info:
             list(
                 model_with_guidance_limit._invoke_stream_with_retry(
                     messages=[MagicMock()], retries_with_guidance_count=1
@@ -518,6 +520,7 @@ def test_stream_guidance_count_preserved_across_plain_retries(model_with_guidanc
         # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
         # a reset counter would allow a 3rd invoke instead.
         assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+        assert isinstance(exc_info.value.__cause__, RetryableModelProviderError)
 
 
 @pytest.mark.asyncio
@@ -534,7 +537,7 @@ async def test_async_stream_guidance_count_preserved_across_plain_retries(model_
         yield  # make this an async generator
 
     with patch.object(model_with_guidance_limit, "ainvoke_stream", side_effect=mock_ainvoke_stream):
-        with pytest.raises(ModelProviderError, match="Max retries with guidance reached"):
+        with pytest.raises(ModelProviderError, match="Max retries with guidance reached") as exc_info:
             async for _ in model_with_guidance_limit._ainvoke_stream_with_retry(
                 messages=[MagicMock()], retries_with_guidance_count=1
             ):
@@ -543,3 +546,4 @@ async def test_async_stream_guidance_count_preserved_across_plain_retries(model_
         # Entering at the limit (count=1), the guidance error must raise on the 2nd invoke;
         # a reset counter would allow a 3rd invoke instead.
         assert call_count == 2, f"Expected 2 invokes (limit enforced), got {call_count}"
+        assert isinstance(exc_info.value.__cause__, RetryableModelProviderError)
