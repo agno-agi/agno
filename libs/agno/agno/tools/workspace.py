@@ -382,6 +382,99 @@ class Workspace(Toolkit):
         "shell": "run_command",
     }
 
+    @classmethod
+    def _build_instructions(cls, tool_names: List[str]) -> str:
+        """Build instructions based on which tools are actually enabled.
+
+        Only references tools the LLM can call — never mentions disabled tools.
+        """
+        enabled = set(tool_names)
+        sections: List[str] = []
+
+        # Read tools
+        if "read_file" in enabled:
+            sections.append(
+                "**read_file** — read a file with line numbers.\n"
+                "When to use: examining file contents, checking code, getting context.\n"
+                "Always read before editing or citing."
+            )
+
+        if "list_files" in enabled:
+            sections.append(
+                "**list_files** — list directory contents.\n"
+                "When to use: discovering project structure, finding files.\n"
+                "Use `recursive=True` with `max_depth` for broad exploration."
+            )
+
+        if "search_content" in enabled:
+            text = (
+                "**search_content** — substring search across files.\n"
+                "When to use: finding text, locating usages, discovering code."
+            )
+            if "grep_content" in enabled:
+                text += "\nFor regex patterns or line numbers, use grep_content instead."
+            sections.append(text)
+
+        if "grep_content" in enabled:
+            text = (
+                "**grep_content** — regex search with line numbers and context.\n"
+                "When to use: pattern matching, finding code with surrounding context."
+            )
+            if "search_content" in enabled:
+                text += "\nFor simple substring search, use search_content instead."
+            sections.append(text)
+
+        # Write tools
+        if "write_file" in enabled:
+            sections.append(
+                "**write_file** — create or overwrite a file.\n"
+                "When to use: creating new files, replacing entire file contents."
+            )
+
+        if "edit_file" in enabled:
+            text = (
+                "**edit_file** — replace a substring in a file.\n"
+                "When to use: modifying existing code.\n"
+                "IMPORTANT: Always read_file first — use the exact substring from the output."
+            )
+            if "write_file" in enabled:
+                text += "\nUse write_file for new files; edit_file for modifications."
+            sections.append(text)
+
+        if "move_file" in enabled:
+            sections.append("**move_file** — move or rename a file.\nWhen to use: reorganizing, renaming.")
+
+        if "delete_file" in enabled:
+            sections.append("**delete_file** — delete a file.\nWhen to use: removing files. Use with caution.")
+
+        if "run_command" in enabled:
+            sections.append(
+                "**run_command** — run a shell command in the workspace.\n"
+                "When to use: running tests, builds, or other commands.\n"
+                "Note: runs with cwd=workspace root."
+            )
+
+        if len(sections) < 2:
+            return ""
+
+        result = "## Workspace Tools\n\n" + "\n\n".join(sections)
+
+        # Routing guidance
+        routing: List[str] = []
+        if "list_files" in enabled:
+            routing.append("- Discover structure → list_files")
+        if "search_content" in enabled or "grep_content" in enabled:
+            routing.append("- Find code/text → search_content or grep_content")
+        if "read_file" in enabled:
+            routing.append("- Examine contents → read_file")
+        if "edit_file" in enabled:
+            routing.append("- Modify code → read_file first, then edit_file")
+
+        if routing:
+            result += "\n\n## Workflow\n" + "\n".join(routing)
+
+        return result
+
     def __init__(
         self,
         root: Optional[Union[str, Path]] = None,
@@ -429,23 +522,16 @@ class Workspace(Toolkit):
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
-        # Only nudge the agent about edit_file when edit_file is actually
-        # available — read-only surfaces (e.g. WikiContextProvider's read
-        # sub-agent) shouldn't be told how to use a tool they don't have.
-        edit_registered = "edit" in resolved_allowed_aliases or "edit" in resolved_confirm_aliases
+        # Build instructions dynamically based on enabled tools
         toolkit_kwargs: dict = {}
-        if edit_registered:
-            toolkit_kwargs["instructions"] = (
-                "Always read_file before editing — the line-numbered output gives you "
-                "the exact substring to pass to edit_file's old_str parameter. "
-                "Do not guess file contents or pass line numbers to edit_file."
-            )
-            toolkit_kwargs["add_instructions"] = True
+        if kwargs.get("instructions") is None:
+            built = self._build_instructions(registered)
+            if built:
+                toolkit_kwargs["instructions"] = built
+                toolkit_kwargs.setdefault("add_instructions", True)
 
-        # Allow name override via kwargs (for prefixed tools in context providers)
-        toolkit_name = kwargs.pop("name", "workspace")
         super().__init__(
-            name=toolkit_name,
+            name="workspace",
             tools=sync_tools,
             async_tools=async_tools,
             requires_confirmation_tools=resolved_confirm_methods,
@@ -682,18 +768,20 @@ class Workspace(Toolkit):
             contents = file_path.read_text(encoding=encoding)
             self._read_paths.add(file_path)
             if start_line is None and end_line is None:
+                # Only suggest search_content if it's actually enabled
+                search_hint = (
+                    ", or use search_content to find specific text first" if "search_content" in self.functions else ""
+                )
                 if len(contents) > self.max_file_length:
                     return (
                         f"Error: file too long ({len(contents)} chars > {self.max_file_length}). "
-                        "Use start_line/end_line to read a chunk, "
-                        "or use search_content to find specific text first."
+                        f"Use start_line/end_line to read a chunk{search_hint}."
                     )
                 line_count = contents.count("\n") + 1
                 if line_count > self.max_file_lines:
                     return (
                         f"Error: file too long ({line_count} lines > {self.max_file_lines}). "
-                        "Use start_line/end_line to read a chunk, "
-                        "or use search_content to find specific text first."
+                        f"Use start_line/end_line to read a chunk{search_hint}."
                     )
                 return _format_with_line_numbers(contents, start_line=1)
             lines = contents.split("\n")

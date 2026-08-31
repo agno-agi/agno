@@ -81,11 +81,9 @@ class WorkspaceContextProvider(ContextProvider):
 
     def instructions(self) -> str:
         if self.mode == ContextMode.tools:
-            # Tool names are prefixed with provider id when mode=tools
-            prefix = f"{self.id}_"
             return (
                 f"`{self.name}`: inspect project files under {self.root}. Use read-only "
-                f"`{prefix}list_files`, `{prefix}search_content`, `{prefix}grep_content`, and `{prefix}read_file`. "
+                "`list_files`, `search_content`, `grep_content`, and `read_file`. "
                 f"Paths are relative to the workspace root. {self._exclusion_sentence()}"
             )
         return (
@@ -112,6 +110,14 @@ class WorkspaceContextProvider(ContextProvider):
 
     def _default_tools(self) -> list:
         return [self._query_tool()]
+
+    def _query_tool(self):
+        query_tool = super()._query_tool()
+        query_tool.description = (
+            f"Explore project files under {self.root} with a natural-language question. "
+            "Read-only: lists directories, searches/greps code, and reads file contents."
+        )
+        return query_tool
 
     def _all_tools(self) -> list:
         return [self._build_workspace_tools()]
@@ -148,7 +154,6 @@ class WorkspaceContextProvider(ContextProvider):
             allow_paths=list(self.allow_paths),
             max_file_lines=self.max_file_lines,
             max_file_length=self.max_file_length,
-            **self._toolkit_prefix_kwargs(),
         )
 
 
