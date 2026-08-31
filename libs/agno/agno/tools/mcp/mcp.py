@@ -54,6 +54,7 @@ class MCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
+        headers: Optional[dict[str, Any]] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
         **kwargs,
     ):
@@ -77,9 +78,14 @@ class MCPTools(Toolkit):
             transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http".
                        Defaults to "streamable-http" when url is provided, otherwise defaults to "stdio".
             refresh_connection: If True, the connection and tools will be refreshed on each run
+            headers: Optional static HTTP headers applied when establishing the MCP session
+                (connect/handshake) and merged into per-run sessions. Only relevant with
+                HTTP transports (Streamable HTTP or SSE). Prefer this for connect-time auth
+                tokens; use header_provider for per-run dynamic values.
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
-                Creates a new session per agent run with dynamic headers merged into connection config.
+                Invoked during connect() so secured servers receive auth on the handshake,
+                and again per agent run when run context is available.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -150,6 +156,17 @@ class MCPTools(Toolkit):
                     )
 
         self.transport = transport
+
+        # Stored separately from any subclass attribute named `headers`
+        # (e.g. MCPToolbox uses `self.headers` for toolbox-core credentials).
+        self._mcp_headers: Optional[dict[str, Any]] = None
+        if headers is not None:
+            if self.transport not in ["sse", "streamable-http"]:
+                raise ValueError(
+                    f"headers is not supported with '{self.transport}' transport. "
+                    "Use 'sse' or 'streamable-http' transport instead."
+                )
+            self._mcp_headers = headers
 
         self.header_provider = None
         if header_provider is not None:
@@ -277,6 +294,23 @@ class MCPTools(Toolkit):
             log_warning(f"Error calling header_provider: {str(e)}")
             return {}
 
+    def _merge_http_headers(
+        self,
+        base_headers: Optional[dict[str, Any]] = None,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> dict[str, Any]:
+        """Merge server_params headers, static MCP headers, and header_provider output."""
+        merged: dict[str, Any] = {}
+        if base_headers:
+            merged.update(base_headers)
+        if self._mcp_headers:
+            merged.update(self._mcp_headers)
+        if self.header_provider is not None:
+            merged.update(self._call_header_provider(run_context=run_context, agent=agent, team=team))
+        return merged
+
     async def _cleanup_stale_sessions(self) -> None:
         """Clean up sessions older than TTL to prevent memory leaks."""
         if not self._run_sessions:
@@ -324,7 +358,7 @@ class MCPTools(Toolkit):
             yield self.session
             return
 
-        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+        dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
 
         if self.transport == "sse":
             sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
@@ -427,8 +461,8 @@ class MCPTools(Toolkit):
             # Create a new session with dynamic headers for this run
             log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
 
-            # Generate dynamic headers from the provider
-            dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+            # Generate dynamic headers from the provider (merged with static headers)
+            dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
 
             # Create new session with merged headers based on transport type
             if self.transport == "sse":
@@ -595,12 +629,10 @@ class MCPTools(Toolkit):
             await self.initialize()
             return
 
-        # If header_provider is set, generate initial headers for the connection.
-        # This ensures MCP servers that require auth headers for tool discovery
-        # receive them during initialization, not just during per-run sessions.
-        init_headers: dict[str, Any] = {}
-        if self.header_provider:
-            init_headers = self._call_header_provider()
+        # Merge static headers and header_provider output for the handshake.
+        # Secured MCP servers require auth headers during session initialization,
+        # not only on subsequent tool calls.
+        init_headers = self._merge_http_headers()
 
         # Create a new studio session
         if self.transport == "sse":
