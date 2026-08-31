@@ -20,6 +20,9 @@ by default; uploads/downloads are disabled.
    - Set ``GOOGLE_CLIENT_ID``, ``GOOGLE_CLIENT_SECRET``, ``GOOGLE_PROJECT_ID``
    - Or pass ``credentials_path`` / ``token_path`` directly
    - Opens browser on first use, caches token to ``gdrive_token.json``
+   - On headless servers set ``GOOGLE_OAUTH_NONINTERACTIVE=1``: expired
+     credentials then raise a clear error instead of blocking on a browser
+     that never opens
 
 **Search scope (Shared Drive support):**
 
@@ -72,9 +75,17 @@ class GoogleDriveContextProvider(ContextProvider):
         instructions: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         stream_sub_agent_events: bool = True,
     ) -> None:
-        super().__init__(id=id, name=name, mode=mode, model=model, stream_sub_agent_events=stream_sub_agent_events)
+        super().__init__(
+            id=id,
+            name=name,
+            mode=mode,
+            model=model,
+            stream_sub_agent_events=stream_sub_agent_events,
+            query_timeout=query_timeout,
+        )
 
         # Store params — toolkit handles actual auth
         self._sa_path = service_account_path or getenv("GOOGLE_SERVICE_ACCOUNT_FILE")

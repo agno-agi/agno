@@ -1,9 +1,11 @@
 import json
-from unittest.mock import MagicMock, Mock
+from unittest.mock import MagicMock, Mock, patch
 
 import pytest
 
+from agno.tools.google.auth import AuthConfig
 from agno.tools.google.auth.decorator import google_authenticate
+from agno.tools.google.gmail import GmailTools
 
 
 class FakeToolkit:
@@ -224,3 +226,31 @@ def test_decorator_service_name_titlecased_in_error(service_name, expected_prefi
 
 def test_decorator_wraps_preserves_method_name():
     assert FakeToolkit.do_work.__name__ == "do_work"
+
+
+# ============================================================================
+# NON-INTERACTIVE END-TO-END TESTS
+# ============================================================================
+
+
+def test_decorator_noninteractive_dead_token_returns_auth_error_json():
+    # Real GmailTools with interactive=False and no usable token: the tool call
+    # returns the auth-failed JSON and never reaches run_local_server
+    auth = AuthConfig(interactive=False)
+    auth.service_account_path = None
+    tools = GmailTools(auth=auth)
+
+    with (
+        patch("agno.tools.google.base.Path") as mock_path,
+        patch("google_auth_oauthlib.flow.InstalledAppFlow") as mock_flow,
+    ):
+        mock_path.return_value.exists.return_value = False
+        mock_flow.from_client_config.return_value.run_local_server.side_effect = AssertionError(
+            "run_local_server must not be called"
+        )
+        result = tools.get_latest_emails(count=1)
+
+    data = json.loads(result)
+    assert "Gmail authentication failed" in data["error"]
+    assert "interactive login is disabled" in data["error"]
+    mock_flow.from_client_config.return_value.run_local_server.assert_not_called()

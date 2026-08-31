@@ -1781,8 +1781,17 @@ class BaseDb(ABC):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            limit: Page size.
+            page: 1-indexed page number.
+            raise_on_error: When True, re-raise DB failures and raise when the
+                schedules table is unavailable (database error or table never
+                created), instead of returning ([], 0).
 
         Returns:
             Tuple of (schedules, total_count)
@@ -3160,8 +3169,17 @@ class AsyncBaseDb(ABC):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         """List schedules with optional filtering.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            limit: Page size.
+            page: 1-indexed page number.
+            raise_on_error: When True, re-raise DB failures and raise when the
+                schedules table is unavailable (database error or table never
+                created), instead of returning ([], 0).
 
         Returns:
             Tuple of (schedules, total_count)

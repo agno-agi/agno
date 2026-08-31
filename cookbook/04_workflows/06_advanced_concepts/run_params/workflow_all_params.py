@@ -24,7 +24,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 researcher = Agent(
     name="Content Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a content researcher.",
         "Research the given topic and provide 3-5 key points.",
@@ -36,7 +36,7 @@ researcher = Agent(
 
 writer = Agent(
     name="Content Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a content writer.",
         "Take the research from the previous step and write a short article.",

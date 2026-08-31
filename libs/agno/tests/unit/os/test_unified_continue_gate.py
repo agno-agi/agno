@@ -5,7 +5,7 @@ follow-up, RUNNING/ERROR resume, unresolved HITL raises its own precise
 error - so the router carries no paused-only gate. A stale router gate
 here once 409'd persisted COMPLETED runs with "run is already continued"
 (false: nothing was continued) before the request reached the dispatch
-that supports it, breaking cookbook/04_run_lifecycle/checkpoints.py.
+that supports it, breaking cookbook/05_agent_os/04_run_lifecycle/checkpoints.py.
 
 These tests pin the gate's absence at the endpoint level. The seeded agent
 has no model, so the continuation fails deeper in the machinery - the
