@@ -6260,6 +6260,26 @@ def _reclaim_own_requirements(
     return reclaimed
 
 
+def _resolve_callable_members_for_continue(team: "Team", run_context: RunContext) -> None:
+    """Resolve Team.members into run_context before continue_run HITL routing.
+
+    ``_find_member_route_by_id`` reads ``get_resolved_members()``, which is empty
+    until the factory runs. That used to happen only inside
+    ``_determine_tools_for_model``, after requirement routing — so every
+    member-HITL continue on a callable members factory failed to route.
+    """
+    from agno.utils.callables import resolve_callable_members
+
+    resolve_callable_members(team, run_context)
+
+
+async def _aresolve_callable_members_for_continue(team: "Team", run_context: RunContext) -> None:
+    """Async variant of ``_resolve_callable_members_for_continue``."""
+    from agno.utils.callables import aresolve_callable_members
+
+    await aresolve_callable_members(team, run_context)
+
+
 def _has_member_requirements(requirements: List[Any]) -> bool:
     """Check if any requirements are for member agents (have member_agent_id set)."""
     return any(getattr(req, "member_agent_id", None) is not None for req in requirements)
@@ -7636,6 +7656,9 @@ def continue_run_dispatch(
     # Resolve dependencies
     if run_context.dependencies is not None:
         _resolve_run_dependencies(team, run_context=run_context)
+
+    # Member-HITL routing reads get_resolved_members() before tools are built.
+    _resolve_callable_members_for_continue(team, run_context)
 
     # Resolve run_response from run_id if needed
     if run_response is None and run_id is not None:
@@ -9499,6 +9522,9 @@ async def _acontinue_run(
                     if user_id is not None:
                         run_context.user_id = user_id
 
+                # Member-HITL routing reads get_resolved_members() before tools are built.
+                await _aresolve_callable_members_for_continue(team, run_context)
+
                 # A resumed run keeps its runtime-owned metadata (dispatch
                 # lineage, hop count, version stamp); on the async path the
                 # session may only be readable here, so the restore happens at
@@ -9979,6 +10005,9 @@ async def _acontinue_run_stream(
                     user_id = _resolve_continue_owner_team(run_response, run_id=run_id, session=team_session)
                     if user_id is not None:
                         run_context.user_id = user_id
+
+                # Member-HITL routing reads get_resolved_members() before tools are built.
+                await _aresolve_callable_members_for_continue(team, run_context)
 
                 # A resumed run keeps its runtime-owned metadata (dispatch
                 # lineage, hop count, version stamp); on the async path the
