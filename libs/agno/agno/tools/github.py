@@ -77,12 +77,13 @@ class GithubTools(Toolkit):
     def authenticate(self) -> Github:
         """Authenticate with GitHub using the provided access token."""
         auth = Auth.Token(self.access_token) if self.access_token else None
+        mode = "authenticated" if auth else "unauthenticated"
 
         if self.base_url:
-            log_debug(f"Connecting to GitHub Enterprise at {self.base_url}")
+            log_debug(f"Connecting to GitHub Enterprise at {self.base_url} ({mode})")
             return Github(base_url=self.base_url, auth=auth)
         else:
-            log_debug("Connecting to GitHub")
+            log_debug(f"Connecting to GitHub ({mode})")
             return Github(auth=auth)
 
     def _auth_required_response(self, tool_name: str) -> str:
