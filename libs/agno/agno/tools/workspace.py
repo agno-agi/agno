@@ -30,7 +30,8 @@ import sys
 import unicodedata
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Tuple, Union
+from shutil import which
+from typing import Dict, List, Literal, Optional, Set, Tuple, Union
 
 from agno.exceptions import PathSecurityError
 from agno.tools import Toolkit
@@ -392,6 +393,7 @@ class Workspace(Toolkit):
         max_file_length: int = 10_000_000,
         max_grep_matches: int = 500,
         max_search_file_size: int = 500 * 1024,
+        use_ripgrep: Union[bool, Literal["auto"]] = "auto",
         exclude_patterns: Optional[List[str]] = None,
         allow_paths: Optional[List[str]] = None,
         **kwargs,
@@ -406,6 +408,8 @@ class Workspace(Toolkit):
         self.max_file_length = max_file_length
         self.max_grep_matches = max_grep_matches
         self.max_search_file_size = max_search_file_size
+        self.use_ripgrep = use_ripgrep
+        self._ripgrep_path: Optional[str] = None  # Cached path to rg binary
         self.require_read_before_write = require_read_before_write
         self.exclude_patterns: List[str] = _validate_exclude_patterns(exclude_patterns)
         _resolve_allow_paths(self.root, allow_paths)
@@ -857,6 +861,162 @@ class Workspace(Toolkit):
             log_error(f"search_content failed: {e}")
             return f"Error searching content: {e}"
 
+    # ------------------------------------------------------------------
+    # Ripgrep helpers
+    # ------------------------------------------------------------------
+
+    def _get_ripgrep_path(self) -> Optional[str]:
+        """Return path to ripgrep binary, or None if not available."""
+        if self._ripgrep_path is not None:
+            return self._ripgrep_path if self._ripgrep_path else None
+
+        if self.use_ripgrep is False:
+            self._ripgrep_path = ""
+            return None
+
+        rg_path = which("rg")
+        self._ripgrep_path = rg_path or ""
+        if rg_path:
+            log_debug(f"ripgrep found at {rg_path}")
+        return rg_path
+
+    def _build_ripgrep_cmd(
+        self,
+        pattern: str,
+        search_dir: Path,
+        context_lines: int,
+        limit: int,
+    ) -> List[str]:
+        """Build ripgrep command with appropriate flags."""
+        rg_path = self._get_ripgrep_path()
+        if not rg_path:
+            raise RuntimeError("ripgrep not available")
+
+        cmd = [
+            rg_path,
+            "--json",  # JSON output for structured parsing
+            "--ignore-case",  # Match Python grep_content behavior
+            "--max-count",
+            str(limit * 2),  # Get extra for context dedup
+        ]
+
+        # Add context lines if requested
+        if context_lines > 0:
+            cmd.extend(["--context", str(context_lines)])
+
+        # Filter to text file extensions
+        for ext in TEXT_EXTENSIONS:
+            cmd.extend(["--glob", f"*{ext}"])
+
+        # Add exclude patterns as glob ignores
+        for pat in self.exclude_patterns:
+            # Convert gitignore-style to ripgrep glob
+            if pat.startswith("/"):
+                cmd.extend(["--glob", f"!{pat[1:]}"])
+            else:
+                cmd.extend(["--glob", f"!**/{pat}"])
+
+        # Add pattern and search directory
+        cmd.append(pattern)
+        cmd.append(str(search_dir))
+
+        return cmd
+
+    def _grep_with_ripgrep(
+        self,
+        pattern: str,
+        search_dir: Path,
+        context_lines: int,
+        limit: int,
+    ) -> str:
+        """Execute grep using ripgrep subprocess."""
+        try:
+            cmd = self._build_ripgrep_cmd(pattern, search_dir, context_lines, limit)
+            log_debug(f"Running ripgrep: {' '.join(cmd[:10])}...")
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=30,
+                cwd=self.root,
+            )
+
+            # ripgrep exit codes: 0=matches found, 1=no matches, 2=error
+            if result.returncode == 2:
+                log_warning(f"ripgrep error: {result.stderr}")
+                return f"Error: ripgrep failed: {result.stderr}"
+
+            # Parse JSON output
+            matches: List[dict] = []
+            total_matches = 0
+            seen_lines: Set[Tuple[str, int]] = set()
+
+            for line in result.stdout.strip().split("\n"):
+                if not line:
+                    continue
+                try:
+                    entry = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+
+                if entry.get("type") == "match":
+                    data = entry.get("data", {})
+                    path_obj = data.get("path", {})
+                    file_path = path_obj.get("text", "")
+
+                    # Make path relative to root
+                    try:
+                        rel_path = Path(file_path).relative_to(self.root).as_posix()
+                    except ValueError:
+                        rel_path = file_path
+
+                    line_num = data.get("line_number", 0)
+                    lines_data = data.get("lines", {})
+                    text = lines_data.get("text", "").rstrip("\n")
+
+                    key = (rel_path, line_num)
+                    if key not in seen_lines and total_matches < limit:
+                        seen_lines.add(key)
+                        matches.append({"file": rel_path, "line": line_num, "text": text})
+                        total_matches += 1
+
+                elif entry.get("type") == "context":
+                    # Handle context lines
+                    data = entry.get("data", {})
+                    path_obj = data.get("path", {})
+                    file_path = path_obj.get("text", "")
+
+                    try:
+                        rel_path = Path(file_path).relative_to(self.root).as_posix()
+                    except ValueError:
+                        rel_path = file_path
+
+                    line_num = data.get("line_number", 0)
+                    lines_data = data.get("lines", {})
+                    text = lines_data.get("text", "").rstrip("\n")
+
+                    key = (rel_path, line_num)
+                    if key not in seen_lines:
+                        seen_lines.add(key)
+                        matches.append({"file": rel_path, "line": line_num, "text": text})
+
+            output = {
+                "pattern": pattern,
+                "total_matches": total_matches,
+                "truncated": total_matches >= limit,
+                "matches": matches,
+                "backend": "ripgrep",
+            }
+            return json.dumps(output, indent=2)
+
+        except subprocess.TimeoutExpired:
+            log_warning("ripgrep timed out")
+            return "Error: ripgrep search timed out"
+        except Exception as e:
+            log_error(f"ripgrep failed: {e}")
+            return f"Error: ripgrep failed: {e}"
+
     def grep_content(
         self,
         pattern: str,
@@ -882,24 +1042,32 @@ class Workspace(Toolkit):
             # Clamp limit to constructor-defined max
             limit = min(limit, self.max_grep_matches)
 
-            # 1. Compile regex (always case-insensitive)
-            try:
-                rx = re.compile(pattern, re.IGNORECASE)
-            except re.error as exc:
-                return f"Error: invalid regex pattern: {exc}"
-
-            # 2. Resolve directory
+            # Resolve directory first (needed for both backends)
             err, search_dir = self._resolve(directory, what="directory")
             if err:
                 return err
             if not search_dir.is_dir():
                 return f"Error: not a directory: {directory}"
 
+            # Try ripgrep if available (much faster for large codebases)
+            if self._get_ripgrep_path():
+                result = self._grep_with_ripgrep(pattern, search_dir, context_lines, limit)
+                if not result.startswith("Error:"):
+                    return result
+                # Fall through to Python implementation on ripgrep error
+                log_debug("ripgrep failed, falling back to Python regex")
+
+            # Validate regex pattern for Python implementation
+            try:
+                rx = re.compile(pattern, re.IGNORECASE)
+            except re.error as exc:
+                return f"Error: invalid regex pattern: {exc}"
+
             max_file_size = self.max_search_file_size
             matches: List[dict] = []
             total_matches = 0
 
-            # 3. Walk the directory tree
+            # Walk the directory tree (Python fallback)
             for dirpath, dirnames, filenames in os.walk(search_dir):
                 if total_matches >= limit:
                     break
@@ -953,12 +1121,13 @@ class Workspace(Toolkit):
 
                         total_matches += 1
 
-            # 4. Format output as JSON
+            # Format output as JSON
             result = {
                 "pattern": pattern,
                 "total_matches": total_matches,
                 "truncated": total_matches >= limit,
                 "matches": matches,
+                "backend": "python",
             }
             return json.dumps(result, indent=2)
 

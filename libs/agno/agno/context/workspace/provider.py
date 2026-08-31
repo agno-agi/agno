@@ -6,6 +6,22 @@ Exposes a local project workspace via a read-only `Workspace` toolkit.
 The provider is intended for repository roots and other working trees
 where dependency directories, build outputs, and agent scratch folders
 should be ignored by default.
+
+Supports pluggable backends for different search implementations:
+
+    from agno.context.workspace import (
+        WorkspaceContextProvider,
+        PythonWorkspaceBackend,
+        RipgrepWorkspaceBackend,
+    )
+
+    # Default: Python backend (no external dependencies)
+    provider = WorkspaceContextProvider(root="./my-project")
+
+    # Ripgrep backend (faster for large codebases)
+    provider = WorkspaceContextProvider(
+        backend=RipgrepWorkspaceBackend(root="./my-project"),
+    )
 """
 
 from __future__ import annotations
@@ -22,16 +38,25 @@ from agno.run import RunContext
 from agno.tools.workspace import DEFAULT_EXCLUDE_PATTERNS, Workspace, _resolve_allow_paths, _validate_exclude_patterns
 
 if TYPE_CHECKING:
+    from agno.context.workspace.backend import WorkspaceBackend
     from agno.models.base import Model
 
 
 class WorkspaceContextProvider(ContextProvider):
-    """Project-aware local workspace rooted at a single directory."""
+    """Project-aware local workspace rooted at a single directory.
+
+    Args:
+        root: Root directory. Ignored if backend is provided.
+        backend: Optional WorkspaceBackend for custom implementation.
+            If not provided, uses the default Python-based Workspace toolkit.
+        ... (other args same as before)
+    """
 
     def __init__(
         self,
         root: str | Path | None = None,
         *,
+        backend: WorkspaceBackend | None = None,
         id: str = "workspace",
         name: str = "Workspace",
         instructions: str | None = None,
@@ -52,16 +77,28 @@ class WorkspaceContextProvider(ContextProvider):
             stream_sub_agent_events=stream_sub_agent_events,
             query_timeout=query_timeout,
         )
-        self.root = Path(root).expanduser().resolve() if root is not None else Path.cwd().resolve()
+
+        # Backend mode: delegate to backend for tools
+        self.backend = backend
+        if backend is not None:
+            self.root = backend.root
+            self.exclude_patterns: list[str] = []
+            self.allow_paths: list[str] = []
+        else:
+            # Legacy mode: build Workspace toolkit directly
+            self.root = Path(root).expanduser().resolve() if root is not None else Path.cwd().resolve()
+            self.exclude_patterns = _validate_exclude_patterns(exclude_patterns)
+            _resolve_allow_paths(self.root, allow_paths)
+            self.allow_paths = list(allow_paths) if allow_paths else []
+
         self.instructions_text = instructions if instructions is not None else DEFAULT_WORKSPACE_INSTRUCTIONS
-        self.exclude_patterns = _validate_exclude_patterns(exclude_patterns)
-        _resolve_allow_paths(self.root, allow_paths)
-        self.allow_paths = list(allow_paths) if allow_paths else []
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
         self._agent: Agent | None = None
 
     def status(self) -> Status:
+        if self.backend is not None:
+            return self.backend.status()
         if not self.root.exists():
             return Status(ok=False, detail=f"root does not exist: {self.root}")
         if not self.root.is_dir():
@@ -69,7 +106,17 @@ class WorkspaceContextProvider(ContextProvider):
         return Status(ok=True, detail=str(self.root))
 
     async def astatus(self) -> Status:
+        if self.backend is not None:
+            return await self.backend.astatus()
         return await asyncio.to_thread(self.status)
+
+    async def asetup(self) -> None:
+        if self.backend is not None:
+            await self.backend.asetup()
+
+    async def aclose(self) -> None:
+        if self.backend is not None:
+            await self.backend.aclose()
 
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer:
         kwargs = self._run_kwargs_for_sub_agent(run_context)
@@ -112,6 +159,8 @@ class WorkspaceContextProvider(ContextProvider):
         return [self._query_tool()]
 
     def _all_tools(self) -> list:
+        if self.backend is not None:
+            return self.backend.get_tools()
         return [self._build_workspace_tools()]
 
     # ------------------------------------------------------------------
@@ -127,6 +176,11 @@ class WorkspaceContextProvider(ContextProvider):
         return self._agent
 
     def _build_agent(self) -> Agent:
+        if self.backend is not None:
+            tools = self.backend.get_tools()
+        else:
+            tools = [self._build_workspace_tools()]
+
         return Agent(
             id=self.id,
             name=self.name,
@@ -134,7 +188,7 @@ class WorkspaceContextProvider(ContextProvider):
             instructions=self.instructions_text.replace("{root}", str(self.root)).replace(
                 "{exclusion}", self._exclusion_sentence()
             ),
-            tools=[self._build_workspace_tools()],
+            tools=tools,
             markdown=True,
         )
 
