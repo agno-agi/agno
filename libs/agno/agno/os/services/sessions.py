@@ -16,6 +16,7 @@ from starlette.concurrency import run_in_threadpool
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
 from agno.db.utils import detect_session_type
 from agno.os.schema import RunSchema, TeamRunSchema, WorkflowRunSchema
+from agno.utils.log import log_warning
 
 AnyRunSchema = Union[RunSchema, TeamRunSchema, WorkflowRunSchema]
 
@@ -44,7 +45,14 @@ async def verify_run_ownership(
     component_type: Literal["agents", "teams", "workflows"],
     component_id: str,
 ) -> None:
-    """Fail closed unless ``run_id`` lives in a ``user_id``-owned session for this component.
+    """Fail closed unless ``run_id`` lives in a session this user owns for this component.
+
+    The scoped-caller gate: ``user_id`` pins the session fetch to that user's session,
+    and the session and the run must each carry this ``component_type``/``component_id``
+    (a run that lives under a different component is rejected even when the caller named
+    a component they may reach). An absent session or run row fails closed -- the REST
+    rule for scoped callers, where cancellation of a run that has not persisted yet is
+    likewise refused.
 
     Surface-agnostic twin of the REST ``verify_run_in_session`` (which raises
     ``HTTPException``); raises :class:`RunOwnershipError` so the MCP layer can present
@@ -57,6 +65,43 @@ async def verify_run_ownership(
         raise RunOwnershipError()
     run = session.get_run(run_id=run_id)
     if run is None or not run_matches_component(run, component_type, component_id):
+        raise RunOwnershipError()
+
+
+async def verify_persisted_run_binding(
+    db: Optional[Union[BaseDb, AsyncBaseDb]],
+    *,
+    run_id: str,
+    component_type: Literal["agents", "teams", "workflows"],
+    component_id: str,
+) -> None:
+    """Refuse when the persisted row for ``run_id`` belongs to a different component.
+
+    The admin-plane half of the run-lifecycle gate. The row is looked up by ``run_id``
+    alone -- never through a caller-supplied session -- so the caller cannot steer the
+    check toward a row of their choosing. An absent row passes: an in-flight or
+    not-yet-started run has no row until it pauses or finishes, and cancellation
+    intent exists precisely for those runs (parity with the REST cancel routes, which
+    apply no ownership check for admin callers at all). A read failure also passes,
+    with a warning -- a broken db must not make a live run uncancellable. The refusal
+    is therefore hardening on top of REST admin semantics for runs that ARE persisted,
+    not a substitute for :func:`verify_run_ownership` on scoped callers.
+    """
+    if db is None:
+        return
+    from agno.os.middleware.user_scope import run_matches_component
+
+    try:
+        if isinstance(db, AsyncBaseDb):
+            run = await db.get_run(run_id=run_id)
+        else:
+            run = await run_in_threadpool(lambda: db.get_run(run_id=run_id))
+    except Exception as e:
+        log_warning(f"Could not read run {run_id} to verify its component binding: {e}")
+        return
+    if run is None:
+        return
+    if not run_matches_component(run, component_type, component_id):
         raise RunOwnershipError()
 
 
