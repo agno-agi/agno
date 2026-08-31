@@ -3,53 +3,27 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from textwrap import dedent
 from time import time
 from typing import TYPE_CHECKING, Any, List, Optional
 from uuid import uuid4
 
+from agno.compaction._cut import choose_boundary, choose_watermark
+from agno.compaction._tokens import estimate_tokens
+from agno.compaction._view import build_view
 from agno.compaction.archive import CompactionArchive, namespace_for, render_messages
+from agno.compaction.prompts import (
+    ARCHIVE_AWARE_PROMPT,
+    ARCHIVE_LOOKUP_INSTRUCTION,
+    DEFAULT_COMPACTION_PROMPT,
+)
 from agno.compaction.types import CompactionRecord, CompactionStats
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.message import safe_truncation_index
 
 if TYPE_CHECKING:
     from agno.metrics import RunMetrics
 
-DEFAULT_COMPACTION_PROMPT = dedent("""\
-    You are compacting the earlier part of a conversation so it can be dropped
-    from context while the assistant keeps working without losing the thread.
-
-    Write a summary that lets the assistant continue as if it still remembered
-    everything. Preserve:
-    - What the user asked for, including constraints and stated preferences
-    - Decisions taken, and the reasoning that settled them
-    - Facts established: names, numbers, dates, identifiers, file paths, URLs
-    - What was tried and failed, and why, so it is not retried
-    - Work still outstanding
-
-    Drop: pleasantries, restatements, tool mechanics, and anything already
-    superseded by a later decision.
-
-    Write in past tense, as a factual record. Be specific over general: names
-    and numbers, not "some files" or "a few options". Do not invent anything
-    that is not in the transcript.
-    """)
-
-# Appended to the summarization prompt when the originals are archived. A
-# summary cannot be complete, and the assistant reading it cannot tell what is
-# missing unless the summary says so - which is what turns "answer from the
-# summary" into "check the archive first" on exactly the questions that need it.
-ARCHIVE_AWARE_PROMPT = dedent("""\
-
-    The full transcript remains available, so this summary does not have to
-    carry everything. End with one line beginning "Not covered here:" naming
-    the kinds of detail a reader would have to look up - for example exact
-    figures, identifiers, code, error text, or long tool output. Omit the line
-    only if the summary genuinely preserves every specific in the transcript.
-    """)
 
 # Summarizing an enormous transcript in one call is unreliable and can itself
 # overflow. Trim what the summarizer reads, oldest first, to this budget.
@@ -81,8 +55,11 @@ class Compaction:
 
     # Model used to write the summary. Defaults to the agent's model.
     model: Optional[Model] = None
-    # Custom summarization instructions.
+    # Custom summarization instructions. Replaces the default prompt entirely.
     instructions: Optional[str] = None
+    # Length budget given to the summarizer. A summary that grows without bound defeats the
+    # point; this is a soft target stated in the prompt, not an enforced cap.
+    summary_budget_tokens: int = 2_000
 
     # -- when to compact ------------------------------------------------
     # Compact when the context is at least this many tokens.
@@ -106,17 +83,23 @@ class Compaction:
     # Where the archive lives. Defaults to the agent's db (AgentFS).
     fs: Optional[Any] = None
 
+    # Render tool results older than the cut as a short placeholder in the view. A cheap,
+    # no-inference tier: on a tool-heavy transcript this reclaims more than the summary does,
+    # and the full results stay in the transcript and the archive.
+    elide_tool_results: bool = True
+
     # Also compact reactively when the provider rejects a request as too long.
     on_context_overflow: bool = True
 
-    # Skip a compaction unless this many characters of transcript are being
-    # replaced. A summary costs a few hundred tokens whatever it replaces, so
-    # compacting a short span can leave the context BIGGER than it started -
-    # and it discards the prompt-cache prefix to do it. This is a floor on the
-    # INPUT, not a guarantee about the outcome: the summary does not exist yet
-    # when the check runs, so a dense span can still summarize to roughly its
-    # own size. Set to 0 to always compact.
-    min_chars_to_reclaim: int = 4_000
+    # Skip a compaction unless the folded span is at least this many times the kept tail.
+    #
+    # A summary has a floor cost - the structured sections alone run to hundreds of tokens - so
+    # folding a span barely larger than what it replaces leaves the context BIGGER than it
+    # started, and discards the prompt-cache prefix to do it. Sizing the guard relative to the
+    # tail, rather than as an absolute char count, is what makes it hold at every scale: it is
+    # the ratio of folded-to-kept that decides whether a summary can pay for itself.
+    # Set to 0 to always compact.
+    min_fold_ratio: float = 2.0
 
     stats: CompactionStats = field(default_factory=CompactionStats)
 
@@ -204,29 +187,34 @@ class Compaction:
 
     # -- boundary -------------------------------------------------------
 
-    def _requested_boundary(self, messages: List[Message]) -> int:
-        """Where the kept tail starts, before pair-safety is applied."""
-        if self.keep_last_messages is not None:
-            return max(0, len(messages) - self.keep_last_messages)
+    def _keep_tokens(self, messages: List[Message]) -> int:
+        """Token budget for the tail kept verbatim.
 
-        keep_runs = self.keep_last_runs if self.keep_last_runs is not None else 0
+        ``keep_last_runs`` / ``keep_last_messages`` are expressed in turns, but the cut walks
+        backward by token cost, so they are converted here by measuring what that many turns
+        actually costs in this conversation.
+        """
+        if self.keep_last_messages is not None:
+            tail = messages[-self.keep_last_messages :] if self.keep_last_messages else []
+            return estimate_tokens(tail) if tail else 0
+
+        keep_runs = self.keep_last_runs or 0
         if keep_runs <= 0:
-            return len(messages)
-        # A run begins at a user message; keep the last ``keep_runs`` of them.
+            return 0
         user_indexes = [i for i, m in enumerate(messages) if m.role == "user"]
         if len(user_indexes) <= keep_runs:
-            return 0
-        return user_indexes[-keep_runs]
+            return estimate_tokens(messages)
+        return estimate_tokens(messages[user_indexes[-keep_runs] :])
 
-    def boundary_for(self, messages: List[Message]) -> int:
-        """The index the kept tail starts at, never splitting a tool batch.
+    def boundary_for(self, messages: List[Message], min_index: int = 0) -> Optional[int]:
+        """Index of the first message kept verbatim, or None when no safe cut exists.
 
-        Cutting between an assistant message that owns tool_calls and the tool
-        results answering them leaves an unanswered call, which most providers
-        reject outright - so the requested boundary is snapped down to a safe
-        one.
+        Delegates to ``choose_boundary``, which snaps the requested tail to a boundary that is
+        pair-safe (a tool result never starts the tail, and a batch whose head would fall behind
+        the cut moves into the tail whole) and *durable* - it never anchors on a message that
+        will not survive in storage, since the anchor has to resolve again on the next run.
         """
-        return safe_truncation_index(messages, self._requested_boundary(messages))
+        return choose_boundary(messages, self._keep_tokens(messages), min_index=min_index)
 
     # -- summarizing ----------------------------------------------------
 
@@ -243,7 +231,11 @@ class Compaction:
         return list(reversed(kept))
 
     def _summary_messages(
-        self, messages: List[Message], previous: Optional[str], archived: bool = False
+        self,
+        messages: List[Message],
+        previous: Optional[str],
+        archived: bool = False,
+        archive_path: Optional[str] = None,
     ) -> List[Message]:
         transcript = render_messages(self._trim_for_summary(messages))
         # Fold the previous summary in rather than summarizing a summary
@@ -253,12 +245,12 @@ class Compaction:
             transcript = (
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
-        prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
+        prompt = self.instructions or DEFAULT_COMPACTION_PROMPT.format(budget_tokens=self.summary_budget_tokens)
         # Only ask the summary to flag its own gaps when there is somewhere to
         # go and read them. Without an archive the line would name detail the
         # assistant has no way to recover, which is worse than not saying it.
         if archived:
-            prompt += ARCHIVE_AWARE_PROMPT
+            prompt += ARCHIVE_AWARE_PROMPT.format(archive_path=archive_path or "the archive")
         return [
             Message(role="system", content=prompt),
             Message(role="user", content=transcript),
@@ -270,12 +262,13 @@ class Compaction:
         previous: Optional[str],
         run_metrics: Optional["RunMetrics"] = None,
         archived: bool = False,
+        archive_path: Optional[str] = None,
     ) -> Optional[str]:
         if self.model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = self.model.response(messages=self._summary_messages(messages, previous, archived))
+            response = self.model.response(messages=self._summary_messages(messages, previous, archived, archive_path))
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
@@ -288,12 +281,15 @@ class Compaction:
         previous: Optional[str],
         run_metrics: Optional["RunMetrics"] = None,
         archived: bool = False,
+        archive_path: Optional[str] = None,
     ) -> Optional[str]:
         if self.model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = await self.model.aresponse(messages=self._summary_messages(messages, previous, archived))
+            response = await self.model.aresponse(
+                messages=self._summary_messages(messages, previous, archived, archive_path)
+            )
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
@@ -381,81 +377,101 @@ class Compaction:
         self,
         messages: List[Message],
         summary: str,
-        boundary: int,
+        first_kept_message_id: Optional[str],
+        messages_compacted: int,
         archive_path: Optional[str],
         tokens_before: Optional[int] = None,
     ) -> CompactionRecord:
         return CompactionRecord(
-            messages_compacted=boundary,
+            messages_compacted=messages_compacted,
             summary=summary,
-            boundary=boundary,
+            first_kept_message_id=first_kept_message_id,
             archive_path=archive_path,
             tokens_before=tokens_before,
             created_at=int(time()),
         )
 
     def apply_record(self, messages: List[Message], record: CompactionRecord) -> List[Message]:
-        """Rebuild the model-bound list: summary, then the kept tail.
+        """Derive the model-bound list for this call: summary, then the kept tail.
 
-        Applied to a fresh copy of history each run, so a stored record replays
-        without paying for the summary again.
+        A fresh view each call, built from the canonical messages plus the record. Nothing is
+        mutated: every transformation lands on a shallow copy. When the record's anchor no longer
+        resolves the view fails open to the full list, which is always valid to send.
+
+        ``strip_provider_chaining`` removes only the response-chaining key from assistant copies.
+        Some providers continue a conversation by id rather than from the messages sent (OpenAI
+        Responses chains on ``previous_response_id``), and the server then replays the whole
+        pre-fold history behind the view's back - so the saving would be imaginary. The rest of
+        provider_data survives: a function_call without its paired reasoning item is a provider
+        error.
         """
-        boundary = min(record.boundary, len(messages))
-        return [self._summary_message(record)] + self._detach_from_server_state(messages[boundary:])
+        return build_view(
+            messages,
+            record,
+            strip_provider_chaining=True,
+            summary_suffix=self._archive_instruction(record),
+        )
+
+    def _archive_instruction(self, record: CompactionRecord) -> Optional[str]:
+        """The lookup rule appended to the injected summary, when the agent can act on it.
+
+        Promised only when the archive exists *and* the search tools are attached: telling a
+        model to read a file it cannot open invites a refusal or an invented answer.
+        """
+        if not (self.searchable and record.archive_path):
+            return None
+        return ARCHIVE_LOOKUP_INSTRUCTION.format(archive_path=record.archive_path)
+
+    def _watermark(self, messages: List[Message], boundary: int, previous: Optional[CompactionRecord]) -> Optional[str]:
+        """Where tool-result elision stops, when elision is on.
+
+        Elision covers the span between the previous watermark and this cut: results still in
+        the kept tail stay whole, older ones render as a placeholder. Monotonic, so a result
+        that has been elided once never comes back.
+        """
+        if not self.elide_tool_results:
+            return previous.elision_watermark_message_id if previous else None
+        floor = self._resolved_boundary(messages, previous)
+        return choose_watermark(messages, boundary, min_index=floor) or (
+            previous.elision_watermark_message_id if previous else None
+        )
 
     @staticmethod
-    def _detach_from_server_state(kept: List[Message]) -> List[Message]:
-        """Detach the kept tail from any provider-side conversation history.
+    def _resolved_boundary(messages: List[Message], previous: Optional[CompactionRecord]) -> int:
+        """Where the previous compaction cut, as an index into this message list.
 
-        Some providers continue a conversation by id rather than from the
-        messages sent: OpenAI Responses chains on ``previous_response_id``
-        taken from an assistant message's ``provider_data``, and the server
-        then replays the WHOLE prior conversation - including the turns
-        compaction just removed. The context would look compacted locally
-        while the model still saw everything, so the saving is imaginary and
-        the summary is contradicted by history the agent should no longer
-        have.
-
-        Dropping the id is not enough on its own. That id is also what tells
-        the provider it already holds the reasoning items its stored
-        function_calls require; once it is gone, replaying those tool calls
-        from our messages sends a function_call with no matching reasoning
-        item, which the API rejects outright. So the tool-call exchanges go
-        with it: what is left is the plain conversation, which is valid to
-        send from scratch. Their content is in the summary and the archive.
+        An anchor that no longer resolves means the previous cut does not apply here, so the
+        floor is 0 - the same fail-open the view takes.
         """
-        if not any("response_id" in (m.provider_data or {}) for m in kept):
-            return kept
+        if previous is None or not previous.first_kept_message_id:
+            return 0
+        for index, message in enumerate(messages):
+            if message.id == previous.first_kept_message_id:
+                return index
+        return 0
 
-        detached: List[Message] = []
-        for message in kept:
-            if message.role == "tool":
-                continue
-            if message.tool_calls:
-                # An assistant turn that only made tool calls carries nothing
-                # else worth sending once those calls are gone.
-                if not message.get_content_string():
-                    continue
-                message = message.model_copy(update={"tool_calls": None})
-            provider_data = {k: v for k, v in (message.provider_data or {}).items() if k != "response_id"}
-            if provider_data != (message.provider_data or {}):
-                message = message.model_copy(update={"provider_data": provider_data or None})
-            detached.append(message)
-        return detached
+    def _worth_compacting(self, to_compact: List[Message], kept: List[Message]) -> bool:
+        """Whether folding this span can pay for the summary that replaces it.
 
-    def _worth_compacting(self, to_compact: List[Message]) -> bool:
-        """Whether replacing these messages would actually free anything.
-
-        A summary costs a few hundred characters no matter how little it
-        replaces, so compacting a short span can leave the context bigger than
-        it started - and it discards the prompt-cache prefix to do it. Below
-        the floor, leaving the transcript alone is strictly better.
+        Measured as a ratio against the kept tail rather than an absolute size: a summary's
+        floor cost is roughly fixed, so what decides whether it pays for itself is how much
+        more it is replacing than it is keeping. Below the ratio, leaving the transcript alone
+        is strictly better.
         """
-        if self.min_chars_to_reclaim <= 0:
+        if self.min_fold_ratio <= 0:
             return True
-        size = sum(len(m.get_content_string()) for m in to_compact)
-        if size < self.min_chars_to_reclaim:
-            log_debug(f"Compaction: skipping, only {size} chars to reclaim (min {self.min_chars_to_reclaim})")
+        fold_tokens = estimate_tokens(to_compact)
+        keep_tokens = max(estimate_tokens(kept), 1)
+        ratio = fold_tokens / keep_tokens
+        if ratio < self.min_fold_ratio:
+            # log_info, not debug: a threshold was crossed and the user was told so. Going
+            # quiet after that reads as a bug. Say what was declined and why.
+            log_info(
+                f"Compaction: threshold reached but skipping this fold - it would replace "
+                f"{fold_tokens} tokens with a summary while keeping a {keep_tokens}-token tail "
+                f"(ratio {ratio:.2f} < min_fold_ratio {self.min_fold_ratio}), which would not "
+                f"shrink the context. Lower min_fold_ratio or keep_last_runs to fold sooner."
+            )
             return False
         return True
 
@@ -467,12 +483,24 @@ class Compaction:
         compactions that never happen - which is what a bare "should_compact"
         does, since it cannot see the pair-safe boundary or the size floor.
         """
-        boundary = self.boundary_for(messages)
-        already = previous.boundary if previous is not None else 0
-        if boundary <= already:
-            log_debug("Compaction: nothing new to compact")
+        already = self._resolved_boundary(messages, previous)
+        boundary = self.boundary_for(messages, min_index=already)
+        if boundary is None or boundary <= already:
+            kept = "keep_last_messages" if self.keep_last_messages is not None else "keep_last_runs"
+            size = self.keep_last_messages if self.keep_last_messages is not None else self.keep_last_runs
+            if previous is None:
+                log_info(
+                    f"Compaction: threshold reached but nothing to fold yet - {kept}={size} covers the "
+                    f"whole conversation, so there is no history before the kept tail. Lower {kept} to "
+                    "fold sooner."
+                )
+            else:
+                log_info(
+                    "Compaction: threshold reached but no safe cut past the previous fold yet - the "
+                    "conversation has not grown enough since then."
+                )
             return None
-        if not self._worth_compacting(messages[already:boundary]):
+        if not self._worth_compacting(messages[already:boundary], messages[boundary:]):
             return None
         return boundary
 
@@ -498,18 +526,25 @@ class Compaction:
         if boundary is None:
             return None
 
-        already = previous.boundary if previous is not None else 0
+        already = self._resolved_boundary(messages, previous)
         to_compact = messages[already:boundary]
         archive = self.archive_for(session_id, db)
         archive_path = archive.write(to_compact) if archive is not None else None
 
         summary = self._summarize(
-            to_compact, previous.summary if previous else None, run_metrics, archived=archive_path is not None
+            to_compact,
+            previous.summary if previous else None,
+            run_metrics,
+            archived=archive_path is not None,
+            archive_path=archive_path,
         )
         if not summary:
             return None
 
-        record = self.build_record(messages, summary, boundary, archive_path, tokens_before)
+        record = self.build_record(
+            messages, summary, messages[boundary].id, len(to_compact), archive_path, tokens_before
+        )
+        record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         self.stats.record(record)
         return record
 
@@ -529,18 +564,25 @@ class Compaction:
         if boundary is None:
             return None
 
-        already = previous.boundary if previous is not None else 0
+        already = self._resolved_boundary(messages, previous)
         to_compact = messages[already:boundary]
         archive = self.archive_for(session_id, db)
         archive_path = await archive.awrite(to_compact) if archive is not None else None
 
         summary = await self._asummarize(
-            to_compact, previous.summary if previous else None, run_metrics, archived=archive_path is not None
+            to_compact,
+            previous.summary if previous else None,
+            run_metrics,
+            archived=archive_path is not None,
+            archive_path=archive_path,
         )
         if not summary:
             return None
 
-        record = self.build_record(messages, summary, boundary, archive_path, tokens_before)
+        record = self.build_record(
+            messages, summary, messages[boundary].id, len(to_compact), archive_path, tokens_before
+        )
+        record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         self.stats.record(record)
         return record
 

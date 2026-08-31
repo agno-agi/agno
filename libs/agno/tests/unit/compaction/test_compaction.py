@@ -39,6 +39,16 @@ class _StubModel:
         return ModelResponse(content="SUMMARY")
 
 
+def _record(messages, boundary_index, summary="s", **kwargs):
+    """A record anchored on messages[boundary_index] - the first message kept verbatim."""
+    return CompactionRecord(
+        messages_compacted=boundary_index,
+        summary=summary,
+        first_kept_message_id=messages[boundary_index].id if boundary_index < len(messages) else None,
+        **kwargs,
+    )
+
+
 def _db():
     return __import__("agno.db.sqlite", fromlist=["SqliteDb"]).SqliteDb(
         db_file=str(Path(tempfile.mkdtemp()) / "test.db")
@@ -125,9 +135,10 @@ def test_boundary_keeps_requested_runs():
 
 
 def test_keeping_everything_compacts_nothing():
+    """No safe cut is None, not 0: there is nothing to fold, so the pass aborts."""
     messages = _transcript(runs=2)
     c = Compaction(compact_at_runs=1, keep_last_runs=99)
-    assert c.boundary_for(messages) == 0
+    assert c.boundary_for(messages) is None
 
 
 # --- applying ------------------------------------------------------------
@@ -135,28 +146,37 @@ def test_keeping_everything_compacts_nothing():
 
 def test_apply_record_replaces_head_with_summary():
     messages = _transcript(runs=3)
-    record = CompactionRecord(messages_compacted=4, summary="Earlier: discussed 0 and 1.", boundary=4)
+    record = _record(messages, 4, summary="Earlier: discussed 0 and 1.")
     c = Compaction(compact_at_runs=2)
+    from agno.compaction.prompts import SUMMARY_PREFIX
+
     out = c.apply_record(messages, record)
 
-    assert out[0].role == "system"
+    assert out[0].content.startswith(SUMMARY_PREFIX)
     assert "Earlier: discussed 0 and 1." in out[0].content
-    assert out[1:] == messages[4:]
+    assert [m.id for m in out[1:]] == [m.id for m in messages[4:]]
 
 
-def test_summary_message_is_not_persisted():
-    """Sent to the model, never written to the session.
+def test_summary_is_injected_into_the_view_only():
+    """The summary exists in the derived view, never in the stored transcript.
 
-    add_to_agent_memory is what the run actually filters on; temporary alone
-    is only honoured by some providers. Persisting the summary would mean the
-    next compaction summarizes a summary, compounding the loss each time.
+    Views are rebuilt per call and discarded, so there is nothing to persist and
+    no way for a later compaction to end up summarizing its own summary.
     """
-    c = Compaction(compact_at_runs=2)
-    record = CompactionRecord(messages_compacted=2, summary="s", boundary=2)
-    summary_message = c.apply_record(_transcript(), record)[0]
+    from agno.compaction.prompts import SUMMARY_PREFIX
 
-    assert summary_message.add_to_agent_memory is False
-    assert summary_message.temporary is True
+    messages = _transcript()
+    original = list(messages)
+    c = Compaction(compact_at_runs=2)
+
+    view = c.apply_record(messages, _record(messages, 3, summary="earlier turns"))
+
+    injected = next(m for m in view if isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX))
+    assert "earlier turns" in injected.content
+    assert injected.from_history is True
+    # The canonical list is untouched: same objects, same order, no summary in it.
+    assert messages == original
+    assert not any(isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX) for m in messages)
 
 
 def test_kept_messages_lose_provider_side_conversation_state():
@@ -175,7 +195,7 @@ def test_kept_messages_lose_provider_side_conversation_state():
     ]
     c = Compaction(compact_at_runs=2)
 
-    kept = c.apply_record(messages, CompactionRecord(messages_compacted=2, summary="s", boundary=2))
+    kept = c.apply_record(messages, _record(messages, 2, summary="s"))
 
     tail = kept[1:]
     assert all("response_id" not in (m.provider_data or {}) for m in tail)
@@ -185,14 +205,12 @@ def test_kept_messages_lose_provider_side_conversation_state():
     assert messages[3].provider_data["response_id"] == "resp_123"
 
 
-def test_tool_exchanges_go_with_the_dropped_response_id():
-    """Dropping the id alone would produce a request the API rejects.
+def test_only_the_chaining_key_is_stripped_not_the_exchange():
+    """Reasoning payload and tool exchanges survive; only response_id goes.
 
-    On a reasoning model that id is what tells the provider it already holds
-    the reasoning items its stored function_calls require. Once it is gone,
-    replaying those tool calls sends a function_call with no matching
-    reasoning item - a hard 400. The exchanges go with it; their content is in
-    the summary and the archive.
+    Dropping the whole exchange would be the blunt fix. The precise one is to
+    remove only the chaining key: a function_call still needs its paired
+    reasoning item, which lives elsewhere in provider_data.
     """
     messages = [
         Message(role="user", content="q0"),
@@ -208,14 +226,14 @@ def test_tool_exchanges_go_with_the_dropped_response_id():
         Message(role="assistant", content="a1"),
     ]
 
-    tail = Compaction(compact_at_runs=2).apply_record(
-        messages, CompactionRecord(messages_compacted=2, summary="s", boundary=2)
-    )[1:]
+    tail = Compaction(compact_at_runs=2).apply_record(messages, _record(messages, 2, summary="s"))[1:]
 
-    assert not any(m.role == "tool" for m in tail)
-    assert not any(m.tool_calls for m in tail)
-    # The plain conversation survives.
-    assert [m.content for m in tail] == ["q1", "a1"]
+    # The exchange survives intact - only the chaining key is gone.
+    assert any(m.role == "tool" for m in tail)
+    assert any(m.tool_calls for m in tail)
+    assert all("response_id" not in (m.provider_data or {}) for m in tail)
+    # The canonical message keeps its provider_data.
+    assert messages[3].provider_data["response_id"] == "resp_123"
 
 
 def test_tool_exchanges_survive_when_there_is_no_server_state():
@@ -232,9 +250,7 @@ def test_tool_exchanges_survive_when_there_is_no_server_state():
         Message(role="tool", tool_call_id="call_1", tool_name="search", content="data"),
     ]
 
-    tail = Compaction(compact_at_runs=2).apply_record(
-        messages, CompactionRecord(messages_compacted=2, summary="s", boundary=2)
-    )[1:]
+    tail = Compaction(compact_at_runs=2).apply_record(messages, _record(messages, 2, summary="s"))[1:]
 
     assert any(m.role == "tool" for m in tail)
     assert any(m.tool_calls for m in tail)
@@ -246,12 +262,13 @@ def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
     Without searchable the archive is for a developer, not the model. Telling
     it to read a file it cannot open invites a refusal or an invented answer.
     """
-    archived = CompactionRecord(messages_compacted=2, summary="s", boundary=2, archive_path="0001.md")
+    messages = _transcript()
+    archived = _record(messages, 3, summary="s", archive_path="0001.md")
 
-    searchable = Compaction(compact_at_runs=2, searchable=True).apply_record(_transcript(), archived)[0]
-    not_searchable = Compaction(compact_at_runs=2).apply_record(_transcript(), archived)[0]
+    searchable = Compaction(compact_at_runs=2, searchable=True).apply_record(messages, archived)[0]
+    not_searchable = Compaction(compact_at_runs=2).apply_record(messages, archived)[0]
     no_archive = Compaction(compact_at_runs=2, searchable=True).apply_record(
-        _transcript(), CompactionRecord(messages_compacted=2, summary="s", boundary=2)
+        messages, _record(messages, 3, summary="s")
     )[0]
 
     assert "0001.md" in searchable.content
@@ -272,7 +289,9 @@ def test_summarizer_is_told_to_flag_gaps_only_when_archived():
 
 
 def test_record_roundtrips_through_dict():
-    record = CompactionRecord(messages_compacted=4, summary="s", boundary=4, archive_path="0001.md", tokens_before=100)
+    record = CompactionRecord(
+        messages_compacted=4, summary="s", first_kept_message_id="m-4", archive_path="0001.md", tokens_before=100
+    )
     assert CompactionRecord.from_dict(record.to_dict()) == record
 
 
@@ -285,14 +304,16 @@ def test_second_compaction_only_covers_what_is_new():
     actually shrinks and every subsequent run compacts again.
     """
     messages = _transcript(runs=4)
-    # min_chars_to_reclaim=0: this exercises the boundary, not the size floor.
-    c = Compaction(compact_at_runs=2, keep_last_runs=1, min_chars_to_reclaim=0, model=_StubModel())
-    previous = CompactionRecord(messages_compacted=2, summary="earlier", boundary=2)
+    # min_fold_ratio=0: this exercises the boundary, not the size floor.
+    c = Compaction(compact_at_runs=2, keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
+    previous = _record(messages, 2, summary="earlier")
 
     record = c.compact(messages, session_id="s", db=None, previous=previous)
 
     assert record is not None
-    assert record.boundary > previous.boundary
+    # The new anchor sits strictly after the previous one.
+    ids = [m.id for m in messages]
+    assert ids.index(record.first_kept_message_id) > ids.index(previous.first_kept_message_id)
     # Only the messages after the previous boundary were sent to the summarizer.
     assert "question 0" not in c.model.seen
     assert "question 2" in c.model.seen
@@ -302,33 +323,37 @@ def test_no_new_span_does_not_recompact():
     messages = _transcript(runs=2)
     c = Compaction(compact_at_runs=2, keep_last_runs=1)
     boundary = c.boundary_for(messages)
-    previous = CompactionRecord(messages_compacted=boundary, summary="s", boundary=boundary)
+    previous = _record(messages, boundary, summary="s")
 
     assert c.compact(messages, session_id="s", db=None, previous=previous) is None
 
 
-def test_skips_compaction_that_would_not_free_anything():
-    """A summary costs more than a handful of short turns is worth.
-
-    Compacting anyway leaves the context bigger than it started and throws
-    away the prompt-cache prefix to do it.
-    """
+def test_skips_a_fold_that_cannot_pay_for_its_summary():
+    """Folding barely more than is kept leaves the context bigger, not smaller."""
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(compact_at_runs=2, keep_last_messages=0, model=_StubModel())
+    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
 
     assert c.compact(tiny, session_id="s", db=None) is None
 
 
-def test_reclaim_floor_can_be_disabled():
-    tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(compact_at_runs=2, keep_last_messages=0, min_chars_to_reclaim=0, model=_StubModel())
+def test_fold_ratio_can_be_disabled():
+    messages = [
+        Message(role="user", content="hi"),
+        Message(role="assistant", content="hello"),
+        Message(role="user", content="more"),
+    ]
+    c = Compaction(compact_at_runs=2, keep_last_messages=1, min_fold_ratio=0, model=_StubModel())
 
-    assert c.compact(tiny, session_id="s", db=None) is not None
+    assert c.compact(messages, session_id="s", db=None) is not None
 
 
-def test_large_span_clears_the_floor():
-    big = [Message(role="user", content="x" * 5_000), Message(role="assistant", content="y" * 5_000)]
-    c = Compaction(compact_at_runs=2, keep_last_messages=0, model=_StubModel())
+def test_large_fold_against_a_small_tail_clears_the_ratio():
+    big = [
+        Message(role="user", content="x" * 5_000),
+        Message(role="assistant", content="y" * 5_000),
+        Message(role="user", content="tiny"),
+    ]
+    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
 
     assert c.compact(big, session_id="s", db=None) is not None
 
@@ -348,15 +373,19 @@ def test_plan_refuses_what_compact_would_refuse():
 
 
 def test_plan_agrees_with_compact_when_worthwhile():
-    big = [Message(role="user", content="x" * 5_000), Message(role="assistant", content="y" * 5_000)]
-    c = Compaction(compact_at_runs=2, keep_last_messages=0, model=_StubModel())
+    big = [
+        Message(role="user", content="x" * 5_000),
+        Message(role="assistant", content="y" * 5_000),
+        Message(role="user", content="tiny"),
+    ]
+    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
 
     boundary = c.plan(big)
     record = c.compact(big, session_id="s", db=None)
 
     assert boundary is not None
     assert record is not None
-    assert record.boundary == boundary
+    assert record.first_kept_message_id == big[boundary].id
 
 
 def test_run_output_carries_the_compaction_record():
@@ -364,7 +393,12 @@ def test_run_output_carries_the_compaction_record():
     from agno.run.agent import RunOutput
 
     record = CompactionRecord(
-        messages_compacted=6, summary="s", boundary=6, archive_path="0001.md", tokens_before=100, tokens_after=40
+        messages_compacted=6,
+        summary="s",
+        first_kept_message_id="m-6",
+        archive_path="0001.md",
+        tokens_before=100,
+        tokens_after=40,
     )
     run = RunOutput(run_id="r", session_id="s", compaction=record)
 
@@ -377,6 +411,63 @@ def test_run_output_without_compaction_serializes_cleanly():
 
     assert "compaction" not in RunOutput(run_id="r", session_id="s").to_dict()
     assert RunOutput.from_dict({"run_id": "r", "session_id": "s"}).compaction is None
+
+
+def test_unresolvable_anchor_fails_open():
+    """A record whose anchor is not in this list must not cut anything.
+
+    History is rebuilt from stored runs every run. An anchor that no longer
+    resolves means the record does not describe this list - sending the full
+    list is always valid, silently cutting at the wrong place is not.
+    """
+    from agno.compaction.prompts import SUMMARY_PREFIX
+
+    messages = _transcript()
+    stale = CompactionRecord(messages_compacted=4, summary="s", first_kept_message_id="not-in-this-list")
+
+    view = Compaction(compact_at_runs=2).apply_record(messages, stale)
+
+    assert [m.id for m in view] == [m.id for m in messages]
+    assert not any(isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX) for m in view)
+
+
+def test_tool_results_before_the_watermark_are_elided():
+    """Elision reclaims bulk tool output without paying a summarizer for it."""
+    from agno.compaction.prompts import ELISION_PLACEHOLDER
+
+    messages = [
+        Message(role="user", content="q0"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": "c1", "function": {"name": "dump", "arguments": "{}"}}],
+        ),
+        Message(role="tool", tool_call_id="c1", tool_name="dump", content="x" * 5_000),
+        Message(role="user", content="q1"),
+    ]
+    record = CompactionRecord(messages_compacted=0, summary="", elision_watermark_message_id=messages[3].id)
+
+    view = Compaction(compact_at_runs=2).apply_record(messages, record)
+
+    elided = next(m for m in view if m.role == "tool")
+    assert elided.content == ELISION_PLACEHOLDER.format(n_chars=5_000)
+    # The transcript keeps the real payload.
+    assert messages[2].content == "x" * 5_000
+
+
+def test_boundary_never_anchors_on_a_message_that_will_not_persist():
+    """A temporary message is gone by the next run; anchoring there would break."""
+    messages = [
+        Message(role="user", content="q0" * 400),
+        Message(role="assistant", content="a0" * 400),
+        Message(role="user", content="temp", temporary=True),
+        Message(role="assistant", content="a1" * 400),
+        Message(role="user", content="q2"),
+    ]
+
+    boundary = Compaction(compact_at_runs=2, keep_last_messages=2).boundary_for(messages)
+
+    assert boundary is None or not messages[boundary].temporary
 
 
 # --- events --------------------------------------------------------------

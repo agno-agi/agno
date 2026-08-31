@@ -33,11 +33,11 @@ agent = Agent(
 # ---------------------------------------------------------------------------
 async def main() -> None:
     questions = [
-        "Give me a one-line summary of the CAP theorem.",
-        "What does partition tolerance actually mean?",
-        "Name a database that chooses availability.",
-        "Name one that chooses consistency.",
-        "Which would you pick for a payments ledger?",
+        "Explain the CAP theorem in detail, with worked examples.",
+        "Explain partition tolerance in depth and why it is not optional.",
+        "Compare AP and CP databases in detail, with named systems.",
+        "Explain consistency models in detail: linearizable to eventual.",
+        "Which model would you pick for a payments ledger, and why?",
     ]
     for question in questions:
         await agent.aprint_response(question)

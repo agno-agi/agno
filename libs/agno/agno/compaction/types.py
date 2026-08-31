@@ -26,8 +26,18 @@ class CompactionRecord:
     messages_compacted: int
     # The generated summary that stands in for them.
     summary: str
-    # Index into the history list where the kept (verbatim) tail begins.
-    boundary: int
+    # Id of the first message kept verbatim - the boundary anchor.
+    #
+    # An id, not an index: history is rebuilt from stored runs on every run, so a positional
+    # boundary means something different each time the list grows and the cut silently crawls.
+    # An id resolves to the same message forever, or fails to resolve at all - in which case the
+    # view falls open to the full list rather than cutting in the wrong place.
+    first_kept_message_id: Optional[str] = None
+    # Id of the first message whose tool results are kept in full. Tool results *before* it
+    # render as a short placeholder in the view - a cheap, no-inference tier that reclaims the
+    # bulk of a tool-heavy transcript without paying a summarizer for it. The transcript itself
+    # is untouched; only the view elides.
+    elision_watermark_message_id: Optional[str] = None
     # Archive file holding the replaced messages verbatim, if one was written.
     archive_path: Optional[str] = None
     tokens_before: Optional[int] = None
@@ -38,7 +48,8 @@ class CompactionRecord:
         _dict = {
             "messages_compacted": self.messages_compacted,
             "summary": self.summary,
-            "boundary": self.boundary,
+            "first_kept_message_id": self.first_kept_message_id,
+            "elision_watermark_message_id": self.elision_watermark_message_id,
             "archive_path": self.archive_path,
             "tokens_before": self.tokens_before,
             "tokens_after": self.tokens_after,
@@ -51,7 +62,8 @@ class CompactionRecord:
         return cls(
             messages_compacted=data.get("messages_compacted", 0),
             summary=data.get("summary", ""),
-            boundary=data.get("boundary", 0),
+            first_kept_message_id=data.get("first_kept_message_id"),
+            elision_watermark_message_id=data.get("elision_watermark_message_id"),
             archive_path=data.get("archive_path"),
             tokens_before=data.get("tokens_before"),
             tokens_after=data.get("tokens_after"),

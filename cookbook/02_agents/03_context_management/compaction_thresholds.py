@@ -24,8 +24,9 @@ from agno.models.openai import OpenAIResponses
 compaction = Compaction(
     # A small model is enough to summarize a transcript.
     model=OpenAIResponses(id="gpt-5-mini"),
-    compact_at_tokens=100_000,
-    keep_last_runs=5,
+    compact_at_tokens=1_000,
+    # Keep the last two turns verbatim; everything older folds into the summary.
+    keep_last_runs=2,
 )
 
 # ---------------------------------------------------------------------------
@@ -44,8 +45,13 @@ agent = Agent(
 # Run Agent
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
-    agent.print_response("Explain how a database index works.")
-    agent.print_response("Now compare that to a hash index.")
+    for question in [
+        "Explain how a database index works, in detail.",
+        "Now compare that to a hash index, in detail.",
+        "Explain covering indexes and index-only scans, in detail.",
+        "Explain when an index hurts more than it helps, in detail.",
+    ]:
+        agent.print_response(question)
 
     print(f"\nCompactions so far: {compaction.stats.compactions}")
     print(f"Messages compacted: {compaction.stats.messages_compacted}")

@@ -58,7 +58,7 @@ if __name__ == "__main__":
         if run.compaction is not None:
             r = run.compaction
             print(
-                f"\n[compacted {r.messages_compacted} messages at boundary {r.boundary}: "
+                f"\n[compacted {r.messages_compacted} messages: "
                 f"{r.tokens_before} -> {r.tokens_after} tokens, archived at {r.archive_path}]"
             )
 

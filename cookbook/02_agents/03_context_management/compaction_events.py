@@ -12,11 +12,10 @@ before and after, and where the originals were archived.
 Note these arrive during message assembly, before the model is called - so they
 land near the start of a run, ahead of the first `ModelRequestStarted`.
 
-The questions below ask for long answers on purpose. A summary costs a few
-hundred tokens no matter how little it replaces, so `min_chars_to_reclaim`
-(2000 by default) skips a compaction that would not free more than it costs -
-compacting a handful of one-line turns would leave the context bigger than it
-started.
+The questions below ask for long answers on purpose. A summary has a floor cost,
+so `min_fold_ratio` (2.0 by default) skips a fold that would not be meaningfully
+larger than the tail it keeps - folding a handful of one-line turns would leave
+the context bigger than it started.
 """
 
 import asyncio

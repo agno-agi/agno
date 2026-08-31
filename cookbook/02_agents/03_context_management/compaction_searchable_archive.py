@@ -31,14 +31,12 @@ from agno.models.openai import OpenAIResponses
 # ---------------------------------------------------------------------------
 compaction = Compaction(
     compact_at_runs=4,
-    keep_last_runs=2,
     # Adds read_file, list_files and search_content, scoped to this session's
     # archive - one session can never read another's history.
     searchable=True,
-    # These turns are short, so lower the floor that normally skips a
-    # compaction too small to be worth its own summary. Leave it at the
-    # default in real use.
-    min_chars_to_reclaim=500,
+    # The turns here are short, so keep only one of them: the guard skips a fold
+    # that would not be meaningfully larger than the tail it keeps.
+    keep_last_runs=1,
 )
 
 # ---------------------------------------------------------------------------
