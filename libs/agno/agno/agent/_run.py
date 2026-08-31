@@ -63,9 +63,11 @@ from agno.run.cancel import (
     acancel_run as acancel_run_global,
 )
 from agno.run.cancel import (
+    acleanup_member_runs,
     acleanup_run,
     araise_if_cancelled,
     aregister_run,
+    cleanup_member_runs,
     cleanup_run,
     raise_if_cancelled,
     register_run,
@@ -745,6 +747,7 @@ def _run(
         disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
 
     return run_response
 
@@ -1278,6 +1281,7 @@ def _run_stream(
         disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
 
 
 def run_dispatch(
@@ -1908,6 +1912,7 @@ async def _arun(
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
+        await acleanup_member_runs(run_response.run_id)  # type: ignore
 
     return run_response
 
@@ -1991,6 +1996,7 @@ async def _arun_background(
             except Exception as e:
                 log_error(f"Failed to persist cancelled state for background run {run_response.run_id}: {str(e)}")
             await acleanup_run(run_context.run_id)
+            await acleanup_member_runs(run_context.run_id)
         except asyncio.CancelledError:
             # Task-level shutdown (event loop stopping), not run-cancellation:
             # best-effort persist so pollers are not left with a run stuck at
@@ -2178,6 +2184,7 @@ async def _arun_background_stream(
             except Exception:
                 log_error(f"Failed to persist cancelled state for background stream run {run_id}", exc_info=True)
             await acleanup_run(run_id)
+            await acleanup_member_runs(run_id)
         except Exception:
             log_error(f"Background stream run {run_id} failed", exc_info=True)
             # Persist ERROR status — only persist the changed run (O(1))
@@ -2796,6 +2803,7 @@ async def _arun_stream(
 
         # Always clean up the run tracking
         await acleanup_run(run_response.run_id)  # type: ignore
+        await acleanup_member_runs(run_response.run_id)  # type: ignore
 
 
 def arun_dispatch(  # type: ignore
@@ -3929,6 +3937,7 @@ def _continue_run(
         disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
     return run_response
 
 
@@ -4240,6 +4249,7 @@ def _continue_run_stream(
         disconnect_connectable_tools(agent)
         # Always clean up the run tracking
         cleanup_run(run_response.run_id)  # type: ignore
+        cleanup_member_runs(run_response.run_id)  # type: ignore
 
 
 def acontinue_run_dispatch(  # type: ignore
@@ -4647,6 +4657,7 @@ async def _acontinue_run_background_stream(
                     f"Failed to persist cancelled state for background continue-run stream {_run_id}", exc_info=True
                 )
             await acleanup_run(_run_id)
+            await acleanup_member_runs(_run_id)
         except Exception:
             log_error(f"Background continue-run stream {_run_id} failed", exc_info=True)
             producer_terminal = RunStatus.error
@@ -5228,6 +5239,7 @@ async def _acontinue_run(
         # Always clean up the run tracking
         if run_response is not None and run_response.run_id:
             await acleanup_run(run_response.run_id)
+            await acleanup_member_runs(run_response.run_id)
     return run_response  # type: ignore
 
 
@@ -5858,6 +5870,7 @@ async def _acontinue_run_stream(
         cleanup_run_id = run_response.run_id if run_response and run_response.run_id is not None else run_id
         if cleanup_run_id is not None:
             await acleanup_run(cleanup_run_id)
+            await acleanup_member_runs(cleanup_run_id)
 
 
 # ---------------------------------------------------------------------------
@@ -6283,6 +6296,7 @@ def _persist_cancelled_run_in_background(
             # re-cancelled; clean up here too so the run is never left tracked.
             if run_response.run_id:
                 await acleanup_run(run_response.run_id)
+                await acleanup_member_runs(run_response.run_id)
         except Exception as store_err:
             log_warning(f"Failed to persist cancelled run: {store_err}")
 
