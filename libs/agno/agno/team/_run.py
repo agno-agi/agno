@@ -8840,9 +8840,10 @@ def _raise_if_stale_paused_over_terminal(
     stored_status = _as_run_status(getattr(stored_run, "status", None))
     caller_status = _as_run_status(getattr(run_response, "status", None))
     if stored_status in (RunStatus.completed, RunStatus.cancelled) and caller_status == RunStatus.paused:
+        status_label = stored_status.value if isinstance(stored_status, RunStatus) else stored_status
         raise RunNotContinuableError(
             f"Cannot continue run {run_response.run_id}: the stored run has status "
-            f"{stored_status.value} and cannot be continued in place from a paused "
+            f"{status_label} and cannot be continued in place from a paused "
             "caller snapshot. The stored run is unchanged."
         )
 
