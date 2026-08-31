@@ -98,7 +98,7 @@ google = ["google-genai>=1.52.0", "pydantic>=2.12.5"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
 infinity = ["infinity_client"]
-litellm = ["litellm<=1.82.6"]
+litellm = ["litellm>=1.83.0"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
 mistral = ["mistralai>=2.0.0"]
@@ -275,7 +275,7 @@ models = [
   "agno[groq]",
   "agno[ibm]",
   # "agno[infinity]",  # Excluded: infinity_client pins httpx<0.28.0, unresolvable next to a2a-sdk (httpx>=0.28.1) in agno[tests]
-  # "agno[litellm]",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
+  "agno[litellm]",
   "agno[lmstudio]",
   "agno[meta]",
   "agno[mistral]",
@@ -294,7 +294,7 @@ tools = [
   "agno[cartesia]",
   "agno[code]",
   "agno[confluence]",
-  # "agno[crawl4ai]",  # Excluded: depends on litellm, which was compromised on PyPI (March 24, 2026)
+  "agno[crawl4ai]",
   "agno[daytona]",
   "agno[ddg]",
   "agno[docling]",
