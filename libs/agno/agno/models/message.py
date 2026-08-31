@@ -343,6 +343,10 @@ class Message(BaseModel):
             message_dict["files"] = [file.to_dict() for file in self.files]
         if self.audio_output:
             message_dict["audio_output"] = self.audio_output.to_dict()
+        if self.image_output:
+            message_dict["image_output"] = self.image_output.to_dict()
+        if self.video_output:
+            message_dict["video_output"] = self.video_output.to_dict()
 
         if self.references:
             message_dict["references"] = self.references.model_dump()
