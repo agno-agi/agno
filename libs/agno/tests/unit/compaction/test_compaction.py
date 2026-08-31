@@ -359,6 +359,26 @@ def test_plan_agrees_with_compact_when_worthwhile():
     assert record.boundary == boundary
 
 
+def test_run_output_carries_the_compaction_record():
+    """`run.compaction` is the documented way to inspect what happened."""
+    from agno.run.agent import RunOutput
+
+    record = CompactionRecord(
+        messages_compacted=6, summary="s", boundary=6, archive_path="0001.md", tokens_before=100, tokens_after=40
+    )
+    run = RunOutput(run_id="r", session_id="s", compaction=record)
+
+    restored = RunOutput.from_dict(run.to_dict())
+    assert restored.compaction == record
+
+
+def test_run_output_without_compaction_serializes_cleanly():
+    from agno.run.agent import RunOutput
+
+    assert "compaction" not in RunOutput(run_id="r", session_id="s").to_dict()
+    assert RunOutput.from_dict({"run_id": "r", "session_id": "s"}).compaction is None
+
+
 # --- events --------------------------------------------------------------
 
 

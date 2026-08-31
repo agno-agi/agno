@@ -51,14 +51,19 @@ if __name__ == "__main__":
 
     for question in questions:
         print(f"\n--- {question}")
-        agent.print_response(question)
+        run = agent.run(question)
+        print(run.content)
 
-    # The summary shortens the request, never the record.
+        # `run.compaction` reports what compaction did on this run, if anything.
+        if run.compaction is not None:
+            r = run.compaction
+            print(
+                f"\n[compacted {r.messages_compacted} messages at boundary {r.boundary}: "
+                f"{r.tokens_before} -> {r.tokens_after} tokens, archived at {r.archive_path}]"
+            )
+
+    # The summary shortens the request, never the record: every message the
+    # session stored is still there.
     session = agent.get_session(session_id="compaction_demo")
     stored = sum(len(run.messages or []) for run in session.runs or [])
-    record = (session.session_data or {}).get("compaction")
-
     print(f"\nMessages still stored in the session: {stored}")
-    if record:
-        print(f"Messages replaced by the summary: {record['messages_compacted']}")
-        print(f"Archived at: {record.get('archive_path')}")

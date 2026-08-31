@@ -23,6 +23,7 @@ from agno.utils.media import (
 )
 
 if TYPE_CHECKING:
+    from agno.compaction.types import CompactionRecord
     from agno.session.summary import SessionSummary
 
 
@@ -667,6 +668,8 @@ class RunOutput:
     model_provider: Optional[str] = None
     messages: Optional[List[Message]] = None
     metrics: Optional[RunMetrics] = None
+    # What compaction did to this run's context, when it ran.
+    compaction: Optional["CompactionRecord"] = None
     additional_input: Optional[List[Message]] = None
 
     tools: Optional[List[ToolExecution]] = None
@@ -752,6 +755,7 @@ class RunOutput:
     _HAND_SERIALIZED_FIELDS = (
         "messages",
         "metrics",
+        "compaction",
         "tools",
         "metadata",
         "images",
@@ -785,6 +789,9 @@ class RunOutput:
 
         if self.metrics is not None:
             _dict["metrics"] = self.metrics.to_dict() if isinstance(self.metrics, RunMetrics) else self.metrics
+
+        if self.compaction is not None:
+            _dict["compaction"] = self.compaction.to_dict() if hasattr(self.compaction, "to_dict") else self.compaction
 
         if self.events is not None:
             _dict["events"] = [e.to_dict() for e in self.events]
@@ -944,6 +951,12 @@ class RunOutput:
         if metrics:
             metrics = RunMetrics.from_dict(metrics)
 
+        compaction = data.pop("compaction", None)
+        if compaction:
+            from agno.compaction.types import CompactionRecord
+
+            compaction = CompactionRecord.from_dict(compaction)
+
         additional_input = data.pop("additional_input", None)
 
         if additional_input is not None:
@@ -970,6 +983,7 @@ class RunOutput:
         return cls(
             messages=messages,
             metrics=metrics,
+            compaction=compaction,
             citations=citations,
             tools=tools,
             images=images,

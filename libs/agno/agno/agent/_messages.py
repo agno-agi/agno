@@ -197,6 +197,9 @@ def apply_compaction(
     # Measure before storing, so the persisted record carries the real sizes.
     _log_compaction(new_record, in_context, compacted, inputs)
     _store_compaction(session, new_record)
+    # Surface it on the run, so `run.compaction` reports what happened here.
+    if run_response is not None:
+        run_response.compaction = new_record
     if events is not None:
         events.extend(_compaction_events(run_response, new_record))
     return compacted
@@ -247,6 +250,9 @@ async def aapply_compaction(
     # Measure before storing, so the persisted record carries the real sizes.
     _log_compaction(new_record, in_context, compacted, inputs)
     _store_compaction(session, new_record)
+    # Surface it on the run, so `run.compaction` reports what happened here.
+    if run_response is not None:
+        run_response.compaction = new_record
     if events is not None:
         events.extend(_compaction_events(run_response, new_record))
     return compacted
