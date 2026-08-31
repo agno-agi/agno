@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional, Type, Union
+from warnings import warn
 
 from pydantic import BaseModel
 
@@ -29,8 +30,12 @@ class Perplexity(OpenAILike):
     """
     A class for using models hosted on Perplexity.
 
+    This class uses Perplexity's deprecated Sonar Chat Completions API, which is
+    supported until September 27, 2026. For new integrations, use
+    ``OpenAIResponses`` with Perplexity's Agent API.
+
     Attributes:
-        id (str): The model id. Defaults to "sonar".
+        id (str): The model id. Defaults to "not-provided".
         name (str): The model name. Defaults to "Perplexity".
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
@@ -38,7 +43,7 @@ class Perplexity(OpenAILike):
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 
-    id: str = "sonar"
+    id: str = "not-provided"
     name: str = "Perplexity"
     provider: str = "Perplexity"
     # Perplexity returns cumulative token counts in each streaming chunk, so only collect on final chunk
@@ -51,6 +56,16 @@ class Perplexity(OpenAILike):
 
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        warn(
+            "Perplexity Sonar Chat Completions is deprecated and will be supported until September 27, 2026. "
+            "Use agno.models.openai.OpenAIResponses with base_url='https://api.perplexity.ai/v1' for "
+            "Perplexity's Agent API. See https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     def _get_client_params(self) -> Dict[str, Any]:
         """
