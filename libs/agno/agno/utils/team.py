@@ -1,4 +1,4 @@
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Union
 
 from agno.agent import Agent
 from agno.media import Audio, File, Image, Video
@@ -53,6 +53,58 @@ def get_member_id(member: Union[Agent, "Team"]) -> Optional[str]:
         return url_safe_string(member.name)
     else:
         return None
+
+
+def _member_identity_label(member: Union[Agent, "Team"]) -> str:
+    """Describe a member for duplicate-id errors: originals plus the resolved key."""
+    member_id = getattr(member, "id", None)
+    member_name = getattr(member, "name", None)
+    if member_id is not None:
+        if member_name:
+            return f"id={member_id!r} name={member_name!r}"
+        return f"id={member_id!r}"
+    if member_name is not None:
+        return f"name={member_name!r} (normalized {url_safe_string(member_name)!r})"
+    return "<unnamed member>"
+
+
+def validate_unique_member_ids(
+    members: Sequence[Union[Agent, "Team"]],
+    *,
+    team_id: Optional[str] = None,
+    team_name: Optional[str] = None,
+) -> None:
+    """Reject duplicate resolved ids among a team's direct members.
+
+    Member identity is a namespace-local primary key: ``(team, member_id)``
+    must be unique. Resolution uses ``get_member_id`` (explicit id, else
+    ``url_safe_string(name)``), so name-fallback collisions such as
+    ``Right Team`` / ``right_team`` / ``RightTeam`` fail closed instead of
+    first-match. Same id under different parent teams is allowed.
+
+    Members with no resolvable id are skipped: they receive a unique id at
+    ``set_id`` time and are not addressable for delegation until then.
+    """
+    seen: Dict[str, List[str]] = {}
+    for member in members:
+        resolved_id = get_member_id(member)
+        if not resolved_id:
+            continue
+        seen.setdefault(resolved_id, []).append(_member_identity_label(member))
+
+    collisions = {mid: labels for mid, labels in seen.items() if len(labels) > 1}
+    if not collisions:
+        return
+
+    team_label = team_name or team_id or "this team"
+    collision_parts = [f"{mid!r} <- {'; '.join(labels)}" for mid, labels in collisions.items()]
+    raise ValueError(
+        f"Duplicate member id(s) among direct members of team {team_label!r}: "
+        f"{'; '.join(collision_parts)}. "
+        "Member ids are a namespace-local primary key used for delegation and "
+        "HITL continue and must be unique within a team. "
+        "Assign each member an explicit unique id."
+    )
 
 
 def add_interaction_to_team_run_context(
