@@ -5,10 +5,24 @@ import inspect
 import logging
 import re
 from contextlib import contextmanager
-from typing import TYPE_CHECKING, Any, Callable, Dict, Iterator, List, Literal, Optional, Union
+from copy import deepcopy
+from typing import (
+    TYPE_CHECKING,
+    Any,
+    Callable,
+    Dict,
+    Iterator,
+    List,
+    Literal,
+    NamedTuple,
+    Optional,
+    Union,
+    get_type_hints,
+)
 from uuid import uuid4
 
 from fastmcp import Context, FastMCP
+from fastmcp.exceptions import ToolError
 from fastmcp.server.http import (
     StarletteWithLifespan,
 )
@@ -16,7 +30,7 @@ from fastmcp.tools import ToolResult
 from mcp.types import ToolAnnotations
 
 from agno.db.base import SessionType
-from agno.os.mcp_results import build_run_tool_result, trim_session_run
+from agno.os.mcp_results import build_custom_tool_result, build_run_tool_result, trim_session_run
 from agno.os.schema import (
     AgentSummaryResponse,
     PaginatedResponse,
@@ -40,6 +54,14 @@ from agno.run.agent import RunEvent, RunOutput
 from agno.run.team import TeamRunEvent, TeamRunOutput
 from agno.run.workflow import WorkflowRunEvent, WorkflowRunOutput
 from agno.tools.annotations import tool_presentation
+from agno.utils.schema import (
+    AGNO_INJECTED_PARAMS,
+    IDENTITY_INJECTED_PARAMS,
+    annotation_binds,
+    annotation_reaches,
+    identity_injected_types,
+    unwrap_annotation,
+)
 from agno.utils.string import generate_component_id_from_name, generate_id_from_name
 
 if TYPE_CHECKING:
@@ -158,6 +180,11 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
     as "partial"), so the exposure collision check downstream sees the real registry
     rather than a re-derivation.
 
+    A ``Toolkit`` is flattened into one MCP tool per method, the way an agent takes it
+    apart. Each flattened name goes through the same collision check as a hand-written
+    custom tool, so a toolkit method named like a default tool (``WorkflowTools`` really
+    does register ``run_workflow``) is a startup error rather than a silent replacement.
+
     A custom tool named like a default tool that will register (its tags intersect
     ``enabled_tags``), or like an earlier custom tool, is a hard error, matching the
     exposure path: FastMCP would otherwise warn-and-REPLACE, so a custom
@@ -165,6 +192,8 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
     keep steering callers to the builtin's schema), and a duplicate custom name would
     silently swallow the first tool.
     """
+    from agno.tools.toolkit import Toolkit
+
     taken = {
         builtin: f'the default tool "{builtin}"'
         for builtin, tags in _BUILTIN_TOOL_NAMES.items()
@@ -172,6 +201,26 @@ def _register_custom_tools(mcp: FastMCP, entries: List[Any], enabled_tags: "Opti
     }
     names: Dict[str, str] = {}
     for tool in entries:
+        if isinstance(tool, Toolkit):
+            # ``get_async_functions()`` is the merged surface with async variants
+            # preferred -- the same set an agent running in async mode would get --
+            # already filtered by the toolkit's include_tools/exclude_tools.
+            members = list(tool.get_async_functions().values())
+            if not members:
+                raise ValueError(
+                    f'MCPConfig.tools got toolkit "{tool.name}", which registers no functions, so it would '
+                    "publish nothing. A toolkit that discovers its tools while connecting (MCPTools) has to "
+                    "be connected before the server is built; otherwise widen its include_tools/exclude_tools, "
+                    "or drop it."
+                )
+            for member in members:
+                name = _register_custom_tool(mcp, member, taken=taken, enabled_tags=enabled_tags, toolkit=tool)
+                # The label names the toolkit, because a collision on a flattened method
+                # is not fixed by renaming a "custom tool" the deployer never wrote.
+                label = f'toolkit "{tool.name}" tool "{name}"'
+                names[name] = label
+                taken[name] = label
+            continue
         name = _register_custom_tool(mcp, tool, taken=taken, enabled_tags=enabled_tags)
         label = f'custom tool "{name}"'
         names[name] = label
@@ -212,38 +261,373 @@ def _custom_tool_presentation(tool: Any) -> "tuple[Optional[str], Optional[ToolA
     return title, (ToolAnnotations(**annotations) if annotations else None)
 
 
+class _Hidden(NamedTuple):
+    """One parameter kept out of an MCP tool's schema, and what the server puts in it.
+
+    ``bind`` is None when the server has nothing to put there: the parameter is still
+    hidden (pydantic could not describe it) but its own default stands. ``always``
+    writes the bound value even over a non-empty default, which is what the reserved
+    names get -- an authenticated caller's identity is never the tool author's to
+    default away.
+    """
+
+    bind: Optional[Callable[[], Any]]
+    always: bool
+
+
+# A hidden parameter has to be passed by keyword at call time. The other kinds cannot
+# be, so a framework-typed one among them is refused by name rather than left in the
+# schema for pydantic to fail on.
+_MCP_INJECTABLE_KINDS = (inspect.Parameter.POSITIONAL_OR_KEYWORD, inspect.Parameter.KEYWORD_ONLY)
+
+# Approval gates that live in ``FunctionCall.execute``. An MCP call runs the entrypoint
+# directly, so a tool carrying one of these would run its body with the gate skipped.
+_MCP_UNSUPPORTED_GATES = ("requires_confirmation", "requires_user_input", "external_execution", "approval_type")
+
+
+def _new_mcp_run_context() -> Any:
+    """A RunContext for one MCP tool call, carrying the authenticated caller.
+
+    There is no run and no session behind an MCP tool call, so both ids are fresh per
+    call: what a tool writes into ``session_state`` here is not read back by the next
+    call. ``user_id`` is the part that carries real information -- the JWT subject, the
+    same value ``user_id`` injection resolves.
+    """
+    from agno.run.base import RunContext
+
+    return RunContext(run_id=str(uuid4()), session_id=str(uuid4()), user_id=_resolve_user_id(None))
+
+
+def _identity_binder(hint: Any) -> "Optional[Callable[[], Any]]":
+    """What the server can put INTO a parameter of this type, or None for nothing.
+
+    Deliberately narrower than the rule that decides what to HIDE, and mirroring
+    ``FunctionCall._build_entrypoint_args``: a ``List[RunContext]`` names an identity
+    type, so it cannot stay in the schema, but it holds run contexts rather than being
+    one and nothing can be bound into it. Agent and Team bind None because an MCP tool
+    call runs outside any component.
+    """
+    from agno.agent.agent import Agent
+    from agno.run.base import RunContext
+    from agno.team.team import Team
+
+    hint = unwrap_annotation(hint)
+    if annotation_binds(hint, (RunContext,)):
+        return _new_mcp_run_context
+    if annotation_binds(hint, (Agent, Team)):
+        return lambda: None
+    return None
+
+
+def _toolkit_clause(toolkit: Any, method: "Optional[str]") -> str:
+    """The 'or drop it from the toolkit' half of a refusal, when one applies."""
+    if toolkit is None:
+        return ""
+    return f' (or drop it from toolkit "{toolkit.name}" with exclude_tools=["{method}"])'
+
+
+def _mcp_hidden_params(
+    fn: Callable,
+    owner: "Optional[str]",
+    reserved_names: bool = False,
+    toolkit: Any = None,
+    drop_var_keyword: bool = False,
+) -> "Dict[str, _Hidden]":
+    """The parameters kept out of an MCP tool's schema, and how each one is filled.
+
+    Two rules, each mirroring one the agent-facing path already uses:
+
+      * By NAME -- ``user_id`` always, because the JWT subject is the server's to
+        resolve and never the caller's to supply. For an Agno ``Function`` the identity
+        names the framework fills itself (``agent``/``team``/``run_context`` and the
+        ``_agno_`` channels) are hidden too: that object is the same one an agent would
+        run, and it must not have two contracts. A bare callable handed to
+        ``MCPConfig.tools`` was written for this surface, so its own ``agent: str``
+        stays its own. Media names are hidden on NEITHER path -- nothing here has run
+        media to inject, so hiding one would leave it fillable by nobody.
+      * By TYPE -- any annotation that can REACH an identity type. This is broader than
+        the model-facing ``is_framework_typed`` on purpose. That rule keeps
+        ``owner: Union[str, Agent]`` fillable because a model can only ever send the
+        string half; here pydantic builds the schema from the real signature and fails
+        on ``BaseDb`` regardless of what the caller would have sent.
+
+    A parameter the server must fill but cannot pass by keyword, and a required one
+    nothing can be bound into, are refused by name -- otherwise they surface at startup
+    as a pydantic error naming a type the tool author never wrote.
+    """
+    try:
+        sig = inspect.signature(fn)
+    except (ValueError, TypeError):
+        return {}
+
+    hidden: Dict[str, _Hidden] = {}
+
+    def claim(param_name: str, entry: _Hidden) -> None:
+        param = sig.parameters[param_name]
+        if param.kind not in _MCP_INJECTABLE_KINDS:
+            raise ValueError(
+                f'MCP custom tool "{owner}" declares "{param_name}" as a {param.kind.description} parameter. '
+                "The server has to fill it -- pydantic cannot build a tool schema for it -- and cannot pass "
+                f"it by keyword. Make it a normal or keyword-only parameter{_toolkit_clause(toolkit, owner)}."
+            )
+        hidden[param_name] = entry
+
+    # ``user_id`` is hidden on the hand-written path only. That contract was written for
+    # a tool authored FOR this surface, where the name means "who is calling". A toolkit
+    # method takes its identity from the RunContext instead -- agno never injects
+    # ``user_id`` by name -- so a ``user_id`` argument there is a domain value
+    # (``ZoomTools.get_upcoming_meetings(user_id="me")`` asks which Zoom account to read),
+    # and overwriting it with the JWT subject would break the call rather than secure it.
+    if drop_var_keyword:
+        # ``**kwargs`` has no MCP schema -- FastMCP refuses the tool outright rather than
+        # publishing one -- so a catch-all that the Function does not describe separately
+        # is dropped from what clients see. The named parameters beside it still describe
+        # the tool (EmailTools.email_user(subject, body, **kwargs)), and nothing fills it:
+        # an MCP caller sends a JSON object, which binds to the named parameters anyway.
+        for param_name, param in sig.parameters.items():
+            if param.kind is inspect.Parameter.VAR_KEYWORD:
+                hidden[param_name] = _Hidden(bind=None, always=False)
+
+    by_name = (() if toolkit is not None else ("user_id",)) + (IDENTITY_INJECTED_PARAMS if reserved_names else ())
+    for param_name in by_name:
+        if param_name not in sig.parameters:
+            continue
+        if param_name == "user_id":
+            claim(param_name, _Hidden(bind=lambda: _resolve_user_id(None), always=True))
+        elif param_name in ("run_context", "_agno_run_context"):
+            claim(param_name, _Hidden(bind=_new_mcp_run_context, always=True))
+        else:
+            claim(param_name, _Hidden(bind=lambda: None, always=True))
+
+    try:
+        hints = get_type_hints(fn)
+    except Exception:
+        # One unreadable annotation fails the whole walk. The reserved names above still
+        # stand; the typed rule is skipped rather than guessed at by evaluating
+        # annotation text, which would run the tool author's strings at startup.
+        hints = {}
+
+    for param_name, hint in hints.items():
+        # get_type_hints includes "return", which is not a parameter.
+        if param_name == "return" or param_name not in sig.parameters or param_name in hidden:
+            continue
+        # Per parameter, not per signature: one annotation this walk cannot read must not
+        # leave a neighbouring identity parameter unclassified and caller-facing.
+        try:
+            owned = annotation_reaches(hint, identity_injected_types())
+        except Exception:
+            owned = True  # Cannot classify it, so do not put it in the schema.
+        if not owned:
+            continue
+        binder = _identity_binder(hint)
+        if binder is None and sig.parameters[param_name].default is inspect.Parameter.empty:
+            raise ValueError(
+                f'MCP custom tool "{owner}" declares required parameter "{param_name}" as {hint!r}, which the '
+                "server must keep out of the tool schema but has nothing to fill it with. Drop it from the "
+                "signature, or give it a default and expect that default on every call"
+                f"{_toolkit_clause(toolkit, owner)}."
+            )
+        claim(param_name, _Hidden(bind=binder, always=False))
+
+    return hidden
+
+
+def _reject_gated_function(tool: Any, name: "Optional[str]", toolkit: Any) -> None:
+    """Refuse a tool whose approval gate this surface cannot honour.
+
+    Confirmation, user input and external execution all live in ``FunctionCall.execute``.
+    An MCP call reaches the entrypoint directly, so publishing such a tool would run the
+    gated body with no gate -- ``Workspace`` alone would put ``delete_file`` and
+    ``run_command`` on the wire ungated. Refused at startup rather than downgraded.
+    """
+    gates = [gate for gate in _MCP_UNSUPPORTED_GATES if getattr(tool, gate, None)]
+    if not gates:
+        return
+    raise ValueError(
+        f'MCP custom tool "{name}" sets {", ".join(gates)}, which the MCP server cannot honour: an MCP call '
+        "runs the tool directly, so the approval step would be skipped. Drop the gate for this surface"
+        f"{_toolkit_clause(toolkit, name)}."
+    )
+
+
+def _takes_var_keyword(fn: Callable) -> bool:
+    """Whether the callable ends in ``**kwargs``, which FastMCP refuses to publish."""
+    try:
+        return any(param.kind is inspect.Parameter.VAR_KEYWORD for param in inspect.signature(fn).parameters.values())
+    except (ValueError, TypeError):
+        return False
+
+
+def _declares_own_schema(tool: Any, entrypoint: Callable) -> bool:
+    """Whether this Function carries the schema its signature cannot express.
+
+    A dynamic toolkit builds its tools at runtime and puts the schema on the Function
+    rather than in the signature: ``MCPTools`` copies each remote tool's ``inputSchema``,
+    ``ApifyTools`` takes ``**kwargs`` and describes the actor's inputs separately. FastMCP
+    derives its schema by introspecting the callable, which for those refuses outright --
+    "Functions with **kwargs are not supported as tools" -- and takes the whole server
+    down with it.
+
+    True only when the entrypoint genuinely cannot describe itself AND the Function does.
+    Everywhere else the signature stays the source of truth, so an ordinary tool is
+    unaffected.
+    """
+    from agno.tools.function import Function
+
+    if not isinstance(tool, Function) or not _takes_var_keyword(entrypoint):
+        return False
+    parameters = tool.parameters
+    return isinstance(parameters, dict) and bool(parameters.get("properties"))
+
+
+def _declared_parameters(tool: Any, entrypoint: Callable, hidden: "Dict[str, _Hidden]") -> "Dict[str, Any]":
+    """The Function's declared schema, minus the names the server fills itself.
+
+    Only two things are removed, and both are ones the caller could not have meant.
+    Whatever the signature hid is dropped because the wrapper injects it, and the
+    ``_agno_``-prefixed channels are dropped because they are agno's own wire names.
+
+    The bare identity names are deliberately NOT dropped. A declared schema reaches this
+    point because the signature could not describe the tool -- typically a remote tool's
+    own ``inputSchema``, proxied through ``MCPTools`` -- and ``agent`` or ``team`` there
+    belongs to the far side. Removing them hid a legitimate argument from the model while
+    a client could still send it: FastMCP validates against the declared schema (see
+    ``_schema_validator``) but the name never reached anything of agno's either way.
+
+    The catch-all's own name goes too. agno derives a property literally named after it
+    from a Google-style ``Args:`` docstring, and publishing a required ``kwargs`` of
+    unspecified type describes nothing a caller can fill.
+    """
+    owned = set(hidden) | set(AGNO_INJECTED_PARAMS)
+    try:
+        owned.update(
+            name
+            for name, param in inspect.signature(entrypoint).parameters.items()
+            if param.kind is inspect.Parameter.VAR_KEYWORD
+        )
+    except (ValueError, TypeError):
+        pass
+
+    declared = deepcopy(tool.parameters)
+    properties = {name: schema for name, schema in declared.get("properties", {}).items() if name not in owned}
+    declared["properties"] = properties
+    required = [name for name in declared.get("required", []) or [] if name in properties]
+    if required:
+        declared["required"] = required
+    else:
+        declared.pop("required", None)
+    return declared
+
+
+def _schema_validator(schema: "Dict[str, Any]") -> "Optional[Callable[[Dict[str, Any]], None]]":
+    """A checker for arguments against a declared schema, or None if it cannot be built.
+
+    An ordinary tool gets this for free: FastMCP builds a pydantic model from the
+    signature, so a missing argument or a wrong type is rejected before the body runs. A
+    declared schema skips that machinery entirely, which left two tools on the same
+    server disagreeing about whether a malformed call is an error -- and a malformed call
+    from a model is ordinary traffic, not an attack.
+
+    ``jsonschema`` ships with the MCP stack itself, so this costs no new dependency; if it
+    is somehow absent the tool keeps working exactly as it did, unvalidated.
+    """
+    try:
+        from jsonschema import Draft202012Validator  # type: ignore[import-untyped]
+    except Exception:
+        return None
+    try:
+        validator = Draft202012Validator(schema)
+    except Exception:
+        # A schema this validator cannot compile is the remote's to fix, not a reason to
+        # refuse the tool: it was serving unvalidated a moment ago.
+        return None
+
+    def validate(arguments: "Dict[str, Any]") -> None:
+        errors = sorted(validator.iter_errors(arguments), key=lambda error: list(error.path))
+        if not errors:
+            return
+        detail = "; ".join(
+            f"{'.'.join(str(part) for part in error.path) or '<root>'}: {error.message}" for error in errors[:5]
+        )
+        raise ToolError(f"Invalid arguments: {detail}")
+
+    return validate
+
+
 def _register_custom_tool(
-    mcp: FastMCP, tool: Any, taken: "Optional[Dict[str, str]]" = None, enabled_tags: "Optional[set]" = None
+    mcp: FastMCP,
+    tool: Any,
+    taken: "Optional[Dict[str, str]]" = None,
+    enabled_tags: "Optional[set]" = None,
+    toolkit: Any = None,
 ) -> str:
     """Register a single custom tool, supporting plain callables and Agno tools/Functions.
 
     Returns the name the tool registered under. ``taken`` holds names already claimed
     on this server (checked before registration -- FastMCP replaces on duplicates
     rather than raising). ``enabled_tags`` steers the collision advice toward the knob
-    that actually frees the name.
+    that actually frees the name. ``toolkit`` is the toolkit this tool was flattened
+    out of, used only to point a refusal at the knob that frees it.
     """
-    from fastmcp.tools import Tool
+    from fastmcp.tools import FunctionTool, Tool
 
     # Agno tool / Function: a callable ``entrypoint`` plus name/description metadata.
     entrypoint = getattr(tool, "entrypoint", None)
     if callable(entrypoint):
         name = getattr(tool, "name", None) or getattr(entrypoint, "__name__", None)
         description = getattr(tool, "description", None)
+        _reject_gated_function(tool, name, toolkit)
+        uses_declared_schema = _declares_own_schema(tool, entrypoint)
+        hidden = _mcp_hidden_params(
+            entrypoint,
+            owner=name,
+            reserved_names=True,
+            toolkit=toolkit,
+            # A declared schema is published verbatim, so the catch-all it is declared
+            # THROUGH has to stay in the wrapper's signature to receive the arguments.
+            drop_var_keyword=not uses_declared_schema,
+        )
         # Presentation metadata is read only from an Agno Function, never duck-typed off
         # an arbitrary object: a stray ``.annotations`` attribute on some other tool-ish
         # object means something else entirely. Marketplace scans reject tools that carry
         # no annotations, so a custom tool that wants a listing sets them on its Function.
         title, annotations = _custom_tool_presentation(tool)
-        tool_obj = Tool.from_function(
-            _inject_user_id(entrypoint),
-            name=name,
-            title=title,
-            description=description,
-            annotations=annotations,
-        )
+        returns_tool_result = _returns_tool_result(entrypoint)
+        wrapped = _build_mcp_wrapper(entrypoint, hidden, convert_result=returns_tool_result)
+        if uses_declared_schema:
+            declared = _declared_parameters(tool, entrypoint, hidden)
+            # Built directly rather than through ``Tool.from_function``, which would
+            # re-derive the schema from a signature that cannot express one.
+            tool_obj = FunctionTool(
+                fn=_build_mcp_wrapper(
+                    entrypoint, hidden, convert_result=returns_tool_result, validate=_schema_validator(declared)
+                ),
+                name=name,
+                title=title,
+                description=description,
+                annotations=annotations,
+                parameters=declared,
+            )
+        else:
+            tool_obj = Tool.from_function(
+                wrapped,
+                name=name,
+                title=title,
+                description=description,
+                annotations=annotations,
+                # A ``ToolResult`` return is converted into content blocks on the way
+                # out, so the schema FastMCP would derive from that model describes
+                # something the tool never sends.
+                **({"output_schema": None} if returns_tool_result else {}),
+            )
     elif callable(tool):
         # Plain callable: name/description inferred from ``__name__``/docstring.
-        tool_obj = Tool.from_function(_inject_user_id(tool))
+        hidden = _mcp_hidden_params(tool, owner=getattr(tool, "__name__", "custom tool"), drop_var_keyword=True)
+        returns_tool_result = _returns_tool_result(tool)
+        tool_obj = Tool.from_function(
+            _build_mcp_wrapper(tool, hidden, convert_result=returns_tool_result),
+            **({"output_schema": None} if returns_tool_result else {}),
+        )
     else:
         raise TypeError(
             f"Cannot register MCP tool of type {type(tool).__name__!r}; expected a callable or an Agno tool/Function."
@@ -251,8 +635,17 @@ def _register_custom_tool(
 
     if taken and tool_obj.name in taken:
         claimant = taken[tool_obj.name]
+        # A flattened toolkit method is not the deployer's to rename -- the name comes
+        # from someone else's class -- so its advice names the knob that frees it.
+        free_it = (
+            f'Drop it from toolkit "{toolkit.name}" with exclude_tools=["{tool_obj.name}"]'
+            if toolkit is not None
+            else "Rename the custom tool"
+        )
         if claimant.startswith("the default tool"):
-            advice = f"Rename the custom tool, {_collision_free_advice(tool_obj.name, enabled_tags)}so each tool name is unique."
+            advice = f"{free_it}, {_collision_free_advice(tool_obj.name, enabled_tags)}so each tool name is unique."
+        elif toolkit is not None:
+            advice = f"{free_it} so each tool name is unique."
         else:
             advice = "Rename one of them so each tool name is unique."
         raise ValueError(f'MCP custom tool name "{tool_obj.name}" collides with {claimant}. {advice}')
@@ -260,40 +653,121 @@ def _register_custom_tool(
     return tool_obj.name
 
 
-def _inject_user_id(fn: Callable) -> Callable:
-    """Inject the authenticated caller's user_id into a custom tool, hidden from clients.
+def _returns_tool_result(fn: Callable) -> bool:
+    """Whether the callable declares an Agno ``ToolResult`` return.
 
-    If ``fn`` declares a ``user_id`` parameter, return a wrapper that fills it with the
-    resolved JWT subject at call time and drops it from the wrapper's signature -- so it
-    does not appear in the MCP tool schema and cannot be supplied (or spoofed) by callers.
-    Tools that do not declare ``user_id`` are returned unchanged.
+    Read from the annotation rather than discovered at call time, because the same
+    answer settles two things at once: the result needs converting, and FastMCP must be
+    told NOT to derive an output schema from the ``ToolResult`` model -- otherwise
+    ``tools/list`` advertises a ToolResult-shaped ``outputSchema`` describing something
+    the tool never sends.
     """
+    from agno.tools.function import ToolResult
+
     try:
-        sig = inspect.signature(fn)
-    except (ValueError, TypeError):
-        return fn
-    if "user_id" not in sig.parameters:
+        hint = get_type_hints(fn).get("return")
+    except Exception:
+        hint = getattr(fn, "__annotations__", {}).get("return")
+    return isinstance(hint, type) and issubclass(hint, ToolResult)
+
+
+def _converted_result(value: Any) -> Any:
+    """An Agno ``ToolResult`` rendered as MCP content; anything else untouched."""
+    from agno.tools.function import ToolResult
+
+    if isinstance(value, ToolResult):
+        return build_custom_tool_result(value)
+    return value
+
+
+def _build_mcp_wrapper(
+    fn: Callable,
+    hidden: "Dict[str, _Hidden]",
+    convert_result: bool = False,
+    validate: "Optional[Callable[[Dict[str, Any]], None]]" = None,
+) -> Callable:
+    """Give FastMCP a signature without the framework's parameters, and fill them in.
+
+    On the agent-facing path FunctionCall assembles the arguments after the schema is
+    settled, so hiding and filling are separate steps. Here FastMCP reads this signature
+    to BUILD the schema, so a RunContext left in it is not merely exposed: pydantic
+    cannot describe one, and the server fails to start. The wrapper therefore drops the
+    hidden parameters from its own signature and puts the values back on the way through.
+
+    ``convert_result`` additionally renders an Agno ``ToolResult`` as MCP content blocks
+    on the way out, instead of letting it reach FastMCP's generic JSON serializer.
+
+    Tools with nothing to hide and nothing to convert are returned unchanged, so they
+    register exactly as they did before this wrapper existed.
+    """
+    if not hidden and not convert_result and validate is None:
         return fn
 
-    visible_params = [p for name, p in sig.parameters.items() if name != "user_id"]
-    new_sig = sig.replace(parameters=visible_params)
+    sig = inspect.signature(fn)
+    visible = [param for name, param in sig.parameters.items() if name not in hidden]
+    new_sig = sig.replace(parameters=visible)
+    # Positional arguments can only be re-bound by name when every visible parameter can
+    # take a keyword. Without that step a hidden parameter sitting BEFORE a visible one
+    # -- the shape of every RunContext-taking toolkit method -- would collide with its
+    # own injected value on a positional call.
+    positional_names = (
+        [param.name for param in visible] if all(p.kind in _MCP_INJECTABLE_KINDS for p in visible) else []
+    )
+
+    def visible_annotations() -> Dict[str, Any]:
+        """The annotations of the parameters that survived, plus the return type.
+
+        ``functools.wraps`` copies the wrapped function's ``__annotations__`` wholesale,
+        hidden parameters included -- and it copies the same dict object, so this builds
+        a new one rather than deleting from the original's. FastMCP reads annotations as
+        well as the signature, so a hidden parameter's annotation left behind is not
+        cosmetic: one that cannot be resolved at all (a framework type imported only
+        under ``if TYPE_CHECKING``) fails FastMCP's type adapter and the server never
+        starts, even though the parameter was correctly hidden.
+        """
+        annotations = {
+            param.name: param.annotation for param in visible if param.annotation is not inspect.Parameter.empty
+        }
+        if new_sig.return_annotation is not inspect.Signature.empty:
+            annotations["return"] = new_sig.return_annotation
+        return annotations
+
+    def prepare(args: tuple, kwargs: Dict[str, Any]) -> tuple:
+        if validate is not None and not args:
+            # Before injection, so the schema is checked against what the caller sent
+            # rather than against the framework values it never sees.
+            validate(kwargs)
+        if args and positional_names and len(args) <= len(positional_names):
+            names = positional_names[: len(args)]
+            if not any(name in kwargs for name in names):
+                kwargs.update(zip(names, args))
+                args = ()
+        for param_name, entry in hidden.items():
+            if entry.bind is None:
+                continue  # Hidden but unfillable: the parameter's own default stands.
+            value = entry.bind()
+            if entry.always or value is not None or sig.parameters[param_name].default is inspect.Parameter.empty:
+                kwargs[param_name] = value
+        return args
 
     if inspect.iscoroutinefunction(fn):
 
         @functools.wraps(fn)
         async def async_wrapper(*args: Any, **kwargs: Any) -> Any:
-            kwargs["user_id"] = _resolve_user_id(None)
-            return await fn(*args, **kwargs)
+            result = await fn(*prepare(args, kwargs), **kwargs)
+            return _converted_result(result) if convert_result else result
 
         async_wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+        async_wrapper.__annotations__ = visible_annotations()
         return async_wrapper
 
     @functools.wraps(fn)
     def wrapper(*args: Any, **kwargs: Any) -> Any:
-        kwargs["user_id"] = _resolve_user_id(None)
-        return fn(*args, **kwargs)
+        result = fn(*prepare(args, kwargs), **kwargs)
+        return _converted_result(result) if convert_result else result
 
     wrapper.__signature__ = new_sig  # type: ignore[attr-defined]
+    wrapper.__annotations__ = visible_annotations()
     return wrapper
 
 
@@ -1184,6 +1658,7 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
     from agno.agent.agent import Agent
     from agno.team.team import Team
     from agno.tools.component import ComponentTool
+    from agno.tools.toolkit import Toolkit
     from agno.workflow.workflow import Workflow
 
     def _concrete_kind(obj: Any) -> "Optional[str]":
@@ -1234,6 +1709,13 @@ def _split_tool_entries(mcp_config: "Optional[MCPConfig]", os: "AgentOS") -> "tu
                 f"MCPConfig.tools got the string {entry!r}; pass the component instance itself "
                 "(or a callable/Agno tool)."
             )
+        if isinstance(entry, Toolkit):
+            # Classified by type, not left to the heuristics below. A Toolkit carries an
+            # id like a component does, so a subclass that also defines ``arun`` would
+            # otherwise be read as an off-roster component and rejected as missing from
+            # a roster it was never meant to join.
+            customs.append(entry)
+            continue
         if isinstance(entry, (Agent, Team, Workflow)):
             kind, component = _locate_component(entry, os, expected_kind=_concrete_kind(entry))
             exposures.append((kind, component, None))

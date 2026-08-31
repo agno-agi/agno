@@ -2,7 +2,7 @@
 
 AgentOS can expose its agents, teams, and workflows as an MCP server at
 `/mcp`. These examples cover the server side of that boundary: the default
-operator surface, agents served directly as tools, custom tools, PAT
+operator surface, agents served directly as tools, custom tools, toolkits, PAT
 authentication, tool scoping, and two OAuth deployment choices. Examples where
 an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 
@@ -14,6 +14,7 @@ an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 | `agents_as_tools.py` | Turn the default tools off and expose agents directly as named MCP tools. |
 | `mcp_client.py` | Discover, pause, continue, cancel, and inspect runs with a protocol-level client. |
 | `custom_tools.py` | Disable the default tools and expose one purpose-built tool. |
+| `toolkit_tools.py` | Serve a whole toolkit, flattened into one MCP tool per method. |
 | `secure_mcp.py` | Mint a PAT, authorize its principal, restrict hosts and tool tags, and return full results. |
 | `oauth_builtin.py` | Run AgentOS's database-backed OAuth authorization server. |
 | `oauth_authkit.py` | Use WorkOS AuthKit as an external authorization server. |
@@ -116,6 +117,50 @@ tools; paused runs then say to resume over the REST API.
 `custom_tools.py` passes an Agno `@tool` through
 `MCPConfig(tools=[...])` and sets `default_tools=False`, leaving a
 single client-visible tool.
+
+`toolkit_tools.py` passes a whole `Toolkit` instead of a single tool. AgentOS
+flattens it into one MCP tool per method -- `MemoryTools(enable_think=False,
+enable_analyze=False)` becomes `get_memories`, `add_memory`, `update_memory`,
+and `delete_memory` -- the way an agent takes a toolkit apart. Each flattened name goes through the same
+collision check as a hand-written custom tool, so a toolkit method named like a
+default tool (`WorkflowTools` really does register `run_workflow`) fails at
+startup instead of silently replacing it. Narrow the published set with the
+toolkit's own `include_tools` / `exclude_tools`.
+
+Toolkit methods take framework arguments: every `MemoryTools` method declares
+`run_context: RunContext`. Those are kept out of the client-facing schema and
+filled server-side at call time, so `add_memory` publishes just `memory` and
+`topics` while its body still receives a context carrying the authenticated
+caller. This is not only about tidiness -- pydantic cannot build a schema for a
+`RunContext`, so a visible one would stop the server from starting. The same
+rule hides `Agent`- and `Team`-typed arguments, which arrive as `None` because
+an MCP call runs outside any component. Media arguments stay visible: nothing on
+this surface has run media to inject, so hiding one would leave it fillable by
+nobody. So does a toolkit method's own `user_id` -- agno fills identity from the
+RunContext, never by that name, so a `user_id` argument on a toolkit method is a
+domain value (`ZoomTools` asks which account to read) and stays the caller's to
+send. `user_id` on a tool you wrote for this surface is still filled from the
+JWT subject, as before.
+
+The identity in that RunContext is only as good as the deployment's
+authorization: without `AgentOS(authorization=True, ...)` there is no JWT
+subject, the resolved caller is `None`, and every client shares one identity.
+Configure authorization before serving a toolkit whose data is per-user.
+
+This server runs each tool call directly, so a toolkit's `connect()` and
+`close()` never fire and every call is handed a fresh `RunContext`. The shipped
+connection-managing toolkits (`PostgresTools`, `RedshiftTools`) connect
+themselves on use and are unaffected. A toolkit whose state is keyed on the run
+is not: `CodeMode` keys its kernel by `session_id`, so over MCP it would start a
+kernel per call and accumulate nothing. Serve that one over REST, where a run
+owns the session.
+
+A tool whose approval gate this surface cannot honour is refused at startup
+rather than published without it. `requires_confirmation`, `requires_user_input`
+and `external_execution` all live in the call path an MCP request bypasses, so
+`Workspace(root=".")` -- whose `delete_file` and `run_command` are
+confirmation-gated -- fails fast and names the knob that frees it. Serve the
+read-only surface (`allowed=["read", "list", "search"]`) instead.
 
 `secure_mcp.py` demonstrates the full security configuration:
 

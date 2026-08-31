@@ -59,6 +59,15 @@ class MCPConfig(BaseModel):
     #
     #   - a plain callable or an Agno ``@tool``/``Function`` -- a custom tool
     #     (name/description inferred from the function or taken from the tool);
+    #   - a ``Toolkit`` -- flattened into one MCP tool per method, the way an agent
+    #     takes it apart. Narrow the published set with the toolkit's own
+    #     ``include_tools``/``exclude_tools``; each flattened name goes through the
+    #     same collision check as a hand-written custom tool. This server runs each call
+    #     directly, so a toolkit's ``connect()``/``close()`` never fire: the shipped
+    #     ``_requires_connect`` toolkits (``PostgresTools``, ``RedshiftTools``) connect
+    #     themselves on use and are unaffected, but one whose state is keyed on the run
+    #     (``CodeMode``, whose kernel is keyed by ``session_id``) gets a fresh identity
+    #     every call and will not accumulate anything -- serve those over REST instead;
     #   - an ``Agent`` / ``Team`` / ``Workflow`` instance -- exposed as a tool named
     #     after its id, described by the component's own description;
     #   - ``component.as_tool(name=..., description=...)`` -- the same exposure with a
@@ -89,8 +98,26 @@ class MCPConfig(BaseModel):
     #
     # Identity: a custom tool may declare a ``user_id`` parameter. AgentOS fills it with
     # the authenticated caller's id (the JWT subject) and hides it from the client-facing
-    # schema, so clients cannot spoof it. Tools that need the full request can declare a
+    # schema, so clients cannot spoof it. A parameter typed ``RunContext``, ``Agent`` or
+    # ``Team`` is hidden and filled the same way, whatever it is called -- pydantic cannot
+    # build a tool schema for those types, so a visible one would stop the server from
+    # starting; the RunContext a tool receives carries the authenticated caller but no run
+    # (an MCP call has none), and Agent/Team arrive as None. Media parameters stay visible:
+    # nothing here has run media to inject. Tools that need the full request can declare a
     # FastMCP ``Context`` parameter, which FastMCP injects natively.
+    #
+    # An MCP call runs the tool directly, so the approval step a Function can declare
+    # (``requires_confirmation``, ``requires_user_input``, ``external_execution``) would be
+    # skipped. Such a tool is refused when the server is built rather than published
+    # without its gate. The rest of ``FunctionCall``'s machinery is inert here for the same
+    # reason and is NOT refused: tool hooks, pre/post hooks, and result caching
+    # (``cache_results``) simply do not run on this surface.
+    #
+    # A tool returning an Agno ``ToolResult`` has it rendered as MCP content -- the answer
+    # as text, images and audio as their own block types, videos and files as embedded
+    # blob resources, and media the tool produced elsewhere as a resource link -- rather
+    # than JSON-serialized, which loses the answer in a dump of the model and fails
+    # outright on raw bytes.
     tools: Optional[List[Any]] = None
 
     # Master switch for the 8 default tools. Set to False to ship only your own

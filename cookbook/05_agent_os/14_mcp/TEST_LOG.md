@@ -10,6 +10,9 @@ remain accepted aliases). Re-run LIVE on 2026-08-28 after the lifecycle
 ride-along and the review-round fixes landed; the entry below records the
 2026-08-28 run. Re-run LIVE again on 2026-08-30 after tool presentation
 metadata (`title`, `annotations`) landed -- see the entry below the first.
+`toolkit_tools.py` added and first tested LIVE on 2026-08-29, when a
+`Toolkit` passed to `MCPConfig.tools` began flattening into one MCP tool per
+method with the framework's own arguments filled server-side.
 
 ### agents_as_tools.py
 
@@ -203,6 +206,39 @@ AuthKit login was not claimed because no configured tenant was available.
 
 ---
 
+### toolkit_tools.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (2026-08-29)
+
+**Description:** Started the checked-in server (`MemoryTools(db=SqliteDb(...),
+enable_think=False, enable_analyze=False)` passed whole to
+`MCPConfig(tools=[...], default_tools=False)`) and drove it with a FastMCP
+streamable-HTTP client at `http://localhost:7777/mcp`: listed tools, read every
+generated schema, added a memory, read it back, and tried to supply the hidden
+`run_context` from the client.
+
+**Result:** `tools/list` returned exactly the toolkit's four methods --
+`get_memories`, `add_memory`, `update_memory`, `delete_memory` -- each carrying
+its own docstring as the description. `run_context`, which every one of those
+methods declares, was absent from all four schemas: `add_memory` published
+`memory` (required) and `topics`, `update_memory` published `memory_id`
+(required) plus `memory` and `topics`, `delete_memory` published `memory_id`
+(required), and `get_memories` published no arguments at all. `add_memory`
+returned `success: true` with a generated `memory_id`, and `get_memories`
+returned that same memory, so the server-filled RunContext reached the tool body
+-- `run_context` is a required argument of `add_memory`, so the call could not
+have succeeded without it. The run was unauthenticated, so the caller it carried
+was None and the memory landed in the null-user bucket; the example's docstring
+and the README now say so rather than implying per-caller ownership out of the
+box. Supplying `run_context` from the client was
+rejected by FastMCP as an unexpected keyword argument, which is the point of
+hiding it rather than merely omitting it from the docs. The server was stopped
+and the SQLite file removed afterwards.
+
+---
+
 ## Validation
 
 - All three credential-independent server/client paths completed with live
@@ -214,7 +250,7 @@ AuthKit login was not claimed because no configured tenant was available.
 - The six focused MCP server, lifecycle, result, OAuth, built-in auth, and
   AuthKit source suites passed 218 tests.
 - Python compilation and targeted Ruff format/check passed.
-- Recursive structure and stale-surface scans checked exactly 6 Python files
+- Recursive structure and stale-surface scans checked exactly 8 Python files
   with no violations.
 - `git diff --check` passed for the lesson and consumed legacy MCP folder.
 - All scoped servers were stopped after testing.
