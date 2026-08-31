@@ -515,6 +515,22 @@ class TestTeamDeepCopyCallableFactories:
         copy = team.deep_copy()
         assert isinstance(copy.members, list)
 
+    def test_deep_copy_raises_when_a_member_cannot_be_copied(self):
+        healthy_member = Agent(name="healthy-member")
+
+        class UncopyableAgent(Agent):
+            def __init__(self, required_value: str, **kwargs):
+                super().__init__(**kwargs)
+                self.required_value = required_value
+
+        uncopyable_member = UncopyableAgent(required_value="required", name="uncopyable-member")
+        team = _make_team(members=[healthy_member, uncopyable_member])
+
+        with pytest.raises(RuntimeError, match="Failed to deep copy team member at index 1 .*uncopyable-member"):
+            team.deep_copy()
+
+        assert team.members == [healthy_member, uncopyable_member]
+
     def test_deep_copy_no_warning_on_callable_tools(self):
         """Regression: Team.deep_copy() must not iterate a callable tools factory."""
         import logging

@@ -3439,8 +3439,8 @@ class TestMemberIsolation:
         assert fresh.members[1] is remote
 
     def test_shared_member_nested_in_a_team_of_teams_refuses_dispatch(self, db):
-        # An inner team whose own member copy failed comes back as a new object
-        # holding the shared grandchild, so the check has to descend.
+        # A nested member copy failure must stop dispatch before a shared
+        # grandchild can escape through the outer team's copy.
         from agno.agent.agent import Agent as AgentClass
         from agno.team.team import Team as TeamClass
 
@@ -3454,7 +3454,9 @@ class TestMemberIsolation:
         outer = TeamClass(id="outer", name="Outer", model=OpenAIResponses(id="gpt-5.4"), members=[inner])
 
         out = _loads(StudioRunnerTools(db=db, include_teams=[outer]).run_team("outer", "hi"))
-        assert "still shares member 'grandchild'" in out["error"]
+        assert "deep_copy failed" in out["error"]
+        assert "Failed to deep copy team member" in out["error"]
+        assert "Inner" in out["error"]
 
     def test_healthy_nested_team_dispatches(self, db):
         from agno.agent.agent import Agent as AgentClass

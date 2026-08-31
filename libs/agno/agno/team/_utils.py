@@ -140,6 +140,8 @@ def deep_copy(team: Team, *, update: Optional[Dict[str, Any]] = None) -> Team:
             try:
                 fields_for_new_team[f.name] = _deep_copy_field(team, f.name, field_value)
             except Exception as e:
+                if f.name == "members":
+                    raise
                 log_warning(f"Failed to deep copy field '{f.name}'. Using original value.: {str(e)}")
                 fields_for_new_team[f.name] = field_value
 
@@ -171,9 +173,17 @@ def _deep_copy_field(team: Team, field_name: str, field_value: Any) -> Any:
         if is_callable_factory(field_value):
             return field_value
         copied_members = []
-        for member in field_value:
+        for index, member in enumerate(field_value):
             if hasattr(member, "deep_copy"):
-                copied_members.append(member.deep_copy())
+                try:
+                    copied_members.append(member.deep_copy())
+                except Exception as e:
+                    member_identifier = getattr(member, "name", None) or getattr(member, "id", None)
+                    if member_identifier:
+                        member_context = f" ({member_identifier})"
+                    else:
+                        member_context = f" ({type(member).__name__})"
+                    raise RuntimeError(f"Failed to deep copy team member at index {index}{member_context}") from e
             else:
                 copied_members.append(member)
         return copied_members
