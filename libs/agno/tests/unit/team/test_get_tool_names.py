@@ -10,6 +10,7 @@ Regression test for: https://github.com/agno-agi/agno/issues/7039
 from types import SimpleNamespace
 from unittest.mock import MagicMock
 
+from agno.agent import Agent
 from agno.registry import Registry
 from agno.run.base import RunContext
 from agno.run.team import TeamRunOutput
@@ -187,8 +188,8 @@ def _make_tool_model():
     return model
 
 
-def _resolve(team: Team) -> None:
-    _determine_tools_for_model(
+def _resolve(team: Team) -> list:
+    return _determine_tools_for_model(
         team=team,
         model=_make_tool_model(),
         run_response=_make_tool_run_response(),
@@ -197,6 +198,29 @@ def _resolve(team: Team) -> None:
         session=_make_tool_session(),
         async_mode=False,
     )
+
+
+def test_framework_tool_wins_name_collision():
+    def user_delegate() -> str:
+        return "user tool"
+
+    team = Team(
+        name="team",
+        members=[Agent(id="member", telemetry=False)],
+        tools=[
+            Function(
+                name="delegate_task_to_member",
+                entrypoint=user_delegate,
+            )
+        ],
+        telemetry=False,
+    )
+
+    tools = _resolve(team)
+    delegation_tools = [tool for tool in tools if isinstance(tool, Function) and tool.name == "delegate_task_to_member"]
+
+    assert len(delegation_tools) == 1
+    assert delegation_tools[0].entrypoint is not user_delegate
 
 
 def test_bare_function_instructions_reach_team():
