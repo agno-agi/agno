@@ -5859,6 +5859,12 @@ def _merge_tools_preserving_approval(
     for orig in original_tools:
         updated = updated_tools_map.get(orig.tool_call_id)
         if updated is not None:
+            # A tool that already ran keeps its stored object. Replacing it
+            # with a wire copy (confirmed=true, result empty) would make
+            # continue treat the confirmation as new and re-execute.
+            if getattr(orig, "result", None) is not None:
+                merged.append(orig)
+                continue
             for attr in ("approval_type", "approval_id"):
                 if getattr(updated, attr, None) is None and getattr(orig, attr, None) is not None:
                     setattr(updated, attr, getattr(orig, attr))
@@ -6012,6 +6018,10 @@ def _backfill_approval_to_requirements(
     one) and exactly one stored requirement carries that tool call — and
     the STORED requirement becomes the object routing sees, with only the
     client's decision state merged onto it (_merge_requirement_decision).
+    Undelivered stored requirements stay on the run: a subset payload must
+    not replace the pending set, or the dropped pauses complete the run
+    and leave their members paused forever. An already-consumed
+    confirmation (stored tool already has a result) is not merged again.
     Trusting the wire copy instead mis-executes: a swapped or duplicated id
     binds one member's approved arguments to another member's tool.
 
@@ -6112,12 +6122,34 @@ def _backfill_approval_to_requirements(
     # a bare retry of a rejected request would execute the tools that bound
     # before the bad entry.
     for old_req, req in bindings:
-        _merge_requirement_decision(old_req, req)
-    run_response.requirements = [old_req for old_req, _ in bindings]
+        # A confirmation that already produced a result is spent. Merging
+        # the wire copy onto it would look like a fresh approve.
+        if not _requirement_already_consumed(old_req):
+            _merge_requirement_decision(old_req, req)
+    # Keep the full pending set. Replacing with only the bound entries
+    # drops undelivered pauses, so a one-of-N approve completes the run
+    # and leaves the other member paused forever.
+    if old_requirements:
+        run_response.requirements = list(old_requirements)
+    else:
+        run_response.requirements = [old_req for old_req, _ in bindings]
 
 
 _REQUIREMENT_DECISION_FIELDS = ("confirmation", "confirmation_note", "external_execution_result")
 _TOOL_EXECUTION_DECISION_FIELDS = ("confirmed", "confirmation_note", "answered", "result", "tool_call_error")
+
+
+def _requirement_already_consumed(req: Any) -> bool:
+    """True when the gated tool already ran or an external result was recorded.
+
+    Re-delivering that confirmation must be a no-op: the stored result is
+    the consumed mark, and continue must not treat the wire copy as a new
+    approve.
+    """
+    te = getattr(req, "tool_execution", None)
+    if te is not None and getattr(te, "result", None) is not None:
+        return True
+    return getattr(req, "external_execution_result", None) is not None
 
 
 def _requirement_decision_slots(requirements: Optional[List[Any]]) -> Iterator[Tuple[Any, str]]:
@@ -6423,6 +6455,8 @@ def _group_requirements_for_continue(
 
     member_reqs: Dict[Tuple[str, Optional[str]], List["RunRequirement"]] = {}
     for req in run_response.requirements or []:
+        if _requirement_already_consumed(req):
+            continue
         mid = getattr(req, "member_agent_id", None)
         if mid is not None:
             member_reqs.setdefault((mid, getattr(req, "member_run_id", None)), []).append(req)
@@ -6551,8 +6585,8 @@ def _route_requirements_to_members(
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
             if updated_tools and member_run_output.tools:
-                updated_map = {t.tool_call_id: t for t in updated_tools}
-                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+                updated_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
+                member_run_output.tools = _merge_tools_preserving_approval(member_run_output.tools, updated_map)
 
             member_response = member.continue_run(
                 run_response=member_run_output,  # type: ignore[arg-type]
@@ -6632,8 +6666,8 @@ def _route_requirements_to_members_stream(
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
             if updated_tools and member_run_output.tools:
-                updated_map = {t.tool_call_id: t for t in updated_tools}
-                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+                updated_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
+                member_run_output.tools = _merge_tools_preserving_approval(member_run_output.tools, updated_map)
 
             member_response_stream = member.continue_run(  # type: ignore[call-overload]
                 run_response=member_run_output,  # type: ignore[arg-type]
@@ -6735,8 +6769,8 @@ async def _aroute_requirements_to_members(
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
             if updated_tools and member_run_output.tools:
-                updated_map = {t.tool_call_id: t for t in updated_tools}
-                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+                updated_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
+                member_run_output.tools = _merge_tools_preserving_approval(member_run_output.tools, updated_map)
 
             member_response = await member.acontinue_run(  # type: ignore[misc]
                 run_response=member_run_output,  # type: ignore[arg-type]
@@ -6832,8 +6866,8 @@ async def _aroute_requirements_to_members_stream(
             member_run_output.requirements = reqs
             updated_tools = [req.tool_execution for req in reqs if req.tool_execution is not None]
             if updated_tools and member_run_output.tools:
-                updated_map = {t.tool_call_id: t for t in updated_tools}
-                member_run_output.tools = [updated_map.get(t.tool_call_id, t) for t in member_run_output.tools]
+                updated_map = {t.tool_call_id: t for t in updated_tools if t.tool_call_id}
+                member_run_output.tools = _merge_tools_preserving_approval(member_run_output.tools, updated_map)
 
             member_response_stream = member.acontinue_run(  # type: ignore[call-overload]
                 run_response=member_run_output,  # type: ignore[arg-type]
