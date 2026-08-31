@@ -1,8 +1,7 @@
 # Perplexity Cookbook
 
-> [!WARNING]
-> These examples use Sonar Chat Completions, which is deprecated and supported only until September 27, 2026.
-> For new projects, use the [Perplexity Agent API with Agno's `OpenAIResponses`](https://docs.perplexity.ai/docs/getting-started/integrations/agno).
+These examples use the [Perplexity Agent API with Agno's `OpenAIResponses`](https://docs.perplexity.ai/docs/getting-started/integrations/agno).
+They do not use the legacy `agno.models.perplexity.Perplexity` integration, which calls the deprecated Sonar Chat Completions API.
 
 > Note: Fork and clone this repository if needed
 
@@ -22,7 +21,7 @@ export PERPLEXITY_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-uv pip install -U ddgs duckdb agno
+uv pip install -U ddgs duckdb agno openai
 ```
 
 ### 4. Run basic Agent
