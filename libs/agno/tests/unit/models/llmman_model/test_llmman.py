@@ -9,7 +9,7 @@ from agno.models.utils import get_model
 def test_defaults():
     """llmman serves on its own port and takes a bare model reference."""
     model = Llmman()
-    assert model.id == "gemma4"
+    assert model.id == "qwen3:0.6b-q4_K_M"
     assert model.name == "Llmman"
     assert model.provider == "Llmman"
     assert model.base_url == "http://127.0.0.1:17434/v1"
