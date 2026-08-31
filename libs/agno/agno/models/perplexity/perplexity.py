@@ -39,7 +39,7 @@ class Perplexity(OpenAILike):
         name (str): The model name. Defaults to "Perplexity".
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/chat/completions".
+        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/".
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 
@@ -60,9 +60,9 @@ class Perplexity(OpenAILike):
     def __post_init__(self) -> None:
         super().__post_init__()
         warn(
-            "Perplexity Sonar Chat Completions is deprecated and will be supported until September 27, 2026. "
-            "Use agno.models.openai.OpenAIResponses with base_url='https://api.perplexity.ai/v1' for "
-            "Perplexity's Agent API. See https://docs.perplexity.ai/docs/agent-api/migrate-from-sonar",
+            "agno.models.perplexity.Perplexity uses Sonar Chat Completions, which is deprecated and supported only "
+            "until September 27, 2026. Migrate to agno.models.openai.OpenAIResponses with Perplexity's Agent API: "
+            "https://docs.perplexity.ai/docs/getting-started/integrations/agno",
             DeprecationWarning,
             stacklevel=3,
         )

@@ -1,5 +1,9 @@
 # Perplexity Cookbook
 
+> [!WARNING]
+> These examples use Sonar Chat Completions, which is deprecated and supported only until September 27, 2026.
+> For new projects, use the [Perplexity Agent API with Agno's `OpenAIResponses`](https://docs.perplexity.ai/docs/getting-started/integrations/agno).
+
 > Note: Fork and clone this repository if needed
 
 ### 1. Create and activate a virtual environment
@@ -40,4 +44,3 @@ python cookbook/90_models/perplexity/web_search.py
 ```shell
 python cookbook/90_models/perplexity/knowledge.py
 ```
-
