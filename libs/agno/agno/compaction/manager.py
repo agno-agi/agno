@@ -38,6 +38,19 @@ DEFAULT_COMPACTION_PROMPT = dedent("""\
     that is not in the transcript.
     """)
 
+# Appended to the summarization prompt when the originals are archived. A
+# summary cannot be complete, and the assistant reading it cannot tell what is
+# missing unless the summary says so - which is what turns "answer from the
+# summary" into "check the archive first" on exactly the questions that need it.
+ARCHIVE_AWARE_PROMPT = dedent("""\
+
+    The full transcript remains available, so this summary does not have to
+    carry everything. End with one line beginning "Not covered here:" naming
+    the kinds of detail a reader would have to look up - for example exact
+    figures, identifiers, code, error text, or long tool output. Omit the line
+    only if the summary genuinely preserves every specific in the transcript.
+    """)
+
 # Summarizing an enormous transcript in one call is unreliable and can itself
 # overflow. Trim what the summarizer reads, oldest first, to this budget.
 DEFAULT_SUMMARIZE_CHAR_BUDGET = 100_000
@@ -96,11 +109,14 @@ class Compaction:
     # Also compact reactively when the provider rejects a request as too long.
     on_context_overflow: bool = True
 
-    # Skip a compaction that would not free at least this many characters of
-    # transcript. A summary has a fixed cost, so compacting a handful of short
-    # turns can leave the context BIGGER than it started - and it invalidates
-    # the prompt-cache prefix to do it. Set to 0 to always compact.
-    min_chars_to_reclaim: int = 2_000
+    # Skip a compaction unless this many characters of transcript are being
+    # replaced. A summary costs a few hundred tokens whatever it replaces, so
+    # compacting a short span can leave the context BIGGER than it started -
+    # and it discards the prompt-cache prefix to do it. This is a floor on the
+    # INPUT, not a guarantee about the outcome: the summary does not exist yet
+    # when the check runs, so a dense span can still summarize to roughly its
+    # own size. Set to 0 to always compact.
+    min_chars_to_reclaim: int = 4_000
 
     stats: CompactionStats = field(default_factory=CompactionStats)
 
@@ -226,7 +242,9 @@ class Compaction:
             kept.append(message)
         return list(reversed(kept))
 
-    def _summary_messages(self, messages: List[Message], previous: Optional[str]) -> List[Message]:
+    def _summary_messages(
+        self, messages: List[Message], previous: Optional[str], archived: bool = False
+    ) -> List[Message]:
         transcript = render_messages(self._trim_for_summary(messages))
         # Fold the previous summary in rather than summarizing a summary
         # separately, so a session compacted many times keeps one continuous
@@ -235,8 +253,14 @@ class Compaction:
             transcript = (
                 f"Summary of the conversation before this point:\n{previous}\n\nConversation since then:\n{transcript}"
             )
+        prompt = self.instructions or DEFAULT_COMPACTION_PROMPT
+        # Only ask the summary to flag its own gaps when there is somewhere to
+        # go and read them. Without an archive the line would name detail the
+        # assistant has no way to recover, which is worse than not saying it.
+        if archived:
+            prompt += ARCHIVE_AWARE_PROMPT
         return [
-            Message(role="system", content=self.instructions or DEFAULT_COMPACTION_PROMPT),
+            Message(role="system", content=prompt),
             Message(role="user", content=transcript),
         ]
 
@@ -245,12 +269,13 @@ class Compaction:
         messages: List[Message],
         previous: Optional[str],
         run_metrics: Optional["RunMetrics"] = None,
+        archived: bool = False,
     ) -> Optional[str]:
         if self.model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = self.model.response(messages=self._summary_messages(messages, previous))
+            response = self.model.response(messages=self._summary_messages(messages, previous, archived))
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
@@ -262,12 +287,13 @@ class Compaction:
         messages: List[Message],
         previous: Optional[str],
         run_metrics: Optional["RunMetrics"] = None,
+        archived: bool = False,
     ) -> Optional[str]:
         if self.model is None:
             log_warning("No compaction model available")
             return None
         try:
-            response = await self.model.aresponse(messages=self._summary_messages(messages, previous))
+            response = await self.model.aresponse(messages=self._summary_messages(messages, previous, archived))
         except Exception as e:
             log_error(f"Error compacting conversation: {e}")
             return None
@@ -332,10 +358,22 @@ class Compaction:
             "</conversation_summary>\n\n"
             f"The {record.messages_compacted} earlier messages this replaces were removed to save space."
         )
-        if record.archive_path is not None:
+        # Only promise a lookup the agent can actually perform. Without the
+        # search tools the archive exists for a developer, not the model, and
+        # telling it to read a file it cannot open invites a refusal or an
+        # invented answer.
+        if record.archive_path is not None and self.searchable:
+            # State the rule, not a suggestion. A model asked to "search if
+            # needed" will usually judge the summary sufficient and answer from
+            # it - including for the exact values a summary is least likely to
+            # have kept. Naming the file and the trigger condition is what
+            # makes the fallback fire on the questions that need it.
             content += (
-                f" They are stored verbatim at `{record.archive_path}`; "
-                "search or read that file if you need a detail this summary omits."
+                f" The full text is stored at `{record.archive_path}`.\n"
+                "Before answering any question about the earlier conversation that calls for an "
+                "exact value - an identifier, figure, name, quote, command, or error message - "
+                "read or search that file rather than relying on this summary. Say you do not "
+                "know only after looking."
             )
         return Message(role="system", content=content, temporary=True, add_to_agent_memory=False)
 
@@ -363,12 +401,11 @@ class Compaction:
         without paying for the summary again.
         """
         boundary = min(record.boundary, len(messages))
-        kept = [self._drop_server_side_state(m) for m in messages[boundary:]]
-        return [self._summary_message(record)] + kept
+        return [self._summary_message(record)] + self._detach_from_server_state(messages[boundary:])
 
     @staticmethod
-    def _drop_server_side_state(message: Message) -> Message:
-        """Detach a kept message from any provider-side conversation history.
+    def _detach_from_server_state(kept: List[Message]) -> List[Message]:
+        """Detach the kept tail from any provider-side conversation history.
 
         Some providers continue a conversation by id rather than from the
         messages sent: OpenAI Responses chains on ``previous_response_id``
@@ -377,14 +414,34 @@ class Compaction:
         compaction just removed. The context would look compacted locally
         while the model still saw everything, so the saving is imaginary and
         the summary is contradicted by history the agent should no longer
-        have. Dropping the id forces the provider to use the messages we
-        actually send.
+        have.
+
+        Dropping the id is not enough on its own. That id is also what tells
+        the provider it already holds the reasoning items its stored
+        function_calls require; once it is gone, replaying those tool calls
+        from our messages sends a function_call with no matching reasoning
+        item, which the API rejects outright. So the tool-call exchanges go
+        with it: what is left is the plain conversation, which is valid to
+        send from scratch. Their content is in the summary and the archive.
         """
-        existing = message.provider_data or {}
-        if "response_id" not in existing:
-            return message
-        provider_data = {k: v for k, v in existing.items() if k != "response_id"}
-        return message.model_copy(update={"provider_data": provider_data or None})
+        if not any("response_id" in (m.provider_data or {}) for m in kept):
+            return kept
+
+        detached: List[Message] = []
+        for message in kept:
+            if message.role == "tool":
+                continue
+            if message.tool_calls:
+                # An assistant turn that only made tool calls carries nothing
+                # else worth sending once those calls are gone.
+                if not message.get_content_string():
+                    continue
+                message = message.model_copy(update={"tool_calls": None})
+            provider_data = {k: v for k, v in (message.provider_data or {}).items() if k != "response_id"}
+            if provider_data != (message.provider_data or {}):
+                message = message.model_copy(update={"provider_data": provider_data or None})
+            detached.append(message)
+        return detached
 
     def _worth_compacting(self, to_compact: List[Message]) -> bool:
         """Whether replacing these messages would actually free anything.
@@ -446,7 +503,9 @@ class Compaction:
         archive = self.archive_for(session_id, db)
         archive_path = archive.write(to_compact) if archive is not None else None
 
-        summary = self._summarize(to_compact, previous.summary if previous else None, run_metrics)
+        summary = self._summarize(
+            to_compact, previous.summary if previous else None, run_metrics, archived=archive_path is not None
+        )
         if not summary:
             return None
 
@@ -475,7 +534,9 @@ class Compaction:
         archive = self.archive_for(session_id, db)
         archive_path = await archive.awrite(to_compact) if archive is not None else None
 
-        summary = await self._asummarize(to_compact, previous.summary if previous else None, run_metrics)
+        summary = await self._asummarize(
+            to_compact, previous.summary if previous else None, run_metrics, archived=archive_path is not None
+        )
         if not summary:
             return None
 

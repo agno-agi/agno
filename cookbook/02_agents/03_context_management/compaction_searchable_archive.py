@@ -10,12 +10,15 @@ stored, so the summary works as an index and the agent can go read the rest.
 This example plants a specific fact early, buries it under enough turns to be
 compacted away, and then asks for it back.
 
-To make the archive lookup visible, the summarizer here is deliberately told to
-write a terse summary that drops identifiers. That forces the agent to call
-`search_content` - you will see the tool call in the output. With the default
-prompt the summary usually preserves an identifier like this one, the agent
-answers straight from it, and no tool call happens at all. Both outcomes are
-correct; the archive is the backstop for what a summary did not keep.
+The flow is summary-first, archive-as-fallback. When a summary is enough the
+agent just answers from it. When the question needs an exact value a summary is
+unlikely to have kept, the agent reads the archive instead - you will see the
+tool call in the output.
+
+Two built-in nudges make that fallback reliable: the summarizer is asked to end
+with a "Not covered here:" line naming what it dropped, and the summary message
+tells the agent to consult the archive before answering anything that turns on
+an exact value.
 """
 
 from agno.agent import Agent
@@ -32,13 +35,10 @@ compaction = Compaction(
     # Adds read_file, list_files and search_content, scoped to this session's
     # archive - one session can never read another's history.
     searchable=True,
-    # Deliberately lossy, so the fact survives ONLY in the archive and the
-    # lookup is visible. Remove this to get the default (identifier-preserving)
-    # summary.
-    instructions=(
-        "Summarize the conversation in at most 40 words. "
-        "Describe topics only - omit every ticket number, identifier and figure."
-    ),
+    # These turns are short, so lower the floor that normally skips a
+    # compaction too small to be worth its own summary. Leave it at the
+    # default in real use.
+    min_chars_to_reclaim=500,
 )
 
 # ---------------------------------------------------------------------------
@@ -51,10 +51,6 @@ agent = Agent(
     add_history_to_context=True,
     num_history_runs=100,
     compaction=compaction,
-    instructions=[
-        "If a question refers to something earlier in the conversation that you "
-        "cannot see, search your archived history before saying you do not know.",
-    ],
 )
 
 # ---------------------------------------------------------------------------

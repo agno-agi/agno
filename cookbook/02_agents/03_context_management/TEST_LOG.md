@@ -31,14 +31,14 @@ model. Two short runs stayed well under the threshold.
 
 **Status:** PASS
 **Tier:** untagged
-**Description:** `searchable=True`. Plants an unguessable fact (ticket KR-4417-QX, a 47-day window
-and the passphrase 'plum-harbor-92'), buries it under five unrelated turns, then asks for it back.
-The summarizer is deliberately lossy so the fact survives only in the archive - which makes the
-lookup verifiable rather than something the model could reconstruct.
-**Result:** Completed successfully. 1 compaction (6 messages, 1222 -> 854 tokens, archived to
-`0001.md`). The final turn shows a `read_file` tool call against the archive before answering.
-Note the trigger fires at 4 runs but the size floor correctly declines that first compaction; it
-commits at 5 runs.
+**Description:** `searchable=True` with the default summarization prompt (no artificial lossiness).
+Plants unguessable values (ticket KR-4417-QX, a 47-day window, build hash b7f2ae91c4), buries them
+under five unrelated turns, then asks for them back. Sets `min_chars_to_reclaim=500` because the
+demo turns are short; the default suits real sessions.
+**Result:** Completed successfully. 2 compactions; the final turn shows `read_file` and
+`search_content` calls against the archive before answering with both exact values. Confirmed the
+summarizer emits its "Not covered here:" line, and that the summary message only promises a lookup
+when `searchable=True`.
 
 ---
 

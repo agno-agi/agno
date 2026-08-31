@@ -185,15 +185,90 @@ def test_kept_messages_lose_provider_side_conversation_state():
     assert messages[3].provider_data["response_id"] == "resp_123"
 
 
-def test_summary_points_at_the_archive_when_there_is_one():
-    c = Compaction(compact_at_runs=2)
-    with_archive = c.apply_record(
-        _transcript(), CompactionRecord(messages_compacted=2, summary="s", boundary=2, archive_path="0001.md")
-    )[0]
-    without = c.apply_record(_transcript(), CompactionRecord(messages_compacted=2, summary="s", boundary=2))[0]
+def test_tool_exchanges_go_with_the_dropped_response_id():
+    """Dropping the id alone would produce a request the API rejects.
 
-    assert "0001.md" in with_archive.content
-    assert "0001.md" not in without.content
+    On a reasoning model that id is what tells the provider it already holds
+    the reasoning items its stored function_calls require. Once it is gone,
+    replaying those tool calls sends a function_call with no matching
+    reasoning item - a hard 400. The exchanges go with it; their content is in
+    the summary and the archive.
+    """
+    messages = [
+        Message(role="user", content="q0"),
+        Message(role="assistant", content="a0"),
+        Message(role="user", content="q1"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": "call_1", "function": {"name": "search", "arguments": "{}"}}],
+            provider_data={"response_id": "resp_123"},
+        ),
+        Message(role="tool", tool_call_id="call_1", tool_name="search", content="data"),
+        Message(role="assistant", content="a1"),
+    ]
+
+    tail = Compaction(compact_at_runs=2).apply_record(
+        messages, CompactionRecord(messages_compacted=2, summary="s", boundary=2)
+    )[1:]
+
+    assert not any(m.role == "tool" for m in tail)
+    assert not any(m.tool_calls for m in tail)
+    # The plain conversation survives.
+    assert [m.content for m in tail] == ["q1", "a1"]
+
+
+def test_tool_exchanges_survive_when_there_is_no_server_state():
+    """Nothing is dropped for providers that send history in the request."""
+    messages = [
+        Message(role="user", content="q0"),
+        Message(role="assistant", content="a0"),
+        Message(role="user", content="q1"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": "call_1", "function": {"name": "search", "arguments": "{}"}}],
+        ),
+        Message(role="tool", tool_call_id="call_1", tool_name="search", content="data"),
+    ]
+
+    tail = Compaction(compact_at_runs=2).apply_record(
+        messages, CompactionRecord(messages_compacted=2, summary="s", boundary=2)
+    )[1:]
+
+    assert any(m.role == "tool" for m in tail)
+    assert any(m.tool_calls for m in tail)
+
+
+def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
+    """The lookup instruction is promised only when the tools exist.
+
+    Without searchable the archive is for a developer, not the model. Telling
+    it to read a file it cannot open invites a refusal or an invented answer.
+    """
+    archived = CompactionRecord(messages_compacted=2, summary="s", boundary=2, archive_path="0001.md")
+
+    searchable = Compaction(compact_at_runs=2, searchable=True).apply_record(_transcript(), archived)[0]
+    not_searchable = Compaction(compact_at_runs=2).apply_record(_transcript(), archived)[0]
+    no_archive = Compaction(compact_at_runs=2, searchable=True).apply_record(
+        _transcript(), CompactionRecord(messages_compacted=2, summary="s", boundary=2)
+    )[0]
+
+    assert "0001.md" in searchable.content
+    assert "read or search that file" in searchable.content
+    assert "0001.md" not in not_searchable.content
+    assert "0001.md" not in no_archive.content
+
+
+def test_summarizer_is_told_to_flag_gaps_only_when_archived():
+    """A summary should declare what it dropped only if that is recoverable."""
+    c = Compaction(compact_at_runs=2)
+
+    archived = c._summary_messages(_transcript(), None, archived=True)[0].content
+    plain = c._summary_messages(_transcript(), None, archived=False)[0].content
+
+    assert "Not covered here:" in archived
+    assert "Not covered here:" not in plain
 
 
 def test_record_roundtrips_through_dict():
