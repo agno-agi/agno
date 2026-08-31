@@ -391,10 +391,13 @@ def discover_all(
     return found
 
 
+# Deliberately the OLD spelling: agnoctl versions independently of agno and talks to
+# servers on any agno release. ``mcp=`` only exists on newer agno; ``mcp_server=`` is a
+# kept alias there, so this line works everywhere. Flip once older agno is out of support.
 MCP_ENABLE_INSTRUCTIONS = """MCP is not enabled on this AgentOS. Enable it and restart:
 
     agent_os = AgentOS(
         agents=[...],
-        mcp_server=True,  # add this line
+        mcp_server=True,  # add this line (spelled mcp= on newer agno)
     )
 """
