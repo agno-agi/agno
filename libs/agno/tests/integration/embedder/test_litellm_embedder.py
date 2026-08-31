@@ -62,7 +62,7 @@ async def test_async_get_embedding_and_usage(embedder):
     assert isinstance(embedding, list)
     assert len(embedding) > 0
     assert all(isinstance(x, float) for x in embedding)
-    
+
     assert usage is None or isinstance(usage, dict)
 
 
@@ -103,15 +103,15 @@ def test_different_models():
         "openai/text-embedding-3-small",
         "openai/text-embedding-ada-002",
     ]
-    
+
     text = "Test text for different models"
-    
+
     for model_id in models_to_test:
         embedder = LiteLLMEmbedder(id=model_id)
         try:
             embeddings = embedder.get_embedding(text)
             assert isinstance(embeddings, list)
-            if embeddings: 
+            if embeddings:
                 assert all(isinstance(x, float) for x in embeddings)
         except Exception as e:
             pytest.skip(f"Model {model_id} not available: {e}")

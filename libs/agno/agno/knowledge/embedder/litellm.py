@@ -32,11 +32,32 @@ class LiteLLMEmbedder(Embedder):
     """
 
     id: str = "openai/text-embedding-3-small"
+    dimensions: Optional[int] = None
     api_key: Optional[str] = None
     api_base: Optional[str] = None
     request_params: Optional[Dict[str, Any]] = None
     enable_batch: bool = False
     batch_size: int = 100
+
+    def __post_init__(self) -> None:
+        if self.dimensions is not None:
+            return
+
+        try:
+            model_info = litellm.get_model_info(self.id)
+            if isinstance(model_info, dict):
+                output_vector_size = model_info.get("output_vector_size")
+                if isinstance(output_vector_size, int) and output_vector_size > 0:
+                    self.dimensions = output_vector_size
+                    return
+        except Exception as e:
+            log_warning(f"Failed to determine dimensions for LiteLLM model {self.id}: {e}")
+
+        self.dimensions = 1536
+        log_warning(
+            f"Could not determine dimensions for LiteLLM model {self.id}; defaulting to {self.dimensions}. "
+            "Set dimensions explicitly for models not in the LiteLLM registry."
+        )
 
     def _build_request(self, texts: List[str]) -> Dict[str, Any]:
         params: Dict[str, Any] = {
@@ -62,6 +83,15 @@ class LiteLLMEmbedder(Embedder):
         if isinstance(item, dict):
             return item["embedding"]
         return item.embedding
+
+    @staticmethod
+    def _item_index(item: Any) -> Optional[int]:
+        """Read the input index from a LiteLLM embedding data entry."""
+        if isinstance(item, dict):
+            index = item.get("index")
+        else:
+            index = getattr(item, "index", None)
+        return index if isinstance(index, int) and not isinstance(index, bool) else None
 
     @staticmethod
     def _extract_embedding(response: Any) -> List[float]:
@@ -141,16 +171,21 @@ class LiteLLMEmbedder(Embedder):
             try:
                 request = self._build_request(batch)
                 response = await litellm.aembedding(**request)
-                embeddings: List[List[float]] = []
+                embeddings: List[List[float]] = [[] for _ in batch]
                 if hasattr(response, "data") and response.data:
                     for item in response.data:
-                        embeddings.append(self._item_embedding(item))
+                        index = self._item_index(item)
+                        if index is None or index < 0 or index >= len(batch):
+                            log_warning("LiteLLM returned an embedding with an invalid input index; ignoring it.")
+                            continue
+                        embeddings[index] = self._item_embedding(item)
 
-                if len(embeddings) < len(batch):
+                returned_embeddings = sum(bool(embedding) for embedding in embeddings)
+                if returned_embeddings < len(batch):
                     log_warning(
-                        f"LiteLLM returned {len(embeddings)} embeddings for {len(batch)} texts; padding with empty vectors."
+                        f"LiteLLM returned {returned_embeddings} embeddings for {len(batch)} texts; "
+                        "missing entries will use empty vectors."
                     )
-                    embeddings.extend([[] for _ in range(len(batch) - len(embeddings))])
 
                 usage = self._extract_usage(response)
                 all_embeddings.extend(embeddings)

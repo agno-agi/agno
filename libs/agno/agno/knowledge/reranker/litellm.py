@@ -69,8 +69,12 @@ class LiteLLMReranker(Reranker):
             ranked: List[Document] = []
             for r in results:
                 try:
-                    idx = getattr(r, "index", None)
-                    score = getattr(r, "relevance_score", None)
+                    if isinstance(r, dict):
+                        idx = r.get("index")
+                        score = r.get("relevance_score")
+                    else:
+                        idx = getattr(r, "index", None)
+                        score = getattr(r, "relevance_score", None)
                     if idx is None or idx < 0 or idx >= len(documents):
                         continue
                     doc = documents[idx]
