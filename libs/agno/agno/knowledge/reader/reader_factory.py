@@ -2,6 +2,7 @@ import os
 from typing import Any, Callable, Dict, List, Optional
 
 from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.utils.urls import is_sitemap_url
 
 
 class ReaderFactory:
@@ -79,6 +80,10 @@ class ReaderFactory:
         "llms_txt": {
             "name": "LLMsTxtReader",
             "description": "Reads llms.txt files, discovers linked documentation URLs, and fetches their content",
+        },
+        "sitemap": {
+            "name": "SitemapReader",
+            "description": "Discovers a website's sitemap and loads one document per page with its source URL",
         },
         "docling": {
             "name": "DoclingReader",
@@ -296,6 +301,18 @@ class ReaderFactory:
         return LLMsTxtReader(**config)
 
     @classmethod
+    def _get_sitemap_reader(cls, **kwargs) -> Reader:
+        """Get Sitemap reader instance."""
+        from agno.knowledge.reader.sitemap_reader import SitemapReader
+
+        config: Dict[str, Any] = {
+            "name": "Sitemap Reader",
+            "description": "Discovers a website's sitemap and loads one document per page with its source URL",
+        }
+        config.update(kwargs)
+        return SitemapReader(**config)
+
+    @classmethod
     def _get_docling_reader(cls, **kwargs) -> Reader:
         """Get Docling reader instance."""
         from agno.knowledge.reader.docling_reader import DoclingReader
@@ -351,6 +368,7 @@ class ReaderFactory:
             "wikipedia": ("agno.knowledge.reader.wikipedia_reader", "WikipediaReader"),
             "web_search": ("agno.knowledge.reader.web_search_reader", "WebSearchReader"),
             "llms_txt": ("agno.knowledge.reader.llms_txt_reader", "LLMsTxtReader"),
+            "sitemap": ("agno.knowledge.reader.sitemap_reader", "SitemapReader"),
             "docling": ("agno.knowledge.reader.docling_reader", "DoclingReader"),
         }
 
@@ -432,6 +450,10 @@ class ReaderFactory:
         # Check for YouTube URLs
         if any(domain in url_lower for domain in ["youtube.com", "youtu.be"]):
             return cls.create_reader("youtube")
+
+        # A sitemap URL gets the per-page sitemap reader
+        if is_sitemap_url(url):
+            return cls.create_reader("sitemap")
 
         # Default to website reader
         return cls.create_reader("website")
