@@ -39,7 +39,7 @@ class MovieScript(BaseModel):
 
 # Agent that returns a structured output
 structured_output_agent = Agent(
-    model=Llmman(id="gemma4"),
+    model=Llmman(id="qwen3:0.6b-q4_K_M"),
     description="You write movie scripts.",
     output_schema=MovieScript,
 )

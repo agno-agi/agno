@@ -9,13 +9,13 @@ class Llmman(OpenAILike):
     A class for interacting with llmman (https://github.com/llmmanorg/llmman).
 
     Attributes:
-        id (str): The id of the llmman model. Default is "gemma4".
+        id (str): The id of the llmman model. Default is "qwen3:0.6b-q4_K_M".
         name (str): The name of this chat model instance. Default is "Llmman".
         provider (str): The provider of the model. Default is "Llmman".
         base_url (str): The base url to which the requests are sent.
     """
 
-    id: str = "gemma4"
+    id: str = "qwen3:0.6b-q4_K_M"
     name: str = "Llmman"
     provider: str = "Llmman"
 

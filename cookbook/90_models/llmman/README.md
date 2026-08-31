@@ -22,18 +22,23 @@ irm https://raw.githubusercontent.com/llmmanorg/llmman/main/install.ps1 | iex
 
 ### 2. Pull a model and start the server
 
-The examples below use `gemma4`. Any reference `llmman pull` accepts works as a model id,
-including tags such as `qwen3.5:0.8B`.
+The examples below use `qwen3:0.6b-q4_K_M` (0.6B parameters, ~0.4 GB), which runs on a laptop
+without a dedicated GPU. Any reference `llmman pull` accepts works as a model id, including
+HuggingFace references such as `hf.co/unsloth/Qwen3-0.6B-GGUF:Q4_K_M`.
 
 ```shell
-llmman pull gemma4
-llmman serve
+llmman pull qwen3:0.6b-q4_K_M
+llmman serve qwen3:0.6b-q4_K_M
 ```
+
+`llmman serve` holds port 17434 until it is stopped, so a second `serve` fails with an address
+in use error. Stop it with Ctrl+C in the serving terminal, or unload a single model with
+`llmman stop <MODEL>`.
 
 Set `LLMMAN_HOST` to bind elsewhere, then pass a matching `base_url`:
 
 ```python
-Llmman(id="gemma4", base_url="http://192.168.1.10:17434/v1")
+Llmman(id="qwen3:0.6b-q4_K_M", base_url="http://192.168.1.10:17434/v1")
 ```
 
 ### 3. Create and activate a virtual environment

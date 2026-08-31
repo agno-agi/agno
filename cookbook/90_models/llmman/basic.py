@@ -12,9 +12,9 @@ from agno.models.llmman import Llmman
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Llmman(id="gemma4"), markdown=True)
+agent = Agent(model=Llmman(id="qwen3:0.6b-q4_K_M"), markdown=True)
 
-# The string syntax works too: Agent(model="llmman:gemma4", markdown=True)
+# The string syntax works too: Agent(model="llmman:qwen3:0.6b-q4_K_M", markdown=True)
 
 # Get the response in a variable
 # run: RunOutput = agent.run("Share a 2 sentence horror story")

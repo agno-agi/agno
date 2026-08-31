@@ -9,7 +9,7 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=Llmman(id="gemma4"),
+    model=Llmman(id="qwen3:0.6b-q4_K_M"),
     tools=[WebSearchTools()],
     markdown=True,
 )
