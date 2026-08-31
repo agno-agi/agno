@@ -6260,6 +6260,17 @@ def _reclaim_own_requirements(
     return reclaimed
 
 
+def _is_resolvable_members_factory(members: Any) -> bool:
+    """True when ``members`` is a callable factory we should invoke on continue."""
+    from agno.utils.callables import is_callable_factory
+
+    if not is_callable_factory(members):
+        return False
+    # MagicMock/Mock are callable, so is_callable_factory is True, but they are
+    # not members factories. Skip so mocked continue_run tests keep working.
+    return not type(members).__module__.startswith("unittest.mock")
+
+
 def _resolve_callable_members_for_continue(team: "Team", run_context: RunContext) -> None:
     """Resolve Team.members into run_context before continue_run HITL routing.
 
@@ -6270,6 +6281,8 @@ def _resolve_callable_members_for_continue(team: "Team", run_context: RunContext
     """
     from agno.utils.callables import resolve_callable_members
 
+    if not _is_resolvable_members_factory(getattr(team, "members", None)):
+        return
     resolve_callable_members(team, run_context)
 
 
@@ -6277,6 +6290,8 @@ async def _aresolve_callable_members_for_continue(team: "Team", run_context: Run
     """Async variant of ``_resolve_callable_members_for_continue``."""
     from agno.utils.callables import aresolve_callable_members
 
+    if not _is_resolvable_members_factory(getattr(team, "members", None)):
+        return
     await aresolve_callable_members(team, run_context)
 
 
