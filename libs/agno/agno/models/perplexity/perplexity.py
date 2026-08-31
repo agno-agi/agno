@@ -35,7 +35,8 @@ class Perplexity(OpenAILike):
     ``OpenAIResponses`` with Perplexity's Agent API.
 
     Attributes:
-        id (str): The model id. Defaults to "sonar".
+        id (str): The model id. Defaults to "not-provided"; callers must select
+            a Sonar model explicitly.
         name (str): The model name. Defaults to "Perplexity".
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
@@ -43,7 +44,7 @@ class Perplexity(OpenAILike):
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 
-    id: str = "sonar"
+    id: str = "not-provided"
     name: str = "Perplexity"
     provider: str = "Perplexity"
     # Perplexity returns cumulative token counts in each streaming chunk, so only collect on final chunk

@@ -2,7 +2,7 @@ import pytest
 
 from agno.models.perplexity import Perplexity
 
-DEFAULT_MODEL_ID = "sonar"
+DEFAULT_MODEL_ID = "not-provided"
 EXPLICIT_MODEL_ID = "sonar-pro"
 
 
@@ -12,7 +12,10 @@ def test_perplexity_warns_about_deprecation_without_changing_model_selection(mod
     if model_id is not None:
         model_kwargs["id"] = model_id
 
-    with pytest.warns(DeprecationWarning) as warning_records:
+    with pytest.warns(
+        DeprecationWarning,
+        match="Sonar Chat Completions.*OpenAIResponses.*Agent API",
+    ) as warning_records:
         model = Perplexity(**model_kwargs)
 
     assert model.id == (model_id or DEFAULT_MODEL_ID)
