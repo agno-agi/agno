@@ -3,6 +3,12 @@
 Examples for instructions, system messages, introduction messages, and context shaping.
 
 ## Files
+- `compaction.py` - Keep a long session in the context window with `compaction=True`.
+- `compaction_thresholds.py` - Tune when compaction fires and how much it keeps.
+- `compaction_searchable_archive.py` - Let the agent search history that was compacted away.
+- `compaction_events.py` - Stream `CompactionStarted` / `CompactionCompleted` and show what was reclaimed.
+- `compaction_async.py` - Compaction on the async path.
+- `compaction_local_archive.py` - Write the archive to disk as markdown instead of the database.
 - `few_shot_learning.py` - Demonstrates few-shot learning with example messages.
 - `filter_tool_calls_from_history.py` - Filter tool calls from conversation history.
 - `instructions.py` - Set agent instructions.

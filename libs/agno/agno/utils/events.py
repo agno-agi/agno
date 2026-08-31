@@ -5,6 +5,8 @@ from agno.models.message import Citations
 from agno.models.response import ToolExecution
 from agno.reasoning.step import ReasoningStep
 from agno.run.agent import (
+    CompactionCompletedEvent,
+    CompactionStartedEvent,
     CompressionCompletedEvent,
     CompressionStartedEvent,
     FollowupsCompletedEvent,
@@ -968,6 +970,36 @@ def create_compression_completed_event(
         tool_results_compressed=tool_results_compressed,
         original_size=original_size,
         compressed_size=compressed_size,
+    )
+
+
+def create_compaction_started_event(
+    from_run_response: RunOutput,
+) -> CompactionStartedEvent:
+    return CompactionStartedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+    )
+
+
+def create_compaction_completed_event(
+    from_run_response: RunOutput,
+    messages_compacted: Optional[int] = None,
+    tokens_before: Optional[int] = None,
+    tokens_after: Optional[int] = None,
+    archive_path: Optional[str] = None,
+) -> CompactionCompletedEvent:
+    return CompactionCompletedEvent(
+        session_id=from_run_response.session_id,
+        agent_id=from_run_response.agent_id,  # type: ignore
+        agent_name=from_run_response.agent_name,  # type: ignore
+        run_id=from_run_response.run_id,
+        messages_compacted=messages_compacted,
+        tokens_before=tokens_before,
+        tokens_after=tokens_after,
+        archive_path=archive_path,
     )
 
 

@@ -39,10 +39,217 @@ from agno.utils.agent import (
 )
 from agno.utils.common import is_typed_dict
 from agno.utils.knowledge import get_user_id_kwarg
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 from agno.utils.message import copy_history_message, filter_tool_calls, get_text_from_message, render_instructions
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
+
+_COMPACTION_SESSION_KEY = "compaction"
+
+
+def _stored_compaction(session: AgentSession) -> Optional[Any]:
+    """The last compaction for this session, if one was recorded."""
+    from agno.compaction.types import CompactionRecord
+
+    data = (session.session_data or {}).get(_COMPACTION_SESSION_KEY)
+    if not data:
+        return None
+    try:
+        return CompactionRecord.from_dict(data)
+    except Exception as e:
+        log_warning(f"Ignoring unreadable compaction record: {e}")
+        return None
+
+
+def _store_compaction(session: AgentSession, record: Any) -> None:
+    if session.session_data is None:
+        session.session_data = {}
+    session.session_data[_COMPACTION_SESSION_KEY] = record.to_dict()
+
+
+def _last_input_tokens(session: AgentSession) -> Optional[int]:
+    """Input tokens the provider reported for the most recent run.
+
+    Free and authoritative - it is what the provider actually billed - so it
+    is preferred over counting tokens locally, which on some providers costs a
+    network round trip of its own.
+    """
+    for run in reversed(session.runs or []):
+        metrics = getattr(run, "metrics", None)
+        input_tokens = getattr(metrics, "input_tokens", None) if metrics is not None else None
+        if input_tokens:
+            return int(input_tokens)
+    return None
+
+
+def _compaction_inputs(agent: "Agent", session: AgentSession) -> Dict[str, Any]:
+    return {
+        "last_input_tokens": _last_input_tokens(session),
+        "model": agent.model,
+    }
+
+
+def _log_compaction(record: Any, before: List[Message], after: List[Message], inputs: Dict[str, Any]) -> None:
+    """Report what one compaction achieved, and record the size it left behind.
+
+    Both sides are measured locally, over the two lists this compaction turned
+    into each other, so the numbers are comparable and the report costs
+    nothing. ``Model.count_tokens`` is deliberately not used: on Anthropic it
+    is a network round trip, and OpenAI rejects a list with no user message -
+    which is exactly the shape a compacted list can have.
+
+    The trigger's estimate - the previous run's whole request as the provider
+    billed it - measures something else entirely, so it is overwritten here
+    rather than differenced against ``tokens_after``. Reporting the two
+    together produced "saved -32 tokens" on a compaction that had in fact
+    shrunk the context.
+    """
+    from agno.utils.tokens import count_tokens
+
+    model = inputs.get("model")
+    model_id = getattr(model, "id", None) or "gpt-4o"
+    try:
+        record.tokens_before = count_tokens(before, model_id=model_id)
+        record.tokens_after = count_tokens(after, model_id=model_id)
+    except Exception:  # noqa: BLE001 - a log line must never fail a run
+        pass
+
+    detail = f"Compacted {record.messages_compacted} messages"
+    if record.tokens_before and record.tokens_after:
+        saved = record.tokens_before - record.tokens_after
+        detail += f" ({record.tokens_before} -> {record.tokens_after} tokens, saved {saved})"
+    if record.archive_path:
+        detail += f", archived at {record.archive_path}"
+    log_info(detail)
+
+
+def _compaction_events(run_response: Optional[RunOutput], record: Any, started: bool = False) -> List[Any]:
+    """The events one compaction raises, when there is a run to attach them to."""
+    if run_response is None:
+        return []
+    from agno.utils.events import create_compaction_completed_event, create_compaction_started_event
+
+    if started:
+        return [create_compaction_started_event(from_run_response=run_response)]
+    return [
+        create_compaction_completed_event(
+            from_run_response=run_response,
+            messages_compacted=record.messages_compacted,
+            tokens_before=record.tokens_before,
+            tokens_after=record.tokens_after,
+            archive_path=record.archive_path,
+        )
+    ]
+
+
+def apply_compaction(
+    agent: "Agent",
+    session: AgentSession,
+    history: List[Message],
+    run_response: Optional[RunOutput] = None,
+    events: Optional[List[Any]] = None,
+) -> List[Message]:
+    """Replace the head of ``history`` with a summary once it grows too long.
+
+    Returns the list to send to the model. ``history`` itself is not mutated,
+    and what the session persists is never touched: compaction shortens the
+    request, not the record.
+    """
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None or not history:
+        return history
+
+    record = _stored_compaction(session)
+    # A stored compaction is replayed rather than recomputed, so the summary is
+    # paid for once and the prompt prefix stays stable between runs.
+    in_context = compaction.apply_record(history, record) if record is not None else history
+
+    inputs = _compaction_inputs(agent, session)
+    if not compaction.should_compact(in_context, **inputs):
+        return in_context
+
+    # Announce only once the guards have passed. should_compact cannot see the
+    # pair-safe boundary or the size floor, so announcing on it alone reports
+    # compactions that then never happen.
+    if compaction.plan(history, record) is None:
+        return in_context
+
+    log_info("Auto-compacting conversation history")
+    if events is not None:
+        events.extend(_compaction_events(run_response, None, started=True))
+
+    # Compact against the FULL history, so the boundary the record stores is an
+    # absolute index into it. A boundary measured on the already-compacted list
+    # would advance by only one message per run, so the context would never
+    # actually shrink and every later run would compact again.
+    new_record = compaction.compact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        previous=record,
+        run_metrics=run_response.metrics if run_response is not None else None,
+        tokens_before=inputs["last_input_tokens"],
+    )
+    if new_record is None:
+        return in_context
+
+    compacted = compaction.apply_record(history, new_record)
+    # Measure before storing, so the persisted record carries the real sizes.
+    _log_compaction(new_record, in_context, compacted, inputs)
+    _store_compaction(session, new_record)
+    if events is not None:
+        events.extend(_compaction_events(run_response, new_record))
+    return compacted
+
+
+async def aapply_compaction(
+    agent: "Agent",
+    session: AgentSession,
+    history: List[Message],
+    run_response: Optional[RunOutput] = None,
+    events: Optional[List[Any]] = None,
+) -> List[Message]:
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None or not history:
+        return history
+
+    record = _stored_compaction(session)
+    in_context = compaction.apply_record(history, record) if record is not None else history
+
+    inputs = _compaction_inputs(agent, session)
+    if not compaction.should_compact(in_context, **inputs):
+        return in_context
+
+    # Announce only once the guards have passed. should_compact cannot see the
+    # pair-safe boundary or the size floor, so announcing on it alone reports
+    # compactions that then never happen.
+    if compaction.plan(history, record) is None:
+        return in_context
+
+    log_info("Auto-compacting conversation history")
+    if events is not None:
+        events.extend(_compaction_events(run_response, None, started=True))
+
+    # Compact against the FULL history so the stored boundary is absolute -
+    # see the sync path for why a relative boundary never shrinks the context.
+    new_record = await compaction.acompact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        previous=record,
+        run_metrics=run_response.metrics if run_response is not None else None,
+        tokens_before=inputs["last_input_tokens"],
+    )
+    if new_record is None:
+        return in_context
+
+    compacted = compaction.apply_record(history, new_record)
+    # Measure before storing, so the persisted record carries the real sizes.
+    _log_compaction(new_record, in_context, compacted, inputs)
+    _store_compaction(session, new_record)
+    if events is not None:
+        events.extend(_compaction_events(run_response, new_record))
+    return compacted
 
 
 def _get_resolved_knowledge(agent: "Agent", run_context: Optional[RunContext] = None) -> Any:
@@ -1196,6 +1403,10 @@ def get_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
+            # Replace the older part of the history with a summary once it has
+            # grown past the configured threshold.
+            history_copy = apply_compaction(agent, session, history_copy, run_response, events=run_messages.events)
+
             log_debug(f"Adding {len(history_copy)} messages from history")
 
             run_messages.messages += history_copy
@@ -1401,6 +1612,12 @@ async def aget_run_messages(
             # Filter tool calls from history if limit is set (before adding to run_messages)
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
+
+            # Replace the older part of the history with a summary once it has
+            # grown past the configured threshold.
+            history_copy = await aapply_compaction(
+                agent, session, history_copy, run_response, events=run_messages.events
+            )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
