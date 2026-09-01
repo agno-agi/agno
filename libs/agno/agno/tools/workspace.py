@@ -446,10 +446,14 @@ class Workspace(Toolkit):
             sections.append(text)
 
         if "move_file" in enabled:
-            sections.append(f"**{tool_prefix}move_file** — move or rename a file.\nWhen to use: reorganizing, renaming.")
+            sections.append(
+                f"**{tool_prefix}move_file** — move or rename a file.\nWhen to use: reorganizing, renaming."
+            )
 
         if "delete_file" in enabled:
-            sections.append(f"**{tool_prefix}delete_file** — delete a file.\nWhen to use: removing files. Use with caution.")
+            sections.append(
+                f"**{tool_prefix}delete_file** — delete a file.\nWhen to use: removing files. Use with caution."
+            )
 
         if "run_command" in enabled:
             sections.append(

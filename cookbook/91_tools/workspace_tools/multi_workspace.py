@@ -19,13 +19,20 @@ from agno.tools.workspace import Workspace
 
 def main():
     # Create two temp directories to simulate docs and code workspaces
-    with tempfile.TemporaryDirectory() as docs_dir, tempfile.TemporaryDirectory() as code_dir:
+    with (
+        tempfile.TemporaryDirectory() as docs_dir,
+        tempfile.TemporaryDirectory() as code_dir,
+    ):
         docs_path = Path(docs_dir)
         code_path = Path(code_dir)
 
         # Create sample files in docs workspace
-        (docs_path / "getting-started.md").write_text("# Getting Started\n\nWelcome to the docs!")
-        (docs_path / "api-reference.md").write_text("# API Reference\n\n## Agent class\n...")
+        (docs_path / "getting-started.md").write_text(
+            "# Getting Started\n\nWelcome to the docs!"
+        )
+        (docs_path / "api-reference.md").write_text(
+            "# API Reference\n\n## Agent class\n..."
+        )
 
         # Create sample files in code workspace
         (code_path / "agent.py").write_text("class Agent:\n    def run(self): pass")
