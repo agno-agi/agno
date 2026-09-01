@@ -13,12 +13,12 @@ from agno.models.groq import Groq
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Groq(id="meta-llama/llama-4-scout-17b-16e-instruct"))
+agent = Agent(model=Groq(id="qwen/qwen3.6-27b"))
 
 agent.print_response(
     "Tell me about this image",
     images=[
-        Image(url="https://upload.wikimedia.org/wikipedia/commons/f/f2/LPU-v1-die.jpg"),
+        Image(url="https://agno-public.s3.amazonaws.com/images/krakow_mariacki.jpg"),
     ],
     stream=True,
 )
