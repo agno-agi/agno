@@ -6,19 +6,20 @@ result yet.
 
 ### image_agent.py
 
-**Status:** PASS (streaming caveat disclosed)
+**Status:** PASS
 
-**Description:** Sends an image by URL to `qwen/qwen3.6-27b` and asks for a
-description. The image is the public `agno-public` S3 photo of Krakow's Main
-Market Square (the previous Wikimedia URL returned 403 to Groq's server-side
-fetch — Wikimedia blocks non-browser user agents).
+**Description:** Sends an image by URL to `qwen/qwen3.6-27b` (with
+`reasoning_effort="none"`) and streams a description. The image is the public
+`agno-public` S3 photo of Krakow's Main Market Square (the previous Wikimedia
+URL returned 403 to Groq's server-side fetch — Wikimedia blocks non-browser
+user agents).
 
-**Result:** Groq fetched the S3 URL and the model returned a genuine, accurate
-description of the image in both runs. Caveat: with `stream=True` (as the file
-is written) the streamed output contains the model's raw `<think>` reasoning
-and the stream ended before the final answer in both runs; a non-streaming run
-of the identical agent completed with the full description after the reasoning
-block. This is a qwen-reasoning-tokens / streaming interaction, unrelated to
-the URL change.
+**Result:** Two streamed runs completed cleanly with genuine, accurate
+descriptions of the image. `reasoning_effort="none"` matters: with qwen's
+default thinking enabled, the raw `<think>` tokens stream into the response
+and the run can end before the answer appears (observed in 2 of 2 streamed
+and 2 of 3 non-streamed runs without the flag). The flag disables thinking so
+the streamed answer is immediate and complete; verified 4 of 4 with it (two
+raw API calls, two full cookbook runs).
 
 ---
