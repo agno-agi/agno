@@ -135,3 +135,59 @@ channel itself, `content.downloadUrl` file attachments, `@mention` stripping,
 channel and group-chat conversations, and app sideloading.
 
 ---
+
+### On the Microsoft Teams client
+
+**Date:** 2026-09-02 · **Library source:** `libs/agno` at `0d7f648ba` · **Test mode:** LIVE
+
+Run against a real Microsoft Teams client, on a tenant with Microsoft 365 Business
+Basic, using an Azure Bot whose Teams channel was healthy and whose messaging
+endpoint pointed at an HTTPS tunnel to `localhost:7777`. This covers what the Web
+Chat rounds above structurally could not.
+
+**In a one-to-one chat:**
+
+| Sent | Result |
+|---|---|
+| `hello` | replied |
+| an image | described accurately — see the fix note below |
+| a PDF | summarised; the download came from `content.downloadUrl` |
+| a `.zip` | skipped, and the reply named the file and still answered the question |
+
+**In a channel**, after installing the app into a team:
+
+| Sent | Result |
+|---|---|
+| `@bot what is 2+2` | `2 + 2 = 4` — the `<at>` markup was stripped before the model saw it |
+| a PDF | summarised |
+| a `.zip` | skipped with the notice |
+| `@bot /new` | new session created; the next message landed on it, 1 run against the previous session's 11 |
+
+Replies in a channel arrive inside the thread rather than as a new root post.
+
+**App package:** a hand-written `manifest.json` with `scopes` of `personal`, `team`
+and `groupChat`, plus the two icons, uploaded to the organisation's app catalogue
+and installed into a channel. Note the manifest's `id` and the bot's `botId` are
+different values -- reusing the bot's application id as the manifest id is refused
+when that id already backs a catalogue entry.
+
+**One fix came out of this tier.** An image arrived with the interface passing the
+download's `content-type` to the model. Teams serves its attachment CDN as
+`application/octet-stream`, which is not an image type, so the provider rejected
+the request and the user got the generic error instead of an answer. Web Chat
+serves `image/png`, which is why every earlier round passed. The activity's own
+`contentType` is now preferred, since it is what identified the attachment as an
+image in the first place.
+
+**Worth knowing, and not obvious from the code.** A session id is
+`teams:<entity-id>:<user-id>` and carries no conversation, so one user's private
+chat and their channel messages share a single session and a single history. The
+conversation reference is rewritten on every run, so it points at whichever surface
+that user spoke on most recently -- meaning `send_alert` delivers to the channel
+thread, not the private chat, once the user has posted in a channel.
+
+**Not covered:** group chats. The router does not branch on `conversationType`, so
+a group chat exercises the same path a channel does, and reaching one needs a
+second person in the tenant.
+
+---
