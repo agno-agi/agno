@@ -735,9 +735,10 @@ class Workspace(Toolkit):
             return None
         if file_path in self._read_paths:
             return None
+        read_tool = f"{self.tool_name_prefix}_read_file" if self.tool_name_prefix else "read_file"
         return (
             f"Error: require_read_before_write is enabled and {file_path.name} hasn't "
-            f"been read this session. Call read_file first to confirm contents before "
+            f"been read this session. Call {read_tool} first to confirm contents before "
             f"the {op}."
         )
 
@@ -778,8 +779,9 @@ class Workspace(Toolkit):
             self._read_paths.add(file_path)
             if start_line is None and end_line is None:
                 # Only suggest search_content if it's actually enabled
+                search_tool = f"{self.tool_name_prefix}_search_content" if self.tool_name_prefix else "search_content"
                 search_hint = (
-                    ", or use search_content to find specific text first" if "search_content" in self.functions else ""
+                    f", or use {search_tool} to find specific text first" if search_tool in self.functions else ""
                 )
                 if len(contents) > self.max_file_length:
                     return (
