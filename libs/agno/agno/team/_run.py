@@ -8808,13 +8808,18 @@ async def _acontinue_run_background_stream(
     yield_run_output: Optional[bool] = None,
     debug_mode: Optional[bool] = None,
     background_tasks: Optional[Any] = None,
+    raw_events: bool = False,
     **kwargs: Any,
-) -> AsyncIterator[str]:
+) -> AsyncIterator[Any]:
     """Background streaming continue-run that survives client disconnections.
 
     Mirrors _arun_background_stream but drives _acontinue_run_stream instead of
     _arun_stream. Used for HITL scenarios where a paused run resumes and the
     client needs reconnection support.
+
+    When ``raw_events`` is True, the queue carries raw TeamRunOutputEvent
+    objects instead of SSE strings (and no keepalive comments are emitted),
+    so non-SSE transports such as AG-UI can convert the events themselves.
 
     Without this, team.acontinue_run(background=True, stream=True) would route
     to _acontinue_run_stream and yield raw TeamRunOutputEvent objects directly
@@ -8947,12 +8952,15 @@ async def _acontinue_run_background_stream(
             except Exception:
                 log_warning(f"Failed to buffer event for continue-run {_run_id}")
 
-            sse_data = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
+            # Raw mode hands the event object to the caller for its own framing
+            queue_item: Any = event
+            if not raw_events:
+                queue_item = format_sse_event_with_index(event, event_index=event_index, run_id=_run_id)
 
             try:
-                await sse_queue.put(sse_data)
+                await sse_queue.put(queue_item)
             except Exception:
-                log_warning(f"Failed to push SSE data to queue for continue-run {_run_id}")
+                log_warning(f"Failed to push event to queue for continue-run {_run_id}")
 
         try:
             await slot_cm.__aenter__()
@@ -9241,12 +9249,14 @@ async def _acontinue_run_background_stream(
 
     # 4. Yield SSE strings from the queue. Emit SSE keepalive comments on idle
     # so proxies do not kill the connection while the run waits for a slot (or
-    # during long silent stretches of execution).
+    # during long silent stretches of execution). Raw mode yields event objects
+    # and no keepalives — comment frames would corrupt the caller's conversion.
     while True:
         try:
             sse_data = await asyncio.wait_for(sse_queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
         except asyncio.TimeoutError:
-            yield ": keepalive\n\n"
+            if not raw_events:
+                yield ": keepalive\n\n"
             continue
         if sse_data is None:
             break
@@ -9299,6 +9309,9 @@ def acontinue_run_dispatch(  # type: ignore
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
     background_tasks = kwargs.pop("background_tasks", None)
+    # Raw-event output for non-SSE transports (e.g. AG-UI); only meaningful
+    # for background streaming, popped here so it never leaks into model kwargs
+    raw_events = bool(kwargs.pop("raw_events", False))
     if background_tasks is not None:
         from fastapi import BackgroundTasks
 
@@ -9400,6 +9413,7 @@ def acontinue_run_dispatch(  # type: ignore
                 yield_run_output=opts.yield_run_output,
                 debug_mode=debug_mode,
                 background_tasks=background_tasks,
+                raw_events=raw_events,
                 **kwargs,
             )
         # background=True, stream=False is not supported for continue_run yet —

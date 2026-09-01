@@ -432,3 +432,112 @@ def test_route_reattach_unknown_run_is_404():
 
     response = client.post("/agui", json=_agui_payload(forwarded_props={"reattach": True}))
     assert response.status_code == 404
+
+
+# ----------------------------------------------------------------------
+# resume_paused_run background passthrough
+# ----------------------------------------------------------------------
+
+
+def _make_paused_run():
+    from agno.run.agent import RunOutput
+    from agno.run.requirement import RunRequirement
+
+    return RunOutput(
+        run_id="paused-run-123",
+        session_id="test-session",
+        status=RunStatus.paused,
+        requirements=[
+            RunRequirement(
+                tool_execution=ToolExecution(
+                    tool_call_id="call_1",
+                    tool_name="change_background",
+                    tool_args={"color": "blue"},
+                    external_execution_required=True,
+                )
+            )
+        ],
+    )
+
+
+def _make_resume_entity():
+    from unittest.mock import AsyncMock
+
+    from agno.agent import Agent
+    from agno.session.agent import AgentSession
+
+    async def _empty_stream():
+        return
+        yield
+
+    session = AgentSession(session_id="test-session")
+    session.runs = [_make_paused_run()]
+
+    entity = MagicMock(spec=Agent)
+    entity.db = MagicMock()
+    entity.aget_session = AsyncMock(return_value=session)
+    entity.acontinue_run = MagicMock(return_value=_empty_stream())
+    return entity
+
+
+class _FakeToolMessage:
+    tool_call_id = "call_1"
+    content = "Background changed"
+    error = None
+
+
+@pytest.mark.asyncio
+async def test_resume_background_passes_raw_events_and_skips_stream_sync(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from agno.os.interfaces.agui.resume import resume_paused_run
+    from agno.run.base import RunContext
+
+    sync_mock = AsyncMock()
+    monkeypatch.setattr("agno.os.utils.acomplete_continue_stream", sync_mock)
+
+    entity = _make_resume_entity()
+    stream = await resume_paused_run(
+        entity=entity,
+        session_id="test-session",
+        tool_messages=[_FakeToolMessage()],
+        run_context=RunContext(run_id="new-run", session_id="test-session"),
+        run_kwargs={},
+        background=True,
+    )
+    async for _ in stream:
+        pass
+
+    call_kwargs = entity.acontinue_run.call_args.kwargs
+    assert call_kwargs["background"] is True
+    assert call_kwargs["raw_events"] is True
+    # The detached producer owns the terminal sentinel; the consumer-side
+    # stream sync must NOT run (it would falsely complete a live stream)
+    sync_mock.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_resume_inline_runs_stream_sync(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    from agno.os.interfaces.agui.resume import resume_paused_run
+    from agno.run.base import RunContext
+
+    sync_mock = AsyncMock()
+    monkeypatch.setattr("agno.os.utils.acomplete_continue_stream", sync_mock)
+
+    entity = _make_resume_entity()
+    stream = await resume_paused_run(
+        entity=entity,
+        session_id="test-session",
+        tool_messages=[_FakeToolMessage()],
+        run_context=RunContext(run_id="new-run", session_id="test-session"),
+        run_kwargs={},
+    )
+    async for _ in stream:
+        pass
+
+    call_kwargs = entity.acontinue_run.call_args.kwargs
+    assert "background" not in call_kwargs
+    assert "raw_events" not in call_kwargs
+    sync_mock.assert_awaited_once()
