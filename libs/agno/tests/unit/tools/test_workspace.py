@@ -1852,3 +1852,52 @@ def test_empty_deny_list_with_only_exemptions_excludes_nothing():
         _write(base, ".env", "SECRET=1\n")
         ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
         assert "SECRET=1" in ws.read_file(".env")
+
+
+# =============================================================================
+# tool_name_prefix tests
+# =============================================================================
+
+
+def test_tool_name_prefix_prefixes_tool_names(tmp_path):
+    """tool_name_prefix prepends prefix to all tool names."""
+    workspace = Workspace(root=tmp_path, tool_name_prefix="docs")
+
+    assert "docs_read_file" in workspace.functions
+    assert "docs_list_files" in workspace.functions
+    assert "read_file" not in workspace.functions
+
+
+def test_tool_name_prefix_updates_instructions(tmp_path):
+    """Instructions reference prefixed tool names when prefix is set."""
+    workspace = Workspace(root=tmp_path, tool_name_prefix="myapp")
+
+    # Check that instructions reference prefixed names
+    assert workspace.instructions is not None
+    assert "myapp_read_file" in workspace.instructions
+    assert "myapp_list_files" in workspace.instructions
+    # Should not have unprefixed names
+    assert "**read_file**" not in workspace.instructions
+
+
+def test_tool_name_prefix_none_keeps_original_names(tmp_path):
+    """When tool_name_prefix is None, names and instructions are unchanged."""
+    workspace = Workspace(root=tmp_path, tool_name_prefix=None)
+
+    assert "read_file" in workspace.functions
+    assert "docs_read_file" not in workspace.functions
+    if workspace.instructions:
+        assert "**read_file**" in workspace.instructions
+
+
+def test_multiple_workspaces_different_prefixes(tmp_path):
+    """Multiple Workspace instances can coexist with different prefixes."""
+    docs = Workspace(root=tmp_path, tool_name_prefix="docs")
+    code = Workspace(root=tmp_path, tool_name_prefix="code")
+
+    # Each has its own prefixed tools
+    assert "docs_read_file" in docs.functions
+    assert "code_read_file" in code.functions
+    # No collision
+    assert "docs_read_file" not in code.functions
+    assert "code_read_file" not in docs.functions

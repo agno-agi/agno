@@ -986,3 +986,73 @@ def test_explicit_tools_argument_preserved():
 
     assert example_func in toolkit.tools
     assert "example_func" in toolkit.functions
+
+
+# =============================================================================
+# tool_name_prefix tests
+# =============================================================================
+
+
+def test_tool_name_prefix_basic():
+    """tool_name_prefix prepends prefix to all registered tool names."""
+    toolkit = Toolkit(name="test", tools=[example_func, another_func], tool_name_prefix="myprefix")
+
+    assert "myprefix_example_func" in toolkit.functions
+    assert "myprefix_another_func" in toolkit.functions
+    assert "example_func" not in toolkit.functions
+    assert "another_func" not in toolkit.functions
+
+
+def test_tool_name_prefix_none_uses_original_names():
+    """When tool_name_prefix is None, tool names are unchanged."""
+    toolkit = Toolkit(name="test", tools=[example_func], tool_name_prefix=None)
+
+    assert "example_func" in toolkit.functions
+    assert "myprefix_example_func" not in toolkit.functions
+
+
+def test_tool_name_prefix_with_include_tools():
+    """Filters match on unprefixed names, prefix applied after filtering."""
+    toolkit = Toolkit(
+        name="test",
+        tools=[example_func, another_func, third_func],
+        include_tools=["example_func", "third_func"],
+        tool_name_prefix="docs",
+    )
+
+    assert "docs_example_func" in toolkit.functions
+    assert "docs_third_func" in toolkit.functions
+    assert "docs_another_func" not in toolkit.functions
+
+
+def test_tool_name_prefix_with_exclude_tools():
+    """Filters match on unprefixed names, prefix applied after filtering."""
+    toolkit = Toolkit(
+        name="test",
+        tools=[example_func, another_func],
+        exclude_tools=["another_func"],
+        tool_name_prefix="code",
+    )
+
+    assert "code_example_func" in toolkit.functions
+    assert "code_another_func" not in toolkit.functions
+
+
+def test_tool_name_prefix_function_object_has_correct_name():
+    """The Function object's name attribute has the prefix."""
+    toolkit = Toolkit(name="test", tools=[example_func], tool_name_prefix="myapp")
+
+    func = toolkit.functions["myapp_example_func"]
+    assert func.name == "myapp_example_func"
+
+
+def test_tool_name_prefix_multiple_toolkits_no_collision():
+    """Multiple toolkits with different prefixes can have same-named tools."""
+    toolkit1 = Toolkit(name="docs", tools=[example_func], tool_name_prefix="docs")
+    toolkit2 = Toolkit(name="code", tools=[example_func], tool_name_prefix="code")
+
+    assert "docs_example_func" in toolkit1.functions
+    assert "code_example_func" in toolkit2.functions
+    # Each toolkit has its own prefixed version
+    assert toolkit1.functions["docs_example_func"].name == "docs_example_func"
+    assert toolkit2.functions["code_example_func"].name == "code_example_func"

@@ -383,73 +383,77 @@ class Workspace(Toolkit):
     }
 
     @classmethod
-    def _build_instructions(cls, tool_names: List[str]) -> str:
+    def _build_instructions(cls, tool_names: List[str], prefix: Optional[str] = None) -> str:
         """Build instructions based on which tools are actually enabled.
 
         Only references tools the LLM can call — never mentions disabled tools.
+        When prefix is set, tool names in instructions are prefixed (e.g., docs_read_file).
         """
         enabled = set(tool_names)
         sections: List[str] = []
 
+        def t(name: str) -> str:
+            return f"{prefix}_{name}" if prefix else name
+
         # Read tools
         if "read_file" in enabled:
             sections.append(
-                "**read_file** — read a file with line numbers.\n"
+                f"**{t('read_file')}** — read a file with line numbers.\n"
                 "When to use: examining file contents, checking code, getting context.\n"
                 "Always read before editing or citing."
             )
 
         if "list_files" in enabled:
             sections.append(
-                "**list_files** — list directory contents.\n"
+                f"**{t('list_files')}** — list directory contents.\n"
                 "When to use: discovering project structure, finding files.\n"
                 "Use `recursive=True` with `max_depth` for broad exploration."
             )
 
         if "search_content" in enabled:
             text = (
-                "**search_content** — substring search across files.\n"
+                f"**{t('search_content')}** — substring search across files.\n"
                 "When to use: finding text, locating usages, discovering code."
             )
             if "grep_content" in enabled:
-                text += "\nFor regex patterns or line numbers, use grep_content instead."
+                text += f"\nFor regex patterns or line numbers, use {t('grep_content')} instead."
             sections.append(text)
 
         if "grep_content" in enabled:
             text = (
-                "**grep_content** — regex search with line numbers and context.\n"
+                f"**{t('grep_content')}** — regex search with line numbers and context.\n"
                 "When to use: pattern matching, finding code with surrounding context."
             )
             if "search_content" in enabled:
-                text += "\nFor simple substring search, use search_content instead."
+                text += f"\nFor simple substring search, use {t('search_content')} instead."
             sections.append(text)
 
         # Write tools
         if "write_file" in enabled:
             sections.append(
-                "**write_file** — create or overwrite a file.\n"
+                f"**{t('write_file')}** — create or overwrite a file.\n"
                 "When to use: creating new files, replacing entire file contents."
             )
 
         if "edit_file" in enabled:
             text = (
-                "**edit_file** — replace a substring in a file.\n"
+                f"**{t('edit_file')}** — replace a substring in a file.\n"
                 "When to use: modifying existing code.\n"
-                "IMPORTANT: Always read_file first — use the exact substring from the output."
+                f"IMPORTANT: Always {t('read_file')} first — use the exact substring from the output."
             )
             if "write_file" in enabled:
-                text += "\nUse write_file for new files; edit_file for modifications."
+                text += f"\nUse {t('write_file')} for new files; {t('edit_file')} for modifications."
             sections.append(text)
 
         if "move_file" in enabled:
-            sections.append("**move_file** — move or rename a file.\nWhen to use: reorganizing, renaming.")
+            sections.append(f"**{t('move_file')}** — move or rename a file.\nWhen to use: reorganizing, renaming.")
 
         if "delete_file" in enabled:
-            sections.append("**delete_file** — delete a file.\nWhen to use: removing files. Use with caution.")
+            sections.append(f"**{t('delete_file')}** — delete a file.\nWhen to use: removing files. Use with caution.")
 
         if "run_command" in enabled:
             sections.append(
-                "**run_command** — run a shell command in the workspace.\n"
+                f"**{t('run_command')}** — run a shell command in the workspace.\n"
                 "When to use: running tests, builds, or other commands.\n"
                 "Note: runs with cwd=workspace root."
             )
@@ -462,13 +466,13 @@ class Workspace(Toolkit):
         # Routing guidance
         routing: List[str] = []
         if "list_files" in enabled:
-            routing.append("- Discover structure → list_files")
+            routing.append(f"- Discover structure → {t('list_files')}")
         if "search_content" in enabled or "grep_content" in enabled:
-            routing.append("- Find code/text → search_content or grep_content")
+            routing.append(f"- Find code/text → {t('search_content')} or {t('grep_content')}")
         if "read_file" in enabled:
-            routing.append("- Examine contents → read_file")
+            routing.append(f"- Examine contents → {t('read_file')}")
         if "edit_file" in enabled:
-            routing.append("- Modify code → read_file first, then edit_file")
+            routing.append(f"- Modify code → {t('read_file')} first, then {t('edit_file')}")
 
         if routing:
             result += "\n\n## Workflow\n" + "\n".join(routing)
@@ -524,8 +528,9 @@ class Workspace(Toolkit):
 
         # Build instructions dynamically based on enabled tools
         toolkit_kwargs: dict = {}
+        prefix = kwargs.get("tool_name_prefix")
         if kwargs.get("instructions") is None:
-            built = self._build_instructions(registered)
+            built = self._build_instructions(registered, prefix=prefix)
             if built:
                 toolkit_kwargs["instructions"] = built
                 toolkit_kwargs.setdefault("add_instructions", True)
