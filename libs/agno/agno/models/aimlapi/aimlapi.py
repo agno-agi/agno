@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, Dict, Optional
 
 from agno.exceptions import ModelAuthenticationError
+from agno.models.aimlapi.constants import AIMLAPI_HEADERS
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 
@@ -43,7 +44,13 @@ class AIMLAPI(OpenAILike):
                     message="AIMLAPI_API_KEY not set. Please set the AIMLAPI_API_KEY environment variable.",
                     model_name=self.name,
                 )
-        return super()._get_client_params()
+
+        client_params = super()._get_client_params()
+
+        # Attribution headers are always sent; anything the caller set wins on a key clash.
+        client_params["default_headers"] = {**AIMLAPI_HEADERS, **(client_params.get("default_headers") or {})}
+
+        return client_params
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
