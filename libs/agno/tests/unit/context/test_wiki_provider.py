@@ -245,7 +245,7 @@ def test_provider_tools_mode_is_read_only(tmp_path: Path):
     p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), mode=ContextMode.tools)
     workspace = p.get_tools()[0]
     # Only the read aliases should be registered — no write/edit/delete.
-    assert sorted(workspace.functions.keys()) == ["list_files", "read_file", "search_content"]
+    assert sorted(workspace.functions.keys()) == ["grep_content", "list_files", "read_file", "search_content"]
 
 
 def test_provider_tools_mode_instructions_call_out_read_only(tmp_path: Path):
