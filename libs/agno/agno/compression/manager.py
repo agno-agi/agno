@@ -157,7 +157,7 @@ class CompressionManager:
         for tool_msg in uncompressed_tools:
             original_len = len(str(tool_msg.content)) if tool_msg.content else 0
             compressed = self._compress_tool_result(tool_msg, run_metrics=run_metrics)
-            if compressed:
+            if compressed is not None:
                 tool_msg.compressed_content = compressed
                 # Count actual tool results (Gemini combines multiple in one message)
                 tool_results_count = len(tool_msg.tool_calls) if tool_msg.tool_calls else 1
@@ -267,7 +267,7 @@ class CompressionManager:
 
         # Apply results and track stats
         for msg, compressed, original_len in zip(uncompressed_tools, results, original_sizes):
-            if compressed:
+            if compressed is not None:
                 msg.compressed_content = compressed
                 # Count actual tool results (Gemini combines multiple in one message)
                 tool_results_count = len(msg.tool_calls) if msg.tool_calls else 1
