@@ -269,6 +269,152 @@ async def test_connect_merges_init_headers_when_sse_headers_default_to_none():
 
 
 @pytest.mark.asyncio
+async def test_connect_applies_header_provider_when_using_url_only_streamable_http():
+    """Regression for #9442: header_provider must authenticate the connect handshake.
+
+    Reproduces the common url= + header_provider(run_context) pattern without
+    StreamableHTTPClientParams.
+    """
+
+    def header_provider(run_context):
+        return {"Authorization": "Bearer connect-token"}
+
+    tools = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        header_provider=header_provider,
+    )
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_http_mock.call_args.kwargs["url"] == "http://localhost:8000/mcp"
+    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer connect-token"}
+
+
+@pytest.mark.asyncio
+async def test_connect_applies_static_headers_when_using_url_only_streamable_http():
+    tools = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        headers={"Authorization": "Bearer static-token"},
+    )
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer static-token"}
+
+
+@pytest.mark.asyncio
+async def test_connect_merges_static_headers_and_header_provider_on_streamable_http():
+    tools = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        headers={"X-Static": "a", "Authorization": "Bearer static"},
+        header_provider=lambda: {"Authorization": "Bearer dynamic", "X-Dynamic": "b"},
+    )
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert streamable_http_mock.call_args.kwargs["headers"] == {
+        "X-Static": "a",
+        "Authorization": "Bearer dynamic",
+        "X-Dynamic": "b",
+    }
+
+
+@pytest.mark.asyncio
+async def test_connect_applies_header_provider_when_using_url_only_sse():
+    def header_provider(run_context):
+        return {"Authorization": "Bearer connect-token"}
+
+    tools = MCPTools(
+        url="http://localhost:8000/sse",
+        transport="sse",
+        header_provider=header_provider,
+    )
+
+    with (
+        patch("agno.tools.mcp.mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))) as sse_client_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert sse_client_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer connect-token"}
+
+
+def test_headers_with_stdio_transport_raises_error():
+    with pytest.raises(ValueError, match="headers is not supported with 'stdio' transport"):
+        MCPTools(command="npx foo", transport="stdio", headers={"Authorization": "Bearer token"})
+
+
+@pytest.mark.asyncio
+async def test_mcp_toolbox_headers_not_sent_to_mcp_connect():
+    """MCPToolbox toolbox-core credentials in self.headers must not reach the MCP handshake.
+
+    Regression for the Greptile P1 on #9444: MCPTools merges MCP-intended headers for
+    connect/session, but MCPToolbox historically stores toolbox-core client_headers in
+    self.headers. Those must stay isolated from the MCP transport.
+    """
+    import sys
+    from types import ModuleType
+
+    toolbox_core = ModuleType("toolbox_core")
+    toolbox_core.ToolboxClient = MagicMock()
+    sys.modules["toolbox_core"] = toolbox_core
+    sys.modules.pop("agno.tools.mcp_toolbox", None)
+
+    from agno.tools.mcp_toolbox import MCPToolbox
+
+    toolbox_headers = {"Authorization": "Bearer toolbox-secret"}
+    tools = MCPToolbox(
+        url="http://localhost:8000",
+        headers=toolbox_headers,
+        append_mcp_to_url=True,
+    )
+    assert tools.headers == toolbox_headers
+    assert tools._merge_http_headers() == {}
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamablehttp_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    sent_headers = streamable_http_mock.call_args.kwargs.get("headers") or {}
+    assert "Authorization" not in sent_headers
+    assert "toolbox-secret" not in str(streamable_http_mock.call_args)
+
+
+@pytest.mark.asyncio
 async def test_get_session_for_run_merges_headers_when_sse_headers_default_to_none():
     tools = MCPTools(
         server_params=SSEClientParams(url="http://localhost:8080/sse"),

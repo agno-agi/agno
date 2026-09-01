@@ -30,7 +30,7 @@ from agno.db.schemas.service_accounts import ServiceAccount  # noqa: E402
 from agno.models.base import Model  # noqa: E402
 from agno.models.message import MessageMetrics  # noqa: E402
 from agno.models.response import ModelResponse  # noqa: E402
-from agno.os import AgentOS, MCPServerConfig  # noqa: E402
+from agno.os import AgentOS, MCPConfig, MCPServerConfig  # noqa: E402
 from agno.os.config import AuthorizationConfig  # noqa: E402
 from agno.os.mcp import _resolve_user_id, build_mcp_server, get_mcp_server  # noqa: E402
 from agno.os.service_accounts import ServiceAccountVerification, VerificationStatus, generate_token  # noqa: E402
@@ -52,6 +52,24 @@ ALL_BUILTIN_TOOLS = CORE_TOOLS | SESSION_TOOLS
 
 def _agent() -> Agent:
     return Agent(id="demo-agent", name="Demo Agent")
+
+
+def _bind_ownership(component, component_id, session_id, run_id):
+    """Feed the run-ownership gate a matching agent session so it passes for real (the
+    gate logic still runs; rejection is covered in test_mcp_exposed_components.py)."""
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    sess = AgentSession(
+        session_id=session_id,
+        agent_id=component_id,
+        runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id)],
+    )
+
+    async def _fake_aget_session(session_id=None, user_id=None, **kw):
+        return sess
+
+    component.aget_session = _fake_aget_session
 
 
 async def _tool_names(os: AgentOS) -> set:
@@ -182,6 +200,71 @@ def test_disabling_builtins_with_no_custom_tools_is_rejected_at_construction():
         MCPServerConfig(enable_builtin_tools=False)
 
 
+def _noop_tool() -> str:
+    """Return ok."""
+    return "ok"
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({"include_tags": set()}, id="empty-include-tags"),
+        # The pre-lifecycle spelling must keep meaning "no tools": ``lifecycle`` never
+        # enters the enabled set implicitly, so a config written before the tag existed
+        # does not silently regain the run-resumption pair on upgrade.
+        pytest.param({"exclude_tags": {"core", "session"}}, id="exclude-every-original-tag"),
+        pytest.param({"exclude_tags": {"core", "session", "lifecycle"}}, id="exclude-every-tag"),
+        pytest.param({"include_tags": {"core"}, "exclude_tags": {"core"}}, id="exclude-cancels-include"),
+    ],
+)
+def test_tag_scoping_to_zero_builtins_without_custom_tools_warns(monkeypatch, kwargs):
+    """The tags reach the same zero-tool server the check above rejects.
+
+    ``enable_builtin_tools`` is still True in each of these, so the ``zero tools`` branch
+    never fires and the config is accepted -- then ``/mcp`` lists nothing. Warned rather
+    than raised because, unlike ``enable_builtin_tools=False``, this shape is accepted
+    today and callers may be relying on it.
+    """
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPServerConfig(**kwargs)
+
+    assert len(warnings) == 1
+    assert "resolves to zero tools" in warnings[0]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        pytest.param({}, id="defaults"),
+        pytest.param({"include_tags": {"core"}}, id="scoped-to-core"),
+        pytest.param({"exclude_tags": {"session"}}, id="drops-session"),
+        pytest.param({"include_tags": set(), "tools": [_noop_tool]}, id="no-builtins-but-custom-tools"),
+        pytest.param({"tools": [_noop_tool], "enable_builtin_tools": False}, id="custom-tools-only"),
+    ],
+)
+def test_configs_that_still_register_a_tool_do_not_warn(monkeypatch, kwargs):
+    """Anything that ends up with at least one tool stays silent -- no behavior change."""
+    warnings: list = []
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: warnings.append(msg))
+
+    MCPServerConfig(**kwargs)
+
+    assert warnings == []
+
+
+async def test_zero_tool_tag_scoping_still_builds_an_empty_server(monkeypatch):
+    """The warning is advisory: the resolved surface is unchanged (still empty)."""
+    monkeypatch.setattr("agno.utils.log.log_warning", lambda msg, *a, **kw: None)
+
+    # The pre-lifecycle spelling: excluding the two original tags must still resolve to
+    # an empty server on upgrade (the dual-tagged pair must not ride back via an
+    # implicitly enabled ``lifecycle``).
+    os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(exclude_tags={"core", "session"}))
+    assert await _tool_names(os) == set()
+
+
 async def test_include_tags_scopes_builtins_to_core():
     os = AgentOS(agents=[_agent()], mcp_server=MCPServerConfig(include_tags={"core"}))
     assert await _tool_names(os) == CORE_TOOLS
@@ -194,17 +277,45 @@ async def test_exclude_tags_drops_session_builtins():
     assert not (names & SESSION_TOOLS)
 
 
+async def test_exclude_core_removes_the_lifecycle_pair():
+    """continue_run/cancel_run are core tools: excluding ``core`` removes them exactly
+    as it did before the ``lifecycle`` tag existed. A read-only surface built with
+    ``exclude_tags={"core"}`` must not silently retain run mutation."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"core"}))
+    assert await _tool_names(os) == SESSION_TOOLS
+
+
+async def test_exclude_lifecycle_keeps_the_default_surface_intact():
+    """``lifecycle`` gates only the exposure ride-along: excluding it with the default
+    surface on leaves the pair in place (they are core tools there)."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(exclude_tags={"lifecycle"}))
+    assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
+
+
+async def test_lifecycle_tools_flag_leaves_the_default_surface_alone():
+    """``lifecycle_tools=False`` turns off the exposure ride-along, not the pair's core
+    membership -- with no exposures configured the default surface is unchanged."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(lifecycle_tools=False))
+    assert await _tool_names(os) == CORE_TOOLS | SESSION_TOOLS
+
+
+async def test_include_lifecycle_alone_serves_only_the_pair():
+    """The tag is explicitly includable: a surface of just the run-resumption pair."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(include_tags={"lifecycle"}))
+    assert await _tool_names(os) == {"continue_run", "cancel_run"}
+
+
 def test_unknown_include_tag_is_rejected():
     """A typo like ``{"sessions"}`` (plural) would silently produce an empty server. The
     ``MCPBuiltinTag`` Literal makes pydantic reject it at construction."""
-    with pytest.raises(ValueError, match="Input should be 'core' or 'session'"):
+    with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
         MCPServerConfig(include_tags={"sessions"})
 
 
 def test_removed_memory_tag_is_rejected():
     """The memory tools were removed from the MCP surface; the old tag must fail loudly
     instead of silently scoping nothing."""
-    with pytest.raises(ValueError, match="Input should be 'core' or 'session'"):
+    with pytest.raises(ValueError, match="Input should be 'core', 'session' or 'lifecycle'"):
         MCPServerConfig(exclude_tags={"memory"})
 
 
@@ -534,6 +645,7 @@ async def test_continue_run_targets_the_given_session_and_never_mints(monkeypatc
         return RunOutput(run_id=run_id, session_id=session_id, content="resumed")
 
     agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    _bind_ownership(agent, "demo-agent", "orig-sess", "run-1")
     os = AgentOS(agents=[agent], mcp_server=True)
 
     result = await _call_tool(os, "continue_run", {"run_id": "run-1", "session_id": "orig-sess", "agent_id": agent.id})

@@ -1362,11 +1362,16 @@ def run_dispatch(
         files=file_artifacts,
     )
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Read the existing session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata.
+    from copy import deepcopy
+
     from agno.agent._storage import read_or_create_session, update_metadata
 
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+    # so the session layer keeps the session's own values (agent < session < call-site).
+    session_metadata = deepcopy(agent_session.metadata)
     update_metadata(agent, session=agent_session)
 
     # Resolve all run options centrally
@@ -1381,6 +1386,7 @@ def run_dispatch(
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
         output_schema=output_schema,
     )
 
@@ -2867,18 +2873,25 @@ def arun_dispatch(  # type: ignore
         files=file_artifacts,
     )
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Read the existing session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata.
     # Note: arun_dispatch is NOT async, so we can only pre-read with a sync DB.
-    # For async DB, _arun/_arun_stream will handle the session read themselves.
+    # For async DB, _arun/_arun_stream read the session AFTER options are resolved,
+    # so session metadata does not reach this run's resolved options there.
+    from copy import deepcopy
+
     from agno.agent._init import has_async_db
     from agno.agent._storage import update_metadata
 
     _pre_session: Optional[AgentSession] = None
+    _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
         from agno.agent._storage import read_or_create_session
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+        # so the session layer keeps the session's own values (agent < session < call-site).
+        _session_metadata = deepcopy(_pre_session.metadata)
         update_metadata(agent, session=_pre_session)
 
     # Resolve all run options centrally
@@ -2893,6 +2906,7 @@ def arun_dispatch(  # type: ignore
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=_session_metadata,
         output_schema=output_schema,
     )
 
@@ -3421,7 +3435,12 @@ def continue_run_dispatch(
     agent.initialize_agent(debug_mode=debug_mode)
 
     # Read existing session from storage
+    from copy import deepcopy
+
     agent_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+    # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+    # so the session layer keeps the session's own values (agent < session < call-site).
+    session_metadata = deepcopy(agent_session.metadata)
     update_metadata(agent, session=agent_session)
 
     # Fall back to the owner the run paused with, so the resume retrieves under the same scope
@@ -3455,6 +3474,7 @@ def continue_run_dispatch(
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=session_metadata,
     )
 
     # Initialize run context
@@ -3485,6 +3505,9 @@ def continue_run_dispatch(
         if run_response.status == RunStatus.cancelled:
             raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
         # The run is continued from a provided run_response. This contains the updated tools.
+        # The pipeline completes this object in place: the caller owns it
+        # (the run getters hand out copies, and the team resume flow relies
+        # on its member run completing in place).
         continue_index: Optional[int] = _resolve_continue_from(
             run_response,
             continue_from=continue_from,
@@ -3520,6 +3543,13 @@ def continue_run_dispatch(
             raise RunNotFoundError(f"No runs found for run ID {run_id}")
         if run_response.status == RunStatus.cancelled:
             raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+        # The continued run is mutated through the whole continue pipeline
+        # (message truncation, tool results, status). History run objects are
+        # shared between reads of the same session, so continue works on its
+        # own copy.
+        from copy import deepcopy as _deepcopy_run
+
+        run_response = _deepcopy_run(run_response)
 
         continue_index = _resolve_continue_from(
             run_response,
@@ -4289,16 +4319,24 @@ def acontinue_run_dispatch(  # type: ignore
     # Initialize the Agent
     agent.initialize_agent(debug_mode=debug_mode)
 
-    # Read existing session and update metadata BEFORE resolving run options,
-    # so that session-stored metadata is visible to resolve_run_options.
+    # Pre-read the session so session-stored metadata is visible to
+    # resolve_run_options via session_metadata. Only possible with a sync DB:
+    # with an async DB the session is read inside _arun AFTER options are
+    # resolved, so session metadata does not reach this run's resolved options.
     from agno.agent._init import has_async_db
 
     _session_state: Dict[str, Any] = {}
     _pre_session: Optional[AgentSession] = None
+    _session_metadata: Optional[Dict[str, Any]] = None
     if not has_async_db(agent):
+        from copy import deepcopy
+
         from agno.agent._storage import load_session_state, read_or_create_session, update_metadata
 
         _pre_session = read_or_create_session(agent, session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE update_metadata merges agent.metadata into the session dict,
+        # so the session layer keeps the session's own values (agent < session < call-site).
+        _session_metadata = deepcopy(_pre_session.metadata)
         update_metadata(agent, session=_pre_session)
         _session_state = load_session_state(agent, session=_pre_session, session_state={})
 
@@ -4316,6 +4354,7 @@ def acontinue_run_dispatch(  # type: ignore
         dependencies=dependencies,
         knowledge_filters=knowledge_filters,
         metadata=metadata,
+        session_metadata=_session_metadata,
     )
 
     # Prepare arguments for the model
@@ -4787,6 +4826,9 @@ async def _acontinue_run(
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
+                    # The pipeline completes this object in place: the caller owns it
+                    # (the run getters hand out copies, and the team resume flow relies
+                    # on its member run completing in place).
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
                         continue_from=continue_from,
@@ -4818,6 +4860,13 @@ async def _acontinue_run(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    # The continued run is mutated through the whole continue
+                    # pipeline (message truncation, tool results, status).
+                    # History run objects are shared between reads of the same
+                    # session, so continue works on its own copy.
+                    from copy import deepcopy as _deepcopy_run
+
+                    run_response = _deepcopy_run(run_response)
 
                     continue_index = _resolve_continue_from(
                         run_response,
@@ -5286,6 +5335,9 @@ async def _acontinue_run_stream(
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
                     # The run is continued from a provided run_response. This contains the updated tools.
+                    # The pipeline completes this object in place: the caller owns it
+                    # (the run getters hand out copies, and the team resume flow relies
+                    # on its member run completing in place).
                     continue_index: Optional[int] = _resolve_continue_from(
                         run_response,
                         continue_from=continue_from,
@@ -5318,6 +5370,13 @@ async def _acontinue_run_stream(
                         raise RunNotFoundError(f"No runs found for run ID {run_id}")
                     if run_response.status == RunStatus.cancelled:
                         raise RunNotContinuableError(f"Cannot continue run {run_response.run_id}: run is cancelled")
+                    # The continued run is mutated through the whole continue
+                    # pipeline (message truncation, tool results, status).
+                    # History run objects are shared between reads of the same
+                    # session, so continue works on its own copy.
+                    from copy import deepcopy as _deepcopy_run
+
+                    run_response = _deepcopy_run(run_response)
 
                     continue_index = _resolve_continue_from(
                         run_response,
@@ -6274,17 +6333,24 @@ def _mark_run_regenerated(
     explicit ``save_run`` here the DB row keeps its old (COMPLETED) status and
     history builders still surface the parent — producing duplicate content in
     conversation history after regenerate."""
+    from copy import copy as shallow_copy
+
     from agno.agent._session import save_run
 
-    for r in session.runs or []:
+    for i, r in enumerate(session.runs or []):
         if r.run_id == original_run_id:
-            r.status = RunStatus.regenerated
+            # Flip on a copy, never on the loaded run: history run objects are
+            # shared between reads of the same session, so an in-place write
+            # would surface mid-flight on another reader's session.
+            flipped = shallow_copy(r)
+            flipped.status = RunStatus.regenerated
+            session.runs[i] = flipped  # type: ignore[index]
             save_run(
                 agent,
-                run=cast(RunOutput, r),
+                run=cast(RunOutput, flipped),
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=resolve_run_index(session, flipped),
             )
             return
 
@@ -6295,17 +6361,24 @@ async def _amark_run_regenerated(
     original_run_id: str,
 ) -> None:
     """Async variant of :func:`_mark_run_regenerated`."""
+    from copy import copy as shallow_copy
+
     from agno.agent._session import asave_run
 
-    for r in session.runs or []:
+    for i, r in enumerate(session.runs or []):
         if r.run_id == original_run_id:
-            r.status = RunStatus.regenerated
+            # Flip on a copy, never on the loaded run: history run objects are
+            # shared between reads of the same session, so an in-place write
+            # would surface mid-flight on another reader's session.
+            flipped = shallow_copy(r)
+            flipped.status = RunStatus.regenerated
+            session.runs[i] = flipped  # type: ignore[index]
             await asave_run(
                 agent,
-                run=cast(RunOutput, r),
+                run=cast(RunOutput, flipped),
                 session_id=session.session_id,
                 user_id=session.user_id,
-                run_index=resolve_run_index(session, r),
+                run_index=resolve_run_index(session, flipped),
             )
             return
 

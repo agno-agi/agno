@@ -66,7 +66,7 @@ def post_to_slack(channel: str, message: str) -> str:
 
 email_agent = Agent(
     name="EmailAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[send_email],
     instructions="Send email notifications. Always use send_email.",
     db=db,
@@ -75,7 +75,7 @@ email_agent = Agent(
 
 sms_agent = Agent(
     name="SMSAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[send_sms],
     instructions="Send SMS notifications. Always use send_sms.",
     db=db,
@@ -84,7 +84,7 @@ sms_agent = Agent(
 
 slack_agent = Agent(
     name="SlackAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[post_to_slack],
     instructions="Post to Slack. Always use post_to_slack.",
     db=db,
