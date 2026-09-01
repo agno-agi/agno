@@ -681,3 +681,71 @@ class TestSearchSurfacesQueryEmbeddingFailures:
             f"{class_name} swallows a failed query embedding in {unguarded}, so the caller "
             "sees an empty result set instead of the reason the search could not run"
         )
+
+
+class TestPreClearDoesNotDestroyChunks:
+    """Re-ingesting incomplete content must not leave the caller worse off.
+
+    An insert-only store cannot roll a delete back, so the replacement chunks are
+    embedded before the old ones are cleared.
+    """
+
+    def _knowledge(self):
+        knowledge = Knowledge.__new__(Knowledge)
+        vector_db = MagicMock()
+        vector_db.embedder = MagicMock()
+        vector_db.upsert_available.return_value = False
+        knowledge.vector_db = vector_db
+        knowledge.contents_db = None
+        knowledge._update_content = MagicMock()
+        knowledge._aupdate_content = AsyncMock()
+        knowledge.max_embedding_retries = 0
+        knowledge.embedding_retry_backoff = 0.0
+        return knowledge, vector_db
+
+    def _failing_documents(self):
+        document = MagicMock(embedding=None)
+
+        def boom(embedder=None):
+            raise EmbeddingError("Incorrect API key", status_code=401, provider="OpenAI")
+
+        async def aboom(embedder=None):
+            raise EmbeddingError("Incorrect API key", status_code=401, provider="OpenAI")
+
+        document.embed = boom
+        document.async_embed = aboom
+        return [document]
+
+    @pytest.mark.parametrize("prior", [ContentStatus.PARTIAL, ContentStatus.FAILED])
+    def test_failed_embed_leaves_existing_chunks_alone(self, prior):
+        knowledge, vector_db = self._knowledge()
+        content = Content(name="doc", id="cid", content_hash="h")
+
+        knowledge._handle_vector_db_insert(content, self._failing_documents(), upsert=False, prior_status=prior)
+
+        assert vector_db.delete_by_content_id.call_count == 0, "the old chunks must survive a failed retry"
+        assert content.status == ContentStatus.FAILED
+        assert "authentication" in content.status_message
+
+    def test_successful_embed_still_clears_before_writing(self):
+        """The pre-clear exists to stop duplicates, so it must still run on success."""
+        knowledge, vector_db = self._knowledge()
+        content = Content(name="doc", id="cid", content_hash="h")
+
+        knowledge._handle_vector_db_insert(
+            content, [MagicMock(embedding=[0.1])], upsert=False, prior_status=ContentStatus.PARTIAL
+        )
+
+        assert vector_db.delete_by_content_id.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_async_failed_embed_leaves_existing_chunks_alone(self):
+        knowledge, vector_db = self._knowledge()
+        content = Content(name="doc", id="cid", content_hash="h")
+
+        await knowledge._ahandle_vector_db_insert(
+            content, self._failing_documents(), upsert=False, prior_status=ContentStatus.PARTIAL
+        )
+
+        assert vector_db.delete_by_content_id.call_count == 0
+        assert content.status == ContentStatus.FAILED

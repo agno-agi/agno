@@ -4006,6 +4006,17 @@ class Knowledge(RemoteKnowledge):
         vector_db = self.vector_db
 
         if not use_upsert and prior_status in (ContentStatus.PARTIAL, ContentStatus.FAILED):
+            # Embed before clearing: an insert-only store cannot roll the delete back, so
+            # a failure here would leave the caller with less than they started with.
+            from agno.vectordb.base import aembed_before_replace
+
+            try:
+                await aembed_before_replace(read_documents, getattr(vector_db, "embedder", None))
+            except EmbeddingError as e:
+                log_error(f"Error {operation}ing document: {e.safe_message}")
+                self._set_embedding_failure_status(content, e, read_documents, operation)
+                await self._aupdate_content(content)
+                return
             self._clear_partial_chunks(content, "re-ingesting incomplete content")
 
         async def write() -> None:
@@ -4078,6 +4089,17 @@ class Knowledge(RemoteKnowledge):
         vector_db = self.vector_db
 
         if not use_upsert and prior_status in (ContentStatus.PARTIAL, ContentStatus.FAILED):
+            # Embed before clearing: an insert-only store cannot roll the delete back, so
+            # a failure here would leave the caller with less than they started with.
+            from agno.vectordb.base import embed_before_replace
+
+            try:
+                embed_before_replace(read_documents, getattr(vector_db, "embedder", None))
+            except EmbeddingError as e:
+                log_error(f"Error {operation}ing document: {e.safe_message}")
+                self._set_embedding_failure_status(content, e, read_documents, operation)
+                self._update_content(content)
+                return
             self._clear_partial_chunks(content, "re-ingesting incomplete content")
 
         def write() -> None:
