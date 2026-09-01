@@ -738,3 +738,105 @@ def test_inject_header_overrides_existing_x_goog_api_client():
     params = {"http_options": {"headers": {"x-goog-api-client": "stale/0.0.0"}}}
     result = inject_agno_client_header(params)
     assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+
+# --- format_image_for_message tests ---
+
+import base64
+import tempfile
+from pathlib import Path
+from unittest.mock import patch
+
+from agno.media import Image
+from agno.utils.gemini import format_image_for_message
+
+# Well-known magic-byte prefixes
+PNG_HEADER = b"\x89PNG\r\n\x1a\n" + b"\x00" * 8
+JPEG_HEADER = b"\xff\xd8\xff\xe0" + b"\x00" * 8
+WEBP_HEADER = b"RIFF\x00\x00\x00\x00WEBPVP8 " + b"\x00" * 4
+GIF_HEADER = b"GIF89a" + b"\x00" * 8
+
+
+def test_format_image_bytes_png():
+    """Raw PNG bytes should produce mime_type image/png, not image/jpeg."""
+    result = format_image_for_message(Image(content=PNG_HEADER))
+    assert result is not None
+    assert result["mime_type"] == "image/png"
+
+
+def test_format_image_bytes_webp():
+    """Raw WebP bytes should produce mime_type image/webp."""
+    result = format_image_for_message(Image(content=WEBP_HEADER))
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_bytes_jpeg():
+    """Raw JPEG bytes should still produce image/jpeg."""
+    result = format_image_for_message(Image(content=JPEG_HEADER))
+    assert result is not None
+    assert result["mime_type"] == "image/jpeg"
+
+
+def test_format_image_bytes_gif():
+    """Raw GIF bytes should produce image/gif."""
+    result = format_image_for_message(Image(content=GIF_HEADER))
+    assert result is not None
+    assert result["mime_type"] == "image/gif"
+
+
+def test_format_image_explicit_mime_type_wins():
+    """An explicitly set mime_type should take priority over magic bytes."""
+    result = format_image_for_message(Image(content=PNG_HEADER, mime_type="image/webp"))
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_format_field_wins():
+    """The format field should be used when mime_type is not set."""
+    result = format_image_for_message(Image(content=PNG_HEADER, format="gif"))
+    assert result is not None
+    assert result["mime_type"] == "image/gif"
+
+
+def test_format_image_filepath_webp(tmp_path: Path):
+    """A WebP file on disk should produce mime_type image/webp."""
+    webp_file = tmp_path / "photo.webp"
+    webp_file.write_bytes(WEBP_HEADER)
+    result = format_image_for_message(Image(filepath=str(webp_file)))
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_filepath_png(tmp_path: Path):
+    """A PNG file on disk should produce mime_type image/png."""
+    png_file = tmp_path / "photo.png"
+    png_file.write_bytes(PNG_HEADER)
+    result = format_image_for_message(Image(filepath=str(png_file)))
+    assert result is not None
+    assert result["mime_type"] == "image/png"
+
+
+def test_format_image_url_webp():
+    """A URL returning WebP bytes should produce mime_type image/webp."""
+    webp_response = webp_header = WEBP_HEADER
+    with patch("agno.media.Image.get_content_bytes", return_value=webp_response):
+        result = format_image_for_message(Image(url="https://example.com/photo.webp"))
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_url_png():
+    """A URL returning PNG bytes should produce mime_type image/png."""
+    with patch("agno.media.Image.get_content_bytes", return_value=PNG_HEADER):
+        result = format_image_for_message(Image(url="https://example.com/photo.png"))
+    assert result is not None
+    assert result["mime_type"] == "image/png"
+
+
+def test_format_image_bytes_base64_encoded():
+    """The data field should be base64-encoded."""
+    result = format_image_for_message(Image(content=PNG_HEADER))
+    assert result is not None
+    decoded = base64.b64decode(result["data"])
+    assert decoded == PNG_HEADER
