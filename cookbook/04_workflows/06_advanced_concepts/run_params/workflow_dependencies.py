@@ -25,7 +25,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 config_aware_agent = Agent(
     name="Config-Aware Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a helpful assistant that operates based on the provided configuration.",
         "Check your additional context for configuration details.",

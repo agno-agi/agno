@@ -100,10 +100,13 @@ async def test_trimmed_result_carries_answer_and_ids_only():
     result = await _call_run_agent(os)
 
     assert result.content[0].text == "the answer"
+    # The answer is mirrored into structuredContent: clients that render it when
+    # present (Claude Code among them) would otherwise show metadata with no answer.
     assert result.structured_content == {
         "run_id": "run-1",
         "session_id": "sess-1",
         "status": "COMPLETED",
+        "content": "the answer",
     }
 
 

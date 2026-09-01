@@ -39,9 +39,8 @@ Requirements:
 
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.job_queue.config import QueueConfig
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
+from agno.os import AgentOS, QueueConfig
 from agno.tools import tool
 
 

@@ -26,6 +26,40 @@ def _agent() -> Agent:
     return Agent(id="demo-agent", name="Demo Agent")
 
 
+def _bind_ownership(component, kind, component_id, session_id, run_id):
+    """Feed the run-ownership gate a matching session so it passes for real -- the gate
+    logic still runs. Ownership REJECTION is covered in test_mcp_exposed_components.py."""
+    from agno.run.team import TeamRunOutput
+    from agno.run.workflow import WorkflowRunOutput
+    from agno.session.agent import AgentSession
+    from agno.session.team import TeamSession
+    from agno.session.workflow import WorkflowSession
+
+    if kind == "teams":
+        sess = TeamSession(
+            session_id=session_id,
+            team_id=component_id,
+            runs=[TeamRunOutput(run_id=run_id, team_id=component_id, session_id=session_id)],
+        )
+    elif kind == "workflows":
+        sess = WorkflowSession(
+            session_id=session_id,
+            workflow_id=component_id,
+            runs=[WorkflowRunOutput(run_id=run_id, workflow_id=component_id, session_id=session_id)],
+        )
+    else:
+        sess = AgentSession(
+            session_id=session_id,
+            agent_id=component_id,
+            runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id)],
+        )
+
+    async def _fake_aget_session(session_id=None, user_id=None, **kw):
+        return sess
+
+    component.aget_session = _fake_aget_session
+
+
 @pytest.fixture(autouse=True)
 def _resolve_by_identity(monkeypatch):
     """Resolve run/lifecycle tools to the in-memory (stubbed) component instance.
@@ -105,6 +139,7 @@ async def test_continue_run_threads_identity_and_parses_requirements(monkeypatch
         return RunOutput(run_id=run_id, session_id=session_id, content="resumed", status=RunStatus.completed)
 
     agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    _bind_ownership(agent, "agents", "demo-agent", "sess-9", "run-9")
     os = AgentOS(agents=[agent], mcp_server=True)
 
     requirement_dict = {"tool_execution": {"tool_name": "send_email"}, "confirmation": True}
@@ -138,13 +173,19 @@ async def test_continue_run_dispatches_workflow_step_requirements():
         return WorkflowRunOutput(run_id=run_id, session_id=session_id, content="wf resumed")
 
     workflow.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    _bind_ownership(workflow, "workflows", "demo-wf", "wf-sess-9", "wf-run-9")
     os = AgentOS(workflows=[workflow], mcp_server=True)
 
     step_requirement = {"step_id": "s1", "step_name": "approve", "step_type": "Step", "requires_confirmation": True}
     async with Client(build_mcp_server(os)) as client:
         result = await client.call_tool(
             "continue_run",
-            {"run_id": "wf-run-9", "workflow_id": "demo-wf", "requirements": [step_requirement]},
+            {
+                "run_id": "wf-run-9",
+                "session_id": "wf-sess-9",
+                "workflow_id": "demo-wf",
+                "requirements": [step_requirement],
+            },
         )
 
     assert captured["run_id"] == "wf-run-9"
@@ -168,9 +209,12 @@ async def test_cancel_run_requests_cancellation_on_the_named_component():
         return True
 
     agent.acancel_run = fake_acancel_run  # type: ignore[method-assign]
+    _bind_ownership(agent, "agents", "demo-agent", "sess-x", "run-x")
     os = AgentOS(agents=[agent], mcp_server=True)
     async with Client(build_mcp_server(os)) as client:
-        result = await client.call_tool("cancel_run", {"run_id": "run-x", "agent_id": "demo-agent"})
+        result = await client.call_tool(
+            "cancel_run", {"run_id": "run-x", "session_id": "sess-x", "agent_id": "demo-agent"}
+        )
     assert captured["run_id"] == "run-x"
     assert "cancellation requested" in result.content[0].text
 
