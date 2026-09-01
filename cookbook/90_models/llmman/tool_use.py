@@ -1,14 +1,7 @@
-"""
-Cerebras Openai Tool Use
-========================
-
-Cookbook example for `cerebras_openai/tool_use.py`.
-"""
-
-import asyncio
+"""Run `uv pip install ddgs` to install dependencies."""
 
 from agno.agent import Agent
-from agno.models.cerebras import CerebrasOpenAI
+from agno.models.llmman import Llmman
 from agno.tools.websearch import WebSearchTools
 
 # ---------------------------------------------------------------------------
@@ -16,12 +9,10 @@ from agno.tools.websearch import WebSearchTools
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=CerebrasOpenAI(id="gpt-oss-120b"),
+    model=Llmman(id="qwen3:0.6b-q4_K_M"),
     tools=[WebSearchTools()],
     markdown=True,
 )
-
-# Print the response in the terminal
 
 # ---------------------------------------------------------------------------
 # Run Agent
@@ -32,9 +23,3 @@ if __name__ == "__main__":
 
     # --- Sync + Streaming ---
     agent.print_response("Whats happening in France?", stream=True)
-
-    # --- Async ---
-    asyncio.run(agent.aprint_response("Whats happening in France?"))
-
-    # --- Async + Streaming ---
-    asyncio.run(agent.aprint_response("Whats happening in France?", stream=True))

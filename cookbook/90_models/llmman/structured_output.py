@@ -1,14 +1,15 @@
 """
-Cerebras Openai Structured Output
-=================================
+Llmman Structured Output
+========================
 
-Cookbook example for `cerebras_openai/structured_output.py`.
+Cookbook example for `llmman/structured_output.py`.
 """
 
 from typing import List
 
-from agno.agent import Agent, RunOutput  # noqa
-from agno.models.cerebras import CerebrasOpenAI
+from agno.agent import Agent
+from agno.models.llmman import Llmman
+from agno.run.agent import RunOutput
 from pydantic import BaseModel, Field
 from rich.pretty import pprint  # noqa
 
@@ -18,6 +19,7 @@ from rich.pretty import pprint  # noqa
 
 
 class MovieScript(BaseModel):
+    name: str = Field(..., description="Give a name to this movie")
     setting: str = Field(
         ..., description="Provide a nice setting for a blockbuster movie."
     )
@@ -29,21 +31,22 @@ class MovieScript(BaseModel):
         ...,
         description="Genre of the movie. If not available, select action, thriller or romantic comedy.",
     )
-    name: str = Field(..., description="Give a name to this movie")
     characters: List[str] = Field(..., description="Name of characters for this movie.")
     storyline: str = Field(
         ..., description="3 sentence storyline for the movie. Make it exciting!"
     )
 
 
-# Agent that uses a structured output
+# Agent that returns a structured output
 structured_output_agent = Agent(
-    model=CerebrasOpenAI(id="gpt-oss-120b"),
-    description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
+    model=Llmman(id="qwen3:0.6b-q4_K_M"),
+    description="You write movie scripts.",
     output_schema=MovieScript,
 )
 
-structured_output_agent.print_response("New York")
+# Run the agent synchronously
+structured_output_response: RunOutput = structured_output_agent.run("New York")
+pprint(structured_output_response.content)
 
 # ---------------------------------------------------------------------------
 # Run Agent
