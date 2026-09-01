@@ -23,6 +23,7 @@ default empty prefix those routes are `POST /agui` and `GET /status`.
 | `human_in_the_loop.py` | Pause and resume a real backend tool that uses `requires_confirmation`. |
 | `research_team.py` | Stream a coordinated Team and its member activity over AG-UI. |
 | `multiple_instances.py` | Mount two independent AG-UI interfaces on one AgentOS. |
+| `background_runs.py` | Run detached with `forwarded_props: {"background": true}` and reattach after disconnect with `{"reattach": true}`. |
 | `openui/` | Render an Agent as streaming charts, follow-ups, and validated forms with OpenUI. |
 
 ## Prerequisites
@@ -51,6 +52,7 @@ Start one example at a time; every standalone server uses port 7777:
 .venvs/demo/bin/python cookbook/05_agent_os/16_agui/human_in_the_loop.py
 .venvs/demo/bin/python cookbook/05_agent_os/16_agui/research_team.py
 .venvs/demo/bin/python cookbook/05_agent_os/16_agui/multiple_instances.py
+.venvs/demo/bin/python cookbook/05_agent_os/16_agui/background_runs.py
 ```
 
 The [`openui/`](openui/) example includes its own React client. Follow its
