@@ -42,7 +42,6 @@ def test_client_params_prefer_explicit_ad_token_over_key_environment(monkeypatch
 def test_client_params_load_azure_environment(monkeypatch):
     monkeypatch.setenv("AZURE_OPENAI_API_KEY", "environment-key")
     monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://environment.openai.azure.com")
-    monkeypatch.setenv("AZURE_OPENAI_DEPLOYMENT", "environment-deployment")
     monkeypatch.setenv("OPENAI_API_VERSION", "2025-03-01-preview")
     monkeypatch.delenv("AZURE_OPENAI_AD_TOKEN", raising=False)
     model = AzureOpenAIResponses(id="environment-deployment")
@@ -51,7 +50,6 @@ def test_client_params_load_azure_environment(monkeypatch):
 
     assert params["api_key"] == "environment-key"
     assert params["azure_endpoint"] == "https://environment.openai.azure.com"
-    assert params["azure_deployment"] == "environment-deployment"
     assert params["api_version"] == "2025-03-01-preview"
 
 
@@ -100,3 +98,89 @@ def test_async_client_is_azure_and_cached():
     assert hasattr(client, "responses")
     assert model.get_async_client() is client
     asyncio.run(client.close())
+
+
+def test_api_version_defaults_when_unset(monkeypatch):
+    monkeypatch.delenv("OPENAI_API_VERSION", raising=False)
+    monkeypatch.delenv("AZURE_OPENAI_AD_TOKEN", raising=False)
+    model = AzureOpenAIResponses(
+        id="reasoning-deployment",
+        api_key="test-key",
+        azure_endpoint="https://example.openai.azure.com",
+    )
+
+    params = model._get_client_params()
+
+    assert params["api_version"] == "2025-04-01-preview"
+
+
+def test_api_version_env_overrides_default(monkeypatch):
+    monkeypatch.setenv("OPENAI_API_VERSION", "2025-03-01-preview")
+    monkeypatch.delenv("AZURE_OPENAI_AD_TOKEN", raising=False)
+    model = AzureOpenAIResponses(
+        id="reasoning-deployment",
+        api_key="test-key",
+        azure_endpoint="https://example.openai.azure.com",
+    )
+
+    params = model._get_client_params()
+
+    assert params["api_version"] == "2025-03-01-preview"
+
+
+def test_id_is_required():
+    with pytest.raises(ValueError, match="Azure deployment name"):
+        AzureOpenAIResponses(api_key="test-key")  # type: ignore[call-arg]
+
+
+def test_env_api_key_preferred_over_env_ad_token(monkeypatch):
+    monkeypatch.setenv("AZURE_OPENAI_API_KEY", "environment-key")
+    monkeypatch.setenv("AZURE_OPENAI_AD_TOKEN", "environment-token")
+    model = AzureOpenAIResponses(
+        id="reasoning-deployment",
+        azure_endpoint="https://example.openai.azure.com",
+    )
+
+    params = model._get_client_params()
+
+    assert params["api_key"] == "environment-key"
+    assert "azure_ad_token" not in params
+
+
+def test_base_url_skips_endpoint_env_fallback(monkeypatch):
+    monkeypatch.setenv("AZURE_OPENAI_ENDPOINT", "https://environment.openai.azure.com")
+    monkeypatch.delenv("AZURE_OPENAI_AD_TOKEN", raising=False)
+    model = AzureOpenAIResponses(
+        id="reasoning-deployment",
+        api_key="test-key",
+        base_url="https://example.openai.azure.com/openai/v1/",
+    )
+
+    params = model._get_client_params()
+
+    assert params["base_url"] == "https://example.openai.azure.com/openai/v1/"
+    assert "azure_endpoint" not in params
+
+
+def test_reasoning_model_flag_overrides_deployment_name_heuristic():
+    assert AzureOpenAIResponses(id="prod-reasoner", is_reasoning_model=True)._using_reasoning_model() is True
+    assert AzureOpenAIResponses(id="gpt-5-deployment", is_reasoning_model=False)._using_reasoning_model() is False
+    # None falls back to the deployment-name heuristic
+    assert AzureOpenAIResponses(id="gpt-5-deployment")._using_reasoning_model() is True
+    assert AzureOpenAIResponses(id="prod-reasoner")._using_reasoning_model() is False
+
+
+def test_deepcopy_preserves_client_references():
+    from copy import deepcopy
+
+    model = AzureOpenAIResponses(
+        id="reasoning-deployment",
+        api_key="test-key",
+        azure_endpoint="https://example.openai.azure.com",
+    )
+    client = model.get_client()
+
+    model_copy = deepcopy(model)
+
+    assert model_copy.client is client
+    client.close()

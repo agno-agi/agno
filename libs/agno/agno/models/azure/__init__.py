@@ -20,11 +20,14 @@ except ImportError:
 
 try:
     from agno.models.azure.openai_responses import AzureOpenAIResponses
-except ImportError:
+except ImportError as azure_openai_responses_error:
+    _azure_openai_responses_import_error = azure_openai_responses_error
 
     class AzureOpenAIResponses:  # type: ignore
         def __init__(self, *args, **kwargs):
-            raise ImportError("`openai` not installed. Please install it via `pip install openai -U`")
+            raise ImportError(
+                "`openai` not installed. Please install it via `pip install openai`"
+            ) from _azure_openai_responses_import_error
 
 
 try:

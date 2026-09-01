@@ -3,14 +3,18 @@
 Required environment variables:
     AZURE_OPENAI_API_KEY
     AZURE_OPENAI_ENDPOINT
-    OPENAI_API_VERSION
+
+Optional environment variables:
+    OPENAI_API_VERSION (defaults to 2025-04-01-preview)
 """
 
 from agno.agent import Agent
 from agno.models.azure.openai_responses import AzureOpenAIResponses
 
 agent = Agent(
-    model=AzureOpenAIResponses(id="your-full-azure-deployment-name"),
+    model=AzureOpenAIResponses(
+        id="gpt-5.6-luna"
+    ),  # Set to your Azure deployment name (deployments are often named after the model)
     markdown=True,
 )
 
