@@ -68,3 +68,24 @@ def test_get_followups_response_format_fallback_to_json_object():
     assert _get_followups_response_format(_FakeModel()) == {"type": "json_object"}
     assert _get_followups_response_format(_FakeModel(native=True)) is Followups
     assert _get_followups_response_format(_FakeModel(json_schema=True))["type"] == "json_schema"
+
+
+def test_get_followups_response_format_use_json_mode_force_json_object():
+    """use_json_mode=True forces json_object regardless of model capabilities.
+
+    Regression test for https://github.com/agno-agi/agno/issues/9870:
+    json_object-only providers (e.g. DeepSeek) have no way to opt into
+    JSON mode for followup generation.
+    """
+    for model in (
+        _FakeModel(),
+        _FakeModel(native=True),
+        _FakeModel(json_schema=True),
+    ):
+        assert _get_followups_response_format(model, use_json_mode=True) == {"type": "json_object"}
+
+
+def test_get_followups_response_format_use_json_mode_default_off():
+    """use_json_mode defaults to False, preserving capability-based selection."""
+    assert _get_followups_response_format(_FakeModel(native=True)) is Followups
+    assert _get_followups_response_format(_FakeModel(json_schema=True))["type"] == "json_schema"
