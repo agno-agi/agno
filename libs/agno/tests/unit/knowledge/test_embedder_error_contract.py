@@ -291,3 +291,27 @@ class TestShortBatchKeepsPositions:
         full = [[0.1], [0.2]]
 
         assert pad_batch_embeddings(full, ["a", "b"], "Test") == full
+
+
+class TestBedrockEmptyResponse:
+    """Bedrock must treat a 200 carrying no embedding the same way Google does."""
+
+    def _embedder(self):
+        module = pytest.importorskip("agno.knowledge.embedder.aws_bedrock")
+        embedder = module.AwsBedrockEmbedder.__new__(module.AwsBedrockEmbedder)
+        embedder.id = "amazon.titan-embed-text-v2:0"
+        return embedder
+
+    @pytest.mark.parametrize(
+        "body", [{}, {"embeddings": []}, {"embeddings": {}}], ids=["no key", "empty list", "empty dict"]
+    )
+    def test_empty_response_returns_empty_without_raising(self, body):
+        """Raising here would invent an HTTP 502 and a message AWS never sent."""
+        assert self._embedder()._extract_embeddings(body) == []
+
+    def test_a_genuine_parse_failure_still_raises(self):
+        with pytest.raises(EmbeddingError):
+            self._embedder()._extract_embeddings({"embeddings": {"float": None}})
+
+    def test_happy_path_is_unchanged(self):
+        assert self._embedder()._extract_embeddings({"embeddings": [[0.1, 0.2]]}) == [0.1, 0.2]

@@ -319,9 +319,14 @@ class AwsBedrockEmbedder(Embedder):
                         if embeddings[embedding_type]:
                             return embeddings[embedding_type][0]
 
-            raise ValueError("No embeddings found in response")
         except Exception as e:
             raise_embedding_error(e, model_id=self.id, provider="AWSBedrock")
+
+        # A 200 carrying no embedding is a valid provider response, not a failure, so it
+        # is reported as an empty vector. Ingestion counts unembedded chunks and reports
+        # the shortfall as PARTIAL; raising here would fabricate an error AWS never sent.
+        log_warning("No embeddings found in response")
+        return []
 
     def response(self, text: str) -> Dict[str, Any]:
         """
