@@ -11,7 +11,7 @@ try:
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except ModuleNotFoundError:
-    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.0.0,<3.0.0'`")
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
 from agno.media import Image
