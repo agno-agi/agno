@@ -3,7 +3,12 @@ from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from ag_ui.core import BaseEvent
 
-from agno.os.interfaces.agui.handlers import is_completion_event, process_completion, process_event
+from agno.os.interfaces.agui.handlers import (
+    _workflow_error_snapshot,
+    is_completion_event,
+    process_completion,
+    process_event,
+)
 from agno.os.interfaces.agui.state import StreamState
 from agno.run.agent import RunCompletedEvent, RunOutputEvent
 from agno.run.team import TeamRunOutputEvent
@@ -15,7 +20,6 @@ def stream_agno_response_as_agui_events(
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
 ) -> Iterator[BaseEvent]:
-    """Map the Agno response stream to AG-UI format."""
     state = StreamState(thread_id=thread_id, run_id=run_id, run_state=run_state)
 
     if run_state is not None:
@@ -23,12 +27,18 @@ def stream_agno_response_as_agui_events(
 
     completion_chunk = None
 
-    for chunk in response_stream:
-        if is_completion_event(chunk):
-            completion_chunk = chunk
-        else:
-            for event in process_event(chunk, state):
-                yield event
+    try:
+        for chunk in response_stream:
+            if is_completion_event(chunk):
+                completion_chunk = chunk
+            else:
+                for event in process_event(chunk, state):
+                    yield event
+    except Exception:
+        # Engine raised mid-stream (e.g. on_error="fail"): terminalize progress to ERROR
+        for event in _workflow_error_snapshot(state):
+            yield event
+        raise
 
     # Process completion (or synthesize one if stream ended naturally)
     final_chunk = completion_chunk or RunCompletedEvent()
@@ -42,7 +52,6 @@ async def async_stream_agno_response_as_agui_events(
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
 ) -> AsyncIterator[BaseEvent]:
-    """Map the Agno response stream to AG-UI format."""
     state = StreamState(thread_id=thread_id, run_id=run_id, run_state=run_state)
 
     if run_state is not None:
@@ -50,12 +59,18 @@ async def async_stream_agno_response_as_agui_events(
 
     completion_chunk = None
 
-    async for chunk in response_stream:
-        if is_completion_event(chunk):
-            completion_chunk = chunk
-        else:
-            for event in process_event(chunk, state):
-                yield event
+    try:
+        async for chunk in response_stream:
+            if is_completion_event(chunk):
+                completion_chunk = chunk
+            else:
+                for event in process_event(chunk, state):
+                    yield event
+    except Exception:
+        # Engine raised mid-stream (e.g. on_error="fail"): terminalize progress to ERROR
+        for event in _workflow_error_snapshot(state):
+            yield event
+        raise
 
     # Process completion (or synthesize one if stream ended naturally)
     final_chunk = completion_chunk or RunCompletedEvent()
