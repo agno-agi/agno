@@ -215,6 +215,7 @@ weaviate = ["weaviate-client"]
 # Dependencies for Knowledge
 chonkie = [
     "chonkie[semantic,code]>=1.6.7",
+    "tree-sitter-language-pack<1.16",  # 1.16.1 process() returns a dict; chonkie reads .chunks. Drop when xberg-io/tree-sitter-language-pack#183 or chonkie fixes that
 ]
 csv = ["aiofiles"]
 docx = ["python-docx"]
