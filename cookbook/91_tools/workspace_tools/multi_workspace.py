@@ -62,7 +62,7 @@ def main():
         print(f"Collisions: {collision if collision else 'None'}")
 
         # Check toolkit metadata
-        print(f"\n=== Toolkit Metadata ===")
+        print("\n=== Toolkit Metadata ===")
         print(f"Docs toolkit name: {docs_toolkit.name}, id: {docs_toolkit.id}")
         print(f"Code toolkit name: {code_toolkit.name}, id: {code_toolkit.id}")
 
@@ -80,7 +80,7 @@ def main():
         )
 
         # Check instructions include prefixed tool names
-        print(f"\n=== Docs Toolkit Instructions ===")
+        print("\n=== Docs Toolkit Instructions ===")
         if docs_toolkit.instructions:
             print(docs_toolkit.instructions[:500])
 
