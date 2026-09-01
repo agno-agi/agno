@@ -52,6 +52,7 @@ from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
     SESSION_ID_REQUIRED_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
+    assert_run_id_available,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -1728,6 +1729,11 @@ def get_workflow_router(
             session_type=SessionType.WORKFLOW,
             is_admin=caller_is_admin(request),
         )
+
+        # A caller-supplied run_id is honored (pre-allocation, idempotent retry) but must
+        # not collide: upsert_run overwrites ON CONFLICT with no ownership predicate, so
+        # an existing id would silently destroy that run's row.
+        await assert_run_id_available(getattr(workflow, "db", None) or os.db, kwargs.get("run_id"))
 
         if session_id:
             logger.debug(f"Continuing session: {session_id}")
