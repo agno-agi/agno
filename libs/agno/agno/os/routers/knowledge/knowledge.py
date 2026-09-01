@@ -887,7 +887,33 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "status": "completed",
                                     "status_message": "",
                                 },
-                            }
+                            },
+                            "partial": {
+                                "summary": "Example partially ingested content status",
+                                "value": {
+                                    "status": "partial",
+                                    "status_message": (
+                                        "7 of 10 chunks were embedded; 3 failed and are not retrievable. "
+                                        "Re-ingest this content to retry the missing chunks."
+                                    ),
+                                },
+                            },
+                            "failed": {
+                                "summary": "Example failed content status",
+                                "value": {
+                                    "status": "failed",
+                                    "status_message": (
+                                        'Embedding failed for "handbook.pdf" (0 of 12 chunks embedded). '
+                                        "Embedder: OpenAI text-embedding-3-small. "
+                                        "Reason: rate_limit (HTTP 429). "
+                                        "Provider said: Rate limit reached for text-embedding-3-small. "
+                                        "Retrying did not succeed after 4 attempts. "
+                                        "The embedding provider rate-limited this request; wait for the "
+                                        "limit to reset, or lower the embedder batch size. "
+                                        "Re-ingest /docs/handbook.pdf once the cause is resolved."
+                                    ),
+                                },
+                            },
                         }
                     }
                 },
@@ -912,11 +938,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             content_id=content_id, user_id=scoped_user_id
         )
 
-        # Handle the case where content is not found
+        # Missing or non-owned content is a 404, as this route documents and as the
+        # sibling single-content route returns; a 200 saying "failed" is indistinguishable
+        # from content that was found and genuinely failed to ingest.
         if knowledge_status is None:
-            return ContentStatusResponse(
-                id=content_id, status=ContentStatus.FAILED, status_message=status_message or "Content not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
         # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
         if hasattr(knowledge_status, "value"):
@@ -929,10 +955,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             try:
                 status = ContentStatus(status_value.lower())
             except ValueError:
-                # Handle legacy or unknown statuses gracefully
-                if "failed" in status_value.lower():
+                # Handle legacy or unknown statuses gracefully. "partial" is checked
+                # before "failed"/"completed" so a compound legacy value such as
+                # "partially_failed" is not reported as a total failure.
+                lowered = status_value.lower()
+                if "partial" in lowered:
+                    status = ContentStatus.PARTIAL
+                elif "failed" in lowered:
                     status = ContentStatus.FAILED
-                elif "completed" in status_value.lower():
+                elif "completed" in lowered:
                     status = ContentStatus.COMPLETED
                 else:
                     status = ContentStatus.PROCESSING
