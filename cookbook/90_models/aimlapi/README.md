@@ -46,3 +46,16 @@ python cookbook/90_models/aimlapi/tool_use.py
 python cookbook/90_models/aimlapi/structured_output.py
 ```
 
+
+### Attribution headers
+
+Every request sends a small, fixed set of analytics headers (`HTTP-Referer`, `X-Title`,
+`X-AIMLAPI-Partner-ID`, `X-AIMLAPI-Source`) so AI/ML API can attribute traffic to Agno.
+They carry no user data and do not affect routing, model selection or billing. Inspect
+them via `agno.models.aimlapi.AIMLAPI_HEADERS`, and override any of them per-model:
+
+```python
+from agno.models.aimlapi import AIMLAPI
+
+model = AIMLAPI(id="gpt-5.6-terra", default_headers={"X-Title": "My App"})
+```
