@@ -1,3 +1,5 @@
+import asyncio
+import contextlib
 import copy
 import uuid
 from typing import Any, AsyncIterator, Dict, Optional, Union
@@ -34,14 +36,85 @@ from agno.os.interfaces.agui.resume import resume_paused_run
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
 from agno.run.base import RunContext
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+}
 
 
 def _extract_forwarded_flags(run_input: RunAgentInput) -> Dict[str, Any]:
     """Read Agno extension flags from forwarded_props (the AG-UI extension point)."""
     props = run_input.forwarded_props
     return props if isinstance(props, dict) else {}
+
+
+async def _encode_with_keepalive(events: AsyncIterator[BaseEvent], encoder: EventEncoder) -> AsyncIterator[str]:
+    """Encode AG-UI events as SSE, emitting keepalive comments on idle.
+
+    Background runs can sit silent while queued for a concurrency slot or
+    during long model stretches; without keepalives, proxies kill the
+    connection. Events are pumped through a queue so the idle timeout never
+    cancels an in-flight __anext__ (cancelling it would kill the source
+    generator).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for event in events:
+                await queue.put(event)
+        except Exception as e:
+            await queue.put(e)
+        finally:
+            await queue.put(None)
+
+    pump_task = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                yield encoder.encode(RunErrorEvent(type=EventType.RUN_ERROR, message=str(item)))
+                continue  # the None sentinel follows right after
+            yield encoder.encode(item)
+    finally:
+        pump_task.cancel()
+        with contextlib.suppress(BaseException):
+            await pump_task
+
+
+async def _verify_reattach_binding(
+    entity: Union[Agent, Team],
+    run_id: str,
+    thread_id: str,
+    user_id: Optional[str],
+) -> None:
+    """Verify the run belongs to this thread before replaying its events.
+
+    The event buffer is keyed on run_id alone, so a scoped caller could
+    otherwise attach to another user's run by naming a thread of their own.
+    Background runs persist a PENDING row before execution starts, so the DB
+    binding check holds for queued, active, and terminal runs alike. Unscoped
+    deployments (and db-less entities, where reattach serves only the live
+    buffer) skip this, mirroring the REST /resume ownership posture.
+    """
+    if user_id is None or getattr(entity, "db", None) is None:
+        return
+    bound_run = await entity.aget_run_output(run_id=run_id, session_id=thread_id, user_id=user_id)
+    if bound_run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
 
 async def run_entity(
@@ -194,6 +267,12 @@ def attach_routes(
                 )
             if run_input.resume:
                 raise HTTPException(status_code=400, detail="reattach cannot be combined with HITL resume entries")
+            await _verify_reattach_binding(
+                entity,  # type: ignore[arg-type]
+                run_id=run_input.run_id,
+                thread_id=run_input.thread_id,
+                user_id=user_id,
+            )
             buffer_status, stored_run = await find_reattach_target(
                 entity,  # type: ignore[arg-type]
                 run_id=run_input.run_id,
@@ -203,43 +282,29 @@ def attach_routes(
             if buffer_status is None and stored_run is None:
                 raise HTTPException(status_code=404, detail=f"Run {run_input.run_id} not found")
 
-            async def reattach_event_generator():
-                async for event in reattach_run_events(
-                    entity,  # type: ignore[arg-type]
-                    thread_id=run_input.thread_id,
-                    run_id=run_input.run_id,
-                    user_id=user_id,
-                    buffer_status=buffer_status,
-                    stored_run=stored_run,
-                ):
-                    yield encoder.encode(event)
-
             return StreamingResponse(
-                reattach_event_generator(),
+                _encode_with_keepalive(
+                    reattach_run_events(
+                        entity,  # type: ignore[arg-type]
+                        thread_id=run_input.thread_id,
+                        run_id=run_input.run_id,
+                        user_id=user_id,
+                        buffer_status=buffer_status,
+                        stored_run=stored_run,
+                    ),
+                    encoder,
+                ),
                 media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "Access-Control-Allow-Origin": "*",
-                    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-                    "Access-Control-Allow-Headers": "*",
-                },
+                headers=_SSE_HEADERS,
             )
 
-        async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id, background=background):  # type: ignore
-                yield encoder.encode(event)
-
         return StreamingResponse(
-            event_generator(),
+            _encode_with_keepalive(
+                run_entity(entity, run_input, user_id=user_id, background=background),  # type: ignore
+                encoder,
+            ),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
-            },
+            headers=_SSE_HEADERS,
         )
 
     @router.get("/status")

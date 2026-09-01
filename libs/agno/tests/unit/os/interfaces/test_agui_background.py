@@ -541,3 +541,124 @@ async def test_resume_inline_runs_stream_sync(monkeypatch):
     assert "background" not in call_kwargs
     assert "raw_events" not in call_kwargs
     sync_mock.assert_awaited_once()
+
+
+# ----------------------------------------------------------------------
+# _encode_with_keepalive
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_keepalive_emitted_on_idle(monkeypatch):
+    import asyncio
+
+    from ag_ui.core import RunFinishedEvent
+
+    from agno.os.interfaces.agui import router as router_module
+
+    monkeypatch.setattr(router_module, "SSE_KEEPALIVE_INTERVAL_SECONDS", 0.05)
+
+    async def slow_events():
+        await asyncio.sleep(0.2)
+        yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="t", run_id="r")
+
+    encoder = router_module.EventEncoder()
+    lines = []
+    async for line in router_module._encode_with_keepalive(slow_events(), encoder):
+        lines.append(line)
+
+    assert ": keepalive\n\n" in lines
+    # Keepalives precede the real event; the stream ends with the encoded event
+    assert lines[-1].startswith("data:")
+    assert "RUN_FINISHED" in lines[-1]
+
+
+@pytest.mark.asyncio
+async def test_keepalive_not_emitted_when_events_flow_quickly(monkeypatch):
+    from ag_ui.core import RunFinishedEvent
+
+    from agno.os.interfaces.agui import router as router_module
+
+    async def fast_events():
+        yield RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="t", run_id="r")
+
+    encoder = router_module.EventEncoder()
+    lines = []
+    async for line in router_module._encode_with_keepalive(fast_events(), encoder):
+        lines.append(line)
+
+    assert lines == [encoder.encode(RunFinishedEvent(type=EventType.RUN_FINISHED, thread_id="t", run_id="r"))]
+
+
+@pytest.mark.asyncio
+async def test_keepalive_encoder_surfaces_source_exception_as_run_error():
+    from agno.os.interfaces.agui import router as router_module
+
+    async def failing_events():
+        raise RuntimeError("boom")
+        yield
+
+    encoder = router_module.EventEncoder()
+    lines = []
+    async for line in router_module._encode_with_keepalive(failing_events(), encoder):
+        lines.append(line)
+
+    assert len(lines) == 1
+    assert "RUN_ERROR" in lines[0]
+    assert "boom" in lines[0]
+
+
+# ----------------------------------------------------------------------
+# _verify_reattach_binding
+# ----------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_verify_reattach_binding_skips_unscoped_callers():
+    from agno.os.interfaces.agui.router import _verify_reattach_binding
+
+    entity = MagicMock()
+    entity.db = MagicMock()
+    await _verify_reattach_binding(entity, run_id="r", thread_id="t", user_id=None)
+    entity.aget_run_output.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_reattach_binding_skips_dbless_entities():
+    from agno.os.interfaces.agui.router import _verify_reattach_binding
+
+    entity = MagicMock()
+    entity.db = None
+    await _verify_reattach_binding(entity, run_id="r", thread_id="t", user_id="u1")
+    entity.aget_run_output.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_verify_reattach_binding_404_on_cross_thread_run():
+    from unittest.mock import AsyncMock
+
+    from fastapi import HTTPException
+
+    from agno.os.interfaces.agui.router import _verify_reattach_binding
+
+    entity = MagicMock()
+    entity.db = MagicMock()
+    entity.aget_run_output = AsyncMock(return_value=None)
+
+    with pytest.raises(HTTPException) as exc_info:
+        await _verify_reattach_binding(entity, run_id="r", thread_id="other-thread", user_id="u1")
+    assert exc_info.value.status_code == 404
+    entity.aget_run_output.assert_awaited_once_with(run_id="r", session_id="other-thread", user_id="u1")
+
+
+@pytest.mark.asyncio
+async def test_verify_reattach_binding_passes_when_run_bound():
+    from unittest.mock import AsyncMock
+
+    from agno.os.interfaces.agui.router import _verify_reattach_binding
+
+    entity = MagicMock()
+    entity.db = MagicMock()
+    entity.aget_run_output = AsyncMock(return_value=MagicMock())
+
+    await _verify_reattach_binding(entity, run_id="r", thread_id="t", user_id="u1")
