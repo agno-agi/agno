@@ -71,9 +71,3 @@ python cookbook/90_models/llmman/tool_use.py
 ```shell
 python cookbook/90_models/llmman/structured_output.py
 ```
-
-### 8. Run Agent that retries failed requests
-
-```shell
-python cookbook/90_models/llmman/retry.py
-```
