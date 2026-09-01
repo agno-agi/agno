@@ -47,6 +47,17 @@ async def aembed_before_replace(documents: List[Document], embedder: Any) -> Non
     pending = [d for d in documents if d.embedding is None]
     if not pending:
         return
+
+    # Use the batch API where the embedder has one, so guarding the delete does not
+    # turn one batched call into one call per document.
+    if getattr(embedder, "enable_batch", False) is True and hasattr(embedder, "async_get_embeddings_batch_and_usage"):
+        embeddings, usages = await embedder.async_get_embeddings_batch_and_usage([d.content for d in pending])
+        for index, document in enumerate(pending):
+            if index < len(embeddings):
+                document.embedding = embeddings[index]
+                document.usage = usages[index] if index < len(usages) else None
+        return
+
     results = await asyncio.gather(*[d.async_embed(embedder=embedder) for d in pending], return_exceptions=True)
     raise_embedding_failures(results)
 

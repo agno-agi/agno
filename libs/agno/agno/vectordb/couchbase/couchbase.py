@@ -9,7 +9,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 
 try:
     from acouchbase.bucket import AsyncBucket
@@ -452,6 +452,9 @@ class CouchbaseSearch(VectorDb):
             filters: Optional filters to apply to the documents
             user_id: Owner of the chunks for per-user isolation. None means shared.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         logger.info(f"Upserting {len(documents)} documents")
@@ -1167,6 +1170,9 @@ class CouchbaseSearch(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         # Scope the dedupe-delete so re-upserting doesn't wipe another owner's chunks

@@ -32,7 +32,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures, retrievable_documents
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures, retrievable_documents
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
@@ -520,6 +520,9 @@ class PgVector(VectorDb):
 
         ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -712,6 +715,9 @@ class PgVector(VectorDb):
 
         ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):

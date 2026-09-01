@@ -24,7 +24,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb, is_rate_limit_error, raise_embedding_failures
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.search import SearchType
 from agno.vectordb.weaviate.index import Distance, VectorIndex
 
@@ -477,6 +477,9 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         # Up front so a scoped upsert on an unmigrated collection raises before any read or write.
         self._require_owner_property(user_id)
@@ -502,6 +505,9 @@ class Weaviate(VectorDb):
             filters (Optional[Dict[str, Any]]): Filters to apply while upserting
             user_id (Optional[str]): Owner of these chunks for per-user isolation.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         # Up front so a scoped upsert on an unmigrated collection raises before any read or write.
         self._require_owner_property(user_id)
