@@ -287,16 +287,18 @@ async def test_connect_applies_header_provider_when_using_url_only_streamable_ht
 
     with (
         patch(
-            "agno.tools.mcp.mcp.streamablehttp_client",
+            "agno.tools.mcp.mcp.streamable_http_client",
             return_value=_AsyncContextManager(("read", "write")),
         ) as streamable_http_mock,
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
 
-    assert streamable_http_mock.call_args.kwargs["url"] == "http://localhost:8000/mcp"
-    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer connect-token"}
+    # MCP SDK v2: url is positional, headers ride on the http_client built by the factory.
+    assert streamable_http_mock.call_args.args == ("http://localhost:8000/mcp",)
+    assert http_client_factory.call_args.kwargs["headers"] == {"Authorization": "Bearer connect-token"}
 
 
 @pytest.mark.asyncio
@@ -309,15 +311,16 @@ async def test_connect_applies_static_headers_when_using_url_only_streamable_htt
 
     with (
         patch(
-            "agno.tools.mcp.mcp.streamablehttp_client",
+            "agno.tools.mcp.mcp.streamable_http_client",
             return_value=_AsyncContextManager(("read", "write")),
-        ) as streamable_http_mock,
+        ),
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
 
-    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer static-token"}
+    assert http_client_factory.call_args.kwargs["headers"] == {"Authorization": "Bearer static-token"}
 
 
 @pytest.mark.asyncio
@@ -331,15 +334,16 @@ async def test_connect_merges_static_headers_and_header_provider_on_streamable_h
 
     with (
         patch(
-            "agno.tools.mcp.mcp.streamablehttp_client",
+            "agno.tools.mcp.mcp.streamable_http_client",
             return_value=_AsyncContextManager(("read", "write")),
-        ) as streamable_http_mock,
+        ),
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
 
-    assert streamable_http_mock.call_args.kwargs["headers"] == {
+    assert http_client_factory.call_args.kwargs["headers"] == {
         "X-Static": "a",
         "Authorization": "Bearer dynamic",
         "X-Dynamic": "b",
@@ -401,17 +405,24 @@ async def test_mcp_toolbox_headers_not_sent_to_mcp_connect():
 
     with (
         patch(
-            "agno.tools.mcp.mcp.streamablehttp_client",
+            "agno.tools.mcp.mcp.streamable_http_client",
             return_value=_AsyncContextManager(("read", "write")),
         ) as streamable_http_mock,
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
 
-    sent_headers = streamable_http_mock.call_args.kwargs.get("headers") or {}
+    # MCP SDK v2: headers travel via the http_client factory, not streamable_http_client.
+    # With toolbox headers excluded from MCP connect the factory is never invoked, and
+    # the secret must not reach either call.
+    sent_headers = (
+        http_client_factory.call_args.kwargs.get("headers") if http_client_factory.call_args else None
+    ) or {}
     assert "Authorization" not in sent_headers
     assert "toolbox-secret" not in str(streamable_http_mock.call_args)
+    assert "toolbox-secret" not in str(http_client_factory.call_args)
 
 
 @pytest.mark.asyncio
