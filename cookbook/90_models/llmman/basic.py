@@ -3,6 +3,7 @@ Llmman Basic
 ============
 
 Cookbook example for `llmman/basic.py`.
+Refer to- cookbook/90_models/llmman/README.md for installation steps
 """
 
 from agno.agent import Agent, RunOutput  # noqa
