@@ -3,6 +3,7 @@ from os import getenv
 from typing import Any, Dict, Optional
 
 from agno.exceptions import ModelAuthenticationError
+from agno.models.aimlapi.constants import AIMLAPI_HEADERS
 from agno.models.message import Message
 from agno.models.openai.like import OpenAILike
 
@@ -13,7 +14,7 @@ class AIMLAPI(OpenAILike):
     A class for using models hosted on AIMLAPI.
 
     Attributes:
-        id (str): The model id. Defaults to "gpt-4o-mini".
+        id (str): The model id. Defaults to "gpt-5.6-terra".
         name (str): The model name. Defaults to "AIMLAPI".
         provider (str): The provider name. Defaults to "AIMLAPI".
         api_key (Optional[str]): The API key.
@@ -21,7 +22,7 @@ class AIMLAPI(OpenAILike):
         max_tokens (int): The maximum number of tokens. Defaults to 4096.
     """
 
-    id: str = "gpt-4o-mini"
+    id: str = "gpt-5.6-terra"
     name: str = "AIMLAPI"
     provider: str = "AIMLAPI"
 
@@ -43,7 +44,16 @@ class AIMLAPI(OpenAILike):
                     message="AIMLAPI_API_KEY not set. Please set the AIMLAPI_API_KEY environment variable.",
                     model_name=self.name,
                 )
-        return super()._get_client_params()
+
+        client_params = super()._get_client_params()
+
+        # Attribution headers ride every request. Merging rather than assigning
+        # keeps any default_headers the caller supplied, and lets them win on a
+        # key clash; building a new dict keeps AIMLAPI_HEADERS itself immutable
+        # across model instances.
+        client_params["default_headers"] = {**AIMLAPI_HEADERS, **(client_params.get("default_headers") or {})}
+
+        return client_params
 
     def _format_message(self, message: Message) -> Dict[str, Any]:
         """
