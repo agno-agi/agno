@@ -21,8 +21,11 @@ knowledge = Knowledge(
         embedder=GeminiEmbedder(),
     ),
 )
-# Add content to the knowledge
-knowledge.insert(url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf")
+# Add content to the knowledge; reruns skip re-ingesting via the content hash
+knowledge.insert(
+    url="https://agno-public.s3.amazonaws.com/recipes/ThaiRecipes.pdf",
+    skip_if_exists=True,
+)
 
 agent = Agent(
     model=Gemini(id="gemini-3.7-flash"),
