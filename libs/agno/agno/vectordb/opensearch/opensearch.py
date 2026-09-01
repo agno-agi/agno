@@ -17,7 +17,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_info, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.distance import Distance
 from agno.vectordb.opensearch.index import Engine, SpaceType
 from agno.vectordb.search import SearchType
@@ -1020,6 +1020,9 @@ class OpenSearch(VectorDb):
             Clears the owner's existing chunks for this hash first, so a re-upsert that
             splits into fewer chunks leaves no surplus behind.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
@@ -1049,6 +1052,9 @@ class OpenSearch(VectorDb):
             Uses batch embedding for improved performance. Clears the owner's existing
             chunks for this hash first.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         if self.content_hash_exists(content_hash, user_id=user_id):
@@ -1468,12 +1474,8 @@ class OpenSearch(VectorDb):
                 log_info(f"Successfully generated {len(embeddings)} batch embeddings")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     logger.error(f"Rate limit detected during batch embedding: {e}")
@@ -1484,12 +1486,14 @@ class OpenSearch(VectorDb):
                     embed_tasks = [
                         doc.async_embed(embedder=self.embedder) for doc in documents if doc.embedding is None
                     ]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             log_debug("Using individual embedding (batch embedding not available)")
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents if doc.embedding is None]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
     def search(
         self,
