@@ -980,8 +980,9 @@ class Workspace(Toolkit):
             if not pattern or not pattern.strip():
                 return "Error: pattern cannot be empty"
 
-            # Clamp limit to constructor-defined max
-            limit = min(limit, self.max_grep_matches)
+            # Clamp parameters to valid ranges
+            context_lines = max(0, context_lines)
+            limit = max(1, min(limit, self.max_grep_matches))
 
             # 1. Compile regex (always case-insensitive)
             try:
