@@ -184,7 +184,11 @@ async def download_attachments_async(parsed: ActivityContent, config: TeamsConfi
         if not content:
             skipped.append("image")
             continue
-        images.append(Image(content=content, mime_type=mime or "image/png"))
+        # The activity's own contentType first, not the download's: it is what
+        # classified this attachment as an image, while Teams serves its
+        # attachment CDN as application/octet-stream, which the model rejects.
+        declared = (att.get("contentType") or "").lower()
+        images.append(Image(content=content, mime_type=declared or mime or "image/png"))
     if images:
         run_kwargs["images"] = images
 
