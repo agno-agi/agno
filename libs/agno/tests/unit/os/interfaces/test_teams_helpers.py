@@ -475,6 +475,27 @@ async def test_download_attachments_returns_images_and_files():
 
 
 @pytest.mark.asyncio
+async def test_download_attachments_image_keeps_the_activitys_declared_type():
+    """Teams serves its attachment CDN as application/octet-stream, which the
+    model rejects outright. The activity already declares the real type -- it is
+    what classified this attachment as an image -- so it wins over the header."""
+    parsed = ActivityContent(
+        text="hi",
+        image_attachments=[{"contentType": "image/png", "contentUrl": "https://ex/i.png"}],
+    )
+    cfg = _make_config()
+
+    async def fake_download(url, config, use_bot_token=True):
+        return b"pngbytes", "application/octet-stream"
+
+    with patch("agno.os.interfaces.teams.helpers._download_attachment", side_effect=fake_download):
+        run_kwargs, skipped = await download_attachments_async(parsed, cfg)
+
+    assert skipped == []
+    assert run_kwargs["images"][0].mime_type == "image/png"
+
+
+@pytest.mark.asyncio
 async def test_download_attachments_records_failures():
     parsed = ActivityContent(
         text="hi",
