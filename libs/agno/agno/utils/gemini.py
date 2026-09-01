@@ -263,6 +263,12 @@ def convert_schema(
         # carry integer or number enums (for example an IntEnum or Literal[1, 2, 3]
         # tool parameter). Stringify the values so a non-string enum does not raise
         # a pydantic ValidationError.
+        # A default that names one of those values has to be stringified with
+        # them, or it no longer matches any entry in the enum it came from.
+        if default is not None:
+            matched = next((value for value in enum_values if default == value), None)
+            if matched is not None:
+                default = str(matched)
         return Schema(
             type=GeminiType.STRING,
             enum=[str(value) for value in enum_values],

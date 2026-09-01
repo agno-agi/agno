@@ -609,6 +609,38 @@ def test_convert_schema_enum_with_integer_values():
     assert result.enum == ["1", "2", "3"]
 
 
+def test_convert_schema_enum_with_integer_values_and_default():
+    """A default naming an enum member is stringified with the members.
+
+    Left alone it stays an integer against a stringified enum, so it matches
+    none of the values it was chosen from.
+    """
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "default": 2,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.enum == ["1", "2", "3"]
+    assert result.default == "2"
+
+
+def test_convert_schema_enum_default_outside_the_enum_is_left_alone():
+    schema_dict = {
+        "type": "integer",
+        "enum": [1, 2, 3],
+        "default": 9,
+    }
+
+    result = convert_schema(schema_dict)
+
+    assert result is not None
+    assert result.default == 9
+
+
 def test_convert_schema_array_with_title():
     """Test converting an array schema with title"""
     schema_dict = {
