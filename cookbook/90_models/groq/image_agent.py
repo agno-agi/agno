@@ -13,7 +13,11 @@ from agno.models.groq import Groq
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=Groq(id="qwen/qwen3.6-27b"))
+# reasoning_effort="none" disables qwen's thinking tokens: over Groq they
+# stream as raw <think> text and the answer can cut off before it appears.
+agent = Agent(
+    model=Groq(id="qwen/qwen3.6-27b", request_params={"reasoning_effort": "none"})
+)
 
 agent.print_response(
     "Tell me about this image",
