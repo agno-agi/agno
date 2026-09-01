@@ -3,12 +3,14 @@ import subprocess
 from pathlib import Path
 from typing import Dict, List, Optional
 
+from agno.exceptions import PathSecurityError
 from agno.skills.errors import SkillValidationError
 from agno.skills.loaders.base import SkillLoader
 from agno.skills.skill import Skill
-from agno.skills.utils import is_safe_path, read_file_safe, run_script
+from agno.skills.utils import read_file_safe, run_script
 from agno.tools.function import Function
 from agno.utils.log import log_debug, log_warning
+from agno.utils.path_safety import safe_join_relative_path
 
 
 class Skills:
@@ -211,7 +213,7 @@ class Skills:
             }
         )
 
-    def _get_skill_reference(self, skill_name: str, reference_path: str) -> str:
+    def _get_skill_reference(self, skill_name: str, reference_path: Optional[str] = None) -> str:
         """Load a reference document from a skill.
 
         Args:
@@ -231,6 +233,15 @@ class Skills:
                 }
             )
 
+        if not reference_path:
+            return json.dumps(
+                {
+                    "error": f"A reference_path is required to read a reference from skill '{skill_name}'",
+                    "skill_name": skill_name,
+                    "available_references": skill.references,
+                }
+            )
+
         if reference_path not in skill.references:
             return json.dumps(
                 {
@@ -239,18 +250,17 @@ class Skills:
                 }
             )
 
-        # Validate path to prevent path traversal attacks
+        # Validate and resolve path to prevent path traversal attacks
         refs_dir = Path(skill.source_path) / "references"
-        if not is_safe_path(refs_dir, reference_path):
+        try:
+            ref_file = safe_join_relative_path(refs_dir, reference_path)
+        except PathSecurityError:
             return json.dumps(
                 {
                     "error": f"Invalid reference path: '{reference_path}'",
                     "skill_name": skill_name,
                 }
             )
-
-        # Load the reference file
-        ref_file = refs_dir / reference_path
         try:
             content = read_file_safe(ref_file)
             return json.dumps(
@@ -272,7 +282,7 @@ class Skills:
     def _get_skill_script(
         self,
         skill_name: str,
-        script_path: str,
+        script_path: Optional[str] = None,
         execute: bool = False,
         args: Optional[List[str]] = None,
         timeout: int = 30,
@@ -299,6 +309,15 @@ class Skills:
                 }
             )
 
+        if not script_path:
+            return json.dumps(
+                {
+                    "error": f"A script_path is required to read a script from skill '{skill_name}'",
+                    "skill_name": skill_name,
+                    "available_scripts": skill.scripts,
+                }
+            )
+
         if script_path not in skill.scripts:
             return json.dumps(
                 {
@@ -307,17 +326,17 @@ class Skills:
                 }
             )
 
-        # Validate path to prevent path traversal attacks
+        # Validate and resolve path to prevent path traversal attacks
         scripts_dir = Path(skill.source_path) / "scripts"
-        if not is_safe_path(scripts_dir, script_path):
+        try:
+            script_file = safe_join_relative_path(scripts_dir, script_path)
+        except PathSecurityError:
             return json.dumps(
                 {
                     "error": f"Invalid script path: '{script_path}'",
                     "skill_name": skill_name,
                 }
             )
-
-        script_file = scripts_dir / script_path
 
         if not execute:
             # Read mode: return script content

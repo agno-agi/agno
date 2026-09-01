@@ -15,13 +15,18 @@ from agno.os.interfaces.slack.helpers import (
     extract_event_context,
     open_chat_stream,
     resolve_channel_name,
+    resolve_session_id,
+    resolve_slack_bot,
     resolve_slack_user,
     send_slack_message_async,
     should_respond,
+    slack_delivery_kwargs,
     strip_bot_mention,
     upload_response_media_async,
 )
+from agno.os.interfaces.slack.pause import PAUSE_LABELS, finalize_pause, post_pause_card
 from agno.os.interfaces.slack.state import StreamState, TaskStatus
+from agno.os.interfaces.slack.types import tool_name
 from agno.team import RemoteTeam, Team
 from agno.tools.slack import SlackTools
 from agno.utils.log import log_error
@@ -39,11 +44,28 @@ class EventContext:
     user: str
     message_text: str
     session_id: str
+    # Bot sender ID (B...) when message is from a bot; empty for human messages
+    bot_id: str = ""
     team_id: Optional[str] = None
     resolved_user_id: str = ""
     display_name: Optional[str] = None
     channel_name: Optional[str] = None
     action_token: Optional[str] = None
+
+
+# Subtypes that indicate lifecycle events, not user messages
+_IGNORED_SUBTYPES = frozenset(
+    {
+        "message_changed",
+        "message_deleted",
+        "message_replied",
+        "channel_join",
+        "channel_leave",
+        "channel_topic",
+        "channel_purpose",
+        "thread_broadcast",
+    }
+)
 
 
 @dataclass
@@ -57,14 +79,41 @@ class SlackEventHandler:
     bot_name_resolver: BotNameResolver
     reply_to_mentions_only: bool
     resolve_user_identity: bool
+    respond_to_other_apps: bool
+    own_bot_id: Optional[str]
+    own_bot_user_id: Optional[str]
     loading_text: str
     loading_messages: Optional[List[str]]
     task_display_mode: str
     buffer_size: int
     suggested_prompts: Optional[List[Dict[str, str]]] = None
+    unfurl_links: bool = True
+    unfurl_media: bool = True
+    markdown: bool = True
 
     def _client(self) -> AsyncWebClient:
         return AsyncWebClient(token=self.slack_tools.token, ssl=self.ssl)
+
+    def should_process(self, event: dict) -> bool:
+        """Return True if event should be processed, False to skip."""
+        ctx = extract_event_context(event)
+        subtype = event.get("subtype")
+        is_bot = ctx["bot_id"] or subtype == "bot_message"
+
+        if subtype in _IGNORED_SUBTYPES:
+            return False
+
+        # Skip own messages (bot_id for bot posts, user for as_user posts)
+        if self.own_bot_id and ctx["bot_id"] == self.own_bot_id:
+            return False
+        if self.own_bot_user_id and ctx["user"] == self.own_bot_user_id:
+            return False
+
+        # Skip bot messages unless opted in
+        if is_bot and not self.respond_to_other_apps:
+            return False
+
+        return True
 
     async def resolve_context(self, data: dict) -> Optional[EventContext]:
         event = data["event"]
@@ -78,20 +127,27 @@ class SlackEventHandler:
         bot_name = await self.bot_name_resolver.resolve(client, bot_user_id) if bot_user_id else None
         message_text = strip_bot_mention(raw_ctx["message_text"], bot_user_id, bot_name)
 
-        session_id = f"{self.entity_id}:{raw_ctx['thread_id']}"
+        session_id = await resolve_session_id(self.entity, self.entity_id, raw_ctx["channel_id"], raw_ctx["thread_id"])
         team_id = data.get("team_id") or event.get("team")
 
-        resolved_user_id = raw_ctx["user"]
+        sender_user = raw_ctx["user"]
+        sender_bot_id = raw_ctx["bot_id"]
+
+        resolved_user_id = sender_user or sender_bot_id
         display_name = None
         if self.resolve_user_identity:
-            resolved_user_id, display_name = await resolve_slack_user(client, raw_ctx["user"])
+            if sender_bot_id:
+                resolved_user_id, display_name = await resolve_slack_bot(client, sender_bot_id)
+            elif sender_user:
+                resolved_user_id, display_name = await resolve_slack_user(client, sender_user)
 
         channel_name = await resolve_channel_name(client, raw_ctx["channel_id"])
 
         return EventContext(
             channel_id=raw_ctx["channel_id"],
             thread_id=raw_ctx["thread_id"],
-            user=raw_ctx["user"],
+            user=sender_user,
+            bot_id=sender_bot_id,
             message_text=message_text,
             session_id=session_id,
             team_id=team_id,
@@ -162,6 +218,9 @@ class SlackEventHandler:
             channel=ctx.channel_id,
             message=message,
             thread_ts=ctx.thread_id,
+            unfurl_links=self.unfurl_links,
+            unfurl_media=self.unfurl_media,
+            mrkdwn=self.markdown,
         )
 
     async def handle_non_streaming(self, data: dict) -> None:
@@ -198,11 +257,25 @@ class SlackEventHandler:
                     rc = str(response.reasoning_content)
                     formatted = "*Reasoning:*\n> " + rc.replace("\n", "\n> ")
                     await send_slack_message_async(
-                        client, channel=ctx.channel_id, message=formatted, thread_ts=ctx.thread_id
+                        client,
+                        channel=ctx.channel_id,
+                        message=formatted,
+                        thread_ts=ctx.thread_id,
+                        unfurl_links=self.unfurl_links,
+                        unfurl_media=self.unfurl_media,
+                        mrkdwn=self.markdown,
                     )
 
                 content = str(response.content) if response.content else ""
-                await send_slack_message_async(client, channel=ctx.channel_id, message=content, thread_ts=ctx.thread_id)
+                await send_slack_message_async(
+                    client,
+                    channel=ctx.channel_id,
+                    message=content,
+                    thread_ts=ctx.thread_id,
+                    unfurl_links=self.unfurl_links,
+                    unfurl_media=self.unfurl_media,
+                    mrkdwn=self.markdown,
+                )
                 await upload_response_media_async(client, response, ctx.channel_id, ctx.thread_id)
 
         except Exception as e:
@@ -212,9 +285,6 @@ class SlackEventHandler:
             await self.set_status(ctx, "")
 
     async def _handle_paused_non_streaming(self, ctx: EventContext, response: Any) -> bool:
-        from agno.os.interfaces.slack.pause import _PAUSE_LABELS, post_pause_card
-        from agno.os.interfaces.slack.types import tool_name
-
         client = self._client()
         requirements = list(getattr(response, "active_requirements", None) or [])
         run_id = getattr(response, "run_id", None)
@@ -224,9 +294,17 @@ class SlackEventHandler:
 
         content = str(response.content) if response.content else ""
         if content:
-            await send_slack_message_async(client, channel=ctx.channel_id, message=content, thread_ts=ctx.thread_id)
+            await send_slack_message_async(
+                client,
+                channel=ctx.channel_id,
+                message=content,
+                thread_ts=ctx.thread_id,
+                unfurl_links=self.unfurl_links,
+                unfurl_media=self.unfurl_media,
+                mrkdwn=self.markdown,
+            )
 
-        pause_labels = [_PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
+        pause_labels = [PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
         awaiting_ts = None
         if pause_labels:
             try:
@@ -234,14 +312,23 @@ class SlackEventHandler:
                     channel=ctx.channel_id,
                     thread_ts=ctx.thread_id,
                     text="\n".join(pause_labels),
-                    mrkdwn=True,
+                    **slack_delivery_kwargs(self.unfurl_links, self.unfurl_media, self.markdown),
                 )
                 awaiting_ts = awaiting_resp.get("ts")
             except Exception as exc:
                 log_error(f"[HITL] Non-streaming awaiting indicator failed: {exc}")
 
         try:
-            await post_pause_card(client, response, ctx.channel_id, ctx.thread_id, awaiting_ts)
+            await post_pause_card(
+                client,
+                response,
+                ctx.channel_id,
+                ctx.thread_id,
+                awaiting_ts,
+                unfurl_links=self.unfurl_links,
+                unfurl_media=self.unfurl_media,
+                mrkdwn=self.markdown,
+            )
         except Exception as exc:
             log_error(f"[HITL] Non-streaming pause card failed: {exc}")
 
@@ -249,8 +336,13 @@ class SlackEventHandler:
 
     async def _open_chat_stream(self, client: AsyncWebClient, ctx: EventContext) -> Any:
         return await open_chat_stream(
-            client, ctx.channel_id, ctx.thread_id, ctx.user, ctx.team_id,
-            self.task_display_mode, self.buffer_size,
+            client,
+            ctx.channel_id,
+            ctx.thread_id,
+            ctx.user,
+            ctx.team_id,
+            self.task_display_mode,
+            self.buffer_size,
         )
 
     async def _set_thread_title(self, client: AsyncWebClient, ctx: EventContext, state: StreamState) -> None:
@@ -259,9 +351,7 @@ class SlackEventHandler:
         state.title_set = True
         title = ctx.message_text[:50].strip() or "New conversation"
         try:
-            await client.assistant_threads_setTitle(
-                channel_id=ctx.channel_id, thread_ts=ctx.thread_id, title=title
-            )
+            await client.assistant_threads_setTitle(channel_id=ctx.channel_id, thread_ts=ctx.thread_id, title=title)
         except Exception:
             pass
 
@@ -291,7 +381,9 @@ class SlackEventHandler:
 
         return new_stream
 
-    async def _finalize_stream(self, client: AsyncWebClient, ctx: EventContext, state: StreamState, stream: Any) -> None:
+    async def _finalize_stream(
+        self, client: AsyncWebClient, ctx: EventContext, state: StreamState, stream: Any
+    ) -> None:
         final_status: TaskStatus = state.terminal_status or "complete"
         completion_chunks = state.resolve_all_pending(final_status) if state.task_cards else []
         stop_kwargs: Dict[str, Any] = {}
@@ -336,7 +428,9 @@ class SlackEventHandler:
                     break
 
                 if len(state.task_cards) >= _STREAM_CARD_LIMIT:
-                    stream = await self._rotate_stream(client, ctx, state, stream, state.flush() if state.has_content() else "")
+                    stream = await self._rotate_stream(
+                        client, ctx, state, stream, state.flush() if state.has_content() else ""
+                    )
 
                 if state.has_content():
                     await self._set_thread_title(client, ctx, state)
@@ -358,8 +452,6 @@ class SlackEventHandler:
             await self._handle_streaming_error(ctx, state, stream, e)
 
     async def _handle_paused_streaming(self, ctx: EventContext, state: StreamState, stream: Any) -> bool:
-        from agno.os.interfaces.slack.pause import finalize_pause, post_pause_card
-
         client = self._client()
         pause_run_id = getattr(state.paused_event, "run_id", None)
         requirements = list(getattr(state.paused_event, "active_requirements", None) or [])
@@ -375,9 +467,21 @@ class SlackEventHandler:
             channel=ctx.channel_id,
             thread_ts=ctx.thread_id,
             requirements=requirements,
+            unfurl_links=self.unfurl_links,
+            unfurl_media=self.unfurl_media,
+            mrkdwn=self.markdown,
         )
         try:
-            await post_pause_card(client, state.paused_event, ctx.channel_id, ctx.thread_id, awaiting_ts)
+            await post_pause_card(
+                client,
+                state.paused_event,
+                ctx.channel_id,
+                ctx.thread_id,
+                awaiting_ts,
+                unfurl_links=self.unfurl_links,
+                unfurl_media=self.unfurl_media,
+                mrkdwn=self.markdown,
+            )
         except Exception as exc:
             log_error(f"[HITL] Failed to post Card block (pause): {exc}")
 

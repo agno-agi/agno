@@ -36,7 +36,6 @@ agent = Agent(
     model=OpenAIChat(id="gpt-5.2"),
     knowledge=knowledge,
     search_knowledge=True,
-    debug_mode=True,
 )
 
 # Ask the agent about the knowledge

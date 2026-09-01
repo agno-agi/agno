@@ -52,7 +52,7 @@ class DockerContainer(DockerResource):
     # network_disabled (bool) – Disable networking.
     network_disabled: Optional[str] = None
     # network_mode (str) One of:
-    # bridge - Create a new network stack for the container on on the bridge network.
+    # bridge - Create a new network stack for the container on the bridge network.
     # none - No networking for this container.
     # container:<name|id> - Reuse another container’s network stack.
     # host - Use the host network stack. This mode is incompatible with ports.

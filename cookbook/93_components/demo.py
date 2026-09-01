@@ -57,7 +57,7 @@ registry = Registry(
         OpenAIChat(id="gpt-5-mini"),
         OpenAIChat(id="gpt-5"),
         Claude(id="claude-sonnet-4-5"),
-        Gemini(id="gemini-3-flash-preview"),
+        Gemini(id="gemini-3.5-flash"),
     ],
     dbs=[db],
     vector_dbs=[pgvector],

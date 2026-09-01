@@ -3,6 +3,7 @@ import pytest
 from agno.media import Audio, File, Image, Video
 from agno.models.message import Message
 from agno.utils.tokens import (
+    _format_type,
     count_audio_tokens,
     count_file_tokens,
     count_image_tokens,
@@ -404,6 +405,22 @@ def test_model_count_tokens_with_schema():
 
     # Schema should add tokens
     assert tokens_with_schema > tokens_no_schema
+
+
+def test_format_type_numeric_enum_unquoted():
+    """Numeric enums must become numeric literal unions, not quoted strings."""
+    assert _format_type({"type": "integer", "enum": [1, 2, 3]}, 0) == "1 | 2 | 3"
+    assert _format_type({"type": "number", "enum": [1.5, 2.5]}, 0) == "1.5 | 2.5"
+    # String enums are unchanged (still quoted literals).
+    assert _format_type({"type": "string", "enum": ["low", "high"]}, 0) == '"low" | "high"'
+
+
+def test_format_type_untyped_enum_renders_union():
+    """Untyped enums (e.g. mixed-type Literals) must become a literal union, not 'any'."""
+    assert _format_type({"enum": [1, "auto"]}, 0) == '1 | "auto"'
+    assert _format_type({"enum": [1, 2]}, 0) == "1 | 2"
+    # An unknown type with no enum still falls back to "any".
+    assert _format_type({"type": "weird"}, 0) == "any"
 
 
 @pytest.mark.asyncio

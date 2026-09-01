@@ -228,6 +228,12 @@ def test_provider_both_flags_false_raises(tmp_path: Path):
         WikiContextProvider(backend=FileSystemBackend(path=tmp_path), read=False, write=False)
 
 
+def test_provider_query_timeout_plumbs_to_base(tmp_path: Path):
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), query_timeout=2.5)
+    assert p.query_timeout == 2.5
+    assert WikiContextProvider(backend=FileSystemBackend(path=tmp_path)).query_timeout is None
+
+
 def test_provider_instructions_omit_update_when_write_false(tmp_path: Path):
     p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), id="voice", write=False)
     text = p.instructions()
@@ -630,24 +636,199 @@ async def test_git_run_sets_terminal_prompt_zero(monkeypatch, tmp_path: Path):
 
 
 @pytest.mark.asyncio
-async def test_provider_query_tool_serialises_answer(tmp_path: Path):
-    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+async def test_provider_query_tool_serialises_answer_non_streaming(tmp_path: Path):
+    """With stream_sub_agent_events=False, query tool yields final JSON answer."""
+    from agno.run.agent import RunOutput
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), stream_sub_agent_events=False)
 
     class _StubAgent:
         async def arun(self, message: str, **kwargs):  # noqa: ANN001
-            class _Out:
-                content = "hello"
-
-                def get_content_as_string(self):
-                    return self.content
-
-            return _Out()
+            # When stream=False, arun returns RunOutput directly
+            return RunOutput(content="hello")
 
     p._read_agent = _StubAgent()
     tool = next(t for t in p.get_tools() if t.name == "query_wiki")
-    out = await tool.entrypoint(question="anything")
+
+    # Collect output from generator (tool wrapper returns coroutine)
+    gen = await tool.entrypoint(question="anything")
+    out = ""
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            out = chunk
     payload = json.loads(out)
     assert payload == {"text": "hello"}
+
+
+@pytest.mark.asyncio
+async def test_provider_query_tool_streams_events_not_json(tmp_path: Path):
+    """With stream_sub_agent_events=True (default), query yields events only.
+
+    The content is captured by models/base.py from RunContentEvent deltas,
+    so no final JSON is yielded — matching the Team streaming pattern.
+    """
+    from agno.run.agent import RunOutput, ToolCallStartedEvent
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    # Default: stream_sub_agent_events=True
+
+    class _StubAgent:
+        async def arun(self, message: str, **kwargs):  # noqa: ANN001
+            event = ToolCallStartedEvent()
+            event.tool_call_id = "test_call"
+            yield event
+            yield RunOutput(content="hello")
+
+    p._read_agent = _StubAgent()
+    tool = next(t for t in p.get_tools() if t.name == "query_wiki")
+
+    gen = await tool.entrypoint(question="anything")
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    assert len(events) == 1, "Should yield the event"
+    assert events[0].tool_call_id == "test_call"
+    assert len(strings) == 0, "Should not yield final JSON in streaming mode"
+
+
+@pytest.mark.asyncio
+async def test_wiki_update_streaming_with_commit_note(tmp_path: Path):
+    """Streaming update yields events + commit note, no content duplication.
+
+    This tests the WikiContextProvider-specific behavior where:
+    1. Sub-agent events are streamed (content captured by models/base.py)
+    2. Commit note is yielded as a plain string at the end
+    3. No final JSON answer (would duplicate content)
+    """
+    from unittest.mock import AsyncMock
+
+    from agno.context.wiki.backend import CommitSummary
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+
+    class _StubWriteAgent:
+        async def arun(self, message: str, **kwargs):
+            yield RunContentEvent(content="Updated ")
+            yield RunContentEvent(content="the wiki")
+            yield RunOutput(content="Updated the wiki")
+
+    p._write_agent = _StubWriteAgent()
+
+    # Mock commit to return a summary
+    async def mock_commit(*args, **kwargs):
+        return CommitSummary(sha="abc12345", message="Auto-commit", files_changed=1)
+
+    p.backend.commit_after_write = mock_commit
+    p.backend.sync = AsyncMock()
+
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="update page")
+
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    # Should have 2 RunContentEvent (content deltas)
+    assert len(events) == 2, f"Expected 2 events, got {len(events)}"
+    assert all(isinstance(e, RunContentEvent) for e in events)
+
+    # Should have 1 string (just the commit note, not full JSON)
+    assert len(strings) == 1, f"Expected 1 string (commit note), got {len(strings)}"
+    assert "Committed abc12345" in strings[0]
+    assert "1 file(s)" in strings[0]
+
+    # Simulate models/base.py accumulation — content should appear once
+    accumulated = ""
+    for e in events:
+        accumulated += e.content or ""
+    for s in strings:
+        accumulated += s
+
+    expected = "Updated the wiki\n\nCommitted abc12345 (1 file(s)): Auto-commit"
+    assert accumulated == expected, f"Expected '{expected}', got '{accumulated}'"
+
+
+@pytest.mark.asyncio
+async def test_wiki_update_non_streaming_includes_commit_in_json(tmp_path: Path):
+    """Non-streaming update yields single JSON with content + commit note."""
+    from unittest.mock import AsyncMock
+
+    from agno.context.wiki.backend import CommitSummary
+    from agno.run.agent import RunOutput
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), stream_sub_agent_events=False)
+
+    class _StubWriteAgent:
+        async def arun(self, message: str, **kwargs):
+            return RunOutput(content="Updated the wiki")
+
+    p._write_agent = _StubWriteAgent()
+
+    async def mock_commit(*args, **kwargs):
+        return CommitSummary(sha="def67890", message="Auto-commit", files_changed=2)
+
+    p.backend.commit_after_write = mock_commit
+    p.backend.sync = AsyncMock()
+
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="update page")
+
+    outputs = []
+    async for chunk in gen:
+        outputs.append(chunk)
+
+    assert len(outputs) == 1, "Non-streaming should yield exactly one item"
+    payload = json.loads(outputs[0])
+    expected_text = "Updated the wiki\n\nCommitted def67890 (2 file(s)): Auto-commit"
+    assert payload.get("text") == expected_text
+
+
+@pytest.mark.asyncio
+async def test_wiki_update_no_commit_streaming(tmp_path: Path):
+    """When nothing to commit, streaming yields only events (no note)."""
+    from unittest.mock import AsyncMock
+
+    from agno.run.agent import RunContentEvent, RunOutput
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+
+    class _StubWriteAgent:
+        async def arun(self, message: str, **kwargs):
+            yield RunContentEvent(content="No changes")
+            yield RunOutput(content="No changes")
+
+    p._write_agent = _StubWriteAgent()
+
+    # No commit (nothing staged)
+    async def mock_commit(*args, **kwargs):
+        return None
+
+    p.backend.commit_after_write = mock_commit
+    p.backend.sync = AsyncMock()
+
+    update_tool = p._update_tool()
+    gen = await update_tool.entrypoint(instruction="check status")
+
+    events = []
+    strings = []
+    async for chunk in gen:
+        if isinstance(chunk, str):
+            strings.append(chunk)
+        else:
+            events.append(chunk)
+
+    assert len(events) == 1, "Should yield the content event"
+    assert len(strings) == 0, "No commit = no note string"
 
 
 @pytest.mark.asyncio
@@ -683,6 +864,71 @@ async def test_web_backend_tools_attached_to_write_sub_agent(tmp_path: Path):
     # Workspace toolkit registers methods, not tool names — but it
     # must still be in the list (name attribute on Toolkit instances).
     assert any(getattr(t, "name", "") == "workspace" for t in write_agent.tools or [])
+
+
+def test_write_tools_replace_default_workspace(tmp_path: Path):
+    from agno.tools import tool
+    from agno.tools.workspace import Workspace
+
+    @tool(name="kb_write")
+    def _kb_write(path: str, content: str) -> str:
+        return "ok"
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), write_tools=[_kb_write])
+    agent = p._ensure_write_agent()
+    assert agent.tools is not None
+    assert len(agent.tools) == 1
+    assert agent.tools[0] is _kb_write
+    assert not any(isinstance(t, Workspace) for t in agent.tools)
+
+
+def test_write_tools_and_web_backend_both_attached(tmp_path: Path):
+    from agno.context.backend import ContextBackend
+    from agno.context.provider import Status as _Status
+    from agno.tools import tool
+
+    @tool(name="kb_write")
+    def _kb_write(path: str, content: str) -> str:
+        return "ok"
+
+    @tool(name="web_search")
+    async def _web_search(query: str) -> str:
+        return "{}"
+
+    class _StubWeb(ContextBackend):
+        def status(self) -> _Status:
+            return _Status(ok=True, detail="stub")
+
+        async def astatus(self) -> _Status:
+            return self.status()
+
+        def get_tools(self) -> list:
+            return [_web_search]
+
+    injected = [_kb_write]
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path), write_tools=injected, web=_StubWeb())
+    agent = p._ensure_write_agent()
+    names = [getattr(t, "name", None) for t in agent.tools or []]
+    assert "kb_write" in names
+    assert "web_search" in names
+    # Appending web tools must not mutate the caller's list.
+    assert len(injected) == 1
+    assert injected[0] is _kb_write
+
+
+def test_default_write_agent_uses_read_write_workspace(tmp_path: Path):
+    from agno.tools.workspace import Workspace
+
+    p = WikiContextProvider(backend=FileSystemBackend(path=tmp_path))
+    agent = p._ensure_write_agent()
+    ws = next(t for t in agent.tools or [] if isinstance(t, Workspace))
+    assert sorted(ws.functions.keys()) == [
+        "edit_file",
+        "list_files",
+        "read_file",
+        "search_content",
+        "write_file",
+    ]
 
 
 @pytest.mark.asyncio

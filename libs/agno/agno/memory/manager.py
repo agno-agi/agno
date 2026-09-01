@@ -3,6 +3,7 @@ from dataclasses import dataclass
 from os import getenv
 from textwrap import dedent
 from typing import TYPE_CHECKING, Any, Callable, Dict, List, Literal, Optional, Type, Union
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -85,7 +86,15 @@ class MemoryManager:
         add_memories: bool = True,
         clear_memories: bool = False,
         debug_mode: bool = False,
+        id: Optional[str] = None,
+        name: Optional[str] = None,
+        owner_id: Optional[str] = None,
+        owner_type: Optional[str] = None,
     ):
+        self.id = id if id is not None else f"memory_manager_{uuid4().hex[:8]}"
+        self.name = name
+        self.owner_id = owner_id
+        self.owner_type = owner_type
         self.model = model  # type: ignore[assignment]
         self.system_message = system_message
         self.memory_capture_instructions = memory_capture_instructions
@@ -596,8 +605,8 @@ class MemoryManager:
 
         Args:
             query: The search query for agentic search. Required if retrieval_method is "agentic".
-            limit: Maximum number of memories to return. Defaults to self.retrieval_limit if not specified. Optional.
-            retrieval_method: The method to use for retrieving memories. Defaults to self.retrieval if not specified.
+            limit: Maximum number of memories to return. Returns every memory if not specified. Optional.
+            retrieval_method: The method to use for retrieving memories. Defaults to "last_n" if not specified.
                 - "last_n": Return the most recent memories
                 - "first_n": Return the oldest memories
                 - "agentic": Return memories most similar to the query, but using an agentic approach
@@ -618,11 +627,6 @@ class MemoryManager:
 
         if not memories:
             return []
-
-        # Use default retrieval method if not specified
-        retrieval_method = retrieval_method
-        # Use default limit if not specified
-        limit = limit
 
         # Handle different retrieval methods
         if retrieval_method == "agentic":

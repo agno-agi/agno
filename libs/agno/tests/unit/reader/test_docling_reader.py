@@ -316,6 +316,68 @@ async def test_async_url(mock_converter):
         assert documents[0].name == "document"
 
 
+def test_read_file_str_path(mock_converter):
+    """Test reading a local file path passed as a string"""
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.knowledge.reader.docling_reader.DocumentConverter", return_value=mock_converter),
+    ):
+        reader = DoclingReader()
+        documents = reader.read("test.pdf")
+
+        assert len(documents) == 1
+        assert documents[0].name == "test"
+        assert "Test Document" in documents[0].content
+        mock_converter.convert.assert_called_once()
+        # A local string path must be normalized to a Path before hitting Docling.
+        assert isinstance(mock_converter.convert.call_args.args[0], Path)
+
+
+def test_read_file_str_path_custom_name(mock_converter):
+    """Test reading a local string path with a custom document name."""
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.knowledge.reader.docling_reader.DocumentConverter", return_value=mock_converter),
+    ):
+        reader = DoclingReader()
+        documents = reader.read("test.pdf", name="custom_name")
+
+        assert len(documents) == 1
+        assert documents[0].name == "custom_name"
+
+
+@pytest.mark.asyncio
+async def test_async_read_file_str_path(mock_converter):
+    """Test async reading of a local file path passed as a string."""
+    with (
+        patch("pathlib.Path.exists", return_value=True),
+        patch("agno.knowledge.reader.docling_reader.DocumentConverter", return_value=mock_converter),
+    ):
+        reader = DoclingReader()
+        documents = await reader.async_read("test.pdf")
+
+        assert len(documents) == 1
+        assert documents[0].name == "test"
+        mock_converter.convert.assert_called_once()
+
+
+def test_invalid_file_str_path():
+    """Test that a non-existent local string path raises FileNotFoundError."""
+    with patch("pathlib.Path.exists", return_value=False):
+        reader = DoclingReader()
+        with pytest.raises(FileNotFoundError, match="Could not find file: nonexistent.pdf"):
+            reader.read("nonexistent.pdf")
+
+
+def test_read_local_str_path_unaffected_by_allowed_hosts(mock_converter):
+    """Local string path inputs must not be blocked by the URL host allowlist."""
+    reader = DoclingReader(allowed_hosts=["docs.agno.com"], converter=mock_converter)
+    with patch("pathlib.Path.exists", return_value=True):
+        documents = reader.read("local.pdf")
+    assert len(documents) >= 1
+    mock_converter.convert.assert_called_once()
+
+
 def test_default_output_format(mock_converter):
     """Test that default output format is markdown"""
     with (
@@ -353,3 +415,66 @@ def test_docling_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+# ---------------------------------------------------------------------------
+# allowed_hosts (SSRF hardening)
+# ---------------------------------------------------------------------------
+
+
+def test_allowed_hosts_default_is_none():
+    reader = DoclingReader()
+    assert reader.allowed_hosts is None
+
+
+def test_allowed_hosts_lowercases_input():
+    reader = DoclingReader(allowed_hosts=["DOCS.AGNO.COM"])
+    assert reader.allowed_hosts == ["docs.agno.com"]
+
+
+def test_read_url_refuses_disallowed_host(mock_converter):
+    """read() must short-circuit before invoking DocumentConverter for disallowed URLs."""
+    reader = DoclingReader(allowed_hosts=["docs.agno.com"], converter=mock_converter)
+    documents = reader.read("http://127.0.0.1:9999/admin")
+    assert documents == []
+    mock_converter.convert.assert_not_called()
+
+
+def test_read_url_refuses_metadata_endpoint(mock_converter):
+    """SSRF target like the cloud IMDS endpoint must be refused."""
+    reader = DoclingReader(allowed_hosts=["docs.agno.com"], converter=mock_converter)
+    documents = reader.read("http://169.254.169.254/latest/meta-data")
+    assert documents == []
+    mock_converter.convert.assert_not_called()
+
+
+def test_read_url_allows_listed_host(mock_converter):
+    """A URL whose host matches the allowlist must be passed through to the converter."""
+    reader = DoclingReader(allowed_hosts=["docs.agno.com"], converter=mock_converter)
+    documents = reader.read("https://docs.agno.com/page.pdf")
+    assert len(documents) >= 1
+    mock_converter.convert.assert_called_once()
+
+
+def test_read_local_path_unaffected_by_allowed_hosts(mock_converter):
+    """Local Path inputs must not be blocked by the URL host allowlist."""
+    reader = DoclingReader(allowed_hosts=["docs.agno.com"], converter=mock_converter)
+    with patch("pathlib.Path.exists", return_value=True):
+        documents = reader.read(Path("local.pdf"))
+    assert len(documents) >= 1
+    mock_converter.convert.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_async_read_url_inherits_host_check(mock_converter):
+    """async_read delegates to sync read via asyncio.to_thread, so the gate covers it."""
+    reader = DoclingReader(allowed_hosts=["docs.agno.com"], converter=mock_converter)
+    documents = await reader.async_read("http://127.0.0.1/x")
+    assert documents == []
+    mock_converter.convert.assert_not_called()
+
+
+def test_allowed_hosts_rejects_str_input():
+    """Passing a single string (instead of a list) must raise error."""
+    with pytest.raises(TypeError, match="must be a list"):
+        DoclingReader(allowed_hosts="docs.agno.com")

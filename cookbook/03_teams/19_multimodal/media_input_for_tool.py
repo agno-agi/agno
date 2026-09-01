@@ -88,7 +88,6 @@ team = Team(
         "Analyze the extracted content and provide insights directly in your response.",
         "Do not delegate tasks to team members - handle everything yourself using the available tools.",
     ],
-    debug_mode=True,
     send_media_to_model=False,
     store_media=True,
 )

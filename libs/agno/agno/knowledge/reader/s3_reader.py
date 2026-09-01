@@ -53,6 +53,14 @@ class S3Reader(Reader):
     def get_supported_content_types(cls) -> List[ContentType]:
         return [ContentType.FILE, ContentType.URL, ContentType.TEXT]
 
+    def _inner_reader(self, reader_cls):
+        """Build the inner reader, propagating this reader's chunking configuration"""
+        return reader_cls(
+            chunk=self.chunk,
+            chunk_size=self.chunk_size,
+            chunking_strategy=self.chunking_strategy,
+        )
+
     def read(self, name: Optional[str], s3_object: S3Object) -> List[Document]:
         try:
             log_debug(f"Reading S3 file: {s3_object.uri}")
@@ -63,14 +71,14 @@ class S3Reader(Reader):
             if s3_object.uri.endswith(".pdf"):
                 object_resource = s3_object.get_resource()
                 object_body = object_resource.get()["Body"]
-                return PDFReader().read(pdf=BytesIO(object_body.read()), name=doc_name)
+                return self._inner_reader(PDFReader).read(pdf=BytesIO(object_body.read()), name=doc_name)
 
             # Read text files
             else:
                 obj_name = s3_object.name.split("/")[-1]
                 temporary_file = Path("storage").joinpath(obj_name)
                 s3_object.download(temporary_file)
-                documents = TextReader().read(file=temporary_file, name=doc_name)
+                documents = self._inner_reader(TextReader).read(file=temporary_file, name=doc_name)
                 temporary_file.unlink()
                 return documents
 

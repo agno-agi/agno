@@ -11,7 +11,9 @@ RUN apt-get update && apt-get install -y \
 # Install Google ADK and dependencies
 # Pin a2a-sdk to 0.3.x (compatible with latest google-adk)
 # a2a-sdk 1.0 removed a2a.server.apps which google-adk needs
-RUN pip install --no-cache-dir google-adk "a2a-sdk>=0.3.0,<1.0" uvicorn
+# The [http-server] extra pulls sse-starlette, which a2a-sdk 0.3.26 made optional
+# but google-adk's to_a2a() still requires for JSONRPCApplication
+RUN pip install --no-cache-dir google-adk "a2a-sdk[http-server]>=0.3.0,<1.0" uvicorn
 
 # Copy the server script
 COPY tests/system/adk_server.py /app/adk_server.py

@@ -30,6 +30,7 @@ from agno.utils.events import (
 from agno.utils.hooks import (
     copy_args_for_background,
     filter_hook_args,
+    get_hook_name,
     is_guardrail_hook,
     should_run_hook_in_background,
 )
@@ -85,7 +86,7 @@ def execute_pre_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -109,7 +110,7 @@ def execute_pre_hooks(
                 event=create_pre_hook_started_event(
                     from_run_response=run_response,
                     run_input=run_input,
-                    pre_hook_name=hook.__name__,
+                    pre_hook_name=get_hook_name(hook),
                 ),
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
@@ -120,7 +121,7 @@ def execute_pre_hooks(
 
             if iscoroutinefunction(hook):
                 log_warning(
-                    f"Async hook '{hook.__name__}' cannot be used with sync run(). Use arun() instead. Skipping hook."
+                    f"Async hook '{get_hook_name(hook)}' cannot be used with sync run(). Use arun() instead. Skipping hook."
                 )
                 continue
 
@@ -132,7 +133,7 @@ def execute_pre_hooks(
                     event=create_pre_hook_completed_event(
                         from_run_response=run_response,
                         run_input=run_input,
-                        pre_hook_name=hook.__name__,
+                        pre_hook_name=get_hook_name(hook),
                     ),
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
@@ -195,7 +196,7 @@ async def aexecute_pre_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -219,7 +220,7 @@ async def aexecute_pre_hooks(
                 event=create_pre_hook_started_event(
                     from_run_response=run_response,
                     run_input=run_input,
-                    pre_hook_name=hook.__name__,
+                    pre_hook_name=get_hook_name(hook),
                 ),
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
@@ -240,7 +241,7 @@ async def aexecute_pre_hooks(
                     event=create_pre_hook_completed_event(
                         from_run_response=run_response,
                         run_input=run_input,
-                        pre_hook_name=hook.__name__,
+                        pre_hook_name=get_hook_name(hook),
                     ),
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
@@ -300,7 +301,7 @@ def execute_post_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -323,7 +324,7 @@ def execute_post_hooks(
                 run_response=run_output,
                 event=create_post_hook_started_event(
                     from_run_response=run_output,
-                    post_hook_name=hook.__name__,
+                    post_hook_name=get_hook_name(hook),
                 ),
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
@@ -334,7 +335,7 @@ def execute_post_hooks(
 
             if iscoroutinefunction(hook):
                 log_warning(
-                    f"Async hook '{hook.__name__}' cannot be used with sync run(). Use arun() instead. Skipping hook."
+                    f"Async hook '{get_hook_name(hook)}' cannot be used with sync run(). Use arun() instead. Skipping hook."
                 )
                 continue
 
@@ -345,7 +346,7 @@ def execute_post_hooks(
                     run_response=run_output,
                     event=create_post_hook_completed_event(
                         from_run_response=run_output,
-                        post_hook_name=hook.__name__,
+                        post_hook_name=get_hook_name(hook),
                     ),
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,
@@ -404,7 +405,7 @@ async def aexecute_post_hooks(
                 except (InputCheckError, OutputCheckError):
                     raise
                 except Exception:
-                    log_exception(f"Background guardrail '{hook.__name__}' execution failed")
+                    log_exception(f"Background guardrail '{get_hook_name(hook)}' execution failed")
             else:
                 pending_bg_hooks.append(hook)
         bg_args = copy_args_for_background(all_args)
@@ -427,7 +428,7 @@ async def aexecute_post_hooks(
                 run_response=run_output,
                 event=create_post_hook_started_event(
                     from_run_response=run_output,
-                    post_hook_name=hook.__name__,
+                    post_hook_name=get_hook_name(hook),
                 ),
                 events_to_skip=agent.events_to_skip,  # type: ignore
                 store_events=agent.store_events,
@@ -445,7 +446,7 @@ async def aexecute_post_hooks(
                     run_response=run_output,
                     event=create_post_hook_completed_event(
                         from_run_response=run_output,
-                        post_hook_name=hook.__name__,
+                        post_hook_name=get_hook_name(hook),
                     ),
                     events_to_skip=agent.events_to_skip,  # type: ignore
                     store_events=agent.store_events,

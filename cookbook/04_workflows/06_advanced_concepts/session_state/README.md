@@ -4,6 +4,7 @@
 Runnable workflow examples under: cookbook/04_workflows/06_advanced_concepts/session_state
 
 ## Files
+- job_application_tracker.py: Demonstrates job application tracker.
 - rename_session.py: Demonstrates rename session.
 - state_in_condition.py: Demonstrates state in condition.
 - state_in_function.py: Demonstrates state in function.

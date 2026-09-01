@@ -36,14 +36,25 @@ class MovieScript(BaseModel):
     )
 
 
+# Agent that uses JSON mode
 json_mode_agent = Agent(
-    model=LiteLLM(id="gpt-4o"),
+    model=LiteLLM(id="gpt-5.6-luna"),
     description="You write movie scripts.",
     output_schema=MovieScript,
     use_json_mode=True,
 )
 
+# Agent that uses native structured outputs.
+# Set supports_native_structured_outputs=True for the providers that support it.
+structured_output_agent = Agent(
+    model=LiteLLM(id="gpt-5.6-luna", supports_native_structured_outputs=True),
+    description="You write movie scripts.",
+    output_schema=MovieScript,
+    structured_outputs=True,
+)
+
 json_mode_agent.print_response("New York")
+structured_output_agent.print_response("New York")
 
 # ---------------------------------------------------------------------------
 # Run Agent

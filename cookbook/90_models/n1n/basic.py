@@ -12,7 +12,7 @@ from agno.models.n1n import N1N
 # Create Agent
 # ---------------------------------------------------------------------------
 
-agent = Agent(model=N1N(id="gpt-4o"), markdown=True)
+agent = Agent(model=N1N(id="gpt-5.6-luna"), markdown=True)
 
 # ---------------------------------------------------------------------------
 # Run Agent

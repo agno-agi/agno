@@ -19,7 +19,7 @@ cwd = Path(__file__).parent.resolve()
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-image_agent = Agent(model=OpenAIChat(id="gpt-4o"))
+image_agent = Agent(model=OpenAIChat(id="gpt-5.6-luna"))
 
 image_path = Path(__file__).parent.joinpath("sample.jpg")
 
@@ -38,7 +38,7 @@ if __name__ == "__main__":
 
     audio_agent = Agent(
         model=OpenAIChat(
-            id="gpt-4o-audio-preview",
+            id="gpt-audio",
             modalities=["text", "audio"],
             audio={"voice": "sage", "format": "wav"},
         ),

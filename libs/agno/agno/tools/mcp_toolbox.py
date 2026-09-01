@@ -1,5 +1,4 @@
 from typing import Any, Callable, Dict, List, Literal, Optional, Union
-from warnings import warn
 
 from agno.tools.function import Function
 from agno.tools.mcp import MCPTools
@@ -54,7 +53,9 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
 
         super().__init__(url=url, transport=transport, **kwargs)
 
-        self.name = "toolbox_client"
+        # Keep the historical default name, but let an explicit name= win.
+        if kwargs.get("name") is None:
+            self.name = "toolbox_client"
         self.toolbox_url = url
         self.toolsets = toolsets
         self.tool_name = tool_name
@@ -85,7 +86,6 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
                     url=self.toolbox_url,
                     client_headers=self.headers,
                 )
-                self._core_client_initialized = True
 
                 if self.toolsets is not None:
                     # Load multiple toolsets
@@ -97,49 +97,31 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
                     tool = await self.load_tool(tool_name=self.tool_name)
                     # Replace functions dict with just this single tool
                     self.functions = {tool.name: tool}
+                # Latched only after filtering succeeds: connect() early-returns
+                # on this flag, so latching before a failed filter would let a
+                # reconnect skip filtering and serve the unfiltered superset the
+                # base connect just registered.
+                self._core_client_initialized = True
         except Exception as e:
+            await self._close_core_client()
             raise RuntimeError(f"Failed to connect to ToolboxClient: {e}") from e
 
-    def _handle_auth_params(
-        self,
-        auth_token_getters: dict[str, Callable[[], str]] = {},
-        auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
-        auth_headers: Optional[dict[str, Callable[[], str]]] = None,
-    ):
-        """handle authentication parameters for toolbox-core client"""
-        if auth_tokens:
-            if auth_token_getters:
-                warn(
-                    "Both `auth_token_getters` and `auth_tokens` are provided. `auth_tokens` is deprecated, and `auth_token_getters` will be used.",
-                    DeprecationWarning,
-                )
-            else:
-                warn(
-                    "Argument `auth_tokens` is deprecated. Use `auth_token_getters` instead.",
-                    DeprecationWarning,
-                )
-                auth_token_getters = auth_tokens
-
-        if auth_headers:
-            if auth_token_getters:
-                warn(
-                    "Both `auth_token_getters` and `auth_headers` are provided. `auth_headers` is deprecated, and `auth_token_getters` will be used.",
-                    DeprecationWarning,
-                )
-            else:
-                warn(
-                    "Argument `auth_headers` is deprecated. Use `auth_token_getters` instead.",
-                    DeprecationWarning,
-                )
-                auth_token_getters = auth_headers
-        return auth_token_getters
+    async def _close_core_client(self):
+        """Close and forget the core client so a reconnect rebuilds and
+        re-filters; a client or flag surviving teardown would make the next
+        connect() skip filtering."""
+        if hasattr(self, "_MCPToolbox__core_client"):
+            try:
+                await self.__core_client.close()
+            except Exception:
+                pass
+            del self.__core_client
+        self._core_client_initialized = False
 
     async def load_tool(
         self,
         tool_name: str,
         auth_token_getters: dict[str, Callable[[], str]] = {},
-        auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
-        auth_headers: Optional[dict[str, Callable[[], str]]] = None,
         bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
     ) -> Function:
         """Loads the tool with the given tool name from the Toolbox service.
@@ -147,8 +129,6 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         Args:
             tool_name (str): The name of the tool to load.
             auth_token_getters (dict[str, Callable[[], str]], optional): A mapping of authentication source names to functions that retrieve ID tokens. Defaults to {}.
-            auth_tokens (Optional[dict[str, Callable[[], str]]], optional): Deprecated. Use `auth_token_getters` instead.
-            auth_headers (Optional[dict[str, Callable[[], str]]], optional): Deprecated. Use `auth_token_getters` instead.
             bound_params (dict[str, Union[Any, Callable[[], Any]]], optional): A mapping of parameter names to their bound values. Defaults to {}.
 
         Raises:
@@ -157,12 +137,6 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         Returns:
             Function: The loaded tool function.
         """
-        auth_token_getters = self._handle_auth_params(
-            auth_token_getters=auth_token_getters,
-            auth_tokens=auth_tokens,
-            auth_headers=auth_headers,
-        )
-
         core_sync_tool = await self.__core_client.load_tool(
             name=tool_name,
             auth_token_getters=auth_token_getters,
@@ -178,8 +152,6 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         self,
         toolset_name: Optional[str] = None,
         auth_token_getters: dict[str, Callable[[], str]] = {},
-        auth_tokens: Optional[dict[str, Callable[[], str]]] = None,
-        auth_headers: Optional[dict[str, Callable[[], str]]] = None,
         bound_params: dict[str, Union[Any, Callable[[], Any]]] = {},
         strict: bool = False,
     ) -> List[Function]:
@@ -188,8 +160,6 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         Args:
             toolset_name (Optional[str], optional): The name of the toolset to load. Defaults to None.
             auth_token_getters (dict[str, Callable[[], str]], optional): A mapping of authentication source names to functions that retrieve ID tokens. Defaults to {}.
-            auth_tokens (Optional[dict[str, Callable[[], str]]], optional): Deprecated. Use `auth_token_getters` instead.
-            auth_headers (Optional[dict[str, Callable[[], str]]], optional): Deprecated. Use `auth_token_getters` instead.
             bound_params (dict[str, Union[Any, Callable[[], Any]]], optional): A mapping of parameter names to their bound values. Defaults to {}.
             strict (bool, optional): If True, raises an error if *any* loaded tool instance fails
                 to utilize all of the given parameters or auth tokens. (if any
@@ -200,12 +170,6 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
         Returns:
             List[Function]: A list of all tools loaded from the Toolbox.
         """
-        auth_token_getters = self._handle_auth_params(
-            auth_token_getters=auth_token_getters,
-            auth_tokens=auth_tokens,
-            auth_headers=auth_headers,
-        )
-
         core_sync_tools = await self.__core_client.load_toolset(
             name=toolset_name,
             auth_token_getters=auth_token_getters,
@@ -252,8 +216,7 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
 
     async def close(self):
         """Close the underlying asynchronous client."""
-        if self._core_client_initialized and hasattr(self, "_MCPToolbox__core_client"):
-            await self.__core_client.close()
+        await self._close_core_client()
         await super().close()
 
     async def load_toolset_safe(self, toolset_name: str) -> List[str]:
@@ -279,6 +242,5 @@ class MCPToolbox(MCPTools, metaclass=MCPToolsMeta):
     async def __aexit__(self, exc_type, exc_val, exc_tb):
         """Clean up the toolbox client."""
         # Close ToolboxClient first, then MCP client
-        if self._core_client_initialized and hasattr(self, "_MCPToolbox__core_client"):
-            await self.__core_client.close()
+        await self._close_core_client()
         await super().__aexit__(exc_type, exc_val, exc_tb)

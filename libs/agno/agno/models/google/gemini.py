@@ -2,22 +2,23 @@ import asyncio
 import base64
 import json
 import mimetypes
+import re
 import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from os import getenv
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Type, Union
+from typing import Any, Dict, Iterator, List, Optional, Type, Union, cast
 from uuid import uuid4
 
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
 from agno.media import Audio, File, Image, Video
+from agno.metrics import MessageMetrics
 from agno.models.base import Model, RetryableModelProviderError
-from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason
+from agno.models.google.utils import MALFORMED_FUNCTION_CALL_GUIDANCE, GeminiFinishReason, get_mime_type
 from agno.models.message import Citations, Message, UrlCitation
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.tools.function import Function
@@ -30,6 +31,14 @@ from agno.utils.gemini import (
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.tokens import count_schema_tokens, count_text_tokens, count_tool_tokens
 
+_FUNCTION_RESPONSE_MEDIA_TYPES = {
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "text/plain",
+}
+
 try:
     from google import genai
     from google.genai import Client as GeminiClient
@@ -39,6 +48,7 @@ try:
         DynamicRetrievalConfig,
         FileSearch,
         FunctionCallingConfigMode,
+        FunctionResponsePart,
         GenerateContentConfig,
         GenerateContentResponse,
         GenerateContentResponseUsageMetadata,
@@ -83,7 +93,7 @@ class Gemini(Model):
     Based on https://googleapis.github.io/python-genai/
     """
 
-    id: str = "gemini-flash-latest"
+    id: str = "gemini-3.7-flash"
     name: str = "Gemini"
     provider: str = "Google"
 
@@ -244,6 +254,20 @@ class Gemini(Model):
         )
         cleaned_dict = {k: v for k, v in model_dict.items() if v is not None}
         return cleaned_dict
+
+    @staticmethod
+    def _format_unexpected_error_message(error: Exception) -> str:
+        """Return a loggable message for a generic provider exception.
+
+        - If ``str(error)`` is non-empty, pass it through unchanged. This keeps
+          existing log/error semantics intact for the common case (rate limits,
+          timeouts with a message, API error strings, etc).
+        - If ``str(error)`` is empty, fall back to the exception class name so
+          the log/ ``ModelProviderError`` still contains a debuggable token
+          instead of an empty string (the original bug).
+        """
+        error_message = str(error).strip()
+        return error_message or type(error).__name__
 
     def _append_file_search_tool(self, builtin_tools: List[Tool]) -> None:
         """Append Gemini File Search tool to builtin_tools if file search is enabled.
@@ -574,8 +598,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def invoke_stream(
         self,
@@ -628,8 +653,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke(
         self,
@@ -687,8 +713,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     async def ainvoke_stream(
         self,
@@ -744,8 +771,9 @@ class Gemini(Model):
         except RetryableModelProviderError:
             raise
         except Exception as e:
-            log_error(f"Unknown error from Gemini API: {str(e)}")
-            raise ModelProviderError(message=str(e), model_name=self.name, model_id=self.id) from e
+            error_message = self._format_unexpected_error_message(e)
+            log_error(f"Unknown error from Gemini API: {error_message}")
+            raise ModelProviderError(message=error_message, model_name=self.name, model_id=self.id) from e
 
     def _format_messages(self, messages: List[Message], compress_tool_results: bool = False):
         """
@@ -764,6 +792,9 @@ class Gemini(Model):
         system_message = None
 
         for message in messages:
+            is_tool_result = (
+                message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None
+            )
             role = message.role
             if role in ["system", "developer"]:
                 system_message = message.content
@@ -805,9 +836,15 @@ class Gemini(Model):
             # Individual tool result message (canonical format)
             elif message.role == "tool" and message.tool_call_id is not None and message.tool_name is not None:
                 tc_content = message.get_content(use_compressed_content=compress_tool_results)
+                media_parts, fallback_media_parts = self._format_tool_result_media(message)
                 message_parts.append(
-                    Part.from_function_response(name=message.tool_name, response={"result": tc_content})
+                    Part.from_function_response(
+                        name=message.tool_name,
+                        response={"result": tc_content},
+                        parts=media_parts or None,
+                    )
                 )
+                message_parts.extend(fallback_media_parts)
             # Regular text content
             else:
                 if isinstance(content, str):
@@ -816,7 +853,7 @@ class Gemini(Model):
                         part.thought_signature = base64.b64decode(message.provider_data["thought_signature"])
                     message_parts = [part]
 
-            if role == "user" and message.tool_calls is None:
+            if role == "user" and message.tool_calls is None and not is_tool_result:
                 # Add images to the message for the model
                 if message.images is not None:
                     for image in message.images:
@@ -835,10 +872,12 @@ class Gemini(Model):
                             # Case 1: Video is a file_types.File object (Recommended)
                             # Add it as a File object
                             if video.content is not None and isinstance(video.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded videos carry a File
+                                gemini_video = cast(GeminiFile, video.content)
                                 # Google recommends that if using a single video, place the text prompt after the video.
-                                if video.content.uri and video.content.mime_type:
+                                if gemini_video.uri and gemini_video.mime_type:
                                     message_parts.insert(
-                                        0, Part.from_uri(file_uri=video.content.uri, mime_type=video.content.mime_type)
+                                        0, Part.from_uri(file_uri=gemini_video.uri, mime_type=gemini_video.mime_type)
                                     )
                             else:
                                 video_file = self._format_video_for_message(video)
@@ -853,13 +892,15 @@ class Gemini(Model):
                     try:
                         for audio_snippet in message.audio:
                             if audio_snippet.content is not None and isinstance(audio_snippet.content, GeminiFile):
+                                # The content annotation says bytes, but uploaded audio carries a File
+                                gemini_audio = cast(GeminiFile, audio_snippet.content)
                                 # Google recommends that if using a single audio file, place the text prompt after the audio file.
-                                if audio_snippet.content.uri and audio_snippet.content.mime_type:
+                                if gemini_audio.uri and gemini_audio.mime_type:
                                     message_parts.insert(
                                         0,
                                         Part.from_uri(
-                                            file_uri=audio_snippet.content.uri,
-                                            mime_type=audio_snippet.content.mime_type,
+                                            file_uri=gemini_audio.uri,
+                                            mime_type=gemini_audio.mime_type,
                                         ),
                                     )
                             else:
@@ -896,17 +937,95 @@ class Gemini(Model):
 
         return merged, system_message
 
+    def _to_function_response_part(self, part: Part) -> Optional[FunctionResponsePart]:
+        if not self._supports_multimodal_function_responses():
+            return None
+
+        if (
+            part.inline_data is not None
+            and part.inline_data.data is not None
+            and part.inline_data.mime_type is not None
+            and part.inline_data.mime_type in _FUNCTION_RESPONSE_MEDIA_TYPES
+        ):
+            return FunctionResponsePart.from_bytes(
+                data=part.inline_data.data,
+                mime_type=part.inline_data.mime_type,
+            )
+        if (
+            self.vertexai
+            and part.file_data is not None
+            and part.file_data.file_uri is not None
+            and part.file_data.mime_type in _FUNCTION_RESPONSE_MEDIA_TYPES
+        ):
+            return FunctionResponsePart.from_uri(
+                file_uri=part.file_data.file_uri,
+                mime_type=part.file_data.mime_type,
+            )
+        return None
+
+    def _supports_multimodal_function_responses(self) -> bool:
+        model_version = re.search(r"(?:^|/)gemini-(\d+)(?:\.\d+)?(?:-|$)", self.id)
+        return model_version is not None and int(model_version.group(1)) >= 3
+
+    def _format_tool_result_media(self, message: Message) -> tuple[List[FunctionResponsePart], List[Part]]:
+        media_parts: List[FunctionResponsePart] = []
+        fallback_media_parts: List[Part] = []
+
+        def add_media_part(part: Part) -> None:
+            response_part = self._to_function_response_part(part)
+            if response_part is not None:
+                media_parts.append(response_part)
+            else:
+                fallback_media_parts.append(part)
+
+        if message.images is not None:
+            for image in message.images:
+                if image.content is not None and isinstance(image.content, GeminiFile):
+                    if image.content.uri and image.content.mime_type:  # type: ignore[attr-defined]
+                        add_media_part(
+                            Part.from_uri(
+                                file_uri=image.content.uri,  # type: ignore[attr-defined]
+                                mime_type=image.content.mime_type,  # type: ignore[attr-defined]
+                            )
+                        )
+                else:
+                    image_content = format_image_for_message(image)
+                    if image_content:
+                        add_media_part(Part.from_bytes(**image_content))
+
+        if message.videos is not None:
+            for video in message.videos:
+                video_part = self._format_video_for_message(video)
+                if video_part is not None:
+                    add_media_part(video_part)
+
+        if message.audio is not None:
+            for audio in message.audio:
+                audio_part = self._format_audio_for_message(audio)
+                if isinstance(audio_part, Part):
+                    add_media_part(audio_part)
+                elif isinstance(audio_part, GeminiFile) and audio_part.uri and audio_part.mime_type:
+                    add_media_part(Part.from_uri(file_uri=audio_part.uri, mime_type=audio_part.mime_type))
+
+        if message.files is not None:
+            for file in message.files:
+                file_part = self._format_file_for_message(file)
+                if file_part is not None:
+                    add_media_part(file_part)
+
+        return media_parts, fallback_media_parts
+
     def _format_audio_for_message(self, audio: Audio) -> Optional[Union[Part, GeminiFile]]:
+        mime_type = get_mime_type(audio, "audio/mp3")
+
         # Case 1: Audio is a bytes object
         if audio.content and isinstance(audio.content, bytes):
-            mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
             return Part.from_bytes(mime_type=mime_type, data=audio.content)
 
         # Case 2: Audio is an url
         elif audio.url is not None:
             audio_bytes = audio.get_content_bytes()  # type: ignore
             if audio_bytes is not None:
-                mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_bytes(mime_type=mime_type, data=audio_bytes)
             else:
                 log_warning(f"Failed to download audio from {audio}")
@@ -935,7 +1054,7 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=audio_path.stem,
-                            mime_type=f"audio/{audio.format}" if audio.format else "audio/mp3",
+                            mime_type=mime_type,
                         ),
                     )
                 else:
@@ -953,7 +1072,6 @@ class Gemini(Model):
                     return None
 
             if audio_file.uri:
-                mime_type = f"audio/{audio.format}" if audio.format else "audio/mp3"
                 return Part.from_uri(file_uri=audio_file.uri, mime_type=mime_type)
             return None
         else:
@@ -961,9 +1079,10 @@ class Gemini(Model):
             return None
 
     def _format_video_for_message(self, video: Video) -> Optional[Part]:
+        mime_type = get_mime_type(video, "video/mp4")
+
         # Case 1: Video is a bytes object
         if video.content and isinstance(video.content, bytes):
-            mime_type = f"video/{video.format}" if video.format else "video/mp4"
             return Part.from_bytes(mime_type=mime_type, data=video.content)
         # Case 2: Video is stored locally
         elif video.filepath is not None:
@@ -988,7 +1107,7 @@ class Gemini(Model):
                         config=dict(
                             name=remote_file_name,
                             display_name=video_path.stem,
-                            mime_type=f"video/{video.format}" if video.format else "video/mp4",
+                            mime_type=mime_type,
                         ),
                     )
                 else:
@@ -1006,12 +1125,10 @@ class Gemini(Model):
                     return None
 
             if video_file.uri:
-                mime_type = f"video/{video.format}" if video.format else "video/mp4"
                 return Part.from_uri(file_uri=video_file.uri, mime_type=mime_type)
             return None
         # Case 3: Video is a URL
         elif video.url is not None:
-            mime_type = f"video/{video.format}" if video.format else "video/webm"
             return Part.from_uri(
                 file_uri=video.url,
                 mime_type=mime_type,
@@ -1994,7 +2111,7 @@ class Gemini(Model):
 
         Example:
             ```python
-            model = Gemini(id="gemini-2.5-flash")
+            model = Gemini(id="gemini-3.7-flash")
             model.delete_document("fileSearchStores/store-123/documents/doc-456")
             ```
         """

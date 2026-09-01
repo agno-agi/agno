@@ -95,7 +95,6 @@ team_response_with_memory_impact = PerformanceEval(
     num_iterations=5,
     warmup_runs=0,
     measure_runtime=False,
-    debug_mode=True,
     memory_growth_tracking=True,
 )
 

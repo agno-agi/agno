@@ -6,6 +6,7 @@ from typing import Any, Dict, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 
+from agno.os.middleware.user_scope import get_scoped_user_id
 from agno.os.routers.approvals.schema import (
     ApprovalCountResponse,
     ApprovalResolve,
@@ -17,6 +18,20 @@ from agno.os.schema import PaginatedResponse, PaginationInfo
 
 def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
     """Factory that creates and returns the approval router.
+
+    Policy summary:
+
+    - **Read endpoints** (``GET /approvals``, ``/approvals/count``,
+      ``/approvals/{id}``, ``/approvals/{id}/status``) — non-admin scoped
+      callers see only their own rows; admins / unscoped callers see
+      everything. Filtering is applied via ``user_id`` on the DB call.
+    - **Write endpoints** (``POST /approvals/{id}/resolve``,
+      ``DELETE /approvals/{id}``) — admin-only under
+      ``AuthorizationConfig(user_isolation=True)``. The approval row's
+      ``user_id`` is the requester, not the approver, so a non-admin
+      scoped caller cannot resolve or delete approvals (including their
+      own). With ``user_isolation=False`` (the default) the legacy
+      anyone-with-JWT-can-resolve behaviour is preserved.
 
     Args:
         os_db: The AgentOS-level DB adapter (must support approval methods).
@@ -45,6 +60,21 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         except NotImplementedError:
             raise HTTPException(status_code=503, detail="Approvals not supported by the configured database")
 
+    async def _load_approval_for_user(approval_id: str, request: Request) -> Dict[str, Any]:
+        """Fetch an approval and enforce per-user ownership.
+
+        Non-admin callers only see approvals whose user_id matches the JWT sub;
+        a mismatch is reported as 404 (same shape as a missing approval) so the
+        existence of other users' approvals is not leaked.
+        """
+        approval = await _db_call("get_approval", approval_id)
+        if approval is None:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        scoped_user_id = get_scoped_user_id(request)
+        if scoped_user_id is not None and approval.get("user_id") != scoped_user_id:
+            raise HTTPException(status_code=404, detail="Approval not found")
+        return approval
+
     # ------------------------------------------------------------------
     # Endpoints
     # ------------------------------------------------------------------
@@ -66,8 +96,10 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         page: int = Query(1, ge=1),
         _: bool = Depends(auth_dependency),
     ) -> PaginatedResponse[ApprovalResponse]:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
+        # When user_isolation is on and the caller is a non-admin, force the
+        # JWT sub. Admins / unauthenticated / isolation-off paths fall through
+        # to the original query-param ``user_id``.
+        user_id = get_scoped_user_id(request) or user_id
 
         approvals, total_count = await _db_call(
             "get_approvals",
@@ -101,20 +133,18 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
         user_id: Optional[str] = Query(None),
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, int]:
-        if hasattr(request.state, "user_id") and request.state.user_id is not None:
-            user_id = request.state.user_id
-
+        # Non-admin scoped callers only see their own pending count.
+        user_id = get_scoped_user_id(request) or user_id
         count = await _db_call("get_pending_approval_count", user_id=user_id)
         return {"count": count}
 
     @router.get("/approvals/{approval_id}/status", response_model=ApprovalStatusResponse)
     async def get_approval_status(
+        request: Request,
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> ApprovalStatusResponse:
-        approval = await _db_call("get_approval", approval_id)
-        if approval is None:
-            raise HTTPException(status_code=404, detail="Approval not found")
+        approval = await _load_approval_for_user(approval_id, request)
         return ApprovalStatusResponse(
             approval_id=approval_id,
             status=approval.get("status", "unknown"),
@@ -125,24 +155,40 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.get("/approvals/{approval_id}", response_model=ApprovalResponse)
     async def get_approval(
+        request: Request,
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
-        approval = await _db_call("get_approval", approval_id)
-        if approval is None:
-            raise HTTPException(status_code=404, detail="Approval not found")
-        return approval
+        return await _load_approval_for_user(approval_id, request)
 
     @router.post("/approvals/{approval_id}/resolve", response_model=ApprovalResponse)
     async def resolve_approval(
+        request: Request,
         approval_id: str,
         body: ApprovalResolve,
         _: bool = Depends(auth_dependency),
     ) -> Dict[str, Any]:
+        # Admin-only resolve when user_isolation is on. ``get_scoped_user_id``
+        # returns a non-None value precisely when the caller is a non-admin
+        # authenticated user under ``AuthorizationConfig(user_isolation=True)``
+        # - admins and isolation-off / no-JWT callers fall through and keep
+        # the legacy behaviour. Return 404 (not 403) to avoid leaking the
+        # existence of the approval to non-admin callers.
+        if get_scoped_user_id(request) is not None:
+            raise HTTPException(status_code=404, detail="Approval not found")
+
         now = int(time.time())
+        # Audit trail: ``resolved_by`` records the human who clicked resolve,
+        # so we always prefer the authenticated JWT sub over a body-supplied
+        # value (which a client could spoof).
+        resolved_by = body.resolved_by
+        jwt_user_id = getattr(request.state, "user_id", None)
+        if jwt_user_id is not None:
+            resolved_by = jwt_user_id
+
         update_kwargs: Dict[str, Any] = {
             "status": body.status,
-            "resolved_by": body.resolved_by,
+            "resolved_by": resolved_by,
             "resolved_at": now,
         }
         if body.resolution_data is not None:
@@ -167,11 +213,14 @@ def get_approval_router(os_db: Any, settings: Any) -> APIRouter:
 
     @router.delete("/approvals/{approval_id}", status_code=204)
     async def delete_approval(
+        request: Request,
         approval_id: str,
         _: bool = Depends(auth_dependency),
     ) -> None:
-        existing = await _db_call("get_approval", approval_id)
-        if existing is None:
+        # Admin-only delete under user_isolation - return 404 to avoid
+        # leaking existence. Non-admin scoped callers cannot delete any
+        # approval because the row is an audit record.
+        if get_scoped_user_id(request) is not None:
             raise HTTPException(status_code=404, detail="Approval not found")
         deleted = await _db_call("delete_approval", approval_id)
         if not deleted:

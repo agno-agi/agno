@@ -39,21 +39,21 @@ FEW_SHOT_EXAMPLES = dedent(
 # ---------------------------------------------------------------------------
 web_agent = Agent(
     name="Web Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[WebSearchTools()],
     role="Search the web for the latest news and trends",
 )
 
 hackernews_agent = Agent(
     name="Hackernews Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[HackerNewsTools()],
     role="Extract key insights and content from Hackernews posts",
 )
 
 writer_agent = Agent(
     name="Writer Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Write a blog post on the topic",
 )
 
@@ -150,6 +150,5 @@ if __name__ == "__main__":
             instructions="When you run the workflow using the `run_workflow` tool, remember to pass `additional_data` as a dictionary of key-value pairs.",
             markdown=True,
             stream=True,
-            debug_mode=True,
         )
     )

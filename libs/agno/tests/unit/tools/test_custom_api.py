@@ -320,3 +320,51 @@ def test_make_request_all_http_methods(api_tools, mock_dog_image_response):
                 verify=True,
                 timeout=10,
             )
+
+
+def test_make_request_with_base_url_and_api_key(mock_dog_image_response):
+    tools = CustomApiTools(base_url="https://dog.ceo/api", api_key="test_key")
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(endpoint="/breeds/image/random", method="GET")
+        mock_request.assert_called_once()
+        called_headers = mock_request.call_args[1]["headers"]
+        assert called_headers.get("Authorization") == "Bearer test_key"
+
+
+def test_make_request_without_base_url_and_api_key(mock_dog_image_response):
+    tools = CustomApiTools(api_key="test_key")
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(endpoint="https://dog.ceo/api/breeds/image/random", method="GET")
+        mock_request.assert_called_once()
+        called_headers = mock_request.call_args[1]["headers"]
+        assert "Authorization" not in called_headers
+
+
+def test_make_request_without_base_url_api_key_and_explicit_auth(mock_dog_image_response):
+    tools = CustomApiTools(api_key="test_key")
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(
+            endpoint="https://dog.ceo/api/breeds/image/random",
+            method="GET",
+            headers={"Authorization": "Bearer explicit"},
+        )
+        mock_request.assert_called_once()
+        called_headers = mock_request.call_args[1]["headers"]
+        assert called_headers.get("Authorization") == "Bearer explicit"
+
+
+def test_make_request_explicit_headers_override_defaults(mock_dog_image_response):
+    tools = CustomApiTools(
+        base_url="https://dog.ceo/api", headers={"X-Custom-Header": "default_val", "X-Other-Header": "keep_val"}
+    )
+    with patch("requests.request", return_value=mock_dog_image_response) as mock_request:
+        tools.make_request(
+            endpoint="/breeds/image/random",
+            method="GET",
+            headers={"X-Custom-Header": "override_val", "X-New-Header": "new_val"},
+        )
+        mock_request.assert_called_once()
+        called_headers = mock_request.call_args[1]["headers"]
+        assert called_headers.get("X-Custom-Header") == "override_val"
+        assert called_headers.get("X-Other-Header") == "keep_val"
+        assert called_headers.get("X-New-Header") == "new_val"

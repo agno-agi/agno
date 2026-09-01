@@ -2,6 +2,7 @@
 
 import json
 import os
+from inspect import signature
 
 import pytest
 
@@ -17,7 +18,14 @@ pytestmark = pytest.mark.skipif(
 
 @pytest.fixture
 def seltz_tools():
-    return SeltzTools(max_documents=3, show_results=False)
+    return SeltzTools(max_results=3, show_results=False)
+
+
+def _client_supports_search_parameter(seltz_tools: SeltzTools, parameter_name: str) -> bool:
+    if not seltz_tools.client:
+        return False
+
+    return parameter_name in signature(seltz_tools.client.search).parameters
 
 
 def test_search_returns_documents(seltz_tools):
@@ -31,23 +39,26 @@ def test_search_returns_documents(seltz_tools):
         assert doc["url"].startswith("http")
 
 
-def test_search_respects_max_documents(seltz_tools):
-    """Search respects the max_documents parameter."""
-    result = seltz_tools.search_seltz("python programming", max_documents=2)
+def test_search_respects_max_results(seltz_tools):
+    """Search respects the max_results parameter."""
+    result = seltz_tools.search_seltz("python programming", max_results=2)
     data = json.loads(result)
 
     assert len(data) <= 2
 
 
-def test_search_with_context(seltz_tools):
-    """Search with context parameter does not error."""
+def test_search_with_domain_filter(seltz_tools):
+    """Search with a current SDK filter parameter does not error."""
+    if not _client_supports_search_parameter(seltz_tools, "include_domains"):
+        pytest.skip("Installed seltz SDK does not support include_domains.")
+
     result = seltz_tools.search_seltz(
-        "web frameworks",
-        context="looking for modern Python web frameworks",
+        "python programming",
+        include_domains=["python.org"],
     )
     data = json.loads(result)
 
-    assert len(data) > 0
+    assert isinstance(data, list)
 
 
 def test_search_empty_query(seltz_tools):
@@ -56,7 +67,7 @@ def test_search_empty_query(seltz_tools):
     assert "Error" in result
 
 
-def test_search_invalid_max_documents(seltz_tools):
-    """Zero max_documents returns an error string, not an exception."""
-    result = seltz_tools.search_seltz("test", max_documents=0)
+def test_search_invalid_max_results(seltz_tools):
+    """Zero max_results returns an error string, not an exception."""
+    result = seltz_tools.search_seltz("test", max_results=0)
     assert "Error" in result

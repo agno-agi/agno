@@ -19,6 +19,7 @@ class BitbucketTools(Toolkit):
         workspace: Optional[str] = None,
         repo_slug: Optional[str] = None,
         api_version: str = "2.0",
+        timeout: int = 30,
         **kwargs,
     ):
         self.username = username or getenv("BITBUCKET_USERNAME")
@@ -57,6 +58,7 @@ class BitbucketTools(Toolkit):
                 self.get_pull_request_changes,
                 self.list_issues,
             ],
+            timeout=timeout,
             **kwargs,
         )
 
@@ -74,7 +76,7 @@ class BitbucketTools(Toolkit):
         data: Optional[Dict[str, Any]] = None,
     ) -> Union[str, Dict[str, Any]]:
         url = f"{self.base_url}{endpoint}"
-        response = requests.request(method, url, headers=self.headers, json=data, params=params)
+        response = requests.request(method, url, headers=self.headers, json=data, params=params, timeout=self.timeout)
         response.raise_for_status()
         encoding_type = response.headers.get("Content-Type", "application/json")
         if encoding_type.startswith("application/json"):

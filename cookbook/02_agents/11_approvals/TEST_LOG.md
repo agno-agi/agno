@@ -41,6 +41,15 @@
 
 ---
 
+### approval_post_hook.py
+
+**Status:** PASS
+**Tier:** untagged
+**Description:** Demonstrates a post-hook reading the resolved approval record from run_output.metadata["approval"] after the admin/API resolution path (db.update_approval -> continue_run without requirements).
+**Result:** Completed successfully. Audit hook fires with approval_id, status, resolved_by, resolved_at populated from the DB record.
+
+---
+
 ### approval_team.py
 
 **Status:** FAIL

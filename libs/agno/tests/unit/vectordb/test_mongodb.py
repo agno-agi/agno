@@ -20,6 +20,11 @@ def mock_embedder() -> MagicMock:
     embedder.get_embedding.return_value = [0.1] * 384
     embedder.get_embedding_and_usage.return_value = ([0.1] * 384, None)  # (embedding, usage)
     embedder.embedding_dim = 384
+    # The async variants must be awaitable: a plain MagicMock raises TypeError on await,
+    # which the embedding paths now surface instead of swallowing.
+    embedder.enable_batch = False
+    embedder.async_get_embedding = AsyncMock(return_value=[0.1] * 384)
+    embedder.async_get_embedding_and_usage = AsyncMock(return_value=([0.1] * 384, None))
     return embedder
 
 
@@ -383,7 +388,7 @@ def test_upsert(vector_db: MongoVectorDb, mock_mongodb_client: MagicMock, mock_e
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = vector_db.prepare_doc
-    vector_db.prepare_doc = lambda content_hash, doc, filters=None: {
+    vector_db.prepare_doc = lambda content_hash, doc, filters=None, user_id=None: {
         "_id": md5(doc.content.encode("utf-8")).hexdigest(),
         "name": doc.name,
         "content": doc.content,
@@ -485,7 +490,7 @@ async def test_async_insert(
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = async_vector_db.prepare_doc
-    async_vector_db.prepare_doc = lambda content_hash, doc, filters=None: {
+    async_vector_db.prepare_doc = lambda content_hash, doc, filters=None, user_id=None: {
         "_id": md5(doc.content.encode("utf-8")).hexdigest(),
         "name": doc.name,
         "content": doc.content,
@@ -612,7 +617,7 @@ async def test_async_upsert(
 
     # Mock the prepare_doc method to avoid embedding issues during test
     original_prepare_doc = async_vector_db.prepare_doc
-    async_vector_db.prepare_doc = lambda content_hash, doc, filters=None: {
+    async_vector_db.prepare_doc = lambda content_hash, doc, filters=None, user_id=None: {
         "_id": md5(doc.content.encode("utf-8")).hexdigest(),
         "name": doc.name,
         "content": doc.content,

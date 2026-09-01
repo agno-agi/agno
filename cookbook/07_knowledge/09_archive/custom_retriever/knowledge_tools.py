@@ -1,9 +1,9 @@
 """
 Here is a tool with reasoning capabilities to allow agents to search and analyze information from a knowledge base.
 
-1. Run: `uv pip install openai agno lancedb tantivy sqlalchemy` to install the dependencies
+1. Run: `uv pip install openai agno lancedb sqlalchemy` to install the dependencies
 2. Export your OPENAI_API_KEY
-3. Run: `python cookbook/07_knowledge/knowledge_tools.py` to run the agent
+3. Run: `python cookbook/07_knowledge/09_archive/custom_retriever/knowledge_tools.py` to run the agent
 """
 
 from agno.agent import Agent
@@ -35,7 +35,7 @@ knowledge_tools = KnowledgeTools(
 )
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[knowledge_tools],
     markdown=True,
 )

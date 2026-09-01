@@ -48,6 +48,7 @@ class WhatsAppTools(Toolkit):
         enable_send_location: bool = False,
         enable_send_reaction: bool = False,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.access_token = access_token or getenv("WHATSAPP_ACCESS_TOKEN")
@@ -84,7 +85,7 @@ class WhatsAppTools(Toolkit):
         if enable_send_reaction or all:
             tools.append(self.send_reaction)
 
-        super().__init__(name="whatsapp", tools=tools, **kwargs)
+        super().__init__(name="whatsapp", tools=tools, timeout=timeout, **kwargs)
 
     def _get_headers(self) -> Dict[str, str]:
         return {"Authorization": f"Bearer {self.access_token}", "Content-Type": "application/json"}
@@ -101,7 +102,7 @@ class WhatsAppTools(Toolkit):
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Raise on 4xx/5xx with parsed error body for better diagnostics
-        response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data)
+        response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data, timeout=self.timeout)
         if response.status_code >= 400:
             error_body = (
                 response.json()

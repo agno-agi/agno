@@ -1,5 +1,5 @@
 from os import getenv
-from typing import Any, List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 from uuid import uuid4
 
 import requests
@@ -20,6 +20,7 @@ class DesiVocalTools(Toolkit):
         enable_get_voices: bool = True,
         enable_text_to_speech: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         self.api_key = api_key or getenv("DESI_VOCAL_API_KEY")
@@ -34,7 +35,7 @@ class DesiVocalTools(Toolkit):
         if all or enable_text_to_speech:
             tools.append(self.text_to_speech)
 
-        super().__init__(name="desi_vocal_tools", tools=tools, **kwargs)
+        super().__init__(name="desi_vocal_tools", tools=tools, timeout=timeout, **kwargs)
 
     def get_voices(self) -> str:
         """
@@ -44,7 +45,7 @@ class DesiVocalTools(Toolkit):
         """
         try:
             url = "https://prod-api2.desivocal.com/dv/api/v0/tts_api/voices"
-            response = requests.get(url)
+            response = requests.get(url, timeout=self.timeout)
             response.raise_for_status()
 
             voices_data = response.json()
@@ -85,12 +86,12 @@ class DesiVocalTools(Toolkit):
                 "voice_id": voice_id or self.voice_id,
             }
 
-            headers = {
+            headers: Dict[str, Any] = {
                 "X_API_KEY": self.api_key,
                 "Content-Type": "application/json",
             }
 
-            response = requests.post(url, headers=headers, json=payload)
+            response = requests.post(url, headers=headers, json=payload, timeout=self.timeout)
 
             response.raise_for_status()
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any, List, Optional
 
 from agno.os.interfaces.slack.builders import build_pause_message
-from agno.os.interfaces.slack.helpers import slack_error_code
+from agno.os.interfaces.slack.helpers import slack_delivery_kwargs, slack_error_code
 from agno.os.interfaces.slack.types import block_to_dict, tool_name
 from agno.utils.log import log_error
 
@@ -12,7 +12,7 @@ if TYPE_CHECKING:
 
     from agno.run.requirement import RunRequirement
 
-_PAUSE_LABELS = {
+PAUSE_LABELS = {
     "confirmation": "⏸ *Awaiting approval of* `{tool}`…",
     "user_input": "⏸ *Awaiting input for* `{tool}`…",
     "user_feedback": "⏸ *Awaiting feedback*…",
@@ -30,8 +30,11 @@ async def finalize_pause(
     thread_ts: str,
     requirements: List["RunRequirement"],
     log_prefix: str = "",
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
+    mrkdwn: bool = True,
 ) -> Optional[str]:
-    # Build stop kwargs from accumulated state
+    # 1. Stop the stream with accumulated content
     stop_kwargs = {}
     if state.has_content():
         stop_kwargs["markdown_text"] = state.flush()
@@ -45,26 +48,34 @@ async def finalize_pause(
     except Exception as exc:
         log_error(f"[HITL] stream.stop failed: run_id={run_id} err={slack_error_code(exc)!r} | {exc}")
 
-    # Post "awaiting" indicator message
-    labels = [_PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
+    # 2. Post awaiting indicator
+    labels = [PAUSE_LABELS[r.pause_type].format(tool=tool_name(r)) for r in requirements]
     if not labels:
         return None
 
     try:
-        resp = await client.chat_postMessage(channel=channel, thread_ts=thread_ts, text="\n".join(labels))
+        resp = await client.chat_postMessage(
+            channel=channel,
+            thread_ts=thread_ts,
+            text="\n".join(labels),
+            **slack_delivery_kwargs(unfurl_links, unfurl_media, mrkdwn),
+        )
         return resp.get("ts")
     except Exception as exc:
         log_error(f"[HITL] awaiting indicator failed: {exc}")
         return None
 
 
-# Posts HITL card with approval buttons — separate message since chat_appendStream rejects Block Kit
 async def post_pause_card(
     client: "AsyncWebClient",
     paused_event: Any,
     channel: str,
     thread_ts: str,
     awaiting_ts: Optional[str] = None,
+    *,
+    unfurl_links: bool = True,
+    unfurl_media: bool = True,
+    mrkdwn: bool = True,
 ) -> Optional[str]:
     run_id = getattr(paused_event, "run_id", None)
     requirements = list(getattr(paused_event, "active_requirements", None) or [])
@@ -72,12 +83,14 @@ async def post_pause_card(
         return None
 
     try:
+        # The card blocks embed untrusted tool-arg text, so unfurl flags must apply here
         blocks = build_pause_message(run_id, requirements, awaiting_ts)
         resp = await client.chat_postMessage(
             channel=channel,
             thread_ts=thread_ts,
             text="Run paused — please resolve below",
             blocks=[block_to_dict(b) for b in blocks],
+            **slack_delivery_kwargs(unfurl_links, unfurl_media, mrkdwn),
         )
         return resp.get("ts")
     except Exception as exc:

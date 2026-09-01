@@ -18,11 +18,13 @@ from slack_sdk.models.blocks.block_elements import ButtonElement
 
 from agno.os.interfaces.slack.components import Card
 from agno.os.interfaces.slack.ids import (
+    ACTION_CHECK_STATUS,
     ACTION_EXTERNAL_RESULT,
     ACTION_REJECT_REASON,
     ACTION_ROW_APPROVE,
     ACTION_ROW_REJECT,
     ACTION_SUBMIT,
+    encode_admin_approval_button_value,
     encode_row_button_value,
     encode_submit_button_value,
     external_result_block_id,
@@ -32,12 +34,14 @@ from agno.os.interfaces.slack.ids import (
     user_input_action_id,
     user_input_block_id,
 )
+from agno.os.interfaces.slack.interactions import confirmation_row_summary
 from agno.os.interfaces.slack.types import (
     RowActionContext,
     RowTransformResult,
     block_to_dict,
     tool_args,
     tool_name,
+    truncate,
 )
 from agno.run.requirement import RunRequirement
 from agno.utils.serialize import json_serializer
@@ -46,14 +50,35 @@ from agno.utils.serialize import json_serializer
 MAX_MESSAGE_BLOCKS = 50
 
 
-# Formats tool arg values for display in HITL approval cards; strings pass through, others JSON-encode
+# Untrusted values are embedded in Slack inline code spans: a backtick closes the span,
+# a newline exits it (inline code does not span lines), and <...> becomes a Slack control
+# sequence once outside the span. Swap each for an inert lookalike / visible escape.
+_CODE_SPAN_INERT = str.maketrans(
+    {
+        "`": "ˋ",  # modifier letter grave accent
+        "<": "‹",  # single left-pointing angle quotation mark
+        ">": "›",  # single right-pointing angle quotation mark
+        "\r": "\\r",
+        "\n": "\\n",
+    }
+)
+
+
+def inert_code_span_text(text: str) -> str:
+    return text.translate(_CODE_SPAN_INERT)
+
+
+# Formats tool arg values for display in HITL approval cards; strings pass through, others
+# JSON-encode. Output is always inerted so it cannot break out of the surrounding code span.
 def render_arg_value(value: Any) -> str:
     if isinstance(value, str):
-        return value
-    try:
-        return json.dumps(value, default=json_serializer)
-    except (TypeError, ValueError):
-        return str(value)
+        rendered = value
+    else:
+        try:
+            rendered = json.dumps(value, default=json_serializer)
+        except (TypeError, ValueError):
+            rendered = str(value)
+    return inert_code_span_text(rendered)
 
 
 # --- Type detection helpers ---
@@ -180,10 +205,34 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     req_id = requirement.id or ""
     name = tool_name(requirement)
     args = tool_args(requirement)
-    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
-    # Format args as bullet points in body (not subtitle which truncates)
-    body_lines = [f"• {k}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
+
+    # Format args as bullet points in body (not subtitle which truncates). Arg keys are
+    # model-derived and sit outside the code span, so inert them too.
+    body_lines = [f"• {inert_code_span_text(str(k))}: `{render_arg_value(v)}`" for k, v in (args or {}).items()]
     body_text = "\n".join(body_lines) if body_lines else "_(no arguments)_"
+    # Slack Block Kit section text has ~200 char limit; truncate to prevent silent card rejection
+    body_text = truncate(body_text, 200)
+
+    # approval_type="required" tools need admin approval via dashboard, not Slack buttons
+    tool_exec = requirement.tool_execution
+    if tool_exec and getattr(tool_exec, "approval_type", None) == "required":
+        approval_id = getattr(tool_exec, "approval_id", None) or ""
+        button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts)
+        return Card(
+            block_id=f"rowact:{req_id}:admin_approval",
+            title=MarkdownTextObject(text=f"*{name}*"),
+            body=MarkdownTextObject(text=body_text),
+            subtext=MarkdownTextObject(text="Awaiting admin approval"),
+            actions=[
+                ButtonElement(
+                    action_id=ACTION_CHECK_STATUS,
+                    text=PlainTextObject(text="Check Status", emoji=True),
+                    value=button_value,
+                ),
+            ],
+        )
+
+    button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
     return Card(
         block_id=f"rowact:{req_id}:confirmation",
         title=MarkdownTextObject(text=f"*{name}*"),
@@ -205,6 +254,42 @@ def _build_confirmation_card(requirement: RunRequirement, run_id: str = "", awai
     )
 
 
+def build_admin_approval_status_card(
+    tool_name: str,
+    body_text: str,
+    status: str,
+    req_id: str,
+    approval_id: str,
+    run_id: str,
+    awaiting_ts: Optional[str] = None,
+) -> Card:
+    """Build card showing admin approval status after check."""
+    button_value = encode_admin_approval_button_value(approval_id, req_id, run_id, awaiting_ts)
+
+    # "approved" case handled by auto-continue in handle_check_status
+    if status == "rejected":
+        subtext = "Rejected by admin"
+        actions: List[ButtonElement] = []
+    else:
+        # Still pending
+        subtext = "Still pending approval"
+        actions = [
+            ButtonElement(
+                action_id=ACTION_CHECK_STATUS,
+                text=PlainTextObject(text="Check Again", emoji=True),
+                value=button_value,
+            ),
+        ]
+
+    return Card(
+        block_id=f"rowact:{req_id}:admin_approval",
+        title=MarkdownTextObject(text=f"*{tool_name}*"),
+        body=MarkdownTextObject(text=body_text),
+        subtext=MarkdownTextObject(text=subtext),
+        actions=actions,
+    )
+
+
 # Confirmation card with toggle state — selected button gets styled + past tense label
 def build_confirmation_toggle_card(
     req_id: str,
@@ -216,6 +301,8 @@ def build_confirmation_toggle_card(
 ) -> Card:
     button_value = encode_row_button_value(req_id, run_id, awaiting_ts)
     is_approved = selected == "approve"
+    # Slack Block Kit section text has ~200 char limit
+    body_text = truncate(body_text, 200)
 
     approve_btn = ButtonElement(
         action_id=ACTION_ROW_APPROVE,
@@ -264,8 +351,6 @@ def select_confirmation_row(
     selected: str,
     include_reason_input: bool = False,
 ) -> RowTransformResult:
-    from agno.os.interfaces.slack.interactions import confirmation_row_summary
-
     updated: List[Dict[str, Any]] = []
     for block in ctx.blocks:
         block_id = block.get("block_id", "")
@@ -318,8 +403,6 @@ def append_submit_if_needed(
     run_id: str,
     awaiting_ts: Optional[str],
 ) -> List[Dict[str, Any]]:
-    from agno.os.interfaces.slack.interactions import confirmation_row_summary
-
     if not run_id:
         return blocks
     summary = confirmation_row_summary(blocks)
@@ -505,7 +588,9 @@ def response_blocks(
         action_id = element.get("action_id", "")
         submitted = (state_values.get(block_id) or {}).get(action_id) or {}
         value = _extract_input_value(element, submitted)
-        submissions.append(f"• {label}: `{value}`")
+        # Labels round-trip through Slack from the input schema (may be model-derived)
+        # and sit outside the code span, so inert them too.
+        submissions.append(f"• {inert_code_span_text(label)}: `{inert_code_span_text(value)}`")
 
     if not submissions:
         return preserved

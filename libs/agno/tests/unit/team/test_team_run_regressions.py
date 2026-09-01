@@ -1,9 +1,14 @@
+import gc
 import inspect
+import warnings
 from typing import Any
+from unittest.mock import Mock
 
 import pytest
+from sqlalchemy.ext.asyncio import AsyncEngine
 
 from agno.agent.agent import Agent
+from agno.db.postgres import AsyncPostgresDb
 from agno.run import RunContext
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
@@ -319,3 +324,60 @@ async def test_ahandle_team_run_paused_stream_persists_session_state(monkeypatch
     assert len(events) >= 1
     assert session.session_data["session_state"] == {"cart": ["item-1"]}
     assert run_response.session_state == {"cart": ["item-1"]}
+
+
+# ---------------------------------------------------------------------------
+# Sync session APIs must reject an async DB instead of silently leaking a
+# coroutine (regression for the un-awaited db.<call>() path).
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def team_with_async_postgres_db() -> Team:
+    engine = Mock(spec=AsyncEngine)
+    db = AsyncPostgresDb(
+        db_engine=engine,
+        db_schema="test_schema",
+        session_table="test_sessions",
+    )
+    return Team(members=[], name="test-team", db=db, session_id="test-session")
+
+
+def _assert_raises_without_unawaited_warning(callable_to_test):
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", RuntimeWarning)
+        with pytest.raises(ValueError, match="Cannot use sync .* with an async database"):
+            callable_to_test()
+        gc.collect()
+
+    assert not [
+        warning
+        for warning in caught
+        if warning.category is RuntimeWarning and "was never awaited" in str(warning.message)
+    ]
+
+
+def test_sync_team_get_session_rejects_async_postgres_db_without_leaking_coroutines(
+    team_with_async_postgres_db: Team,
+):
+    _assert_raises_without_unawaited_warning(lambda: team_with_async_postgres_db.get_session(session_id="test-session"))
+
+
+def test_sync_team_save_session_rejects_async_postgres_db_without_leaking_coroutines(
+    team_with_async_postgres_db: Team,
+):
+    session = TeamSession(
+        session_id="test-session",
+        team_id="test-team",
+        session_data={},
+    )
+
+    _assert_raises_without_unawaited_warning(lambda: team_with_async_postgres_db.save_session(session=session))
+
+
+def test_sync_team_delete_session_rejects_async_postgres_db_without_leaking_coroutines(
+    team_with_async_postgres_db: Team,
+):
+    _assert_raises_without_unawaited_warning(
+        lambda: team_with_async_postgres_db.delete_session(session_id="test-session")
+    )

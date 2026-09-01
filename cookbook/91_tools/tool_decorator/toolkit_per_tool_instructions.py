@@ -10,11 +10,12 @@ were registered via a Toolkit. This cookbook verifies both paths
 now work correctly.
 """
 
+from unittest.mock import MagicMock
+
 from agno.agent import Agent
 from agno.agent._tools import parse_tools
 from agno.models.openai import OpenAIResponses
 from agno.tools import Toolkit, tool
-from unittest.mock import MagicMock
 
 
 # Path 1: Bare function with instructions
@@ -65,4 +66,6 @@ if __name__ == "__main__":
         print("  - 1 from bare function (subtract)")
         print("  - 2 from Toolkit (add, multiply)")
     else:
-        print(f"FAILURE: Expected {expected_count}, got {len(agent._tool_instructions)}")
+        print(
+            f"FAILURE: Expected {expected_count}, got {len(agent._tool_instructions)}"
+        )

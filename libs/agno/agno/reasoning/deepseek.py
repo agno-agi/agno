@@ -14,14 +14,19 @@ def is_deepseek_reasoning_model(reasoning_model: Model) -> bool:
     """Check if the model is a DeepSeek reasoning model.
 
     Matches:
-    - deepseek-reasoner
-    - deepseek-r1 and variants (deepseek-r1-distill-*, etc.)
+    - Dedicated reasoning models: deepseek-reasoner, deepseek-r1 and variants
+      (deepseek-r1-zero, deepseek-r1-0528, deepseek-r1-distill-*, etc.)
+    - Hybrid models that run with thinking mode enabled by default: deepseek-v4-*,
+      deepseek-v3.1 (incl. -terminus), deepseek-v3.2 (incl. -exp, -speciale).
+
+    Non-reasoning models return False: deepseek-chat, the base deepseek-v3
+    (incl. deepseek-v3-0324), deepseek-v2 and earlier.
     """
     if reasoning_model.__class__.__name__ != "DeepSeek":
         return False
 
     model_id = reasoning_model.id.lower()
-    return "reasoner" in model_id or "r1" in model_id
+    return "reasoner" in model_id or "r1" in model_id or "v4" in model_id or "v3.1" in model_id or "v3.2" in model_id
 
 
 def get_deepseek_reasoning(

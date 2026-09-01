@@ -1,14 +1,16 @@
 import asyncio
 import json
+import shutil
 from io import BytesIO
 from pathlib import Path
-from typing import IO, Any, Dict, List, Optional, Union
+from typing import IO, Any, Dict, List, Optional, Set, Union
 from uuid import uuid4
 
 from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
 from agno.knowledge.document.base import Document
-from agno.knowledge.reader.base import Reader
+from agno.knowledge.reader.base import Reader, package_is_importable
+from agno.knowledge.reader.utils.url_validation import is_host_allowed, validate_allowed_hosts
 from agno.knowledge.types import ContentType
 from agno.utils.log import log_debug, log_error
 
@@ -52,6 +54,7 @@ class DoclingReader(Reader):
         output_format: str = "markdown",
         converter: Optional[DocumentConverter] = None,
         format_options: Optional[Dict[Any, Any]] = None,
+        allowed_hosts: Optional[List[str]] = None,
         **kwargs,
     ):
         """Initialize the DoclingReader.
@@ -69,6 +72,9 @@ class DoclingReader(Reader):
                 - "html_split_page": HTML with page splitting
             converter: Optional pre-configured DocumentConverter instance.
             format_options: Optional format options dictionary for DocumentConverter.
+            allowed_hosts: Optional hostname allowlist for URL inputs. When set, only URLs
+                whose hostname is in the list are converted; others are refused. When None
+                (default), all hosts are allowed (backwards compatible).
             **kwargs: Additional arguments passed to the Reader class
         """
         if chunking_strategy is None:
@@ -88,6 +94,8 @@ class DoclingReader(Reader):
             self.converter = DocumentConverter(format_options=format_options)
         else:
             self.converter = DocumentConverter()
+
+        self.allowed_hosts: Optional[List[str]] = validate_allowed_hosts(allowed_hosts)
 
     @classmethod
     def get_supported_chunking_strategies(cls) -> List[ChunkingStrategyType]:
@@ -167,6 +175,51 @@ class DoclingReader(Reader):
             ContentType.VIDEO_MOV,
         ]
 
+    # Docling transcribes with whichever backend it picked at import time: mlx-whisper on
+    # Apple silicon with MPS, native whisper otherwise, and whisper-s2t if configured.
+    _SPEECH_BACKENDS = ("whisper", "mlx_whisper", "whisper_s2t")
+
+    @classmethod
+    def _media_content_type_values(cls) -> Set[str]:
+        """The content types docling sends through its speech pipeline."""
+        return {
+            ContentType.AUDIO_WAV.value,
+            ContentType.AUDIO_MP3.value,
+            ContentType.AUDIO_M4A.value,
+            ContentType.AUDIO_AAC.value,
+            ContentType.AUDIO_OGG.value,
+            ContentType.AUDIO_FLAC.value,
+            ContentType.VIDEO_MP4.value,
+            ContentType.VIDEO_AVI.value,
+            ContentType.VIDEO_MOV.value,
+        }
+
+    @classmethod
+    def get_missing_read_time_packages(cls, content_type: Optional[Union[ContentType, str]] = None) -> List[str]:
+        """What transcription needs here, which a package list on its own cannot express.
+
+        Docling loads its speech stack only when asked, so importing this class proves nothing
+        about audio and video. Two things gate it and neither is a fixed import: the ffmpeg
+        binary has to be on PATH -- docling fails outright without it, whatever else is
+        installed -- and any one of several speech backends will do, chosen by hardware rather
+        than declared. Requiring one named package would both offer formats that cannot run and
+        withdraw formats that can.
+        """
+        media = cls._media_content_type_values()
+        if content_type is not None:
+            value = content_type.value if isinstance(content_type, ContentType) else content_type
+            if value not in media:
+                return []
+
+        missing: List[str] = []
+        if shutil.which("ffmpeg") is None:
+            missing.append("ffmpeg")
+        if not any(package_is_importable(backend) for backend in cls._SPEECH_BACKENDS):
+            # Named rather than the backend docling would pick: native whisper is the one that
+            # works on every platform, so it is always a correct answer to "what do I install".
+            missing.append("openai-whisper")
+        return missing
+
     def read(self, file: Union[Path, str, IO[Any]], name: Optional[str] = None) -> List[Document]:
         """Reads document using Docling.
 
@@ -191,10 +244,21 @@ class DoclingReader(Reader):
                 source = file
             elif isinstance(file, str) and file.startswith(("http://", "https://")):
                 # Handle URLs - Docling can process them directly
+                if not is_host_allowed(file, self.allowed_hosts):
+                    log_debug(f"Host not in allowed_hosts, refusing to read: {file}")
+                    return []
                 url_path = file.split("?")[0]
                 doc_name = name or Path(url_path).stem
                 log_debug(f"Reading from URL: {file}")
                 source = file
+            elif isinstance(file, str):
+                # Handle local file path strings
+                file_path = Path(file)
+                if not file_path.exists():
+                    raise FileNotFoundError(f"Could not find file: {file_path}")
+                log_debug(f"Reading: {file_path}")
+                doc_name = name or file_path.stem
+                source = file_path
             elif isinstance(file, BytesIO):
                 # Handle BytesIO objects
                 log_debug(f"Reading uploaded file: {getattr(file, 'name', 'BytesIO')}")
@@ -213,11 +277,11 @@ class DoclingReader(Reader):
             if self.output_format == OutputFormat.TEXT:
                 doc_content = result.document.export_to_text()
             elif self.output_format == OutputFormat.JSON:
-                doc_content = json.dumps(result.document.export_to_dict())
+                doc_content = json.dumps(result.document.export_to_dict(), ensure_ascii=False)
             elif self.output_format == OutputFormat.YAML:
                 import yaml
 
-                doc_content = yaml.safe_dump(result.document.export_to_dict())
+                doc_content = yaml.safe_dump(result.document.export_to_dict(), allow_unicode=True)
             elif self.output_format == OutputFormat.HTML:
                 doc_content = result.document.export_to_html()
             elif self.output_format == OutputFormat.HTML_SPLIT_PAGE:

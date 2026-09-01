@@ -20,7 +20,7 @@ from agno.models.openai import OpenAIResponses
 db = SqliteDb(db_file="tmp/agents.db")
 
 agent = Agent(
-    model=OpenAIResponses(id="gpt-5.2"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
     learning=True,
     markdown=True,

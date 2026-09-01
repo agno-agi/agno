@@ -11,7 +11,7 @@ from agno.utils.log import log_error, log_info, log_warning
 from agno.utils.media import get_image_type
 
 _BASE_URL = "https://graph.facebook.com"
-_API_VERSION = "v22.0"
+_API_VERSION = "v25.0"
 
 
 @dataclass

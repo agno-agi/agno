@@ -87,13 +87,12 @@ class OpenAITools(Toolkit):
         """
         log_debug(f"Transcribing audio from {audio_path}")
         try:
-            audio_file = open(audio_path, "rb")
-
-            transcript = OpenAIClient(api_key=self.api_key).audio.transcriptions.create(
-                model=self.transcription_model,
-                file=audio_file,
-                response_format="text",
-            )
+            with open(audio_path, "rb") as audio_file:
+                transcript = OpenAIClient(api_key=self.api_key).audio.transcriptions.create(
+                    model=self.transcription_model,
+                    file=audio_file,
+                    response_format="text",
+                )
         except Exception as e:  # type: ignore[return]
             log_error(f"Failed to transcribe audio: {str(e)}")
             return f"Failed to transcribe audio: {str(e)}"

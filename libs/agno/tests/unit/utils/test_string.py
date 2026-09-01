@@ -2,7 +2,31 @@ from typing import List, Optional
 
 from pydantic import BaseModel
 
-from agno.utils.string import generate_id_from_name, parse_response_model_str, sanitize_postgres_string, url_safe_string
+from agno.utils.string import (
+    _extract_json_objects,
+    generate_id_from_name,
+    parse_response_model_str,
+    sanitize_postgres_string,
+    url_safe_string,
+)
+
+
+def test_extract_json_objects_with_brace_in_string_value():
+    """A value containing a brace char must not be counted as structure.
+
+    Regression test: _extract_json_objects previously tracked brace depth inside
+    JSON string literals, so a value like "a } braced" made it close the object
+    early and return a malformed fragment instead of the full JSON.
+    """
+    text = 'Result: {"name": "a } braced value", "value": "123"}'
+    objs = _extract_json_objects(text)
+    assert len(objs) == 1
+    assert objs[0] == '{"name": "a } braced value", "value": "123"}'
+
+    result = parse_response_model_str(text, MockModel)
+    assert result is not None
+    assert result.name == "a } braced value"
+    assert result.value == "123"
 
 
 def test_url_safe_string_spaces():

@@ -43,7 +43,6 @@ def create_agent(knowledge: Knowledge) -> Agent:
         description="Agno 2.0 Agent Implementation",
         knowledge=knowledge,
         search_knowledge=True,
-        debug_mode=True,
     )
 
 

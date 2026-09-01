@@ -16,7 +16,6 @@ from typing import (
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
-from agno.culture.manager import CultureManager
 from agno.db.base import BaseDb, SessionType
 from agno.filters import FilterExpr
 from agno.knowledge.types import KnowledgeFilter
@@ -26,7 +25,7 @@ from agno.run import RunContext
 from agno.run.agent import RunOutput
 from agno.session import AgentSession
 from agno.tools.function import Function
-from agno.utils.knowledge import get_agentic_or_user_search_filters
+from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
     log_info,
@@ -75,31 +74,6 @@ def get_update_user_memory_function(agent: Agent, user_id: Optional[str] = None,
     return Function.from_callable(update_user_memory_function, name="update_user_memory")
 
 
-def get_update_cultural_knowledge_function(agent: Agent, async_mode: bool = False) -> Function:
-    def update_cultural_knowledge(task: str) -> str:
-        """Use this function to update a cultural knowledge."""
-        agent.culture_manager = cast(CultureManager, agent.culture_manager)
-        response = agent.culture_manager.update_culture_task(task=task)
-
-        return response
-
-    async def aupdate_cultural_knowledge(task: str) -> str:
-        """Use this function to update a cultural knowledge asynchronously."""
-        agent.culture_manager = cast(CultureManager, agent.culture_manager)
-        response = await agent.culture_manager.aupdate_culture_task(task=task)
-        return response
-
-    if async_mode:
-        update_cultural_knowledge_function = aupdate_cultural_knowledge
-    else:
-        update_cultural_knowledge_function = update_cultural_knowledge  # type: ignore
-
-    return Function.from_callable(
-        update_cultural_knowledge_function,
-        name="create_or_update_cultural_knowledge",
-    )
-
-
 def create_knowledge_search_tool(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -121,11 +95,11 @@ def create_knowledge_search_tool(
         if agent.references_format == "json":
             import json
 
-            return json.dumps(docs, indent=2, default=str)
+            return json.dumps(docs, indent=2, default=str, ensure_ascii=False)
         else:
             import yaml
 
-            return yaml.dump(docs, default_flow_style=False)
+            return yaml.dump(docs, default_flow_style=False, allow_unicode=True)
 
     def _track_references(docs: Optional[List[Union[Dict[str, Any], str]]], query: str, elapsed: float) -> None:
         if run_response is not None and docs:
@@ -314,7 +288,7 @@ def get_chat_history_function(agent: Agent, session: AgentSession) -> Callable:
         if num_chats is not None:
             history = history[-num_chats:]
 
-        return json.dumps(history)
+        return json.dumps(history, ensure_ascii=False)
 
     return get_chat_history
 
@@ -339,7 +313,7 @@ def get_tool_call_history_function(agent: Agent, session: AgentSession) -> Calla
         tool_calls = session.get_tool_calls(num_calls=num_calls)
         if len(tool_calls) == 0:
             return json.dumps([])
-        return json.dumps(tool_calls)
+        return json.dumps(tool_calls, ensure_ascii=False)
 
     return get_tool_call_history
 
@@ -380,12 +354,13 @@ def make_update_session_state_entrypoint(agent: Agent) -> Callable:
     return _entrypoint
 
 
-def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
+def add_to_knowledge(agent: Agent, query: str, result: str, user_id: Optional[str] = None) -> str:
     """Use this function to add information to the knowledge base for future use.
 
     Args:
         query (str): The query or topic to add.
         result (str): The actual content or information to store.
+        user_id (Optional[str]): The owner to store the document under. None writes to the shared bucket.
     Returns:
         str: A string indicating the status of the addition.
     """
@@ -400,12 +375,43 @@ def add_to_knowledge(agent: Agent, query: str, result: str) -> str:
         return "Knowledge does not support insert"
 
     document_name = query.replace(" ", "_").replace("?", "").replace("!", "").replace(".", "")
-    document_content = json.dumps({"query": query, "result": result})
+    document_content = json.dumps({"query": query, "result": result}, ensure_ascii=False)
     log_info(f"Adding document to Knowledge: {document_name}: {document_content}")
     from agno.knowledge.reader.text_reader import TextReader
 
-    insert_fn(name=document_name, text_content=document_content, reader=TextReader())
+    insert_kwargs: Dict[str, Any] = {
+        "name": document_name,
+        "text_content": document_content,
+        "reader": TextReader(),
+    }
+
+    insert_kwargs.update(get_user_id_kwarg(insert_fn, user_id, required=True))
+    insert_fn(**insert_kwargs)
     return "Successfully added to knowledge base"
+
+
+def create_add_to_knowledge_tool(agent: Agent, run_context: Optional[RunContext] = None) -> Function:
+    """Create a closure that binds the run's owner to the add_to_knowledge tool."""
+
+    def add_to_knowledge_base(query: str, result: str) -> str:
+        """Use this function to add information to the knowledge base for future use.
+
+        Args:
+            query (str): The query or topic to add.
+            result (str): The actual content or information to store.
+
+        Returns:
+            str: A string indicating the status of the addition.
+        """
+        try:
+            return add_to_knowledge(
+                agent, query=query, result=result, user_id=run_context.user_id if run_context else agent.user_id
+            )
+        except Exception as e:
+            log_warning(f"Adding to knowledge base failed: {str(e)}")
+            return f"Error adding to knowledge base: {type(e).__name__}"
+
+    return Function.from_callable(add_to_knowledge_base, name="add_to_knowledge")
 
 
 def _get_message_text(msg: Message) -> Optional[str]:
@@ -497,7 +503,7 @@ def get_search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     return search_past_sessions
 
@@ -552,7 +558,7 @@ async def aget_search_past_sessions_function(
                 continue
             results.append(_extract_session_preview(session, num_runs=_num_runs))
 
-        return json.dumps(results)
+        return json.dumps(results, ensure_ascii=False)
 
     return Function.from_callable(search_past_sessions, name="search_past_sessions")
 

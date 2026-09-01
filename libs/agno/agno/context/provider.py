@@ -24,6 +24,9 @@ providers inherit a clean failure that `_update_tool()` surfaces as "<name> is r
 `model` swaps the model used by the internal sub-agent. For full
 customization, subclass and override `_build_agent()`.
 
+`query_timeout` puts one wall-clock deadline on each `query_<id>` tool
+call; see the `ContextProvider` docstring for its exact scope.
+
 `instructions()` returns mode-aware usage guidance. The wiring layer
 chooses how to surface it: inline in the system prompt, or via an
 on-demand `learn_context(id)` meta-tool.
@@ -31,17 +34,21 @@ on-demand `learn_context(id)` meta-tool.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import re
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import asdict, dataclass, field
 from typing import TYPE_CHECKING
 
 from agno.context.mode import ContextMode
 from agno.run import RunContext
+from agno.run.agent import RunOutput
 from agno.tools import tool
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.models.base import Model
 
 
@@ -73,7 +80,17 @@ class Answer:
 
 
 class ContextProvider(ABC):
-    """Base class for every context provider."""
+    """Base class for every context provider.
+
+    ``query_timeout`` puts one wall-clock deadline (in seconds) on every
+    ``query_<id>`` tool call, covering sub-agent acquisition and answer
+    streaming; on expiry the tool yields an ``{"error": ...}`` chunk
+    instead of hanging the calling agent's run. It bounds the tool
+    surface only: programmatic ``query()`` / ``aquery()`` calls and the
+    raw backend tools exposed by ``mode=ContextMode.tools`` stay
+    unbounded. The write surface (``update_<id>``) is never bounded.
+    Requires Python 3.11+ and a positive value when set.
+    """
 
     def __init__(
         self,
@@ -82,20 +99,32 @@ class ContextProvider(ABC):
         name: str | None = None,
         mode: ContextMode = ContextMode.default,
         model: Model | None = None,
+        query_timeout: float | None = None,
         read: bool = True,
         write: bool = True,
         query_tool_name: str | None = None,
         update_tool_name: str | None = None,
+        stream_sub_agent_events: bool = True,
     ) -> None:
         if not read and not write:
             raise ValueError(
                 f"{type(self).__name__}: at least one of `read` or `write` must be True "
                 "(a provider that exposes neither tool is meaningless)"
             )
+        if query_timeout is not None:
+            if sys.version_info < (3, 11):
+                raise RuntimeError(
+                    f"{type(self).__name__}: query_timeout requires Python 3.11+ (uses asyncio.timeout_at)"
+                )
+            if query_timeout <= 0:
+                raise ValueError(f"{type(self).__name__}: query_timeout must be positive (got {query_timeout})")
         self.id = id
         self.name = name or id
         self.mode = mode
         self.model = model
+        # Wall-clock budget (seconds) for each query-tool call; see the
+        # class docstring for scope. None = unbounded.
+        self.query_timeout = query_timeout
         # Per-direction toggles for the default surface. `read=False`
         # drops `query_<id>`; `write=False` drops `update_<id>`. Lets
         # callers expose an asymmetric surface (e.g. read-only voice
@@ -105,6 +134,7 @@ class ContextProvider(ABC):
         self.write = write
         self.query_tool_name = query_tool_name or f"query_{_sanitize_id(id)}"
         self.update_tool_name = update_tool_name or f"update_{_sanitize_id(id)}"
+        self.stream_sub_agent_events = stream_sub_agent_events
 
     @abstractmethod
     def query(self, question: str, *, run_context: RunContext | None = None) -> Answer: ...
@@ -181,6 +211,14 @@ class ContextProvider(ABC):
     # Internals
     # ------------------------------------------------------------------
 
+    async def _aget_query_agent(self, run_context: RunContext | None) -> "Agent | None":
+        """Override to return the read sub-agent for streaming; None falls back to aquery()."""
+        return None
+
+    async def _aget_update_agent(self, run_context: RunContext | None) -> "Agent | None":
+        """Override to return the write sub-agent for streaming; None falls back to aupdate()."""
+        return None
+
     def _run_kwargs_for_sub_agent(self, run_context: RunContext | None) -> dict:
         """Extract kwargs to pass to a sub-agent ``arun()`` from the
         caller's RunContext.
@@ -205,6 +243,45 @@ class ContextProvider(ABC):
         the provider's recommended exposure."""
         return [self._query_tool()]
 
+    async def _arun_sub_agent(
+        self,
+        agent: "Agent",
+        message: str,
+        run_context: RunContext | None,
+    ) -> Answer:
+        """Run a sub-agent non-streaming and return the final Answer."""
+        from agno.context._utils import answer_from_run
+
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        output: RunOutput = await agent.arun(message, stream=False, **kwargs)
+        return answer_from_run(output)
+
+    async def _arun_sub_agent_stream(
+        self,
+        agent: "Agent",
+        message: str,
+        run_context: RunContext | None,
+    ):
+        """Stream events from a sub-agent, yield events only.
+
+        Content is captured by models/base.py from RunContentEvent deltas.
+        Don't yield RunOutput — that would duplicate content in the tool result.
+        """
+        kwargs = self._run_kwargs_for_sub_agent(run_context)
+        run_id = run_context.run_id if run_context else None
+
+        async for event in agent.arun(
+            message,
+            stream=True,
+            stream_events=True,
+            yield_run_output=True,
+            **kwargs,
+        ):
+            if isinstance(event, RunOutput):
+                continue
+            event.parent_run_id = getattr(event, "parent_run_id", None) or run_id
+            yield event
+
     def _read_write_tools(self) -> list:
         """Helper for subclasses with both query + update tools.
 
@@ -224,27 +301,112 @@ class ContextProvider(ABC):
         provider = self
 
         @tool(name=self.query_tool_name)
-        async def _query(question: str, run_context: RunContext | None = None) -> str:
-            try:
-                answer = await provider.aquery(question, run_context=run_context)
-            except Exception as exc:
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            return json.dumps(_serialize_answer(answer))
+        async def _query(question: str, run_context: RunContext | None = None):
+            chunks = provider._query_chunks(question, run_context)
+            if provider.query_timeout is not None:
+                chunks = provider._bounded_stream(chunks, provider.query_timeout)
+            async for chunk in chunks:
+                yield chunk
 
         return _query
+
+    async def _query_chunks(self, question: str, run_context: RunContext | None):
+        """The query pipeline: agent acquisition, aquery fallback, streaming."""
+        try:
+            agent = await self._aget_query_agent(run_context)
+        except Exception as exc:
+            yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+            return
+
+        if agent is None:
+            try:
+                answer = await self.aquery(question, run_context=run_context)
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return
+            yield json.dumps(serialize_answer(answer))
+            return
+
+        try:
+            if self.stream_sub_agent_events:
+                async for chunk in self._arun_sub_agent_stream(agent, question, run_context):
+                    yield chunk
+            else:
+                answer = await self._arun_sub_agent(agent, question, run_context)
+                yield json.dumps(serialize_answer(answer))
+        except Exception as exc:
+            yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+
+    async def _bounded_stream(self, stream, timeout: float):
+        """Yield ``stream``'s chunks under one wall-clock deadline.
+
+        The deadline is computed once at entry, so it covers agent
+        acquisition, a hanging ``aquery``, inter-chunk stalls, and
+        steady streams whose total time exceeds the budget alike. Each
+        ``anext`` runs under its own ``asyncio.timeout_at(deadline)``
+        scope — a single scope held across a ``yield`` would cancel the
+        consuming task while this generator is suspended. On expiry the
+        underlying generator's cleanup is itself bounded so a hanging
+        ``aclose`` cannot starve the timed-out error chunk.
+        """
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        while True:
+            scope = asyncio.timeout_at(deadline)  # type: ignore[attr-defined]
+            try:
+                async with scope:
+                    # The anext() builtin is 3.10+; the repo lints at py39.
+                    chunk = await stream.__anext__()
+            except StopAsyncIteration:
+                return
+            except TimeoutError:
+                if not scope.expired():
+                    # Raised by the provider itself, not our deadline.
+                    raise
+                try:
+                    async with asyncio.timeout(1):  # type: ignore[attr-defined]
+                        await stream.aclose()
+                except Exception:
+                    pass
+                yield json.dumps({"error": f"{self.name} timed out after {timeout}s"})
+                return
+            yield chunk
 
     def _update_tool(self):
         provider = self
 
         @tool(name=self.update_tool_name)
-        async def _update(instruction: str, run_context: RunContext | None = None) -> str:
+        async def _update(instruction: str, run_context: RunContext | None = None):
             try:
-                answer = await provider.aupdate(instruction, run_context=run_context)
+                agent = await provider._aget_update_agent(run_context)
             except NotImplementedError:
-                return json.dumps({"error": f"{provider.name} is read-only"})
+                yield json.dumps({"error": f"{provider.name} is read-only"})
+                return
             except Exception as exc:
-                return json.dumps({"error": f"{type(exc).__name__}: {exc}"})
-            return json.dumps(_serialize_answer(answer))
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                return
+
+            if agent is None:
+                try:
+                    answer = await provider.aupdate(instruction, run_context=run_context)
+                except NotImplementedError:
+                    yield json.dumps({"error": f"{provider.name} is read-only"})
+                    return
+                except Exception as exc:
+                    yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
+                    return
+                yield json.dumps(serialize_answer(answer))
+                return
+
+            try:
+                if provider.stream_sub_agent_events:
+                    async for chunk in provider._arun_sub_agent_stream(agent, instruction, run_context):
+                        yield chunk
+                else:
+                    answer = await provider._arun_sub_agent(agent, instruction, run_context)
+                    yield json.dumps(serialize_answer(answer))
+            except Exception as exc:
+                yield json.dumps({"error": f"{type(exc).__name__}: {exc}"})
 
         return _update
 
@@ -257,7 +419,7 @@ def _sanitize_id(raw: str) -> str:
     return s.strip("_") or "context"
 
 
-def _serialize_answer(answer: Answer) -> dict:
+def serialize_answer(answer: Answer) -> dict:
     """Build the JSON payload returned to the calling agent.
 
     Omit empty fields so the calling agent doesn't see filler. Today

@@ -3,7 +3,8 @@
 Covers methods in agno/models/base.py that are not tested by
 test_retry_error_classification.py: to_dict, get_provider,
 _remove_temporary_messages, cache methods, __deepcopy__,
-_handle_agent_exception, __post_init__, and get_system_message_for_model.
+_handle_agent_exception, __post_init__, get_system_message_for_model,
+and _handle_function_call_media.
 """
 
 import json
@@ -18,9 +19,11 @@ import pytest
 os.environ.setdefault("OPENAI_API_KEY", "test-key-for-testing")
 
 from agno.exceptions import AgentRunException
+from agno.media import Audio
 from agno.models.base import _handle_agent_exception
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
+from agno.models.openai.like import OpenAILike
 from agno.models.response import ModelResponse
 
 
@@ -111,6 +114,11 @@ class TestGetProvider:
     def test_get_provider_returns_openai_default(self, model):
         """OpenAIChat defaults provider to 'OpenAI'."""
         assert model.get_provider() == "OpenAI Chat"
+
+    def test_openai_like_returns_provider_without_chat_suffix(self):
+        """OpenAILike returns the provider without the OpenAIChat suffix."""
+        model = OpenAILike(id="compatible-model", provider="CompatibleProvider")
+        assert model.get_provider() == "CompatibleProvider"
 
 
 # =============================================================================
@@ -435,3 +443,59 @@ class TestHandleAgentException:
         assert len(additional) == 2
         assert additional[0].role == "user"
         assert additional[1].role == "assistant"
+
+
+class TestHandleFunctionCallMedia:
+    """Regression tests for https://github.com/agno-agi/agno — a tool call that
+    returns audio (e.g. SmallestTools.text_to_speech) used to get a follow-up
+    "Take note of the following content" user message appended with nothing
+    after it once the media itself was stripped (models that don't accept
+    audio input drop it silently, e.g. OpenAIResponses). That dangling
+    sentence confused the model into asking the user to "share the content"
+    instead of confirming the tool call. The message must stand on its own
+    regardless of whether the attached media survives to the model."""
+
+    def test_audio_result_gets_self_contained_followup_message(self, model):
+        messages: list = []
+        tool_message = Message(role="tool", content="Audio generated successfully")
+        tool_message.audio = [Audio(id="a1", content=b"RIFF...", mime_type="audio/wav")]
+
+        model._handle_function_call_media(messages, [tool_message])
+
+        assert len(messages) == 1
+        followup = messages[0]
+        assert followup.role == "user"
+        assert "take note of the following content" not in followup.content.lower()
+        assert followup.content.strip().endswith(".")
+
+    def test_media_removed_from_original_tool_message(self, model):
+        messages: list = []
+        tool_message = Message(role="tool", content="Audio generated successfully")
+        tool_message.audio = [Audio(id="a1", content=b"RIFF...", mime_type="audio/wav")]
+
+        model._handle_function_call_media(messages, [tool_message])
+
+        # The audio is relocated onto the synthetic follow-up message, not left on the tool message.
+        assert tool_message.audio is None
+        assert messages[0].audio is not None
+        assert messages[0].audio[0].id == "a1"
+
+    def test_no_followup_message_when_no_media(self, model):
+        messages: list = []
+        tool_message = Message(role="tool", content="No media here")
+
+        model._handle_function_call_media(messages, [tool_message])
+
+        assert messages == []
+
+    def test_no_followup_message_when_send_media_to_model_false(self, model):
+        messages: list = []
+        tool_message = Message(role="tool", content="Audio generated successfully")
+        tool_message.audio = [Audio(id="a1", content=b"RIFF...", mime_type="audio/wav")]
+
+        model._handle_function_call_media(messages, [tool_message], send_media_to_model=False)
+
+        # No follow-up message is added, and the media is still stripped from
+        # the original tool message (it's still dropped to avoid erroring some LLMs).
+        assert messages == []
+        assert tool_message.audio is None

@@ -38,6 +38,21 @@ def setup_exclusion_sandbox() -> None:
     (git_dir / "HEAD").write_text("ref: refs/heads/main\n")
 
 
+SUBDIR_SANDBOX = Path("tmp/file_tools_subdirs")
+
+
+def setup_subdir_sandbox() -> None:
+    SUBDIR_SANDBOX.mkdir(parents=True, exist_ok=True)
+
+    (SUBDIR_SANDBOX / "root_notes.txt").write_text("top-level notes\n")
+
+    reports = SUBDIR_SANDBOX / "reports"
+    reports.mkdir(exist_ok=True)
+    (reports / "q1.csv").write_text("quarter,amount\nQ1,100\n")
+    (reports / "q2.csv").write_text("quarter,amount\nQ2,200\n")
+    (reports / "summary.md").write_text("# Summary\n")
+
+
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
@@ -198,6 +213,25 @@ agent_sees_everything = Agent(
     markdown=True,
 )
 
+# Example 9: Directory-scoped listing. list_files accepts an optional `directory`
+# argument, exposed in the tool schema, so the agent can list a specific
+# subdirectory instead of the whole base_dir.
+agent_directory_scoped = Agent(
+    model=OpenAIResponses(id="gpt-5.4"),
+    tools=[
+        FileTools(
+            base_dir=SUBDIR_SANDBOX,
+            enable_list_files=True,
+        )
+    ],
+    description="You explore project subdirectories on request.",
+    instructions=[
+        "Use list_files with the directory argument to list a specific subdirectory",
+        "List only what the user asks for, not the whole tree",
+    ],
+    markdown=True,
+)
+
 # Example usage
 
 # ---------------------------------------------------------------------------
@@ -206,7 +240,7 @@ agent_sees_everything = Agent(
 if __name__ == "__main__":
     print("=== Full File Management Example ===")
     agent_full.print_response(
-        "What is the most advanced LLM currently? Save the answer to a file.",
+        "List three leading LLM providers and save the list to 'llm_providers.txt'.",
         markdown=True,
     )
 
@@ -252,5 +286,13 @@ if __name__ == "__main__":
     print("\n=== No Exclusions Example (see .git internals) ===")
     agent_sees_everything.print_response(
         "List every single file in the project, including git internals.",
+        markdown=True,
+    )
+
+    setup_subdir_sandbox()
+
+    print("\n=== Directory-Scoped Listing Example ===")
+    agent_directory_scoped.print_response(
+        "List only the files inside the 'reports' subdirectory.",
         markdown=True,
     )

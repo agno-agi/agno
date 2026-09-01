@@ -40,8 +40,9 @@ def long_running_task(agent: Agent, run_id_container: dict):
                 run_id_container["run_id"] = chunk.run_id
 
             if chunk.event == RunEvent.run_content:
-                print(chunk.content, end="", flush=True)
-                content_pieces.append(chunk.content)
+                if chunk.content:
+                    print(chunk.content, end="", flush=True)
+                    content_pieces.append(chunk.content)
             # When the run is cancelled, a `RunEvent.run_cancelled` event is emitted
             elif chunk.event == RunEvent.run_cancelled:
                 print(f"\n[CANCELLED] Run was cancelled: {chunk.run_id}")

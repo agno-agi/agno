@@ -2,15 +2,16 @@ import asyncio
 import inspect
 import time
 import weakref
+from contextlib import asynccontextmanager
 from dataclasses import asdict
 from datetime import timedelta
-from typing import TYPE_CHECKING, Any, Callable, Literal, Optional, Tuple, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
-from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.utils.mcp import get_entrypoint_for_tool, prepare_command
+from agno.utils.log import log_debug, log_error, log_warning
+from agno.utils.mcp import get_default_toolkit_name, get_entrypoint_for_tool, prepare_command
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -41,6 +42,7 @@ class MCPTools(Toolkit):
         self,
         command: Optional[str] = None,
         *,
+        name: Optional[str] = None,
         url: Optional[str] = None,
         env: Optional[dict[str, str]] = None,
         transport: Optional[Literal["stdio", "sse", "streamable-http"]] = None,
@@ -52,6 +54,7 @@ class MCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
+        headers: Optional[dict[str, Any]] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
         **kwargs,
     ):
@@ -59,6 +62,10 @@ class MCPTools(Toolkit):
         Initialize the MCP toolkit.
 
         Args:
+            name: The toolkit name. Defaults to a stable name derived from the connection
+                parameters (URL or command), so multiple MCP toolkits in one registry stay
+                distinguishable and selectable by name. Falls back to "MCPTools" when only
+                a session is provided.
             session: An initialized MCP ClientSession connected to an MCP server
             server_params: Parameters for creating a new session
             command: The command to run to start the server. Should be used in conjunction with env.
@@ -71,9 +78,14 @@ class MCPTools(Toolkit):
             transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http".
                        Defaults to "streamable-http" when url is provided, otherwise defaults to "stdio".
             refresh_connection: If True, the connection and tools will be refreshed on each run
+            headers: Optional static HTTP headers applied when establishing the MCP session
+                (connect/handshake) and merged into per-run sessions. Only relevant with
+                HTTP transports (Streamable HTTP or SSE). Prefer this for connect-time auth
+                tokens; use header_provider for per-run dynamic values.
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
-                Creates a new session per agent run with dynamic headers merged into connection config.
+                Invoked during connect() so secured servers receive auth on the handshake,
+                and again per agent run when run context is available.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -82,7 +94,10 @@ class MCPTools(Toolkit):
         stop_after_tool_call_tools = kwargs.pop("stop_after_tool_call_tools", None)
         show_result_tools = kwargs.pop("show_result_tools", None)
 
-        super().__init__(name="MCPTools", **kwargs)
+        super().__init__(
+            name=name or get_default_toolkit_name(url=url, command=command, server_params=server_params),
+            **kwargs,
+        )
 
         if url is not None:
             if transport is None:
@@ -94,7 +109,10 @@ class MCPTools(Toolkit):
                 transport = "streamable-http"
 
         if transport == "sse":
-            log_info("SSE as a standalone transport is deprecated. Please use Streamable HTTP instead.")
+            log_warning(
+                "SSE as a standalone transport is deprecated and will be removed in a future release. "
+                "Please use Streamable HTTP instead."
+            )
 
         # Set these after `__init__` to bypass the `_check_tools_filters`
         # because tools are not available until `initialize()` is called.
@@ -138,6 +156,17 @@ class MCPTools(Toolkit):
                     )
 
         self.transport = transport
+
+        # Stored separately from any subclass attribute named `headers`
+        # (e.g. MCPToolbox uses `self.headers` for toolbox-core credentials).
+        self._mcp_headers: Optional[dict[str, Any]] = None
+        if headers is not None:
+            if self.transport not in ["sse", "streamable-http"]:
+                raise ValueError(
+                    f"headers is not supported with '{self.transport}' transport. "
+                    "Use 'sse' or 'streamable-http' transport instead."
+                )
+            self._mcp_headers = headers
 
         self.header_provider = None
         if header_provider is not None:
@@ -265,6 +294,23 @@ class MCPTools(Toolkit):
             log_warning(f"Error calling header_provider: {str(e)}")
             return {}
 
+    def _merge_http_headers(
+        self,
+        base_headers: Optional[dict[str, Any]] = None,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> dict[str, Any]:
+        """Merge server_params headers, static MCP headers, and header_provider output."""
+        merged: dict[str, Any] = {}
+        if base_headers:
+            merged.update(base_headers)
+        if self._mcp_headers:
+            merged.update(self._mcp_headers)
+        if self.header_provider is not None:
+            merged.update(self._call_header_provider(run_context=run_context, agent=agent, team=team))
+        return merged
+
     async def _cleanup_stale_sessions(self) -> None:
         """Clean up sessions older than TTL to prevent memory leaks."""
         if not self._run_sessions:
@@ -280,6 +326,85 @@ class MCPTools(Toolkit):
         for run_id in stale_run_ids:
             log_debug(f"Cleaning up stale MCP sessions for run_id={run_id}")
             await self.cleanup_run_session(run_id)
+
+    def should_use_temporary_run_session(self, run_context: Optional["RunContext"] = None) -> bool:
+        """Return True when a tool call should avoid the run-session cache."""
+        return bool(
+            self.refresh_connection
+            and self.header_provider is not None
+            and run_context is not None
+            and self.transport in ("sse", "streamable-http")
+        )
+
+    @asynccontextmanager
+    async def get_temporary_session_for_run(
+        self,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> AsyncIterator[ClientSession]:
+        """
+        Create a dynamic-header session for one tool call and close it in the
+        same task that opened it.
+
+        This path is intentionally used only for refresh_connection=True. The
+        MCP HTTP transports keep anyio cancel scopes inside their async context
+        managers, and those scopes can fail noisily when a cached context is
+        entered in one task and later exited from another.
+        """
+        if not self.should_use_temporary_run_session(run_context):
+            if self.session is None:
+                raise ValueError("Session is not initialized")
+            yield self.session
+            return
+
+        dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
+
+        if self.transport == "sse":
+            sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+            if "url" not in sse_params:
+                sse_params["url"] = self.url
+            existing_headers = sse_params.get("headers") or {}
+            sse_params["headers"] = {**existing_headers, **dynamic_headers}
+            context = sse_client(**sse_params)  # type: ignore
+            client_timeout = min(self.timeout_seconds, sse_params.get("timeout", self.timeout_seconds))
+        elif self.transport == "streamable-http":
+            streamable_http_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
+            if "url" not in streamable_http_params:
+                streamable_http_params["url"] = self.url
+            existing_headers = streamable_http_params.get("headers") or {}
+            streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
+            context = streamablehttp_client(**streamable_http_params)  # type: ignore
+            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
+            if isinstance(params_timeout, timedelta):
+                params_timeout = int(params_timeout.total_seconds())
+            client_timeout = min(self.timeout_seconds, params_timeout)
+        else:
+            if self.session is None:
+                raise ValueError("Session is not initialized")
+            yield self.session
+            return
+
+        session_context = None
+        try:
+            session_params = await context.__aenter__()  # type: ignore
+            read, write = session_params[0:2]
+
+            session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+            session = await session_context.__aenter__()  # type: ignore
+            await session.initialize()
+
+            yield session
+        finally:
+            if session_context is not None:
+                try:
+                    await session_context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            try:
+                await context.__aexit__(None, None, None)
+            except BaseException:
+                pass
 
     async def get_session_for_run(
         self,
@@ -336,8 +461,8 @@ class MCPTools(Toolkit):
             # Create a new session with dynamic headers for this run
             log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
 
-            # Generate dynamic headers from the provider
-            dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+            # Generate dynamic headers from the provider (merged with static headers)
+            dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
 
             # Create new session with merged headers based on transport type
             if self.transport == "sse":
@@ -447,8 +572,31 @@ class MCPTools(Toolkit):
         try:
             await self.session.send_ping()
             return True
-        except (RuntimeError, BaseException):
+        except Exception:
             return False
+
+    async def _safe_cleanup(self) -> None:
+        """Close any partially-entered MCP contexts"""
+        if self._session_context is not None:
+            try:
+                await self._session_context.__aexit__(None, None, None)
+            except BaseException:
+                pass
+            self._session_context = None
+            self.session = None
+
+        if self._context is not None:
+            try:
+                await self._context.aclose()  # type: ignore[attr-defined]
+            except BaseException:
+                try:
+                    await self._context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+            self._context = None
+
+        self._active_contexts = []
+        self._initialized = False
 
     async def connect(self, force: bool = False):
         """Initialize a MCPTools instance and connect to the contextual MCP server"""
@@ -467,8 +615,9 @@ class MCPTools(Toolkit):
 
         try:
             await self._connect()
-        except (RuntimeError, BaseException):
-            log_error(f"Failed to connect to {str(self)}")
+        except Exception as e:
+            log_error(f"Failed to connect to {str(self)}: {e}")
+            await self._safe_cleanup()
 
     async def _connect(self) -> None:
         """Connects to the MCP server and initializes the tools"""
@@ -480,12 +629,10 @@ class MCPTools(Toolkit):
             await self.initialize()
             return
 
-        # If header_provider is set, generate initial headers for the connection.
-        # This ensures MCP servers that require auth headers for tool discovery
-        # receive them during initialization, not just during per-run sessions.
-        init_headers: dict[str, Any] = {}
-        if self.header_provider:
-            init_headers = self._call_header_provider()
+        # Merge static headers and header_provider output for the handshake.
+        # Secured MCP servers require auth headers during session initialization,
+        # not only on subsequent tool calls.
+        init_headers = self._merge_http_headers()
 
         # Create a new studio session
         if self.transport == "sse":
@@ -518,12 +665,40 @@ class MCPTools(Toolkit):
             self._context = stdio_client(self.server_params)  # type: ignore
             client_timeout = self.timeout_seconds
 
-        session_params = await self._context.__aenter__()  # type: ignore
+        try:
+            session_params = await self._context.__aenter__()  # type: ignore
+        except BaseException:
+            # Close the partially-entered transport
+            if self._context is not None:
+                try:
+                    await self._context.aclose()  # type: ignore[attr-defined]
+                except BaseException:
+                    try:
+                        await self._context.__aexit__(None, None, None)
+                    except BaseException:
+                        pass
+                self._context = None
+            raise
         self._active_contexts.append(self._context)
         read, write = session_params[0:2]
 
         self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
-        self.session = await self._session_context.__aenter__()  # type: ignore
+        try:
+            self.session = await self._session_context.__aenter__()  # type: ignore
+        except BaseException:
+            if self._session_context is not None:
+                try:
+                    await self._session_context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+                self._session_context = None
+            if self._context is not None:
+                try:
+                    await self._context.__aexit__(None, None, None)
+                except BaseException:
+                    pass
+                self._context = None
+            raise
         self._active_contexts.append(self._session_context)
 
         # Initialize with the new session
@@ -651,7 +826,7 @@ class MCPTools(Toolkit):
                 except Exception as e:
                     log_error(f"Failed to register tool {tool.name}: {str(e)}")
 
-        except (RuntimeError, BaseException):
+        except Exception:
             log_error(f"Failed to get tools for {str(self)}")
             raise
 
@@ -671,5 +846,5 @@ class MCPTools(Toolkit):
 
             self._initialized = True
 
-        except (RuntimeError, BaseException):
+        except Exception:
             log_error("Failed to initialize MCP toolkit")

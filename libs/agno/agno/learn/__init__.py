@@ -15,7 +15,6 @@ from agno.learn.config import (
     EntityMemoryConfig,
     LearnedKnowledgeConfig,
     LearningMode,
-    MemoriesConfig,
     SessionContextConfig,
     UserMemoryConfig,
     UserProfileConfig,
@@ -34,7 +33,6 @@ from agno.learn.stores import (
     EntityMemoryStore,
     LearnedKnowledgeStore,
     LearningStore,
-    MemoriesStore,
     SessionContextStore,
     UserMemoryStore,
     UserProfileStore,
@@ -47,25 +45,23 @@ __all__ = [
     "LearningMode",
     "UserProfileConfig",
     "UserMemoryConfig",
-    "MemoriesConfig",  # Backwards compatibility alias
     "EntityMemoryConfig",
     "SessionContextConfig",
     "LearnedKnowledgeConfig",
-    "DecisionLogConfig",  # Phase 2
+    "DecisionLogConfig",
     # Schemas
     "UserProfile",
     "Memories",
     "EntityMemory",
     "SessionContext",
     "LearnedKnowledge",
-    "DecisionLog",  # Phase 2
+    "DecisionLog",
     # Stores
     "LearningStore",
     "UserProfileStore",
     "UserMemoryStore",
-    "MemoriesStore",  # Backwards compatibility alias
     "SessionContextStore",
     "LearnedKnowledgeStore",
     "EntityMemoryStore",
-    "DecisionLogStore",  # Phase 2
+    "DecisionLogStore",
 ]

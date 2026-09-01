@@ -11,8 +11,9 @@ Examples for team workflows in session.
 ## Files
 
 - chat_history.py - Demonstrates chat history.
+- nested_team_history_to_members.py - Nested sub-team receives its own history via add_team_history_to_members.
 - persistent_session.py - Demonstrates persistent session.
-- search_session_history.py - Search and read previous team sessions (two-step pattern).
+- search_past_sessions.py - Search and read previous team sessions (two-step pattern).
 - custom_session_summary.py - Demonstrates session_summary_manager and summary context.
 - session_options.py - Demonstrates session options.
 - session_summary.py - Demonstrates session summary.

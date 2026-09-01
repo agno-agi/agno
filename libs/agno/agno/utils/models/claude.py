@@ -9,6 +9,7 @@ from agno.utils.log import log_error, log_info, log_warning
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
 
+
 # Models that support assistant message prefill. This is a closed set —
 # prefill was deprecated starting with Claude 4.6 and all future models
 # are expected to reject it.
@@ -85,6 +86,43 @@ ROLE_MAP = {
     "assistant": "assistant",
     "tool": "user",
 }
+
+
+def _anthropic_block_identity(block: Any) -> Optional[Tuple[str, str]]:
+    """Return a stable identity key for an Anthropic content block, or None if untrackable.
+
+    Server tool blocks pair a ``server_tool_use`` (carrying ``id``) with a result block
+    (carrying ``tool_use_id`` referencing that id). The (type, id-or-tool_use_id) tuple
+    lets us dedupe across provider_data["server_tool_blocks"] and list-shaped message.content
+    without dropping blocks that exist in only one source.
+    """
+    if not isinstance(block, dict):
+        return None
+    block_type = block.get("type")
+    if not block_type:
+        return None
+    block_id = block.get("id") or block.get("tool_use_id")
+    if not isinstance(block_id, str):
+        return None
+    return (block_type, block_id)
+
+
+def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
+    """Normalize a stored message content item into an Anthropic Messages API block dict."""
+    if item is None:
+        return None
+    if isinstance(item, dict):
+        return item if item.get("type") else None
+    model_dump = getattr(item, "model_dump", None)
+    if callable(model_dump):
+        try:
+            block_dict = model_dump(exclude_none=True)
+        except Exception as e:
+            log_warning(f"Failed to serialize Anthropic content block of type {type(item).__name__}: {e}")
+            return None
+        if isinstance(block_dict, dict) and block_dict.get("type"):
+            return block_dict
+    return None
 
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -250,13 +288,43 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
 
     # Case 1: Document is a URL
     if file.url is not None:
-        document = {
-            "type": "document",
-            "source": {
-                "type": "url",
-                "url": file.url,
-            },
-        }
+        # Anthropic accepts a url document source for PDFs only; anything else is inlined below.
+        media_type = file.mime_type
+        if media_type is None or media_type == "application/pdf":
+            document = {
+                "type": "document",
+                "source": {
+                    "type": "url",
+                    "url": file.url,
+                },
+            }
+        else:
+            import base64
+
+            raw_bytes = file.get_content_bytes()
+            if raw_bytes is None:
+                log_error(f"Failed to read document from url: {file}")
+                return None
+
+            source_type = mime_mapping.get(media_type, "base64")
+            if source_type == "text":
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "text",
+                        "media_type": "text/plain",
+                        "data": raw_bytes.decode("utf-8", errors="replace"),
+                    },
+                }
+            else:
+                document = {
+                    "type": "document",
+                    "source": {
+                        "type": "base64",
+                        "media_type": media_type,
+                        "data": base64.standard_b64encode(raw_bytes).decode("utf-8"),
+                    },
+                }
     # Case 2: Document is a local file path
     elif file.filepath is not None:
         import base64
@@ -281,7 +349,9 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
                     "type": "document",
                     "source": {
                         "type": "text",
-                        "media_type": media_type,
+                        # Anthropic's text document source only accepts "text/plain". Other
+                        # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                        "media_type": "text/plain",
                         "data": raw_bytes.decode("utf-8", errors="replace"),
                     },
                 }
@@ -308,7 +378,9 @@ def _format_file_for_message(file: File, enable_citations: bool = True) -> Optio
                 "type": "document",
                 "source": {
                     "type": "text",
-                    "media_type": media_type,
+                    # Anthropic's text document source only accepts "text/plain". Other
+                    # text/* subtypes (markdown, csv, html, ...) are sent as plain text.
+                    "media_type": "text/plain",
                     "data": file.content.decode("utf-8", errors="replace"),
                 },
             }
@@ -446,6 +518,11 @@ def format_messages(
         elif message.role == "user":
             if isinstance(content, str):
                 content = [{"type": "text", "text": content}]
+            elif isinstance(content, list):
+                # Work on a copy: appending media blocks into the live
+                # Message.content would duplicate them on every model round
+                # of the run and persist provider blocks into the message
+                content = list(content)
 
             if message.images is not None:
                 for image in message.images:
@@ -484,17 +561,38 @@ def format_messages(
             if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
 
-                content.append(
-                    RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_reasoning_content")
-                )
+                content.append(RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_thinking"))
 
-            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data
-            # Inserted between thinking and text blocks to match Anthropic's native ordering
+            # Extract structured blocks from list-shaped content (used when callers persist and
+            # rehydrate full assistant turns rather than the text-only + provider_data split).
+            structured_from_list: List[Any] = []
+            list_block_identities: set = set()
+            if isinstance(message.content, list):
+                for item in message.content:
+                    blk = _anthropic_coerce_content_block(item)
+                    if blk is None:
+                        continue
+                    block_type = blk.get("type") if isinstance(blk, dict) else None
+                    if block_type == "tool_use" and message.tool_calls:
+                        continue
+                    identity = _anthropic_block_identity(blk)
+                    if identity is not None:
+                        list_block_identities.add(identity)
+                    structured_from_list.append(blk)
+
+            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data.
+            # Merge by identity (type, id-or-tool_use_id) so blocks already present in list-content
+            # aren't duplicated, but blocks that exist only in provider_data are still emitted.
             if message.provider_data and message.provider_data.get("server_tool_blocks"):
                 for block_dict in message.provider_data["server_tool_blocks"]:
+                    identity = _anthropic_block_identity(block_dict)
+                    if identity is not None and identity in list_block_identities:
+                        continue
                     content.append(block_dict)
 
-            if isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
+            if structured_from_list:
+                content.extend(structured_from_list)
+            elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
                 content.append(TextBlock(text=message.content, type="text"))
 
             if message.tool_calls:
@@ -514,11 +612,25 @@ def format_messages(
 
             # Use compressed content for tool messages if compression is active
             tool_result = message.get_content(use_compressed_content=compress_tool_results)
+            if isinstance(tool_result, list):
+                normalized_blocks: List[Any] = []
+                for item in tool_result:
+                    coerced = _anthropic_coerce_content_block(item)
+                    if coerced is not None:
+                        normalized_blocks.append(coerced)
+                    else:
+                        # Fall back to a text block so unknown items still reach the model rather
+                        # than being silently dropped or breaking the request shape.
+                        log_warning(f"Coercing non-block tool_result item of type {type(item).__name__} to text")
+                        normalized_blocks.append({"type": "text", "text": str(item)})
+                tool_payload: Union[str, List[Any]] = normalized_blocks
+            else:
+                tool_payload = str(tool_result)
             content.append(
                 {
                     "type": "tool_result",
                     "tool_use_id": message.tool_call_id,
-                    "content": str(tool_result),
+                    "content": tool_payload,
                 }
             )
 
@@ -531,6 +643,10 @@ def format_messages(
     # Merge consecutive messages with the same role (Claude requires alternating user/assistant roles).
     # This happens when multiple tool results (mapped to "user") appear in sequence, or when a tool
     # result is followed by a user message.
+    # Merging must always build a NEW content list: a list here can be the
+    # same object as a live Message.content (session history included), and
+    # extending or inserting into it in place would corrupt that message on
+    # every subsequent request.
     merged_messages: List[Dict[str, Union[str, list]]] = []
     for msg in chat_messages:
         if merged_messages and merged_messages[-1]["role"] == msg["role"]:
@@ -538,20 +654,13 @@ def format_messages(
             prev_content = merged_messages[-1]["content"]
             curr_content = msg["content"]
 
-            # Handle different content type combinations
-            if isinstance(prev_content, list) and isinstance(curr_content, list):
-                prev_content.extend(curr_content)
-            elif isinstance(prev_content, list):
-                prev_content.append({"type": "text", "text": str(curr_content)})
-            elif isinstance(curr_content, list):
-                curr_content.insert(0, {"type": "text", "text": str(prev_content)})
-                merged_messages[-1]["content"] = curr_content
-            else:
-                # Both strings, convert to list
-                merged_messages[-1]["content"] = [
-                    {"type": "text", "text": str(prev_content)},
-                    {"type": "text", "text": str(curr_content)},
-                ]
+            prev_blocks = (
+                prev_content if isinstance(prev_content, list) else [{"type": "text", "text": str(prev_content)}]
+            )
+            curr_blocks = (
+                curr_content if isinstance(curr_content, list) else [{"type": "text", "text": str(curr_content)}]
+            )
+            merged_messages[-1]["content"] = [*prev_blocks, *curr_blocks]
         else:
             merged_messages.append(msg)
 
@@ -646,3 +755,70 @@ def format_tools_for_model(tools: Optional[List[Dict[str, Any]]] = None) -> Opti
 
         parsed_tools.append(tool)
     return parsed_tools
+
+
+# Sampling parameters the Anthropic SDK stopped declaring on its request methods in
+# 1.0.0: passing one raises TypeError before the request leaves the process. The API
+# still honours them, so they travel in extra_body, which every SDK version merges
+# into the request JSON as-is.
+SAMPLING_PARAMS = ("temperature", "top_p", "top_k")
+
+
+def route_sampling_params_to_extra_body(request_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Move the sampling parameters out of the request kwargs and into extra_body.
+
+    Mutates and returns the dict it is given, so it also catches a sampling parameter
+    that arrived through ``request_params`` rather than through a model field.
+    """
+    moved = {name: request_params.pop(name) for name in SAMPLING_PARAMS if name in request_params}
+    if moved:
+        # A caller who wrote extra_body themselves outranks the model's own fields.
+        request_params["extra_body"] = {**moved, **(request_params.get("extra_body") or {})}
+    return request_params
+
+
+def sdk_http_client_type(is_async: bool = False) -> type:
+    """The HTTP client class the installed Anthropic SDK accepts.
+
+    anthropic 1.0.0 moved its HTTP layer from httpx to httpx2 and raises TypeError at
+    construction when handed an ``httpx.Client``, so the accepted class is read off the
+    SDK's own re-export rather than assumed to be httpx's.
+    """
+    import httpx
+
+    fallback = httpx.AsyncClient if is_async else httpx.Client
+    try:
+        from anthropic import DefaultAsyncHttpxClient, DefaultHttpxClient
+    except ImportError:
+        return fallback
+
+    default = DefaultAsyncHttpxClient if is_async else DefaultHttpxClient
+    wanted = "AsyncClient" if is_async else "Client"
+    for base in default.__mro__[1:]:
+        if base.__name__ == wanted:
+            return base
+    return fallback
+
+
+def resolve_http_client(
+    http_client: Optional[Any], is_async: bool = False, fallback: Optional[Any] = None
+) -> Optional[Any]:
+    """Return the HTTP client to hand the Anthropic SDK, or None to let it build its own.
+
+    A client of the wrong flavour is dropped with a warning instead of being passed on,
+    where it would raise TypeError at client construction and take every request with it.
+    """
+    expected = sdk_http_client_type(is_async)
+
+    if http_client is not None:
+        if isinstance(http_client, expected):
+            return http_client
+        log_warning(
+            f"http_client is not an instance of {expected.__module__}.{expected.__qualname__} "
+            f"(the Anthropic SDK's HTTP client). Ignoring and using the SDK default."
+        )
+
+    # The shared agno client is httpx's, which an httpx2-based SDK will not take.
+    if fallback is not None and isinstance(fallback, expected):
+        return fallback
+    return None

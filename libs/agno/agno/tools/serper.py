@@ -21,6 +21,7 @@ class SerperTools(Toolkit):
         enable_search_scholar: bool = True,
         enable_scrape_webpage: bool = True,
         all: bool = False,
+        timeout: int = 30,
         **kwargs,
     ):
         """
@@ -32,6 +33,7 @@ class SerperTools(Toolkit):
             language Optional[str]: The language code for search results.
             num_results Optional[int]: The number of search results to retrieve.
             date_range Optional[str]: Default date range filter for searches.
+            timeout Optional[int]: Per-request HTTP timeout in seconds. Default is 30.
         """
         self.api_key = api_key or getenv("SERPER_API_KEY")
         if not self.api_key:
@@ -52,7 +54,7 @@ class SerperTools(Toolkit):
         if all or enable_scrape_webpage:
             tools.append(self.scrape_webpage)
 
-        super().__init__(name="serper_tools", tools=tools, **kwargs)
+        super().__init__(name="serper_tools", tools=tools, timeout=timeout, **kwargs)
 
     def _make_request(self, endpoint: str, params: Dict[str, Any]) -> Dict[str, Any]:
         """
@@ -88,7 +90,7 @@ class SerperTools(Toolkit):
             payload = json.dumps(params)
 
             log_debug(f"Making request to {url} with params: {params}")
-            response = requests.request("POST", url, headers=headers, data=payload)
+            response = requests.request("POST", url, headers=headers, data=payload, timeout=self.timeout)
             response.raise_for_status()
 
             log_debug(f"Successfully received response from {endpoint} endpoint")

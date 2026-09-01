@@ -99,8 +99,16 @@ def session_with_runs(shared_db, test_agent: Agent):
         updated_at=now,
     )
 
-    # Save session to database
+    # Save session to database. Under v3, upsert_session writes only the
+    # session row — runs must be persisted individually via upsert_run.
     shared_db.upsert_session(session)
+    for idx, run in enumerate([run1, run2, run3, run4]):
+        shared_db.upsert_run(
+            run=run,
+            session_id=session.session_id,
+            user_id=session.user_id,
+            run_index=idx,
+        )
 
     return session
 
@@ -366,9 +374,11 @@ def test_endpoints_with_multiple_sessions(shared_db, test_agent: Agent):
         updated_at=now,
     )
 
-    # Save sessions
+    # Save sessions and their runs (v3: runs live in a separate table)
     shared_db.upsert_session(session1)
+    shared_db.upsert_run(run=run1_session1, session_id=session1.session_id, user_id=session1.user_id, run_index=0)
     shared_db.upsert_session(session2)
+    shared_db.upsert_run(run=run1_session2, session_id=session2.session_id, user_id=session2.user_id, run_index=0)
 
     # Create test client
     agent_os = AgentOS(agents=[test_agent])
@@ -765,6 +775,35 @@ def test_create_empty_session_with_all_params(shared_db, test_agent: Agent):
     saved_session = shared_db.get_session(session_id=custom_session_id, session_type="agent")
     assert saved_session is not None
     assert saved_session.session_id == custom_session_id
+
+
+def test_create_existing_session_returns_conflict(session_with_runs, shared_db, test_agent: Agent):
+    """Re-creating an existing session_id must 409, not overwrite the stored runs/user_id.
+
+    Regression: create unconditionally upserted a fresh (empty) session over the existing
+    one, dropping its runs/session_data (and, with owner-guarded backends, surfacing a 500).
+    A duplicate create is a conflict (mirrors create_learning / schedules), so the stored
+    session is left untouched and the caller is steered to PATCH.
+    """
+    agent_os = AgentOS(agents=[test_agent])
+    app = agent_os.get_app()
+    client = TestClient(app)
+
+    session_id = session_with_runs.session_id
+
+    # Re-create the same session — must be rejected with 409, not silently overwritten.
+    response = client.post(
+        "/sessions",
+        params={"type": "agent"},
+        json={"session_id": session_id},
+    )
+    assert response.status_code == 409, response.text
+
+    # The stored owner and runs must be preserved, not overwritten with the empty create payload.
+    saved_session = shared_db.get_session(session_id=session_id, session_type="agent")
+    assert saved_session is not None
+    assert saved_session.user_id == "test-user"
+    assert len(saved_session.runs) == 4
 
 
 def test_create_empty_session_auto_generates_id(shared_db, test_agent: Agent):

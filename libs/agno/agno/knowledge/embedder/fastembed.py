@@ -1,8 +1,7 @@
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
-from agno.utils.log import log_warning
+from agno.knowledge.embedder.base import Embedder, raise_embedding_error
 
 try:
     import numpy as np
@@ -33,16 +32,15 @@ class FastEmbedEmbedder(Embedder):
         return self.fastembed_client
 
     def get_embedding(self, text: str) -> List[float]:
-        embeddings = self.client.embed(text)
-        embedding_list = list(embeddings)[0]
-        if isinstance(embedding_list, np.ndarray):
-            return embedding_list.tolist()
-
         try:
+            embeddings = self.client.embed(text)
+            embedding_list = list(embeddings)[0]
+            if isinstance(embedding_list, np.ndarray):
+                return embedding_list.tolist()
+
             return list(embedding_list)
         except Exception as e:
-            log_warning(f"Failed to convert embedding list: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="FastEmbed")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         embedding = self.get_embedding(text=text)
@@ -55,7 +53,7 @@ class FastEmbedEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # Run the CPU-bound operation in a thread executor
         return await loop.run_in_executor(None, self.get_embedding, text)
 
@@ -63,6 +61,6 @@ class FastEmbedEmbedder(Embedder):
         """Async version using thread executor for CPU-bound operations."""
         import asyncio
 
-        loop = asyncio.get_event_loop()
+        loop = asyncio.get_running_loop()
         # Run the CPU-bound operation in a thread executor
         return await loop.run_in_executor(None, self.get_embedding_and_usage, text)

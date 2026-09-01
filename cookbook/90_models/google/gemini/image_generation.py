@@ -18,7 +18,7 @@ from PIL import Image
 # No system message should be provided
 agent = Agent(
     model=Gemini(
-        id="gemini-3-flash-preview",
+        id="gemini-3.7-flash",
         response_modalities=["Text", "Image"],
     )
 )

@@ -1,7 +1,7 @@
 from dataclasses import asdict, dataclass, field, fields
 from enum import Enum
 from time import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, get_args
 
 from pydantic import BaseModel
 
@@ -41,6 +41,7 @@ class WorkflowRunEvent(str, Enum):
 
     workflow_started = "WorkflowStarted"
     workflow_completed = "WorkflowCompleted"
+    workflow_paused = "WorkflowPaused"
     workflow_cancelled = "WorkflowCancelled"
     workflow_error = "WorkflowError"
 
@@ -99,24 +100,56 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
     nested_depth: int = 0
 
     def to_dict(self) -> Dict[str, Any]:
-        # Temporarily clear run_output before asdict() to avoid infinite recursion:
-        # WorkflowCompletedEvent.run_output -> WorkflowRunOutput.events -> WorkflowCompletedEvent.run_output -> ...
-        # asdict() recursively traverses all fields before we can filter, so we must clear it first.
-        saved_run_output = getattr(self, "run_output", None)
-        if saved_run_output is not None:
-            object.__setattr__(self, "run_output", None)
+        # Temporarily clear the DEEP fields before asdict(): it traverses
+        # every dataclass field BEFORE the post-hoc filter can drop a key,
+        # and these object graphs can reach back to this very event -
+        # run_output.events contains it, and
+        # step_requirements[].step_input.workflow_session.runs[].events
+        # contains it too (the WS HITL continue leg produces exactly that
+        # shape once the event lands on the live run). asdict() has no cycle
+        # detection, so traversal is fatal; each cleared field is
+        # re-serialized below through its own cycle-safe to_dict.
+        _deep_fields = (
+            "run_output",
+            "step_requirements",
+            "step_results",
+            "step_executor_runs",
+            "step_response",
+            "iteration_results",
+        )
+        _saved: Dict[str, Any] = {}
+        for _name in _deep_fields:
+            _value = getattr(self, _name, None)
+            if _value is not None:
+                _saved[_name] = _value
+                object.__setattr__(self, _name, None)
         try:
-            _dict = {k: v for k, v in asdict(self).items() if v is not None and k != "run_output"}
+            _dict = {k: v for k, v in asdict(self).items() if v is not None and k not in ("run_output", "metrics")}
         finally:
-            if saved_run_output is not None:
-                object.__setattr__(self, "run_output", saved_run_output)
+            for _name, _value in _saved.items():
+                object.__setattr__(self, _name, _value)
 
         if hasattr(self, "content") and self.content and isinstance(self.content, BaseModel):
             _dict["content"] = self.content.model_dump(exclude_none=True)
 
+        if hasattr(self, "metrics") and self.metrics is not None:
+            _dict["metrics"] = self.metrics.to_dict()
+
         # Handle StepOutput fields that contain Message objects
         if hasattr(self, "step_results") and self.step_results is not None:
             _dict["step_results"] = [step.to_dict() if hasattr(step, "to_dict") else step for step in self.step_results]
+
+        # Handle step_executor_runs (RunOutput/TeamRunOutput/WorkflowRunOutput objects)
+        if hasattr(self, "step_executor_runs") and self.step_executor_runs is not None:
+            _dict["step_executor_runs"] = [
+                run.to_dict() if hasattr(run, "to_dict") else run for run in self.step_executor_runs
+            ]
+
+        # Handle step_requirements (StepRequirement objects with their own to_dict)
+        if hasattr(self, "step_requirements") and self.step_requirements is not None:
+            _dict["step_requirements"] = [
+                req.to_dict() if hasattr(req, "to_dict") else req for req in self.step_requirements
+            ]
 
         if hasattr(self, "step_response") and self.step_response is not None:
             _dict["step_response"] = (
@@ -187,10 +220,23 @@ class WorkflowCompletedEvent(BaseWorkflowRunOutputEvent):
 
     # Store actual step execution results as StepOutput objects
     step_results: List[StepOutput] = field(default_factory=list)
+    # Store underlying agent/team runs (parallels WorkflowRunOutput.step_executor_runs)
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
     metadata: Optional[Dict[str, Any]] = None
+    metrics: Optional[WorkflowMetrics] = None
 
     # Full workflow run output for nested workflows
     run_output: Optional["WorkflowRunOutput"] = None
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "WorkflowCompletedEvent":
+        metrics_data = data.pop("metrics", None)
+        event = super().from_dict(data)
+        if metrics_data:
+            from agno.workflow.types import WorkflowMetrics
+
+            event.metrics = WorkflowMetrics.from_dict(metrics_data)
+        return event
 
 
 @dataclass
@@ -212,9 +258,42 @@ class WorkflowCancelledEvent(BaseWorkflowRunOutputEvent):
 
     event: str = WorkflowRunEvent.workflow_cancelled.value
     reason: Optional[str] = None
+    content: Optional[str] = None
 
     @property
     def is_cancelled(self):
+        return True
+
+
+@dataclass
+class WorkflowPausedEvent(BaseWorkflowRunOutputEvent):
+    """Event sent when workflow execution pauses (HITL).
+
+    Carries the full paused workflow state so clients can issue a continue
+    without having to merge multiple events. Emitted after the inner
+    step-level pause event (StepPaused / StepExecutorPaused / RouterPaused).
+    """
+
+    event: str = WorkflowRunEvent.workflow_paused.value
+
+    # Pause context (mirrors fields on WorkflowRunOutput)
+    status: Optional[str] = None
+    paused_step_index: Optional[int] = None
+    paused_step_name: Optional[str] = None
+    pause_kind: Optional[Union[PauseKind, str]] = None
+
+    # Active state required to issue a continue
+    step_requirements: Optional[List[StepRequirement]] = None
+    # Match WorkflowRunOutput.step_results — nested lists support parallel/loop iterations.
+    step_results: Optional[List[Union[StepOutput, List[StepOutput]]]] = None
+    step_executor_runs: Optional[List[Union[RunOutput, TeamRunOutput, "WorkflowRunOutput"]]] = None
+
+    # Convenience fields
+    content: Optional[Any] = None
+    metadata: Optional[Dict[str, Any]] = None
+
+    @property
+    def is_paused(self):
         return True
 
 
@@ -554,6 +633,7 @@ WorkflowRunOutputEvent = Union[
     WorkflowAgentStartedEvent,
     WorkflowAgentCompletedEvent,
     WorkflowCompletedEvent,
+    WorkflowPausedEvent,
     WorkflowErrorEvent,
     WorkflowCancelledEvent,
     StepStartedEvent,
@@ -581,12 +661,18 @@ WorkflowRunOutputEvent = Union[
     CustomEvent,
 ]
 
+# Cached union members for isinstance checks: rebuilding
+# tuple(get_args(WorkflowRunOutputEvent)) per streamed chunk is measurable on
+# the hot event-dispatch path.
+WORKFLOW_RUN_OUTPUT_EVENT_TYPES = get_args(WorkflowRunOutputEvent)
+
 # Map event string to dataclass for workflow events
 WORKFLOW_RUN_EVENT_TYPE_REGISTRY = {
     WorkflowRunEvent.workflow_started.value: WorkflowStartedEvent,
     WorkflowRunEvent.workflow_agent_started.value: WorkflowAgentStartedEvent,
     WorkflowRunEvent.workflow_agent_completed.value: WorkflowAgentCompletedEvent,
     WorkflowRunEvent.workflow_completed.value: WorkflowCompletedEvent,
+    WorkflowRunEvent.workflow_paused.value: WorkflowPausedEvent,
     WorkflowRunEvent.workflow_cancelled.value: WorkflowCancelledEvent,
     WorkflowRunEvent.workflow_error.value: WorkflowErrorEvent,
     WorkflowRunEvent.step_started.value: StepStartedEvent,
@@ -676,6 +762,11 @@ class WorkflowRunOutput:
     created_at: int = field(default_factory=lambda: int(time()))
 
     status: RunStatus = RunStatus.pending
+    # Queue-attempt generation stamp: set by the queue worker when attempt N
+    # claims this run. Terminal writes carry their attempt and are fenced
+    # against a NEWER stored value, so a presumed-dead attempt's late write
+    # cannot clobber its successor. None outside durable-queue execution.
+    queue_attempt: Optional[int] = None
 
     # Unified HITL requirements to continue a paused workflow
     # Handles all HITL types: confirmation, user input, and route selection
@@ -1012,6 +1103,7 @@ class WorkflowRunOutput:
         elif isinstance(self.content, BaseModel):
             return self.content.model_dump_json(exclude_none=True, **kwargs)
         else:
+            kwargs.setdefault("ensure_ascii", False)
             return json.dumps(self.content, **kwargs)
 
     def has_completed(self) -> bool:
