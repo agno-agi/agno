@@ -217,10 +217,12 @@ def test_compress_empty_string_is_success_and_not_retried():
     cm.compress(messages)
 
     assert msg.compressed_content == ""
+    assert msg.get_content(use_compressed_content=True) == "Result 1"
     assert call_count["n"] == 1
 
     cm.compress(messages)
     assert call_count["n"] == 1
+    assert msg.get_content(use_compressed_content=True) == "Result 1"
 
 
 @pytest.mark.asyncio
@@ -241,7 +243,9 @@ async def test_acompress_empty_string_is_success_and_not_retried():
     await cm.acompress(messages)
 
     assert msg.compressed_content == ""
+    assert msg.get_content(use_compressed_content=True) == "Result 1"
     assert call_count["n"] == 1
 
     await cm.acompress(messages)
     assert call_count["n"] == 1
+    assert msg.get_content(use_compressed_content=True) == "Result 1"

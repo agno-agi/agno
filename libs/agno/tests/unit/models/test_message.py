@@ -58,3 +58,38 @@ class TestGetContentString:
         content = ["item1", "item2"]
         message = Message(role="assistant", content=content)
         assert message.get_content_string() == json.dumps(content)
+
+
+class TestGetContent:
+    """Tests for Message.get_content() compressed-content fallback."""
+
+    def test_none_compressed_content_returns_original(self):
+        """None means compression has not been recorded; return original content."""
+        message = Message(role="tool", content="original tool result")
+        assert message.compressed_content is None
+        assert message.get_content(use_compressed_content=True) == "original tool result"
+        assert message.get_content(use_compressed_content=False) == "original tool result"
+
+    def test_empty_compressed_content_falls_back_to_original(self):
+        """Empty string is an already-attempted marker, not usable compressed content."""
+        message = Message(role="tool", content="original tool result", compressed_content="")
+        assert message.compressed_content == ""
+        assert message.get_content(use_compressed_content=True) == "original tool result"
+        assert message.get_content(use_compressed_content=False) == "original tool result"
+
+    def test_non_empty_compressed_content_is_returned(self):
+        """Successful compression is returned when requested."""
+        message = Message(
+            role="tool",
+            content="original tool result",
+            compressed_content="some compressed result",
+        )
+        assert message.get_content(use_compressed_content=True) == "some compressed result"
+        assert message.get_content(use_compressed_content=False) == "original tool result"
+
+    def test_empty_compressed_content_survives_to_dict_from_dict(self):
+        """Empty-string marker must round-trip so compression is not retried after persist."""
+        message = Message(role="tool", content="original tool result", compressed_content="")
+        restored = Message.from_dict(message.to_dict())
+        assert restored.compressed_content == ""
+        assert restored.get_content(use_compressed_content=True) == "original tool result"
