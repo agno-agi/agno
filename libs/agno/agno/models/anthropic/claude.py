@@ -191,9 +191,11 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
-        # Auto-enable trailing user message for models that don't support prefill
+        # Auto-enable trailing user message for models that don't support prefill. Prefill is also
+        # rejected while thinking is on, on every model: a history ending in an assistant turn (a
+        # resumed run, or a response truncated inside its thinking) must be followed by a user turn.
         if self.append_trailing_user_message is None:
-            self.append_trailing_user_message = not supports_prefill(self.id)
+            self.append_trailing_user_message = not supports_prefill(self.id) or self._thinking_enabled()
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -265,6 +267,10 @@ class Claude(Model):
                         return True
 
         return False
+
+    def _thinking_enabled(self) -> bool:
+        """Return True when the request will run with thinking on."""
+        return bool(self.thinking) and self.thinking.get("type") != "disabled"  # type: ignore[union-attr]
 
     def _validate_thinking_support(self) -> None:
         """

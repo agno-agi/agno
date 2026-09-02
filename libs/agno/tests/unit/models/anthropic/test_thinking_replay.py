@@ -257,3 +257,61 @@ def test_stored_blocks_that_filter_to_nothing_skip_the_assistant_message():
     api_messages, _ = format_messages([Message(role="user", content="hi"), assistant])
 
     assert [m["role"] for m in api_messages] == ["user"]
+
+
+def test_streamed_omitted_display_thinking_round_trips():
+    # With display omitted, a thinking block streams no thinking_delta at all: only the signature
+    # arrives. reasoning_content stays empty on the message, so the legacy rebuild would drop the
+    # block, but the stored blocks still carry it and it must accompany the tool_use it belongs to.
+    model = Claude(id="claude-sonnet-4-5", api_key="x")
+    response = AnthropicMessage(
+        id="msg_1",
+        model="claude-sonnet-4-5",
+        role="assistant",
+        type="message",
+        stop_reason="tool_use",
+        usage=Usage(input_tokens=1, output_tokens=1),
+        content=[
+            ThinkingBlock(type="thinking", thinking="", signature="SIG-ONLY"),
+            ToolUseBlock(type="tool_use", id="tu_1", name="f", input={}),
+        ],
+    )
+    delta = model._parse_provider_response_delta(StreamingMessageStopEvent(type="message_stop", message=response))
+    assistant = Message(
+        role="assistant",
+        content=None,
+        reasoning_content=None,
+        provider_data=delta.provider_data,
+        tool_calls=[{"id": "tu_1", "type": "function", "function": {"name": "f", "arguments": "{}"}}],
+    )
+
+    api_messages, _ = format_messages([Message(role="user", content="hi"), assistant])
+
+    blocks = api_messages[1]["content"]
+    assert _block_types(blocks) == ["thinking", "tool_use"]
+    assert blocks[0]["thinking"] == ""
+    assert blocks[0]["signature"] == "SIG-ONLY"
+
+
+def test_stored_blocks_survive_message_serialization():
+    # Session storage goes through Message.to_dict / from_dict; the blocks must come back intact.
+    model = Claude(id="claude-sonnet-4-5", api_key="x")
+    assistant = _assistant_from(model._parse_provider_response(_interleaved_response()))
+
+    restored = Message.from_dict(assistant.to_dict())
+
+    api_messages, _ = format_messages([Message(role="user", content="hi"), restored])
+    assert _signatures(api_messages[1]["content"]) == ["SIG-A", None, "SIG-B", None]
+
+
+def test_replayed_blocks_do_not_alias_stored_blocks():
+    assistant = Message(
+        role="assistant",
+        content="x",
+        provider_data={"content_blocks": [{"type": "text", "text": "x"}]},
+    )
+
+    api_messages, _ = format_messages([Message(role="user", content="hi"), assistant])
+    api_messages[1]["content"][0]["cache_control"] = {"type": "ephemeral"}
+
+    assert "cache_control" not in assistant.provider_data["content_blocks"][0]

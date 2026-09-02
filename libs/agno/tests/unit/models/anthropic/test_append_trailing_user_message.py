@@ -282,6 +282,36 @@ class TestAutoDetection:
 
         assert Claude(id="claude-sonnet-5-0").append_trailing_user_message is True
 
+    def test_thinking_enabled_auto_enabled_on_prefill_model(self):
+        # Prefill is rejected while thinking is on, so a prefill-capable model still needs the
+        # trailing user turn (a resumed run, or a response truncated inside its thinking).
+        from agno.models.anthropic import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "enabled", "budget_tokens": 1024})
+        assert model.append_trailing_user_message is True
+
+    def test_adaptive_thinking_auto_enabled_on_prefill_model(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "adaptive"})
+        assert model.append_trailing_user_message is True
+
+    def test_thinking_disabled_type_keeps_prefill_default(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "disabled"})
+        assert model.append_trailing_user_message is False
+
+    def test_user_override_respected_with_thinking(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(
+            id="claude-sonnet-4-5-20250929",
+            thinking={"type": "enabled", "budget_tokens": 1024},
+            append_trailing_user_message=False,
+        )
+        assert model.append_trailing_user_message is False
+
 
 class TestAutoDetectionVertexAI:
     """Tests for VertexAI Claude auto-detection."""

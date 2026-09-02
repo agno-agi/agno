@@ -171,7 +171,8 @@ def _anthropic_stored_assistant_blocks(message: Message) -> Optional[List[Dict[s
             continue
         if block.get("type") == "tool_use" and block.get("id") not in tool_call_ids:
             continue
-        replay.append(block)
+        # Copy so request-time edits to the payload can never reach the stored session message.
+        replay.append(dict(block))
     return replay
 
 
@@ -640,8 +641,7 @@ def format_messages(
                         blk = _anthropic_coerce_content_block(item)
                         if blk is None:
                             continue
-                        block_type = blk.get("type") if isinstance(blk, dict) else None
-                        if block_type == "tool_use" and message.tool_calls:
+                        if _anthropic_block_type(blk) == "tool_use" and message.tool_calls:
                             continue
                         identity = _anthropic_block_identity(blk)
                         if identity is not None:
