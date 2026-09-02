@@ -49,8 +49,8 @@ class AwsBedrock(Model):
        - AWS_REGION
     2. Or provide a boto3 Session object
 
-    For async support, you also need aioboto3 installed:
-       pip install aioboto3
+    For async support, install aioboto3 (`pip install aioboto3`), or supply an already-entered
+    async_client.
 
     Not all Bedrock models support all features. See this documentation for more information: https://docs.aws.amazon.com/bedrock/latest/userguide/conversation-inference-supported-models-features.html
 
@@ -98,7 +98,9 @@ class AwsBedrock(Model):
     @staticmethod
     def _check_async_client(client: Any) -> None:
         """
-        Reject an `async_client` that cannot serve `await client.converse(...)`.
+        Reject `async_client` objects that are known to be unusable: one with no `converse`, or a
+        sync boto3 client. Best-effort — an object with a sync `converse` still passes here and fails
+        at call time.
 
         botocore generates `converse` as a plain function on both its sync and async clients, so the
         sync client is recognised by its packages rather than by inspecting the method.
