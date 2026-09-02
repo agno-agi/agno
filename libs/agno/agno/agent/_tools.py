@@ -170,8 +170,8 @@ def get_tools(
     compaction = getattr(agent, "compaction", None)
     if compaction is not None and getattr(compaction, "searchable", False):
         archive_tools = compaction.tools_for(session.session_id, agent.db)
-        if archive_tools is not None:
-            agent_tools.append(archive_tools)
+        if archive_tools:
+            agent_tools.extend(archive_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:
@@ -313,8 +313,8 @@ async def aget_tools(
     compaction = getattr(agent, "compaction", None)
     if compaction is not None and getattr(compaction, "searchable", False):
         archive_tools = compaction.tools_for(session.session_id, agent.db)
-        if archive_tools is not None:
-            agent_tools.append(archive_tools)
+        if archive_tools:
+            agent_tools.extend(archive_tools)
 
     # Add tools for accessing memory
     if agent.read_chat_history:

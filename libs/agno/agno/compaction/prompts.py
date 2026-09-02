@@ -54,9 +54,9 @@ in Critical context when they matter."""
 # "check the archive first" on exactly the questions that need it.
 ARCHIVE_AWARE_PROMPT = """
 
-The full transcript of the folded segment remains available to the agent at `{archive_path}`.
+The full transcript of the folded segment remains available to the agent.
 End the summary with one line beginning "Not covered here:" naming the kinds of detail a reader
-would have to look up there - for example bulk tabular data, long tool output, or full error
+would have to look up - for example bulk tabular data, long tool output, or full error
 text. Omit the line only if the summary genuinely preserves every specific in the segment."""
 
 # Appended to the injected summary message when the archive is readable by the agent. States the
@@ -65,7 +65,7 @@ text. Omit the line only if the summary genuinely preserves every specific in th
 # likely to have kept.
 ARCHIVE_LOOKUP_INSTRUCTION = """
 
-The full text of the folded conversation is stored at `{archive_path}`.
+The full text of the folded conversation is stored and searchable.
 Before answering any question about it that calls for an exact value - an identifier, figure,
-name, quote, command, or error message - read or search that file rather than relying on this
+name, quote, command, or error message - search it rather than relying on this
 summary. Say you do not know only after looking."""

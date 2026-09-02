@@ -5,6 +5,7 @@ discarded — never stored, never appended to, never re-read. Canonical messages
 every transformation lands on a shallow copy with the changed attribute rebound.
 """
 
+import re
 from typing import List, Optional
 
 from agno.compaction._cut import is_injected_compaction_message, is_offload_envelope, leading_system_count
@@ -12,9 +13,40 @@ from agno.compaction.prompts import ELISION_PLACEHOLDER, SUMMARY_PREFIX
 from agno.compaction.types import CompactionRecord
 from agno.models.message import Message
 
+_RESULT_ID_PATTERN = re.compile(r'<result id="([^"]+)"')
+_MAX_SURVIVING_IDS = 100
 
-def summary_message(record: CompactionRecord, suffix: Optional[str] = None) -> Message:
+
+def surviving_result_ids(folded: List[Message]) -> List[str]:
+    """Result ids from offload envelopes that this fold is about to remove.
+
+    An envelope's id is the only handle the model has on a stored payload, so folding one away
+    silently orphans it. Pinning envelopes in the kept tail was the other option, but a single
+    early envelope then caps the boundary forever and compaction stops working entirely. Carrying
+    the ids forward keeps the payloads reachable at a bounded, constant cost.
+    """
+    ids: List[str] = []
+    for message in folded:
+        if not is_offload_envelope(message):
+            continue
+        content = message.content if isinstance(message.content, str) else ""
+        match = _RESULT_ID_PATTERN.search(content)
+        if match and match.group(1) not in ids:
+            ids.append(match.group(1))
+        if len(ids) >= _MAX_SURVIVING_IDS:
+            break
+    return ids
+
+
+def summary_message(
+    record: CompactionRecord, suffix: Optional[str] = None, result_ids: Optional[List[str]] = None
+) -> Message:
     content = SUMMARY_PREFIX + (record.summary or "")
+    if result_ids:
+        content += (
+            "\n\nStored tool results from the folded conversation remain readable with "
+            f"read_result(id): {', '.join(result_ids)}"
+        )
     if suffix:
         content += suffix
     return Message(role="user", content=content, from_history=True)
@@ -58,7 +90,7 @@ def build_view(
 
     view: List[Message] = list(messages[:lead])
     if boundary_index is not None and record is not None:
-        view.append(summary_message(record, summary_suffix))
+        view.append(summary_message(record, summary_suffix, surviving_result_ids(messages[lead:boundary_index])))
         body_start = boundary_index
     else:
         body_start = lead

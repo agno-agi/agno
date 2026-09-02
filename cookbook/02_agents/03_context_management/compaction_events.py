@@ -67,8 +67,8 @@ async def main():
                     print(
                         f"  Tokens: {chunk.tokens_before} -> {chunk.tokens_after} (saved {saved}, {reduction:.1f}%)"
                     )
-                if chunk.archive_path:
-                    print(f"  Originals archived at: {chunk.archive_path}")
+                if chunk.archived:
+                    print("  Originals archived and searchable")
 
             elif chunk.event == RunEvent.run_completed.value:
                 print("[RunCompleted]")

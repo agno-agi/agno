@@ -518,7 +518,7 @@ class CompactionCompletedEvent(BaseAgentRunEvent):
     messages_compacted: Optional[int] = None
     tokens_before: Optional[int] = None
     tokens_after: Optional[int] = None
-    archive_path: Optional[str] = None
+    archived: Optional[bool] = None
 
 
 @dataclass

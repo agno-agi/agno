@@ -59,7 +59,7 @@ if __name__ == "__main__":
             r = run.compaction
             print(
                 f"\n[compacted {r.messages_compacted} messages: "
-                f"{r.tokens_before} -> {r.tokens_after} tokens, archived at {r.archive_path}]"
+                f"{r.tokens_before} -> {r.tokens_after} tokens, archived={r.archived}]"
             )
 
     # The summary shortens the request, never the record: every message the

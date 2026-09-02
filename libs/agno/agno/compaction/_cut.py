@@ -88,8 +88,9 @@ def _is_durable_anchor(message: Message, *, allow_tool_batch_heads: bool = True)
 
 def choose_boundary(
     messages: List[Message],
-    keep_tokens: int,
+    keep_tokens: Optional[int] = None,
     *,
+    keep_from_index: Optional[int] = None,
     min_index: int = 0,
     allow_tool_batch_heads: bool = True,
 ) -> Optional[int]:
@@ -105,7 +106,13 @@ def choose_boundary(
     """
     lead = leading_system_count(messages)
     floor_index = max(min_index, lead)
-    candidate = keep_tail_start(messages, keep_tokens, start=floor_index)
+    # A caller that already knows where the tail starts - "the last N runs" is an index, not a
+    # size - passes it directly. Converting such a request into a token budget and walking
+    # backward to rediscover the same index is only indirection.
+    if keep_from_index is not None:
+        candidate = max(keep_from_index, floor_index)
+    else:
+        candidate = keep_tail_start(messages, keep_tokens or 0, start=floor_index)
     if candidate <= floor_index:
         return None
     # An oversized newest message can push the walk past the end; a tail of at least one message

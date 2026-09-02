@@ -672,9 +672,7 @@ class TestSearchSurfacesQueryEmbeddingFailures:
                 )
                 if not embeds:
                     continue
-                if not any(
-                    isinstance(h.type, ast.Name) and h.type.id == "EmbeddingError" for h in block.handlers
-                ):
+                if not any(isinstance(h.type, ast.Name) and h.type.id == "EmbeddingError" for h in block.handlers):
                     unguarded.append(f"{fn.name}@L{block.lineno}")
 
         assert not unguarded, (

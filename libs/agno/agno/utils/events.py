@@ -989,7 +989,7 @@ def create_compaction_completed_event(
     messages_compacted: Optional[int] = None,
     tokens_before: Optional[int] = None,
     tokens_after: Optional[int] = None,
-    archive_path: Optional[str] = None,
+    archived: Optional[bool] = None,
 ) -> CompactionCompletedEvent:
     return CompactionCompletedEvent(
         session_id=from_run_response.session_id,
@@ -999,7 +999,7 @@ def create_compaction_completed_event(
         messages_compacted=messages_compacted,
         tokens_before=tokens_before,
         tokens_after=tokens_after,
-        archive_path=archive_path,
+        archived=archived,
     )
 
 

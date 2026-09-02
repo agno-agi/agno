@@ -44,27 +44,42 @@ from agno.utils.message import copy_history_message, filter_tool_calls, get_text
 from agno.utils.prompts import get_json_output_prompt, get_response_model_format_prompt
 from agno.utils.timer import Timer
 
-_COMPACTION_SESSION_KEY = "compaction"
 
+def _stored_compaction(agent: "Agent", session: AgentSession, up_to_run_id: Optional[str] = None) -> Optional[Any]:
+    """The compaction in force for this run.
 
-def _stored_compaction(session: AgentSession) -> Optional[Any]:
-    """The last compaction for this session, if one was recorded."""
+    Read from the record table rather than from a value on the session: records are immutable
+    facts about single runs, so two containers writing different runs never clobber one another,
+    and a resumed run can resolve the fold it actually saw.
+    """
     from agno.compaction.types import CompactionRecord
 
-    data = (session.session_data or {}).get(_COMPACTION_SESSION_KEY)
-    if not data:
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None:
+        return None
+    archive = compaction.archive_for(session.session_id, agent.db)
+    if archive is None:
+        return None
+    row = archive.latest(up_to_run_id)
+    if not row:
         return None
     try:
-        return CompactionRecord.from_dict(data)
-    except Exception as e:
+        return CompactionRecord.from_dict(row)
+    except Exception as e:  # noqa: BLE001
         log_warning(f"Ignoring unreadable compaction record: {e}")
         return None
 
 
-def _store_compaction(session: AgentSession, record: Any) -> None:
-    if session.session_data is None:
-        session.session_data = {}
-    session.session_data[_COMPACTION_SESSION_KEY] = record.to_dict()
+def _compaction_as_of(run_response: Optional[RunOutput]) -> Optional[str]:
+    """The run whose fold this run must inherit, if it is resuming one.
+
+    A fresh run returns None and takes the latest. A fork or regeneration returns the run it
+    branched from, so it rebuilds the context that run actually had rather than one summarizing
+    its own future.
+    """
+    if run_response is None:
+        return None
+    return getattr(run_response, "forked_from_run_id", None) or getattr(run_response, "regenerated_from", None)
 
 
 def _last_input_tokens(session: AgentSession) -> Optional[int]:
@@ -89,37 +104,14 @@ def _compaction_inputs(agent: "Agent", session: AgentSession) -> Dict[str, Any]:
     }
 
 
-def _log_compaction(record: Any, before: List[Message], after: List[Message], inputs: Dict[str, Any]) -> None:
-    """Report what one compaction achieved, and record the size it left behind.
-
-    Both sides are measured locally, over the two lists this compaction turned
-    into each other, so the numbers are comparable and the report costs
-    nothing. ``Model.count_tokens`` is deliberately not used: on Anthropic it
-    is a network round trip, and OpenAI rejects a list with no user message -
-    which is exactly the shape a compacted list can have.
-
-    The trigger's estimate - the previous run's whole request as the provider
-    billed it - measures something else entirely, so it is overwritten here
-    rather than differenced against ``tokens_after``. Reporting the two
-    together produced "saved -32 tokens" on a compaction that had in fact
-    shrunk the context.
-    """
-    from agno.utils.tokens import count_tokens
-
-    model = inputs.get("model")
-    model_id = getattr(model, "id", None) or "gpt-4o"
-    try:
-        record.tokens_before = count_tokens(before, model_id=model_id)
-        record.tokens_after = count_tokens(after, model_id=model_id)
-    except Exception:  # noqa: BLE001 - a log line must never fail a run
-        pass
-
+def _log_compaction(record: Any, inputs: Dict[str, Any]) -> None:
+    """Report what one fold achieved. Sizes were measured when the record was built."""
     detail = f"Compacted {record.messages_compacted} messages"
     if record.tokens_before and record.tokens_after:
         saved = record.tokens_before - record.tokens_after
         detail += f" ({record.tokens_before} -> {record.tokens_after} tokens, saved {saved})"
-    if record.archive_path:
-        detail += f", archived at {record.archive_path}"
+    if record.archived:
+        detail += ", originals archived"
     log_info(detail)
 
 
@@ -137,7 +129,7 @@ def _compaction_events(run_response: Optional[RunOutput], record: Any, started: 
             messages_compacted=record.messages_compacted,
             tokens_before=record.tokens_before,
             tokens_after=record.tokens_after,
-            archive_path=record.archive_path,
+            archived=record.archived,
         )
     ]
 
@@ -159,7 +151,7 @@ def apply_compaction(
     if compaction is None or not history:
         return history
 
-    record = _stored_compaction(session)
+    record = _stored_compaction(agent, session, _compaction_as_of(run_response))
     # A stored compaction is replayed rather than recomputed, so the summary is
     # paid for once and the prompt prefix stays stable between runs.
     in_context = compaction.apply_record(history, record) if record is not None else history
@@ -189,14 +181,14 @@ def apply_compaction(
         previous=record,
         run_metrics=run_response.metrics if run_response is not None else None,
         tokens_before=inputs["last_input_tokens"],
+        run_id=run_response.run_id if run_response is not None else None,
     )
     if new_record is None:
         return in_context
 
     compacted = compaction.apply_record(history, new_record)
     # Measure before storing, so the persisted record carries the real sizes.
-    _log_compaction(new_record, in_context, compacted, inputs)
-    _store_compaction(session, new_record)
+    _log_compaction(new_record, inputs)
     # Surface it on the run, so `run.compaction` reports what happened here.
     if run_response is not None:
         run_response.compaction = new_record
@@ -216,7 +208,7 @@ async def aapply_compaction(
     if compaction is None or not history:
         return history
 
-    record = _stored_compaction(session)
+    record = _stored_compaction(agent, session, _compaction_as_of(run_response))
     in_context = compaction.apply_record(history, record) if record is not None else history
 
     inputs = _compaction_inputs(agent, session)
@@ -242,14 +234,14 @@ async def aapply_compaction(
         previous=record,
         run_metrics=run_response.metrics if run_response is not None else None,
         tokens_before=inputs["last_input_tokens"],
+        run_id=run_response.run_id if run_response is not None else None,
     )
     if new_record is None:
         return in_context
 
     compacted = compaction.apply_record(history, new_record)
     # Measure before storing, so the persisted record carries the real sizes.
-    _log_compaction(new_record, in_context, compacted, inputs)
-    _store_compaction(session, new_record)
+    _log_compaction(new_record, inputs)
     # Surface it on the run, so `run.compaction` reports what happened here.
     if run_response is not None:
         run_response.compaction = new_record

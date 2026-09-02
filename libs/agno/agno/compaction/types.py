@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from time import time
 from typing import Any, Dict, Optional
 
 # The namespace prefix every compaction archive lives under. Sibling to the
@@ -15,11 +16,10 @@ ARCHIVE_NAMESPACE_PREFIX = "history"
 class CompactionRecord:
     """What one compaction did: the summary, and where the originals went.
 
-    Persisted in ``AgentSession.session_data`` so a later run reuses the
-    summary instead of paying for it again. ``archive_path`` is None when the
-    archive could not be written (a db that cannot back AgentFS, or a quota
-    refusal); the summary still stands, it is simply no longer recoverable in
-    full, which is why the two fields are separate.
+    Persisted as a row in ``agno_compactions`` so a later run replays the fold rather than paying
+    for it again. ``archived`` is False when the transcript could not be stored - a database that
+    does not implement the optional contract, or a write that failed. The summary still stands; it
+    is simply no longer recoverable in full, which is why the two are separate.
     """
 
     # Number of history messages this compaction replaced.
@@ -38,11 +38,17 @@ class CompactionRecord:
     # bulk of a tool-heavy transcript without paying a summarizer for it. The transcript itself
     # is untouched; only the view elides.
     elision_watermark_message_id: Optional[str] = None
-    # Archive file holding the replaced messages verbatim, if one was written.
-    archive_path: Optional[str] = None
+    # Row id of this record, and the run that produced it. Together they make the record a fact
+    # about one run rather than a value shared by the session.
+    id: Optional[str] = None
+    run_id: Optional[str] = None
+    # Whether the folded transcript was stored alongside this record.
+    archived: bool = False
     tokens_before: Optional[int] = None
     tokens_after: Optional[int] = None
-    created_at: Optional[int] = None
+    # Stamped at construction: the row requires it, and a record without a time cannot be
+    # ordered in the chain that resolves which fold is in force.
+    created_at: int = field(default_factory=lambda: int(time()))
 
     def to_dict(self) -> Dict[str, Any]:
         _dict = {
@@ -50,7 +56,9 @@ class CompactionRecord:
             "summary": self.summary,
             "first_kept_message_id": self.first_kept_message_id,
             "elision_watermark_message_id": self.elision_watermark_message_id,
-            "archive_path": self.archive_path,
+            "id": self.id,
+            "run_id": self.run_id,
+            "archived": self.archived,
             "tokens_before": self.tokens_before,
             "tokens_after": self.tokens_after,
             "created_at": self.created_at,
@@ -64,10 +72,12 @@ class CompactionRecord:
             summary=data.get("summary", ""),
             first_kept_message_id=data.get("first_kept_message_id"),
             elision_watermark_message_id=data.get("elision_watermark_message_id"),
-            archive_path=data.get("archive_path"),
+            id=data.get("id") or data.get("compaction_id"),
+            run_id=data.get("run_id"),
+            archived=bool(data.get("archived") or data.get("archived_messages")),
             tokens_before=data.get("tokens_before"),
             tokens_after=data.get("tokens_after"),
-            created_at=data.get("created_at"),
+            created_at=data.get("created_at") or int(time()),
         )
 
 

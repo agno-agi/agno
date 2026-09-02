@@ -4,7 +4,7 @@ from pathlib import Path
 import pytest
 
 from agno.compaction import Compaction, CompactionRecord
-from agno.compaction.archive import namespace_for, render_messages
+from agno.compaction.archive import render_messages
 from agno.models.message import Message
 
 
@@ -263,7 +263,7 @@ def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
     it to read a file it cannot open invites a refusal or an invented answer.
     """
     messages = _transcript()
-    archived = _record(messages, 3, summary="s", archive_path="0001.md")
+    archived = _record(messages, 3, summary="s", archived=True)
 
     searchable = Compaction(compact_at_runs=2, searchable=True).apply_record(messages, archived)[0]
     not_searchable = Compaction(compact_at_runs=2).apply_record(messages, archived)[0]
@@ -271,10 +271,10 @@ def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
         messages, _record(messages, 3, summary="s")
     )[0]
 
-    assert "0001.md" in searchable.content
-    assert "read or search that file" in searchable.content
-    assert "0001.md" not in not_searchable.content
-    assert "0001.md" not in no_archive.content
+    assert "searchable" in searchable.content
+    assert "search it rather than relying" in searchable.content
+    assert "searchable" not in not_searchable.content
+    assert "searchable" not in no_archive.content
 
 
 def test_summarizer_is_told_to_flag_gaps_only_when_archived():
@@ -290,7 +290,7 @@ def test_summarizer_is_told_to_flag_gaps_only_when_archived():
 
 def test_record_roundtrips_through_dict():
     record = CompactionRecord(
-        messages_compacted=4, summary="s", first_kept_message_id="m-4", archive_path="0001.md", tokens_before=100
+        messages_compacted=4, summary="s", first_kept_message_id="m-4", archived=True, tokens_before=100
     )
     assert CompactionRecord.from_dict(record.to_dict()) == record
 
@@ -396,7 +396,7 @@ def test_run_output_carries_the_compaction_record():
         messages_compacted=6,
         summary="s",
         first_kept_message_id="m-6",
-        archive_path="0001.md",
+        archived=True,
         tokens_before=100,
         tokens_after=40,
     )
@@ -470,6 +470,101 @@ def test_boundary_never_anchors_on_a_message_that_will_not_persist():
     assert boundary is None or not messages[boundary].temporary
 
 
+def test_envelopes_do_not_count_against_the_fold_ratio():
+    """A pinned envelope must not make every later fold look worthless.
+
+    Envelopes are held in the kept tail by design, so their cost is not something folding could
+    reclaim. Counting them would stall compaction entirely once offloading is on.
+    """
+    envelope = Message(
+        role="tool",
+        tool_call_id="c1",
+        tool_name="dump",
+        content='<result id="res_abc" tool="dump">' + "preview " * 400 + "</result>",
+    )
+    folded = [Message(role="user", content="q " * 300), Message(role="assistant", content="a " * 300)]
+    tail = [envelope, Message(role="user", content="tiny")]
+
+    c = Compaction(compact_at_runs=2)
+
+    assert c._worth_compacting(folded, tail) is True
+
+
+def test_folded_envelope_ids_survive_in_the_summary():
+    """Folding an envelope must not orphan its payload.
+
+    Pinning envelopes in the kept tail was the alternative, but one early envelope then caps the
+    boundary forever and compaction stops working. Carrying the ids forward costs a line.
+    """
+    from agno.compaction._view import build_view
+
+    messages = [
+        Message(role="user", content="fetch"),
+        Message(
+            role="tool",
+            tool_call_id="c1",
+            tool_name="dump",
+            content='<result id="res_abc" tool="dump">preview</result>',
+        ),
+        Message(role="assistant", content="done"),
+        Message(role="user", content="later question"),
+    ]
+    record = CompactionRecord(messages_compacted=3, summary="earlier", first_kept_message_id=messages[3].id)
+
+    view = build_view(messages, record)
+
+    assert "res_abc" in view[0].content
+    assert "read_result" in view[0].content
+
+
+def test_grep_returns_numbered_lines_with_context():
+    from agno.compaction.manager import _grep
+
+    text = "alpha\nbeta\nINC-42 here\ndelta\nepsilon"
+
+    out = _grep(text, "INC-42", context_lines=1)
+
+    assert "3: INC-42 here" in out
+    assert "2: beta" in out
+    assert "4: delta" in out
+    assert "1: alpha" not in out
+
+
+def test_grep_supports_regex():
+    from agno.compaction.manager import _grep
+
+    text = "port 5432 open\nno numbers here"
+
+    assert "5432" in _grep(text, r"port \d+", context_lines=0)
+    assert _grep(text, r"port \d+", context_lines=0).count("\n") == 0
+
+
+def test_grep_falls_back_to_literal_on_bad_regex():
+    """The caller is a model; it may send plain text full of regex metacharacters."""
+    from agno.compaction.manager import _grep
+
+    assert "found" in _grep("a (unclosed found", "(unclosed", context_lines=0)
+
+
+def test_grep_merges_overlapping_context():
+    from agno.compaction.manager import _grep
+
+    text = "\n".join(f"hit {i}" for i in range(5))
+
+    out = _grep(text, "hit", context_lines=2)
+
+    # One merged block, not five overlapping ones.
+    assert "--" not in out
+
+
+def test_regex_patterns_skip_the_sql_prefilter():
+    """A regex is not a valid ILIKE string; prefiltering on it would drop real matches."""
+    from agno.compaction.archive import _is_plain_text
+
+    assert _is_plain_text("INC-88213") is True
+    assert _is_plain_text(r"INC-\d+") is False
+
+
 # --- events --------------------------------------------------------------
 
 
@@ -490,45 +585,63 @@ def test_completed_event_carries_what_happened():
         messages_compacted=6,
         tokens_before=1000,
         tokens_after=200,
-        archive_path="0001.md",
+        archived=True,
     )
 
     assert event.messages_compacted == 6
     assert event.tokens_before == 1000
     assert event.tokens_after == 200
-    assert event.archive_path == "0001.md"
+    assert event.archived is True
 
 
 # --- archive -------------------------------------------------------------
 
 
-def test_archive_roundtrip_and_numbering():
+def test_archive_roundtrip():
+    """A record round-trips through the table with its transcript."""
+    db = _db()
     c = Compaction(compact_at_runs=2)
-    archive = c.archive_for("session-a", _db())
-    messages = [Message(role="assistant", content="policy KR-9912 applies")]
+    archive = c.archive_for("session-a", db)
+    record = CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c1", run_id="r1")
 
-    first = archive.write(messages)
-    assert first == "0001.md"
-    assert "KR-9912" in archive.read(first)
-    assert archive.write(messages) == "0002.md"
+    assert archive.write(record, [Message(role="assistant", content="policy KR-9912 applies")]) is True
+    row = archive.latest()
+    assert row["summary"] == "s"
+    assert "KR-9912" in row["archived_messages"]
 
 
 def test_archive_is_isolated_per_session():
     """One session must never be able to read another's history."""
     db = _db()
     c = Compaction(compact_at_runs=2)
-    c.archive_for("session-a", db).write([Message(role="assistant", content="secret KR-9912")])
+    c.archive_for("session-a", db).write(
+        CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c1"),
+        [Message(role="assistant", content="secret KR-9912")],
+    )
 
-    assert c.resolve_fs("session-a", db).search("KR-9912")
-    assert not c.resolve_fs("session-b", db).search("KR-9912")
+    assert c.archive_for("session-a", db).search("KR-9912")
+    assert not c.archive_for("session-b", db).search("KR-9912")
 
 
-def test_namespaces_do_not_collide_on_case():
-    assert namespace_for("Session-A") != namespace_for("session-a")
+def test_resumed_run_resolves_the_fold_that_run_saw():
+    """A fork must not inherit a fold that summarizes its own future."""
+    db = _db()
+    c = Compaction(compact_at_runs=2)
+    archive = c.archive_for("s", db)
+    for cid, run_id, summary, at in (("c1", "r1", "early", 100), ("c2", "r3", "late", 200)):
+        record = CompactionRecord(
+            messages_compacted=1, summary=summary, first_kept_message_id="m1", id=cid, run_id=run_id
+        )
+        record.created_at = at
+        archive.write(record, [Message(role="user", content="x")])
+
+    assert archive.latest()["summary"] == "late"
+    assert archive.latest("r3")["summary"] == "late"
+    assert archive.latest("r1")["summary"] == "early"
 
 
-def test_archive_degrades_when_db_cannot_back_it():
-    """A db AgentFS cannot use loses the archive, not the run."""
+def test_archive_degrades_when_db_cannot_store_records():
+    """A db without the optional contract loses the archive, not the run."""
 
     class UnsupportedDb:
         pass
@@ -564,15 +677,14 @@ def test_searchable_exposes_read_only_tools():
     """Once something is archived, the read-only surface is attached."""
     c = Compaction(compact_at_runs=2, searchable=True)
     db = _db()
-    c.archive_for("s", db).write([Message(role="user", content="something to find")])
+    c.archive_for("s", db).write(
+        CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c9"),
+        [Message(role="user", content="something to find")],
+    )
 
-    toolkit = c.tools_for("s", db)
+    tools = c.tools_for("s", db)
 
-    assert sorted(f.name for f in toolkit.functions.values()) == [
-        "list_files",
-        "read_file",
-        "search_content",
-    ]
+    assert [t.__name__ for t in tools] == ["search_compacted_history"]
 
 
 def test_no_tools_until_something_is_archived():
@@ -600,7 +712,10 @@ def test_searchable_tools_reach_the_agent():
 
     db = _db()
     compaction = Compaction(compact_at_runs=2, searchable=True)
-    compaction.archive_for("s", db).write([Message(role="user", content="archived")])
+    compaction.archive_for("s", db).write(
+        CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c8"),
+        [Message(role="user", content="archived")],
+    )
     agent = Agent(model=OpenAIResponses(id="gpt-4o-mini"), db=db, compaction=compaction)
     tools = get_tools(
         agent,
@@ -609,9 +724,8 @@ def test_searchable_tools_reach_the_agent():
         session=AgentSession(session_id="s"),
     )
 
-    names = [name for tool in tools for name in (getattr(tool, "functions", None) or {})]
-    assert "search_content" in names
-    assert "read_file" in names
+    names = [getattr(t, "__name__", "") for t in tools]
+    assert "search_compacted_history" in names
 
 
 def test_archive_tools_absent_when_not_searchable():
@@ -634,8 +748,8 @@ def test_archive_tools_absent_when_not_searchable():
         session=AgentSession(session_id="s"),
     )
 
-    names = [name for tool in tools for name in (getattr(tool, "functions", None) or {})]
-    assert "search_content" not in names
+    names = [getattr(t, "__name__", "") for t in tools]
+    assert "search_compacted_history" not in names
 
 
 def test_not_searchable_by_default():
