@@ -14,7 +14,7 @@ db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
 db = PostgresDb(db_url=db_url)
 
 agent = Agent(
-    model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
+    model=CerebrasOpenAI(id="gpt-oss-120b"),
     db=db,
     tools=[WebSearchTools()],
     add_history_to_context=True,

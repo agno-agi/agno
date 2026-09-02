@@ -28,7 +28,7 @@ import httpx
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS, MCPServerConfig
+from agno.os import AgentOS, MCPConfig
 from agno.os.settings import AgnoAPISettings
 from fastmcp import Client
 
@@ -85,7 +85,7 @@ agent_os = AgentOS(
     db=db,
     agents=[secure_agent],
     settings=AgnoAPISettings(os_security_key=OS_SECURITY_KEY),
-    mcp_server=MCPServerConfig(
+    mcp=MCPConfig(
         include_tags={"core", "session"},
         exclude_tags={"session"},
         result_mode="full",

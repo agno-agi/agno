@@ -37,7 +37,7 @@ async def create_filesystem_agent(session):
 
     # Create an agent with the MCP toolkit and Groq's fast LLM
     return Agent(
-        model=Groq(id="llama-3.3-70b-versatile"),
+        model=Groq(id="openai/gpt-oss-120b"),
         tools=[mcp_tools],
         instructions=dedent("""\
             You are a high-performance filesystem assistant powered by Groq and MCP.
