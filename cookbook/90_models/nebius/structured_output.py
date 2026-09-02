@@ -38,7 +38,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses a structured output
 structured_output_agent = Agent(
-    model=Nebius(id="Qwen/Qwen3-30B-A3B"),
+    model=Nebius(id="openai/gpt-oss-120b"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     output_schema=MovieScript,
 )
