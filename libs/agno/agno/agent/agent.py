@@ -231,6 +231,8 @@ class Agent:
     # When True: Each run stores all messages including history from previous runs.
     # This allows inspecting full context in stored runs but causes quadratic storage growth.
     store_history_messages: bool = False
+    # If True, store session_state snapshots in run output history.
+    store_run_session_state: bool = True
 
     # --- System message settings ---
     # Provide the system message as a string or function
@@ -423,6 +425,7 @@ class Agent:
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         store_tool_messages: bool = True,
         store_history_messages: bool = False,
+        store_run_session_state: bool = True,
         knowledge: Optional[KnowledgeProtocol] = None,
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
@@ -568,6 +571,7 @@ class Agent:
         self.media_storage = media_storage
         self.store_tool_messages = store_tool_messages
         self.store_history_messages = store_history_messages
+        self.store_run_session_state = store_run_session_state
 
         self.knowledge = knowledge
         self.knowledge_filters = knowledge_filters
