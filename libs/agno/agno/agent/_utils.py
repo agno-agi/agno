@@ -124,6 +124,7 @@ SHARED_BY_REFERENCE_FIELDS = (
     "session_summary_manager",
     "compression_manager",
     "learning",
+    "filesystem",
     "skills",
 )
 
@@ -153,6 +154,14 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
             continue
 
         field_value = getattr(agent, f.name)
+        if f.name == "tools" and agent.filesystem and agent._filesystem is not None and isinstance(field_value, list):
+            from agno.fs.toolkit import FileSystemTools
+
+            field_value = [
+                tool
+                for tool in field_value
+                if not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
+            ]
         if field_value is not None:
             try:
                 fields_for_new_agent[f.name] = deep_copy_field(agent, f.name, field_value)
@@ -167,6 +176,7 @@ def deep_copy(agent: Agent, *, update: Optional[Dict[str, Any]] = None) -> Agent
     # Create a new Agent
     try:
         new_agent = agent.__class__(**fields_for_new_agent)
+        new_agent._filesystem_user_isolation = agent._filesystem_user_isolation
         log_debug(f"Created new {agent.__class__.__name__}")
         return new_agent
     except Exception as e:

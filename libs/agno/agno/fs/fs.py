@@ -143,6 +143,62 @@ class FileSystem:
         self.max_namespace_bytes = max_namespace_bytes
         self._placeholders: Tuple[str, ...] = parse_namespace_template(self.namespace)
 
+    def to_dict(self) -> dict:
+        """Serialize built-in backend settings without serializing live connections."""
+        from agno.fs.db import DbFileSystem
+        from agno.fs.local import LocalFileSystem
+
+        if isinstance(self.backend, DbFileSystem):
+            backend = {
+                "type": "db",
+                "table_name": self.backend.table_name,
+                "db_schema": self.backend.db_schema,
+            }
+        elif isinstance(self.backend, LocalFileSystem):
+            backend = {"type": "local", "root": str(self.backend.root)}
+        else:
+            raise TypeError(
+                f"Cannot serialize filesystem backend {type(self.backend).__name__}; "
+                "configure this filesystem from application code."
+            )
+        return {
+            "backend": backend,
+            "namespace": self.namespace,
+            "max_file_bytes": self.max_file_bytes,
+            "max_namespace_bytes": self.max_namespace_bytes,
+        }
+
+    @classmethod
+    def from_dict(cls, data: dict, *, db: Any = None) -> "FileSystem":
+        """Rebuild a filesystem config, reusing the owning Agent database when needed."""
+        backend_config = data.get("backend") or {}
+        backend_type = backend_config.get("type")
+        if backend_type == "db":
+            if db is None:
+                raise ValueError("A database is required to restore a database-backed filesystem")
+            from agno.fs.db import DbFileSystem
+
+            backend: BaseFS = DbFileSystem(
+                db=db,
+                table_name=backend_config.get("table_name", "agno_fs"),
+                db_schema=backend_config.get("db_schema", "fs"),
+            )
+        elif backend_type == "local":
+            from agno.fs.local import LocalFileSystem
+
+            root = backend_config.get("root")
+            if not isinstance(root, str) or not root:
+                raise ValueError("A root path is required to restore a local filesystem")
+            backend = LocalFileSystem(root=root)
+        else:
+            raise ValueError(f"Unsupported filesystem backend type: {backend_type!r}")
+        return cls(
+            backend=backend,
+            namespace=data.get("namespace", DEFAULT_NAMESPACE),
+            max_file_bytes=data.get("max_file_bytes", 1_000_000),
+            max_namespace_bytes=data.get("max_namespace_bytes", 20_000_000),
+        )
+
     # ------------------------------------------------------------------
     # Templated namespaces
     # ------------------------------------------------------------------
@@ -215,6 +271,11 @@ class FileSystem:
         """Return the file's content, or ``None`` if it does not exist."""
         namespace = self._require_resolved()
         return self.backend.read(namespace, normalize_path(path))
+
+    def stat(self, path: str) -> Optional[FileMeta]:
+        """Return metadata for one file, or ``None`` if it does not exist."""
+        namespace = self._require_resolved()
+        return self.backend._stat(namespace, normalize_path(path))
 
     def write(
         self,
@@ -390,6 +451,10 @@ class FileSystem:
     async def aread(self, path: str) -> Optional[str]:
         """Async variant of ``read``."""
         return await asyncio.to_thread(self.read, path)
+
+    async def astat(self, path: str) -> Optional[FileMeta]:
+        """Async variant of ``stat``."""
+        return await asyncio.to_thread(self.stat, path)
 
     async def awrite(
         self,

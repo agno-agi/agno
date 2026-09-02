@@ -54,6 +54,7 @@ from agno.os.routers.approvals import get_approval_router
 from agno.os.routers.components import get_components_router
 from agno.os.routers.database import get_database_router
 from agno.os.routers.evals import get_eval_router
+from agno.os.routers.filesystem import get_filesystem_router
 from agno.os.routers.health import get_health_router
 from agno.os.routers.home import get_home_router
 from agno.os.routers.job_queue import get_queue_router
@@ -728,6 +729,7 @@ class AgentOS:
         self._add_router(app, get_health_router(health_endpoint="/health"))
         self._add_router(app, get_info_router(self))
         self._add_router(app, get_base_router(self, settings=self.settings))
+        self._add_router(app, get_filesystem_router(self, settings=self.settings))
         self._add_router(app, get_agent_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_team_router(self, settings=self.settings, registry=self.registry))
         self._add_router(app, get_workflow_router(self, settings=self.settings))
@@ -822,10 +824,20 @@ class AgentOS:
         if not self._agents:
             return
 
+        from agno.agent import _init as agent_init
+
         for agent in self._agents:
             # Set the default db to agents without their own
             if self.db is not None and agent.db is None:
                 agent.db = self.db
+            agent_init.set_filesystem_user_isolation(
+                agent,
+                bool(
+                    self.authorization
+                    and self.authorization_config is not None
+                    and self.authorization_config.user_isolation
+                ),
+            )
             # Set the default checkpoint level on agents without their own
             if self.checkpoint is not None and agent.checkpoint is None:
                 agent.checkpoint = self.checkpoint

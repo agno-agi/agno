@@ -873,6 +873,15 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     if agent.add_dependencies_to_context:
         config["add_dependencies_to_context"] = agent.add_dependencies_to_context
 
+    if agent.filesystem is True:
+        config["filesystem"] = True
+    elif agent.filesystem:
+        from agno.fs import FileSystem
+
+        if not isinstance(agent.filesystem, FileSystem):
+            raise TypeError("filesystem must be True, False, None, or a FileSystem instance")
+        config["filesystem"] = agent.filesystem.to_dict()
+
     # --- Agentic Memory settings ---
     # Stored as a registry reference by id, like knowledge: the manager holds
     # a model and callables, so the config names it and the registry supplies
@@ -965,14 +974,23 @@ def to_dict(agent: Agent) -> Dict[str, Any]:
     # Registry.rehydrate_function). Mirrors the parse_tools walk: tools are
     # processed in declaration order and the first one to claim a name wins.
     _owning_toolkit: Dict[str, str] = {}
-    if agent.model is not None and agent.tools and isinstance(agent.tools, list):
+    tools_to_serialize = agent.tools
+    if agent.filesystem and agent._filesystem is not None and isinstance(agent.tools, list):
+        from agno.fs.toolkit import FileSystemTools
+
+        tools_to_serialize = [
+            tool
+            for tool in agent.tools
+            if not (isinstance(tool, FileSystemTools) and tool.fs is agent._filesystem)
+        ]
+    if agent.model is not None and tools_to_serialize and isinstance(tools_to_serialize, list):
         _tools = parse_tools(
             agent,
             model=agent.model,
-            tools=agent.tools,
+            tools=tools_to_serialize,
         )
         _claimed_names: Set[str] = set()
-        for _tool in agent.tools:
+        for _tool in tools_to_serialize:
             if isinstance(_tool, Toolkit):
                 # get_functions() is what parse_tools serializes. Names are claimed
                 # by Function.name, which is what the serialized dict carries.
@@ -1281,6 +1299,18 @@ def from_dict(
             log_warning(f"{component_label} has a serialized db config that could not be resolved.")
             del config["db"]
 
+    # --- Handle FileSystem reconstruction ---
+    if "filesystem" in config and isinstance(config["filesystem"], dict):
+        from agno.fs import FileSystem
+
+        try:
+            config["filesystem"] = FileSystem.from_dict(config["filesystem"], db=config.get("db"))
+        except (TypeError, ValueError) as e:
+            if strict:
+                raise ComponentRehydrationError(f"{component_label} filesystem could not be restored: {e}") from e
+            log_warning(f"{component_label} filesystem could not be restored: {e}")
+            del config["filesystem"]
+
     # --- Handle Schema reconstruction ---
     if "input_schema" in config and isinstance(config["input_schema"], str):
         schema_cls = registry.get_schema(config["input_schema"]) if registry else None
@@ -1389,6 +1419,7 @@ def from_dict(
         # --- Dependencies ---
         dependencies=config.get("dependencies"),
         add_dependencies_to_context=config.get("add_dependencies_to_context", False),
+        filesystem=config.get("filesystem", False),
         # --- Agentic Memory settings ---
         memory_manager=config.get("memory_manager"),
         enable_agentic_memory=config.get("enable_agentic_memory", False),
