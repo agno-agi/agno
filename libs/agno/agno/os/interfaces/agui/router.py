@@ -116,6 +116,8 @@ async def run_entity(
             thread_id=run_input.thread_id,
             run_id=run_id,
             run_state=session_state,
+            team_id=entity.id if isinstance(entity, (Team, RemoteTeam)) else None,
+            team_mode=entity.mode.value if isinstance(entity, Team) and entity.mode else None,
         ):
             yield event
 

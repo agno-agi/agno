@@ -14,9 +14,17 @@ def stream_agno_response_as_agui_events(
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
+    team_id: Optional[str] = None,
+    team_mode: Optional[str] = None,
 ) -> Iterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format."""
-    state = StreamState(thread_id=thread_id, run_id=run_id, run_state=run_state)
+    state = StreamState(
+        thread_id=thread_id,
+        run_id=run_id,
+        team_id=team_id,
+        team_mode=team_mode,
+        run_state=run_state,
+    )
 
     if run_state is not None:
         state.set_state_snapshot(run_state)
@@ -41,9 +49,17 @@ async def async_stream_agno_response_as_agui_events(
     thread_id: str,
     run_id: str,
     run_state: Optional[Dict[str, Any]] = None,
+    team_id: Optional[str] = None,
+    team_mode: Optional[str] = None,
 ) -> AsyncIterator[BaseEvent]:
     """Map the Agno response stream to AG-UI format."""
-    state = StreamState(thread_id=thread_id, run_id=run_id, run_state=run_state)
+    state = StreamState(
+        thread_id=thread_id,
+        run_id=run_id,
+        team_id=team_id,
+        team_mode=team_mode,
+        run_state=run_state,
+    )
 
     if run_state is not None:
         state.set_state_snapshot(run_state)
