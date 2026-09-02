@@ -36,23 +36,26 @@ class ChunkingStrategy(ABC):
         return self.chunk(document)
 
     def clean_text(self, text: str) -> str:
-        """Clean the text by replacing multiple newlines with a single newline"""
-        import re
+        """Collapse every run of whitespace into a single space.
 
-        # Replace multiple newlines with a single newline
-        cleaned_text = re.sub(r"\n+", "\n", text)
-        # Replace multiple spaces with a single space
-        cleaned_text = re.sub(r"\s+", " ", cleaned_text)
-        # Replace multiple tabs with a single tab
-        cleaned_text = re.sub(r"\t+", "\t", cleaned_text)
-        # Replace multiple carriage returns with a single carriage return
-        cleaned_text = re.sub(r"\r+", "\r", cleaned_text)
-        # Replace multiple form feeds with a single form feed
-        cleaned_text = re.sub(r"\f+", "\f", cleaned_text)
-        # Replace multiple vertical tabs with a single vertical tab
-        cleaned_text = re.sub(r"\v+", "\v", cleaned_text)
-
-        return cleaned_text
+        The previous implementation ran six `re.sub` passes. The second of them,
+        `re.sub(r"\\s+", " ", ...)`, already replaces every whitespace character,
+        so the four that followed it could never match and the one before it was
+        redundant. `str.split()` splits on exactly the same character set as `\\s`,
+        so this produces identical output in one pass instead of six.
+        """
+        words = text.split()
+        if not words:
+            # `split()` discards whitespace, so an all-whitespace string collapses
+            # to a single space and an empty string stays empty.
+            return " " if text else text
+        # `split()` also drops leading and trailing whitespace, which the previous
+        # implementation collapsed to a single space rather than removing.
+        if text[0].isspace():
+            words[0] = " " + words[0]
+        if text[-1].isspace():
+            words[-1] = words[-1] + " "
+        return " ".join(words)
 
 
 class ChunkingStrategyType(str, Enum):
