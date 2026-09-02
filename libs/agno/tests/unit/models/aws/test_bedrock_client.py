@@ -35,6 +35,28 @@ class FakeContextManagedAsyncClient(FakeAsyncClient):
         self.closed = True
 
 
+class FakeStreamingAsyncClient(FakeAsyncClient):
+    """Async Bedrock client that also serves the streaming and token-count request paths."""
+
+    def __init__(self):
+        super().__init__()
+        self.converse_stream_calls = 0
+        self.count_tokens_calls = 0
+
+    async def converse_stream(self, **kwargs):
+        self.converse_stream_calls += 1
+
+        async def chunks():
+            yield {"contentBlockDelta": {"delta": {"text": "hel"}}}
+            yield {"contentBlockDelta": {"delta": {"text": "lo"}}}
+
+        return {"stream": chunks()}
+
+    async def count_tokens(self, **kwargs):
+        self.count_tokens_calls += 1
+        return {"inputTokens": 42}
+
+
 def _make_frozen_creds(access_key="ASIATEMP", secret_key="secret", token="token"):
     frozen = MagicMock()
     frozen.access_key = access_key
@@ -302,3 +324,30 @@ class TestAsyncClientGuard:
 
             async with model._async_client() as client:
                 assert client is entered
+
+
+class TestProvidedAsyncClientOtherPaths:
+    @pytest.mark.asyncio
+    async def test_ainvoke_stream_with_provided_client(self):
+        provided = FakeStreamingAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        deltas = [
+            delta
+            async for delta in model.ainvoke_stream(
+                messages=[Message(role="user", content="hi")], assistant_message=Message(role="assistant")
+            )
+        ]
+
+        assert "".join(delta.content for delta in deltas if delta.content) == "hello"
+        assert provided.converse_stream_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_acount_tokens_with_provided_client(self):
+        provided = FakeStreamingAsyncClient()
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
+
+        tokens = await model.acount_tokens(messages=[Message(role="user", content="hi")])
+
+        assert tokens == 42
+        assert provided.count_tokens_calls == 1
