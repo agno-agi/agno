@@ -2,6 +2,7 @@ import asyncio
 import collections.abc
 import json
 from abc import ABC, abstractmethod
+from copy import deepcopy
 from dataclasses import dataclass, field
 from hashlib import md5
 from pathlib import Path
@@ -600,8 +601,10 @@ class Model(ABC):
             if isinstance(tool, Function):
                 _tool_dicts.append({"type": "function", "function": tool.to_dict()})
             else:
-                # If a dict is passed, it is a builtin tool
-                _tool_dicts.append(tool)
+                # If a dict is passed, it is a builtin tool.
+                # Deep copy: provider formatters rewrite tool dicts in place,
+                # and the caller's dict must survive the request unchanged.
+                _tool_dicts.append(deepcopy(tool))
         # Deterministic ordering so prompt caching gets consistent cache hits.
         # Applies across providers — Anthropic, OpenAI, and Gemini prompt/context
         # caching all require stable request prefixes.
