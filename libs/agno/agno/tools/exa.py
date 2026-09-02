@@ -29,6 +29,8 @@ class ExaTools(Toolkit):
         text_length_limit (int): Max length of text content per result. Default is 1000.
         api_key (Optional[str]): Exa API key. Retrieved from `EXA_API_KEY` env variable if not provided.
         num_results (Optional[int]): Default number of search results. Overrides individual searches if set.
+        livecrawl (Optional[str]): Live-crawl mode passed to Exa (e.g. "always", "fallback", "never").
+            Left unset by default, which keeps Exa's own behaviour.
         start_crawl_date (Optional[str]): Include results crawled on/after this date (`YYYY-MM-DD`).
         end_crawl_date (Optional[str]): Include results crawled on/before this date (`YYYY-MM-DD`).
         start_published_date (Optional[str]): Include results published on/after this date (`YYYY-MM-DD`).
@@ -55,7 +57,7 @@ class ExaTools(Toolkit):
         summary: bool = False,
         api_key: Optional[str] = None,
         num_results: Optional[int] = None,
-        livecrawl: str = "always",
+        livecrawl: Optional[str] = None,
         start_crawl_date: Optional[str] = None,
         end_crawl_date: Optional[str] = None,
         start_published_date: Optional[str] = None,
@@ -83,7 +85,7 @@ class ExaTools(Toolkit):
 
         self.summary: bool = summary
         self.num_results: Optional[int] = num_results
-        self.livecrawl: str = livecrawl
+        self.livecrawl: Optional[str] = livecrawl
         self.start_crawl_date: Optional[str] = start_crawl_date
         self.end_crawl_date: Optional[str] = end_crawl_date
         self.start_published_date: Optional[str] = start_published_date
@@ -135,6 +137,11 @@ class ExaTools(Toolkit):
                 if self.text_length_limit:
                     _text = _text[: self.text_length_limit]
                 result_dict["text"] = _text
+            # Summaries are requested (and billed) whenever summary=True; without this
+            # they are parsed out of the response and never reach the model.
+            summary = getattr(result, "summary", None)
+            if summary:
+                result_dict["summary"] = summary
             exa_results_parsed.append(result_dict)
         return json.dumps(exa_results_parsed, indent=4, ensure_ascii=False)
 
@@ -157,6 +164,7 @@ class ExaTools(Toolkit):
             search_kwargs: Dict[str, Any] = {
                 "text": self.text,
                 "summary": self.summary,
+                "livecrawl": self.livecrawl,
                 "num_results": self.num_results or num_results,
                 "start_crawl_date": self.start_crawl_date,
                 "end_crawl_date": self.end_crawl_date,
@@ -199,6 +207,7 @@ class ExaTools(Toolkit):
         query_kwargs: Dict[str, Any] = {
             "text": self.text,
             "summary": self.summary,
+            "livecrawl": self.livecrawl,
         }
 
         try:
@@ -235,6 +244,7 @@ class ExaTools(Toolkit):
         query_kwargs: Dict[str, Any] = {
             "text": self.text,
             "summary": self.summary,
+            "livecrawl": self.livecrawl,
             "include_domains": self.include_domains,
             "exclude_domains": self.exclude_domains,
             "start_crawl_date": self.start_crawl_date,
