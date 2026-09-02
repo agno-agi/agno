@@ -22,11 +22,47 @@ SESSION_TABLE_SCHEMA = {
     "team_data": {"type": JSON, "nullable": True},
     "workflow_data": {"type": JSON, "nullable": True},
     "metadata": {"type": JSON, "nullable": True},
-    "runs": {"type": JSON, "nullable": True},
     "summary": {"type": JSON, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
+
+
+def _get_run_table_schema(session_table_name: str = "agno_sessions") -> dict[str, Any]:
+    """Runs table schema with ``session_id`` FK → sessions ON DELETE CASCADE.
+
+    SQLite requires ``PRAGMA foreign_keys = ON`` on the connection for the
+    constraint to actually enforce — the adapter enables this in its
+    connection init hook.
+    """
+    return {
+        "run_id": {"type": String, "primary_key": True, "nullable": False},
+        "session_id": {
+            "type": String,
+            "nullable": False,
+            "index": True,
+            # Concrete table name (see postgres schemas.py for rationale).
+            "foreign_key": f"{session_table_name}.session_id",
+            "ondelete": "CASCADE",
+        },
+        "run_type": {"type": String, "nullable": False, "index": True},
+        "agent_id": {"type": String, "nullable": True, "index": True},
+        "team_id": {"type": String, "nullable": True, "index": True},
+        "workflow_id": {"type": String, "nullable": True, "index": True},
+        "user_id": {"type": String, "nullable": True, "index": True},
+        "parent_run_id": {"type": String, "nullable": True},
+        "status": {"type": String, "nullable": True, "index": True},
+        "run_index": {"type": BigInteger, "nullable": True},
+        "run_data": {"type": JSON, "nullable": False},
+        "created_at": {"type": BigInteger, "nullable": False, "index": True},
+        "updated_at": {"type": BigInteger, "nullable": True},
+        # Composite index so "most recent N runs of a session"
+        # (WHERE session_id=? ORDER BY run_index DESC LIMIT N) is index-served.
+        "__composite_indexes__": [
+            {"name": "agno_runs_session_id_run_index", "columns": ["session_id", "run_index"]},
+        ],
+    }
+
 
 USER_MEMORY_TABLE_SCHEMA = {
     "memory_id": {"type": String, "primary_key": True, "nullable": False},
@@ -53,6 +89,7 @@ EVAL_TABLE_SCHEMA = {
     "model_id": {"type": String, "nullable": True},
     "model_provider": {"type": String, "nullable": True},
     "evaluated_component_name": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
 }
@@ -71,6 +108,13 @@ KNOWLEDGE_TABLE_SCHEMA = {
     "created_at": {"type": BigInteger, "nullable": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "external_id": {"type": String, "nullable": True},
+    # Uploader. NULL means shared: visible to all (legacy and admin uploads).
+    "user_id": {"type": String, "nullable": True, "index": True},
+    # Composite index so "my content + shared"
+    # (WHERE (user_id=? OR user_id IS NULL) AND linked_to=?) is index-served.
+    "__composite_indexes__": [
+        {"name": "ix_knowledge_user_linked_to", "columns": ["user_id", "linked_to"]},
+    ],
 }
 
 METRICS_TABLE_SCHEMA = {
@@ -86,13 +130,16 @@ METRICS_TABLE_SCHEMA = {
     "model_metrics": {"type": JSON, "nullable": False, "default": "{}"},
     "date": {"type": Date, "nullable": False, "index": True},
     "aggregation_period": {"type": String, "nullable": False, "index": True},
+    # Owner of this metric bucket. Empty string, not NULL, for "no owner":
+    # SQL treats multiple NULLs as distinct, which would break the unique constraint below.
+    "user_id": {"type": String, "nullable": False, "default": "", "index": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": True},
     "completed": {"type": Boolean, "nullable": False, "default": False},
     "_unique_constraints": [
         {
-            "name": "uq_metrics_date_period",
-            "columns": ["date", "aggregation_period"],
+            "name": "uq_metrics_user_date_period",
+            "columns": ["user_id", "date", "aggregation_period"],
         }
     ],
 }
@@ -144,19 +191,6 @@ def _get_span_table_schema(traces_table_name: str = "agno_traces") -> dict[str, 
     }
 
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "name": {"type": String, "nullable": False, "index": True},
-    "summary": {"type": String, "nullable": True},
-    "content": {"type": JSON, "nullable": True},
-    "metadata": {"type": JSON, "nullable": True},
-    "input": {"type": String, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-}
-
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": String, "nullable": False, "primary_key": True},
     "version": {"type": String, "nullable": False},
@@ -168,6 +202,7 @@ COMPONENTS_TABLE_SCHEMA = {
     "component_id": {"type": String, "primary_key": True},
     "component_type": {"type": String, "nullable": False, "index": True},  # agent|team|workflow
     "name": {"type": String, "nullable": False, "index": True},
+    "user_id": {"type": String, "nullable": True, "index": True},
     "description": {"type": String, "nullable": True},
     "current_version": {"type": BigInteger, "nullable": True, "index": True},
     "metadata": {"type": JSON, "nullable": True},
@@ -234,10 +269,33 @@ SCHEDULE_TABLE_SCHEMA = {
     "next_run_at": {"type": BigInteger, "nullable": True, "index": True},
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
+    # Owner. NULL means system-created: executor, migrations, legacy rows.
+    "user_id": {"type": String, "nullable": True, "index": True},
+    # Which control plane manages this row ("studio" for builder-created ones)
+    # plus the exact component target and writing-run provenance. Nullable so
+    # legacy rows need only the ALTERs in the v3 migration.
+    "managed_by": {"type": String, "nullable": True, "index": True},
+    "target_type": {"type": String, "nullable": True},
+    "target_id": {"type": String, "nullable": True, "index": True},
+    "created_by_run_id": {"type": String, "nullable": True},
+    "created_by_session_id": {"type": String, "nullable": True},
+    "updated_by_run_id": {"type": String, "nullable": True},
+    "updated_by_session_id": {"type": String, "nullable": True},
+    "disabled_reason": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
         {"name": "enabled_next_run_at", "columns": ["enabled", "next_run_at"]},
+        # Serves the "my active schedules" list read.
+        {"name": "user_enabled_next_run_at", "columns": ["user_id", "enabled", "next_run_at"]},
+    ],
+    # Names are unique per owner. The router's check-then-insert races under
+    # concurrent creates, so the DB backs it with two partial unique indexes
+    # (NULLs are distinct in a plain unique constraint, and SQLite cannot drop
+    # a table-level constraint, so named partial indexes cover both buckets).
+    "_partial_unique_indexes": [
+        {"name": "uq_user_name", "columns": ["user_id", "name"], "where": "user_id IS NOT NULL"},
+        {"name": "uq_unowned_name", "columns": ["name"], "where": "user_id IS NULL"},
     ],
 }
 
@@ -328,14 +386,44 @@ def _get_schedule_runs_table_schema(schedules_table_name: str = "agno_schedules"
         "input": {"type": JSON, "nullable": True},
         "output": {"type": JSON, "nullable": True},
         "requirements": {"type": JSON, "nullable": True},
+        # Denormalised from agno_schedules.user_id so run reads scope by owner without a JOIN.
+        "user_id": {"type": String, "nullable": True, "index": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
+
+
+TOOL_RESULTS_TABLE_SCHEMA = {
+    "result_id": {"type": String, "primary_key": True, "nullable": False},
+    "namespace": {"type": String, "nullable": False},
+    "path": {"type": String, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    "run_id": {"type": String, "nullable": False},
+    "tool_call_id": {"type": String, "nullable": False},
+    "tool_name": {"type": String, "nullable": False},
+    "args_hash": {"type": String, "nullable": False},
+    "content_type": {"type": String, "nullable": False},
+    "size_bytes": {"type": BigInteger, "nullable": False},
+    "line_count": {"type": BigInteger, "nullable": False},
+    "preview": {"type": String, "nullable": False},
+    "user_id": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "expires_at": {"type": BigInteger, "nullable": True, "index": True},
+    "_unique_constraints": [
+        # Two result ids must never point at one payload.
+        {"name": "uq_tool_results_namespace_path", "columns": ["namespace", "path"]},
+    ],
+    "__composite_indexes__": [
+        # Session cleanup and the newest-first listing.
+        {"name": "session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
 
 
 def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
     schedules_table_name: str = "agno_schedules",
+    session_table_name: str = "agno_sessions",
 ) -> dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -344,6 +432,8 @@ def get_table_schema_definition(
         table_type (str): The type of table to get the schema for.
         traces_table_name (str): The name of the traces table (used for spans foreign key).
         schedules_table_name (str): The name of the schedules table (used for schedule_runs foreign key).
+        session_table_name (str): The name of the sessions table (used for the
+            runs table's ``session_id`` foreign key).
 
     Returns:
         Dict[str, Any]: Dictionary containing column definitions for the table
@@ -353,21 +443,24 @@ def get_table_schema_definition(
         return _get_span_table_schema(traces_table_name)
     if table_type == "schedule_runs":
         return _get_schedule_runs_table_schema(schedules_table_name)
+    if table_type == "runs":
+        return _get_run_table_schema(session_table_name)
 
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "components": COMPONENTS_TABLE_SCHEMA,
         "component_configs": COMPONENT_CONFIGS_TABLE_SCHEMA,
         "component_links": COMPONENT_LINKS_TABLE_SCHEMA,
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
+        "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

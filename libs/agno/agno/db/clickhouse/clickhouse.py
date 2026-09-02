@@ -36,7 +36,6 @@ from agno.db.clickhouse.utils import (
     trace_to_row,
 )
 from agno.db.filter_converter import TRACE_COLUMNS as TRACE_FILTER_COLUMNS
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalRunRecord
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.utils.log import log_debug, log_error
@@ -118,9 +117,10 @@ class ClickhouseDb(BaseDb):
         self._client_instance: Optional["Client"] = client
         self._create_schema = create_schema
         # Per-table cache of "have we already issued CREATE IF NOT EXISTS for
-        # this table on this instance?" Mirrors the Postgres/Mongo adapters.
-        # Each table is created lazily on first write through `_get_table`.
-        self._table_cache: Dict[str, str] = {}
+        # this table on this instance?" Named distinctly from BaseDb's
+        # TableResolutionCache attribute, which this adapter must not shadow:
+        # the inherited _invalidate_table_cache operates on it.
+        self._resolved_names: Dict[str, str] = {}
         self._database_ready = False
 
     # ------------------------------------------------------------------ schema
@@ -156,8 +156,8 @@ class ClickhouseDb(BaseDb):
         First-time creates are server-idempotent (``CREATE TABLE IF NOT
         EXISTS``); the per-instance cache just avoids re-issuing the DDL.
         """
-        if table_type in self._table_cache:
-            return self._table_cache[table_type]
+        if table_type in self._resolved_names:
+            return self._resolved_names[table_type]
 
         ddl_map = {
             "traces": (TRACES_DDL, self.trace_table_name),
@@ -173,7 +173,7 @@ class ClickhouseDb(BaseDb):
             # table already exists on the server.
             if self.table_exists(name):
                 qualified = f"{self.database}.{name}"
-                self._table_cache[table_type] = qualified
+                self._resolved_names[table_type] = qualified
                 return qualified
             log_debug(f"ClickHouse table '{self.database}.{name}' not found")
             return None
@@ -181,7 +181,7 @@ class ClickhouseDb(BaseDb):
         # Write path: create database + table if missing, then cache.
         if not self._create_schema:
             qualified = f"{self.database}.{name}"
-            self._table_cache[table_type] = qualified
+            self._resolved_names[table_type] = qualified
             return qualified
         try:
             if not self._database_ready:
@@ -190,7 +190,7 @@ class ClickhouseDb(BaseDb):
             already_existed = self.table_exists(name)
             self._client.command(ddl.format(db=self.database, table=name))
             qualified = f"{self.database}.{name}"
-            self._table_cache[table_type] = qualified
+            self._resolved_names[table_type] = qualified
             if already_existed:
                 log_debug(f"ClickHouse table '{qualified}' already exists, skipping creation")
             else:
@@ -251,10 +251,12 @@ class ClickhouseDb(BaseDb):
             return False
 
     def get_latest_schema_version(self, table_name: str) -> Optional[str]:
+        # Defaults to "2.0.0" when nothing is stamped so the MigrationManager
+        # runs migrations instead of skipping the table.
         try:
             qualified = self._get_table("versions")
             if qualified is None:
-                return None
+                return "2.0.0"
             res = self._client.query(
                 f"SELECT version FROM {qualified} FINAL WHERE table_name = %(t)s LIMIT 1",
                 parameters={"t": table_name},
@@ -263,7 +265,7 @@ class ClickhouseDb(BaseDb):
                 return res.result_rows[0][0]
         except Exception as e:
             log_debug(f"get_latest_schema_version failed: {e}")
-        return None
+        return "2.0.0"
 
     def upsert_schema_version(self, table_name: str, version: str) -> None:
         now = datetime.now(timezone.utc)
@@ -716,6 +718,7 @@ class ClickhouseDb(BaseDb):
         self,
         starting_date: Optional[date] = None,
         ending_date: Optional[date] = None,
+        user_id: Optional[str] = None,
     ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
         return [], None
 
@@ -723,10 +726,10 @@ class ClickhouseDb(BaseDb):
         return None
 
     # --- Knowledge ---
-    def delete_knowledge_content(self, id: str):
+    def delete_knowledge_content(self, id: str, user_id: Optional[str] = None):
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
-    def get_knowledge_content(self, id: str) -> Optional[KnowledgeRow]:
+    def get_knowledge_content(self, id: str, user_id: Optional[str] = None) -> Optional[KnowledgeRow]:
         return None
 
     def get_knowledge_contents(self, *args, **kwargs):  # type: ignore[override]
@@ -739,7 +742,7 @@ class ClickhouseDb(BaseDb):
     def create_eval_run(self, eval_run: EvalRunRecord) -> Optional[EvalRunRecord]:
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
-    def delete_eval_runs(self, eval_run_ids: List[str]) -> None:
+    def delete_eval_runs(self, eval_run_ids: List[str], user_id: Optional[str] = None) -> None:
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
     def get_eval_run(self, *args, **kwargs):  # type: ignore[override]
@@ -750,22 +753,6 @@ class ClickhouseDb(BaseDb):
         return [] if deserialize else ([], 0)
 
     def rename_eval_run(self, *args, **kwargs):  # type: ignore[override]
-        raise NotImplementedError(_TRACES_ONLY_ERROR)
-
-    # --- Cultural Knowledge ---
-    def clear_cultural_knowledge(self) -> None:
-        raise NotImplementedError(_TRACES_ONLY_ERROR)
-
-    def delete_cultural_knowledge(self, id: str) -> None:
-        raise NotImplementedError(_TRACES_ONLY_ERROR)
-
-    def get_cultural_knowledge(self, id: str) -> Optional[CulturalKnowledge]:
-        return None
-
-    def get_all_cultural_knowledge(self, *args, **kwargs):  # type: ignore[override]
-        return []
-
-    def upsert_cultural_knowledge(self, cultural_knowledge: CulturalKnowledge) -> Optional[CulturalKnowledge]:
         raise NotImplementedError(_TRACES_ONLY_ERROR)
 
     # --- Learnings ---
@@ -786,6 +773,8 @@ class ClickhouseDb(BaseDb):
         self,
         component_id: str,
         component_type: Optional[ComponentType] = None,
+        user_id: Optional[str] = None,
+        include_deleted: bool = False,
     ) -> Optional[Dict[str, Any]]:
         return None
 

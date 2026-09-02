@@ -3,7 +3,6 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
 from pydantic import BaseModel
 from rich.console import Group
 from rich.live import Live
-from rich.markdown import Markdown
 from rich.status import Status
 from rich.text import Text
 
@@ -210,6 +209,8 @@ def print_response_stream(
     **kwargs: Any,
 ) -> None:
     """Print workflow execution with clean streaming"""
+    from rich.markdown import Markdown
+
     if console is None:
         from rich.console import Console
 
@@ -1052,6 +1053,8 @@ async def aprint_response_stream(
     **kwargs: Any,
 ) -> None:
     """Print workflow execution with clean streaming - orange step blocks displayed once"""
+    from rich.markdown import Markdown
+
     if console is None:
         from rich.console import Console
 

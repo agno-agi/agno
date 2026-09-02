@@ -2,7 +2,7 @@
 Agentic Rag
 =============================
 
-1. Run: `./cookbook/run_pgvector.sh` to start a postgres container with pgvector.
+1. Run: `./cookbook/scripts/run_pgvector.sh` to start a postgres container with pgvector.
 """
 
 from agno.agent import Agent

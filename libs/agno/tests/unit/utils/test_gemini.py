@@ -1,6 +1,11 @@
+from pathlib import Path
+from unittest.mock import patch
+
+from agno.media import Image
 from agno.utils.gemini import (
     convert_schema,
     format_function_definitions,
+    format_image_for_message,
     inject_agno_client_header,
     needs_conversion,
     prepare_response_schema,
@@ -738,3 +743,64 @@ def test_inject_header_overrides_existing_x_goog_api_client():
     params = {"http_options": {"headers": {"x-goog-api-client": "stale/0.0.0"}}}
     result = inject_agno_client_header(params)
     assert result["http_options"]["headers"]["x-goog-api-client"] == f"agno/{agno_version}"
+
+
+# Magic-byte headers, so the helper can identify the format from the bytes alone.
+WEBP_BYTES = b"RIFF" + (100).to_bytes(4, "little") + b"WEBPVP8 " + b"\x00" * 88
+PNG_BYTES = b"\x89PNG\r\n\x1a\n" + b"\x00" * 32
+JPEG_BYTES = b"\xff\xd8\xff" + b"\x00" * 32
+
+
+def test_format_image_for_message_url_uses_downloaded_bytes_format():
+    """A URL serving WebP must not be labelled image/jpeg."""
+    with patch.object(Image, "get_content_bytes", return_value=WEBP_BYTES):
+        result = format_image_for_message(Image(url="https://example.com/photo.webp"))
+
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_for_message_content_uses_detected_format():
+    result = format_image_for_message(Image(content=WEBP_BYTES))
+
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_for_message_filepath_uses_file_extension(tmp_path: Path):
+    image_path = tmp_path / "photo.png"
+    image_path.write_bytes(PNG_BYTES)
+
+    result = format_image_for_message(Image(filepath=str(image_path)))
+
+    assert result is not None
+    assert result["mime_type"] == "image/png"
+
+
+def test_format_image_for_message_prefers_explicit_mime_type():
+    result = format_image_for_message(Image(content=WEBP_BYTES, mime_type="image/webp"))
+
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_for_message_uses_format_field():
+    result = format_image_for_message(Image(content=WEBP_BYTES, format="webp"))
+
+    assert result is not None
+    assert result["mime_type"] == "image/webp"
+
+
+def test_format_image_for_message_keeps_jpeg_for_jpeg_bytes():
+    result = format_image_for_message(Image(content=JPEG_BYTES))
+
+    assert result is not None
+    assert result["mime_type"] == "image/jpeg"
+
+
+def test_format_image_for_message_falls_back_to_jpeg_for_unknown_bytes():
+    """Unidentifiable bytes keep the previous default so existing behaviour is unchanged."""
+    result = format_image_for_message(Image(content=b"not-an-image"))
+
+    assert result is not None
+    assert result["mime_type"] == "image/jpeg"
