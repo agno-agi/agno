@@ -150,3 +150,28 @@ async def test_run_entity_fresh_run_calls_arun():
         pass
 
     assert fake_entity.arun_called is True
+
+
+@pytest.mark.asyncio
+async def test_run_entity_forwarded_props_passes_add_history_to_context():
+    """forwarded_props.add_history_to_context is forwarded into entity.arun."""
+    fake_entity = CaptureKwargsEntity()
+    run_input = FakeRunInput()
+    run_input.forwarded_props = {"add_history_to_context": True}
+
+    async for _ in run_entity(fake_entity, run_input):
+        pass
+
+    assert fake_entity.captured_kwargs.get("add_history_to_context") is True
+
+
+@pytest.mark.asyncio
+async def test_run_entity_omits_add_history_when_not_provided():
+    fake_entity = CaptureKwargsEntity()
+    run_input = FakeRunInput()
+    run_input.forwarded_props = {}
+
+    async for _ in run_entity(fake_entity, run_input):
+        pass
+
+    assert "add_history_to_context" not in fake_entity.captured_kwargs

@@ -83,6 +83,15 @@ async def run_entity(
         run_kwargs: dict = {}
         if ui_deps:
             run_kwargs["add_dependencies_to_context"] = True
+        # Prefer forwarded_props (documented AGUI extension point); also accept a
+        # top-level extra field because RunAgentInput allows extras.
+        add_history = None
+        if run_input.forwarded_props and isinstance(run_input.forwarded_props, dict):
+            add_history = run_input.forwarded_props.get("add_history_to_context")
+        if add_history is None:
+            add_history = getattr(run_input, "add_history_to_context", None)
+        if add_history is not None:
+            run_kwargs["add_history_to_context"] = bool(add_history)
 
         # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
         if tool_messages:
