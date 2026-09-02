@@ -3349,6 +3349,12 @@ def _sync_requirements_with_tools(run_response: RunOutput, updated_tools: List[A
                 req.tool_execution = updated_tools_map[req.tool_execution.tool_call_id]
 
 
+def _bind_agent_session_state(agent: Agent, run_context: RunContext) -> None:
+    """Keep agent-scoped writes on the session state persisted by the run context."""
+    if run_context.session_state is not None:
+        agent.session_state = run_context.session_state
+
+
 def continue_run_dispatch(
     agent: Agent,
     run_response: Optional[RunOutput] = None,
@@ -3495,6 +3501,7 @@ def continue_run_dispatch(
         metadata_provided=metadata is not None,
         user_id=user_id,
     )
+    _bind_agent_session_state(agent, run_context)
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -4820,6 +4827,7 @@ async def _acontinue_run(
                     session_id=session_id,
                     run_id=run_context.run_id,
                 )
+                _bind_agent_session_state(agent, run_context)
 
                 # 4. Prepare run response
                 if run_response is not None:
@@ -5325,6 +5333,7 @@ async def _acontinue_run_stream(
                     session_id=session_id,
                     run_id=run_context.run_id,
                 )
+                _bind_agent_session_state(agent, run_context)
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
