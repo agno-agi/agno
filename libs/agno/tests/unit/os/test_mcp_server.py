@@ -670,7 +670,7 @@ async def test_custom_tool_user_id_is_injected_and_hidden(monkeypatch):
     )
 
     async with Client(build_mcp_server(os)) as client:
-        schema = {t.name: t for t in await client.list_tools()}["ask"].inputSchema
+        schema = {t.name: t for t in await client.list_tools()}["ask"].input_schema
         props = schema.get("properties", {})
         assert "message" in props
         assert "user_id" not in props  # hidden from the client-facing schema
@@ -692,7 +692,7 @@ async def test_custom_tool_without_user_id_is_unchanged():
     )
 
     async with Client(build_mcp_server(os)) as client:
-        props = {t.name: t for t in await client.list_tools()}["echo"].inputSchema.get("properties", {})
+        props = {t.name: t for t in await client.list_tools()}["echo"].input_schema.get("properties", {})
         assert set(props) == {"text"}
         result = await client.call_tool("echo", {"text": "abc"})
 
@@ -711,7 +711,7 @@ async def test_custom_tool_can_use_native_ctx():
     )
 
     async with Client(build_mcp_server(os)) as client:
-        props = {t.name: t for t in await client.list_tools()}["whoami"].inputSchema.get("properties", {})
+        props = {t.name: t for t in await client.list_tools()}["whoami"].input_schema.get("properties", {})
         assert "ctx" not in props
         result = await client.call_tool("whoami", {})
 
