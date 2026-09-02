@@ -276,6 +276,11 @@ class Message(BaseModel):
                         id=img_data.get("id"),
                         mime_type=img_data.get("mime_type"),
                         format=img_data.get("format"),
+                        detail=img_data.get("detail"),
+                        original_prompt=img_data.get("original_prompt"),
+                        revised_prompt=img_data.get("revised_prompt"),
+                        alt_text=img_data.get("alt_text"),
+                        metadata=img_data.get("metadata"),
                     )
                 else:
                     data["image_output"] = Image(**img_data)
@@ -292,6 +297,14 @@ class Message(BaseModel):
                         id=vid_data.get("id"),
                         mime_type=vid_data.get("mime_type"),
                         format=vid_data.get("format"),
+                        duration=vid_data.get("duration"),
+                        width=vid_data.get("width"),
+                        height=vid_data.get("height"),
+                        fps=vid_data.get("fps"),
+                        eta=vid_data.get("eta"),
+                        original_prompt=vid_data.get("original_prompt"),
+                        revised_prompt=vid_data.get("revised_prompt"),
+                        metadata=vid_data.get("metadata"),
                     )
                 else:
                     data["video_output"] = Video(**vid_data)
