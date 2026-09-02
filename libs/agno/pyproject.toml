@@ -107,6 +107,7 @@ mistral = ["mistralai>=2.0.0"]
 ollama = ["ollama"]
 openai = ["openai>=1.106.0"]  # >=1.106.0: callable api_key (sync+async token provider), openai/openai-python#2588
 portkey = ["portkey-ai"]
+copilot = ["github-copilot-sdk"]
 
 # Dependencies for Token Counting
 tokenizers = ["tiktoken", "tokenizers"]
