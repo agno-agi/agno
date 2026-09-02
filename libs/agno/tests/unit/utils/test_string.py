@@ -29,6 +29,56 @@ def test_extract_json_objects_with_brace_in_string_value():
     assert result.value == "123"
 
 
+def test_extract_json_objects_after_unbalanced_brace_in_prose():
+    """A brace in the preamble must not hide the JSON that follows it.
+
+    The extractor only runs after strict parsing of the whole response has failed,
+    so its input is JSON wrapped in model prose. A lone `}` in that prose used to
+    drive brace_depth to -1, after which the object's own `{` no longer matched the
+    `brace_depth == 0` object-start test and the object was never emitted.
+    """
+    text = 'You close the object with } like so: {"name": "test", "value": "123"}'
+    objs = _extract_json_objects(text)
+    assert objs == ['{"name": "test", "value": "123"}']
+
+    result = parse_response_model_str(text, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_extract_json_objects_after_unbalanced_quote_in_prose():
+    """An unpaired quote in the preamble must not hide the JSON that follows it.
+
+    The scanner tracked string state outside any object, so a lone `"` in the prose
+    put it into a string literal it never left, and every later character — braces
+    included — was consumed as string content.
+    """
+    text = 'The user asked "what is the config: {"name": "test", "value": "123"}'
+    objs = _extract_json_objects(text)
+    assert objs == ['{"name": "test", "value": "123"}']
+
+    result = parse_response_model_str(text, MockModel)
+    assert result is not None
+    assert result.name == "test"
+    assert result.value == "123"
+
+
+def test_extract_json_objects_prose_braces_still_extracted():
+    """A balanced `{...}` in prose is still returned; only the state leak is fixed.
+
+    This pins the boundary of the change: the extractor does not try to tell prose
+    braces from JSON, it just stops letting unbalanced ones corrupt later spans.
+    Downstream callers already tolerate a candidate that fails `json.loads`.
+    """
+    text = 'Use {braces} then output: {"name": "test"}'
+    assert _extract_json_objects(text) == ["{braces}", '{"name": "test"}']
+
+    result = parse_response_model_str(text, MockModel)
+    assert result is not None
+    assert result.name == "test"
+
+
 def test_url_safe_string_spaces():
     """Test conversion of spaces to dashes"""
     assert url_safe_string("hello world") == "hello-world"
