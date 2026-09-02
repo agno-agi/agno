@@ -39,6 +39,14 @@ class ExaTools(Toolkit):
         category (Optional[str]): Filter results by category. Options are "company", "research paper", "news", "pdf", "github", "tweet", "personal site", "linkedin profile", "financial report".
         include_domains (Optional[List[str]]): Restrict results to these domains.
         exclude_domains (Optional[List[str]]): Exclude results from these domains.
+        include_text (Optional[List[str]]): Require this string to be present in the page text
+            (one string, up to 5 words). Applies to search and find-similar.
+        exclude_text (Optional[List[str]]): Exclude pages whose text contains this string
+            (one string, up to 5 words). Applies to search and find-similar.
+        user_location (Optional[str]): Two-letter ISO country code of the user (e.g. "US").
+        moderation (Optional[bool]): Ask Exa to moderate search results for safety.
+        highlights (bool): Retrieve highlights - the relevant sentences of each page. Default is False.
+        subpages (Optional[int]): Number of subpages to crawl per result.
         show_results (bool): Log search results for debugging. Default is False.
         model (Optional[str]): The search model to use. Options are 'exa' or 'exa-pro'.
         timeout (int): Maximum time in seconds to wait for API responses. Default is 30 seconds.
@@ -66,6 +74,12 @@ class ExaTools(Toolkit):
         category: Optional[str] = None,
         include_domains: Optional[List[str]] = None,
         exclude_domains: Optional[List[str]] = None,
+        include_text: Optional[List[str]] = None,
+        exclude_text: Optional[List[str]] = None,
+        user_location: Optional[str] = None,
+        moderation: Optional[bool] = None,
+        highlights: bool = False,
+        subpages: Optional[int] = None,
         show_results: bool = False,
         model: Optional[str] = None,
         timeout: int = 30,
@@ -94,6 +108,12 @@ class ExaTools(Toolkit):
         self.category: Optional[str] = category
         self.include_domains: Optional[List[str]] = include_domains
         self.exclude_domains: Optional[List[str]] = exclude_domains
+        self.include_text: Optional[List[str]] = include_text
+        self.exclude_text: Optional[List[str]] = exclude_text
+        self.user_location: Optional[str] = user_location
+        self.moderation: Optional[bool] = moderation
+        self.highlights: bool = highlights
+        self.subpages: Optional[int] = subpages
         self.model: Optional[str] = model
         self.research_model: Literal["exa-research", "exa-research-pro"] = research_model
 
@@ -142,6 +162,9 @@ class ExaTools(Toolkit):
             summary = getattr(result, "summary", None)
             if summary:
                 result_dict["summary"] = summary
+            highlights = getattr(result, "highlights", None)
+            if highlights:
+                result_dict["highlights"] = highlights
             exa_results_parsed.append(result_dict)
         return json.dumps(exa_results_parsed, indent=4, ensure_ascii=False)
 
@@ -174,6 +197,12 @@ class ExaTools(Toolkit):
                 "category": self.category or category,  # Prefer a user-set category
                 "include_domains": self.include_domains,
                 "exclude_domains": self.exclude_domains,
+                "include_text": self.include_text,
+                "exclude_text": self.exclude_text,
+                "user_location": self.user_location,
+                "moderation": self.moderation,
+                "highlights": self.highlights or None,
+                "subpages": self.subpages,
             }
             # Clean up the kwargs
             search_kwargs = {k: v for k, v in search_kwargs.items() if v is not None}
@@ -208,6 +237,8 @@ class ExaTools(Toolkit):
             "text": self.text,
             "summary": self.summary,
             "livecrawl": self.livecrawl,
+            "highlights": self.highlights or None,
+            "subpages": self.subpages,
         }
 
         try:
@@ -247,6 +278,10 @@ class ExaTools(Toolkit):
             "livecrawl": self.livecrawl,
             "include_domains": self.include_domains,
             "exclude_domains": self.exclude_domains,
+            "include_text": self.include_text,
+            "exclude_text": self.exclude_text,
+            "highlights": self.highlights or None,
+            "subpages": self.subpages,
             "start_crawl_date": self.start_crawl_date,
             "end_crawl_date": self.end_crawl_date,
             "start_published_date": self.start_published_date,
