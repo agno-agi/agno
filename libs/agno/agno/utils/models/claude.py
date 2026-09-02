@@ -602,77 +602,79 @@ def format_messages(
                 # Echo the turn exactly as the API produced it: block order, text boundaries and
                 # every signed thinking block. Rebuilding the turn from the convenience fields
                 # below loses all of those, and the API rejects a modified thinking sequence.
+                # A stored list that filters down to nothing (a truncated tool_use only) falls
+                # through to the empty-assistant skip below like any other empty turn.
                 content.extend(stored_blocks)
-                chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
-                continue
+            else:
+                if message.reasoning_content is not None and message.provider_data is not None:
+                    from anthropic.types import ThinkingBlock
 
-            if message.reasoning_content is not None and message.provider_data is not None:
-                from anthropic.types import ThinkingBlock
-
-                signature = message.provider_data.get("signature")
-                if isinstance(signature, str) and signature:
-                    content.append(
-                        ThinkingBlock(
-                            thinking=message.reasoning_content,
-                            signature=signature,
-                            type="thinking",
+                    signature = message.provider_data.get("signature")
+                    if isinstance(signature, str) and signature:
+                        content.append(
+                            ThinkingBlock(
+                                thinking=message.reasoning_content,
+                                signature=signature,
+                                type="thinking",
+                            )
                         )
-                    )
-                else:
-                    # The API verifies thinking blocks by signature, so one without a signature
-                    # (reasoning from another provider, or a partially stored response) can only
-                    # be omitted. Omitting prior thinking is permitted outside a tool-use turn.
-                    log_debug("Omitting reasoning content without a thinking signature from Anthropic history")
+                    else:
+                        # The API verifies thinking blocks by signature, so one without a signature
+                        # (reasoning from another provider, or a partially stored response) can only
+                        # be omitted. Omitting prior thinking is permitted outside a tool-use turn.
+                        log_debug("Omitting reasoning content without a thinking signature from Anthropic history")
 
-            if message.redacted_reasoning_content is not None:
-                from anthropic.types import RedactedThinkingBlock
+                if message.redacted_reasoning_content is not None:
+                    from anthropic.types import RedactedThinkingBlock
 
-                content.append(RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_thinking"))
-
-            # Extract structured blocks from list-shaped content (used when callers persist and
-            # rehydrate full assistant turns rather than the text-only + provider_data split).
-            structured_from_list: List[Any] = []
-            list_block_identities: set = set()
-            if isinstance(message.content, list):
-                for item in message.content:
-                    blk = _anthropic_coerce_content_block(item)
-                    if blk is None:
-                        continue
-                    block_type = blk.get("type") if isinstance(blk, dict) else None
-                    if block_type == "tool_use" and message.tool_calls:
-                        continue
-                    identity = _anthropic_block_identity(blk)
-                    if identity is not None:
-                        list_block_identities.add(identity)
-                    structured_from_list.append(blk)
-
-            # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data.
-            # Merge by identity (type, id-or-tool_use_id) so blocks already present in list-content
-            # aren't duplicated, but blocks that exist only in provider_data are still emitted.
-            if message.provider_data and message.provider_data.get("server_tool_blocks"):
-                for block_dict in message.provider_data["server_tool_blocks"]:
-                    identity = _anthropic_block_identity(block_dict)
-                    if identity is not None and identity in list_block_identities:
-                        continue
-                    content.append(block_dict)
-
-            if structured_from_list:
-                content.extend(structured_from_list)
-            elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
-                content.append(TextBlock(text=message.content, type="text"))
-
-            if message.tool_calls:
-                for tool_call in message.tool_calls:
                     content.append(
-                        ToolUseBlock(
-                            id=tool_call["id"],
-                            input=json.loads(tool_call["function"]["arguments"])
-                            if "arguments" in tool_call["function"]
-                            else {},
-                            name=tool_call["function"]["name"],
-                            type="tool_use",
-                        )
+                        RedactedThinkingBlock(data=message.redacted_reasoning_content, type="redacted_thinking")
                     )
+
+                # Extract structured blocks from list-shaped content (used when callers persist and
+                # rehydrate full assistant turns rather than the text-only + provider_data split).
+                structured_from_list: List[Any] = []
+                list_block_identities: set = set()
+                if isinstance(message.content, list):
+                    for item in message.content:
+                        blk = _anthropic_coerce_content_block(item)
+                        if blk is None:
+                            continue
+                        block_type = blk.get("type") if isinstance(blk, dict) else None
+                        if block_type == "tool_use" and message.tool_calls:
+                            continue
+                        identity = _anthropic_block_identity(blk)
+                        if identity is not None:
+                            list_block_identities.add(identity)
+                        structured_from_list.append(blk)
+
+                # Reconstruct server tool blocks (web_fetch, web_search, etc.) from provider_data.
+                # Merge by identity (type, id-or-tool_use_id) so blocks already present in list-content
+                # aren't duplicated, but blocks that exist only in provider_data are still emitted.
+                if message.provider_data and message.provider_data.get("server_tool_blocks"):
+                    for block_dict in message.provider_data["server_tool_blocks"]:
+                        identity = _anthropic_block_identity(block_dict)
+                        if identity is not None and identity in list_block_identities:
+                            continue
+                        content.append(block_dict)
+
+                if structured_from_list:
+                    content.extend(structured_from_list)
+                elif isinstance(message.content, str) and message.content and len(message.content.strip()) > 0:
+                    content.append(TextBlock(text=message.content, type="text"))
+
+                if message.tool_calls:
+                    for tool_call in message.tool_calls:
+                        content.append(
+                            ToolUseBlock(
+                                id=tool_call["id"],
+                                input=json.loads(tool_call["function"]["arguments"])
+                                if "arguments" in tool_call["function"]
+                                else {},
+                                name=tool_call["function"]["name"],
+                                type="tool_use",
+                            )
+                        )
         elif message.role == "tool":
             content = []
 

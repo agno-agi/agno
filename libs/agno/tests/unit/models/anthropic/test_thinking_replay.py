@@ -243,3 +243,17 @@ def test_stored_blocks_take_precedence_over_convenience_fields():
     api_messages, _ = format_messages([Message(role="user", content="hi"), assistant])
 
     assert api_messages[1]["content"] == [{"type": "text", "text": "one"}, {"type": "text", "text": "two"}]
+
+
+def test_stored_blocks_that_filter_to_nothing_skip_the_assistant_message():
+    # A max_tokens response holding only a tool_use that never ran: after filtering, nothing is
+    # left to replay, and an assistant message with empty content must not be sent.
+    assistant = Message(
+        role="assistant",
+        content=None,
+        provider_data={"content_blocks": [{"type": "tool_use", "id": "tu_1", "name": "f", "input": {}}]},
+    )
+
+    api_messages, _ = format_messages([Message(role="user", content="hi"), assistant])
+
+    assert [m["role"] for m in api_messages] == ["user"]
