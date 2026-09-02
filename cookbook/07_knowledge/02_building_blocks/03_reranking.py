@@ -12,6 +12,7 @@ Supported rerankers:
 - SentenceTransformerReranker: Local reranking with BAAI/bge models
 - InfinityReranker: Self-hosted reranking
 - BedrockReranker: AWS Bedrock reranking
+- SiliconflowReranker: Siliconflow cloud reranking
 
 See also: 02_hybrid_search.py for search type options.
 """
