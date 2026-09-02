@@ -43,6 +43,7 @@ class Claude(AnthropicClaude):
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
+        super().__post_init__()
         if self.thinking:
             self._validate_thinking_support()
         self.supports_native_structured_outputs = False

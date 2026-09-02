@@ -181,6 +181,7 @@ class Claude(Model):
 
     def __post_init__(self):
         """Validate model configuration after initialization"""
+        super().__post_init__()
         # Validate thinking support immediately at model creation
         if self.thinking:
             self._validate_thinking_support()

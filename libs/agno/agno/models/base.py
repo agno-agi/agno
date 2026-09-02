@@ -130,6 +130,9 @@ def _handle_agent_exception(a_exc: AgentRunException, additional_input: Optional
             m.stop_after_tool_call = True
 
 
+_CLIENT_ATTRS = ("client", "async_client", "http_client", "mistral_client", "model_client")
+
+
 @dataclass
 class Model(ABC):
     # ID of the model to use.
@@ -189,6 +192,9 @@ class Model(ABC):
     def __post_init__(self):
         if self.provider is None and self.name is not None:
             self.provider = f"{self.name} ({self.id})"
+        # A client already set here was supplied by the caller (agno builds its own lazily, later).
+        # Record which ones so a deep copy can keep them while dropping agno-built clients.
+        self._caller_supplied_clients = frozenset(a for a in _CLIENT_ATTRS if getattr(self, a, None) is not None)
 
     def _get_retry_delay(self, attempt: int) -> float:
         """Calculate the delay before the next retry attempt."""
@@ -3213,13 +3219,16 @@ class Model(ABC):
         new_model = cls.__new__(cls)
         memo[id(self)] = new_model
 
-        # Deep copy all attributes except client objects
+        caller_supplied: frozenset = getattr(self, "_caller_supplied_clients", frozenset())
+        # Deep copy all attributes; client objects are handled by ownership below
         for k, v in self.__dict__.items():
             if k in {"response_format", "_tools", "_functions"}:
                 continue
-            # Skip client objects
-            if k in {"client", "async_client", "http_client", "mistral_client", "model_client"}:
-                setattr(new_model, k, None)
+            # Keep a caller-supplied client so custom credentials/transport survive the copy; drop
+            # an agno-built one so the copy rebuilds its own and concurrent copies (the main run and
+            # its memory pass) don't share one connection pool.
+            if k in _CLIENT_ATTRS:
+                setattr(new_model, k, v if k in caller_supplied else None)
                 continue
             try:
                 setattr(new_model, k, deepcopy(v, memo))
