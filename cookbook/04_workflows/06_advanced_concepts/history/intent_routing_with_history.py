@@ -20,7 +20,7 @@ from agno.workflow.workflow import Workflow
 # ---------------------------------------------------------------------------
 tech_support_agent = Agent(
     name="Technical Support Specialist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a technical support specialist with deep product knowledge.",
         "You have access to the full conversation history with this customer.",
@@ -32,7 +32,7 @@ tech_support_agent = Agent(
 
 billing_agent = Agent(
     name="Billing & Account Specialist",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a billing and account specialist.",
         "You have access to the full conversation history with this customer.",
@@ -44,7 +44,7 @@ billing_agent = Agent(
 
 general_support_agent = Agent(
     name="General Customer Support",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions=[
         "You are a general customer support representative.",
         "You have access to the full conversation history with this customer.",

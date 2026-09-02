@@ -20,7 +20,7 @@ if not tmp.exists():
 today = datetime.now().strftime("%Y-%m-%d")
 
 agent = Agent(
-    model=Groq(id="llama-3.3-70b-versatile"),
+    model=Groq(id="openai/gpt-oss-120b"),
     tools=[ExaTools(start_published_date=today, type="keyword")],
     description="You are an advanced AI researcher writing a report on a topic.",
     instructions=[

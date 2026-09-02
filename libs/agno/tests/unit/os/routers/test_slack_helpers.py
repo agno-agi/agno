@@ -120,13 +120,59 @@ class TestSendSlackMessageAsync:
     async def test_normal_send(self):
         client = AsyncMock()
         await send_slack_message_async(client, "C1", "ts1", "hello world")
-        client.chat_postMessage.assert_called_once_with(channel="C1", text="hello world", thread_ts="ts1")
+        client.chat_postMessage.assert_called_once_with(
+            channel="C1", text="hello world", thread_ts="ts1", unfurl_links=True, unfurl_media=True, mrkdwn=True
+        )
+
+    @pytest.mark.asyncio
+    async def test_default_send_has_no_plaintext_kwargs(self):
+        # Control: defaults keep Slack's markdown delivery, so parse/link_names stay unset
+        client = AsyncMock()
+        await send_slack_message_async(client, "C1", "ts1", "hello world")
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert "parse" not in kwargs
+        assert "link_names" not in kwargs
+
+    @pytest.mark.asyncio
+    async def test_explicit_false_flags_forwarded(self):
+        client = AsyncMock()
+        await send_slack_message_async(
+            client, "C1", "ts1", "hello", unfurl_links=False, unfurl_media=False, mrkdwn=False
+        )
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert kwargs["unfurl_links"] is False
+        assert kwargs["unfurl_media"] is False
+        assert kwargs["mrkdwn"] is False
+
+    @pytest.mark.asyncio
+    async def test_mrkdwn_false_derives_plaintext_kwargs(self):
+        # mrkdwn=False implies parse="none" and link_names=False so bare URLs and
+        # pre-encoded mentions are not auto-linked
+        client = AsyncMock()
+        await send_slack_message_async(client, "C1", "ts1", "hello <!channel>", mrkdwn=False)
+        kwargs = client.chat_postMessage.call_args.kwargs
+        assert kwargs["parse"] == "none"
+        assert kwargs["link_names"] is False
 
     @pytest.mark.asyncio
     async def test_long_message_batching(self):
         client = AsyncMock()
         await send_slack_message_async(client, "C1", "ts1", "x" * 50000)
         assert client.chat_postMessage.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_batch_path_forwards_flags(self):
+        client = AsyncMock()
+        await send_slack_message_async(
+            client, "C1", "ts1", "x" * 50000, unfurl_links=False, unfurl_media=False, mrkdwn=False
+        )
+        assert client.chat_postMessage.call_count == 2
+        for call in client.chat_postMessage.call_args_list:
+            assert call.kwargs["unfurl_links"] is False
+            assert call.kwargs["unfurl_media"] is False
+            assert call.kwargs["mrkdwn"] is False
+            assert call.kwargs["parse"] == "none"
+            assert call.kwargs["link_names"] is False
 
 
 class TestUploadResponseMediaAsync:

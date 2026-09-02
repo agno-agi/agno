@@ -61,15 +61,15 @@ DEBUG You coordinate a team of specialized AI agents t
 
 **Result:** INFO Setting default model to OpenAI Chat                                       
 DEBUG ****** Team ID: afed51f9-7928-4a60-848a-11b071aa87e5 *******              
-INFO Agent 'Sarah' inheriting model from Team: gpt-4o                           
-INFO Agent 'Mike' inheriting model from Team: gpt-4o                            
+INFO Agent 'Sarah' inheriting model from Team: gpt-5.6-luna
+INFO Agent 'Mike' inheriting model from Team: gpt-5.6-luna
 DEBUG ***** Session ID: 373b904d-3f70-4b17-aaac-c4be5b4be980 *****              
 DEBUG Creating new TeamSession: 373b904d-3f70-4b17-aaac-c4be5b4be980            
 DEBUG *** Team Run Start: fbd7af19-51e4-44aa-bc67-17a2a81c83b6 ***              
 DEBUG Processing tools for model                                                
 DEBUG Added tool delegate_task_to_member                                        
 DEBUG --------------- OpenAI Response Stream Start ---------------              
-DEBUG ---------------------- Model: gpt-4o -----------------------              
+DEBUG ---------------------- Model: gpt-5.6-luna -----------------------
 DEBUG ========================== system ==========================              
 DEBUG You coordinate a team of specialized AI agents to fulfill the user's      
       request. Delegate to members when their expertise or tools are needed. For

@@ -18,6 +18,4 @@ def get_a2a_scope_mappings(prefix: str = "/a2a") -> Dict[str, List[str]]:
         f"GET {p}/workflows/*/.well-known/agent-card.json": ["workflows:read"],
         f"POST {p}/workflows/*/v1/message:send": ["workflows:run"],
         f"POST {p}/workflows/*/v1/message:stream": ["workflows:run"],
-        f"POST {p}/message/send": ["agents:run"],
-        f"POST {p}/message/stream": ["agents:run"],
     }

@@ -10,6 +10,7 @@ try:
     from sqlalchemy import and_, not_, or_, update
     from sqlalchemy.dialects import postgresql
     from sqlalchemy.engine import Engine, create_engine
+    from sqlalchemy.exc import NoSuchTableError
     from sqlalchemy.inspection import inspect
     from sqlalchemy.orm import Session, scoped_session, sessionmaker
     from sqlalchemy.schema import Column, Index, MetaData, Table
@@ -25,12 +26,13 @@ try:
 except ImportError:
     raise ImportError("`pgvector` not installed. Please install using `pip install pgvector`")
 
+from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures, retrievable_documents
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
@@ -62,7 +64,6 @@ class PgVector(VectorDb):
         vector_score_weight: float = 0.5,
         content_language: str = "english",
         schema_version: int = 1,
-        auto_upgrade_schema: bool = False,
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
@@ -85,7 +86,6 @@ class PgVector(VectorDb):
             vector_score_weight (float): Weight for vector similarity in hybrid search.
             content_language (str): Language for full-text search.
             schema_version (int): Version of the database schema.
-            auto_upgrade_schema (bool): Automatically upgrade schema if True.
             reranker (Optional[Reranker]): Reranker instance for reranking search results.
             create_schema (bool): Whether to automatically create the database schema if it doesn't exist.
                 Set to False if schema is managed externally (e.g., via migrations). Defaults to True.
@@ -149,8 +149,6 @@ class PgVector(VectorDb):
 
         # Table schema version
         self.schema_version: int = schema_version
-        # Automatically upgrade schema if True
-        self.auto_upgrade_schema: bool = auto_upgrade_schema
 
         # Reranker instance
         self.reranker: Optional[Reranker] = reranker
@@ -160,6 +158,8 @@ class PgVector(VectorDb):
 
         # Database session
         self.Session: scoped_session = scoped_session(sessionmaker(bind=self.db_engine))
+        # Whether the live table has the ``user_id`` column; pre-v3 tables lack it
+        self._owner_column_exists: Optional[bool] = None
         # Database table
         self.table: Table = self.get_table()
         log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
@@ -187,6 +187,8 @@ class PgVector(VectorDb):
             Column("updated_at", DateTime(timezone=True), onupdate=func.now()),
             Column("content_hash", String),
             Column("content_id", String),
+            # Owner of the chunk. ``NULL`` is shared content, readable by every caller.
+            Column("user_id", String, nullable=True),
             extend_existing=True,
         )
 
@@ -195,6 +197,7 @@ class PgVector(VectorDb):
         Index(f"idx_{self.table_name}_name", table.c.name)
         Index(f"idx_{self.table_name}_content_hash", table.c.content_hash)
         Index(f"idx_{self.table_name}_content_id", table.c.content_id)
+        Index(f"idx_{self.table_name}_user_id", table.c.user_id)
         return table
 
     def get_table(self) -> Table:
@@ -239,26 +242,75 @@ class PgVector(VectorDb):
                         log_warning(f"Could not create schema {self.schema}: {str(e)}")
             log_debug(f"Creating table: {self.table_name}")
             self.table.create(self.db_engine)
+            self._owner_column_exists = True
 
     async def async_create(self) -> None:
         """Create the table asynchronously by running in a thread."""
         await asyncio.to_thread(self.create)
 
-    def _record_exists(self, column, value) -> bool:
+    def _user_id_column_exists(self) -> bool:
+        """Whether the live table has the ``user_id`` column. Inspected once, then cached."""
+        if self._owner_column_exists is None:
+            try:
+                columns = inspect(self.db_engine).get_columns(self.table_name, schema=self.schema)
+                self._owner_column_exists = any(col["name"] == "user_id" for col in columns)
+            except NoSuchTableError:
+                # No live table yet — it will be created with the column.
+                self._owner_column_exists = True
+            except Exception:
+                # Assume migrated, uncached: caching a failed inspection would mask a legacy table
+                log_warning(
+                    f"Could not inspect table '{self.table_name}' for the user_id column; "
+                    "proceeding as migrated for this operation."
+                )
+                return True
+        return self._owner_column_exists
+
+    def _require_owner_column(self, user_id: Optional[str]) -> bool:
+        """Gate every ``user_id``-column reference on the live schema.
+
+        Returns True when the column exists and False when it is missing and the call is
+        unscoped, so the caller can fall back to SQL that never mentions the column. A scoped
+        call on an unmigrated table raises.
+        """
+        if self._user_id_column_exists():
+            return True
+        if user_id is None:
+            return False
+        # The cached answer may predate a migration run — re-inspect once before refusing
+        self._owner_column_exists = None
+        if self._user_id_column_exists():
+            return True
+        raise ValueError(
+            f"user_id={user_id!r} was passed but table '{self.table.fullname}' predates per-user "
+            "isolation and has no 'user_id' column. Run the v2 -> v3 migration "
+            "(libs/agno/migrations/v2_to_v3/migrate_sql_vectordbs.py) or recreate the table."
+        )
+
+    def _record_exists(self, column, value, scope_to_owner: bool = False, user_id: Optional[str] = None) -> bool:
         """
         Check if a record with the given column value exists in the table.
 
         Args:
             column: The column to check.
             value: The value to search for.
+            scope_to_owner: Also require the row's owner to match ``user_id``.
+            user_id: The owner to match when scoping; None matches the shared bucket.
 
         Returns:
             bool: True if the record exists, False otherwise.
         """
+        # Outside the try so a scoped check raises instead of returning False
+        scope_to_owner = scope_to_owner and self._require_owner_column(user_id)
         try:
             with self.Session() as sess, sess.begin():
-                stmt = select(1).where(column == value).limit(1)
-                result = sess.execute(stmt).first()
+                stmt = select(1).where(column == value)
+                if scope_to_owner:
+                    if user_id is not None:
+                        stmt = stmt.where(self.table.c.user_id == user_id)
+                    else:
+                        stmt = stmt.where(self.table.c.user_id.is_(None))
+                result = sess.execute(stmt.limit(1)).first()
                 return result is not None
         except Exception as e:
             log_error(f"Error checking if record exists: {str(e)}")
@@ -292,11 +344,16 @@ class PgVector(VectorDb):
         """
         return self._record_exists(self.table.c.id, id)
 
-    def content_hash_exists(self, content_hash: str) -> bool:
+    def content_hash_exists(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
         Check if a document with the given content hash exists in the table.
+
+        Args:
+            content_hash (str): The content hash to check.
+            user_id (Optional[str]): Scope the check to this user's rows. None scopes to the
+                shared bucket (``user_id IS NULL``), the same bucket ``_delete_by_content_hash`` clears.
         """
-        return self._record_exists(self.table.c.content_hash, content_hash)
+        return self._record_exists(self.table.c.content_hash, content_hash, scope_to_owner=True, user_id=user_id)
 
     def _clean_content(self, content: str) -> str:
         """
@@ -316,6 +373,7 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Insert documents into the database.
@@ -325,7 +383,9 @@ class PgVector(VectorDb):
             documents (List[Document]): List of documents to insert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to insert in each batch.
+            user_id (Optional[str]): Owner of these chunks. ``None`` means shared.
         """
+        self._require_owner_column(user_id)
         try:
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
@@ -336,9 +396,18 @@ class PgVector(VectorDb):
                         batch_records = []
                         for doc in batch_docs:
                             try:
-                                batch_records.append(self._get_document_record(doc, filters, content_hash))
+                                batch_records.append(self._get_document_record(doc, filters, content_hash, user_id))
+                            except EmbeddingError:
+                                # A chunk that did not embed is unretrievable. Dropping it here
+                                # would commit the rest of the batch and report success, so the
+                                # failure is raised for ingestion to retry and record.
+                                raise
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records if r.get("embedding")]
 
                         # Insert the batch of records
                         insert_stmt = postgresql.insert(self.table)
@@ -359,8 +428,13 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Insert documents asynchronously with parallel embedding."""
+        """Insert documents asynchronously with parallel embedding.
+
+        ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
+        """
+        self._require_owner_column(user_id)
         try:
             with self.Session() as sess:
                 for i in range(0, len(documents), batch_size):
@@ -369,6 +443,9 @@ class PgVector(VectorDb):
                     try:
                         # Embed all documents in the batch
                         await self._async_embed_documents(batch_docs)
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_docs = retrievable_documents(batch_docs)
 
                         # Prepare documents for insertion
                         batch_records = []
@@ -378,7 +455,7 @@ class PgVector(VectorDb):
                                 # Include content_hash in ID to ensure uniqueness across different content hashes
                                 # This allows the same URL/content to be inserted with different descriptions
                                 base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
-                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                                record_id = self._scoped_record_id(base_id, content_hash, user_id)
 
                                 meta_data = doc.meta_data or {}
                                 if filters:
@@ -395,9 +472,15 @@ class PgVector(VectorDb):
                                     "content_hash": content_hash,
                                     "content_id": doc.content_id,
                                 }
+                                if self._user_id_column_exists():
+                                    record["user_id"] = user_id
                                 batch_records.append(record)
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records if r.get("embedding")]
 
                         # Insert the batch of records
                         if batch_records:
@@ -428,16 +511,23 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert documents by content hash.
         First delete all documents with the same content hash.
         Then upsert the new documents.
+
+        ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
+        self._require_owner_column(user_id)
         try:
-            if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
-            self._upsert(content_hash, documents, filters, batch_size)
+            if self.content_hash_exists(content_hash, user_id=user_id):
+                self._delete_by_content_hash(content_hash, user_id=user_id)
+            self._upsert(content_hash, documents, filters, batch_size, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
             raise
@@ -448,6 +538,7 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert (insert or update) documents in the database.
@@ -456,6 +547,7 @@ class PgVector(VectorDb):
             documents (List[Document]): List of documents to upsert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to upsert in each batch.
+            user_id (Optional[str]): Owner of these chunks. ``None`` means shared.
         """
         try:
             with self.Session() as sess:
@@ -467,32 +559,43 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                record = self._get_document_record(doc, filters, content_hash)
+                                record = self._get_document_record(doc, filters, content_hash, user_id)
                                 # Use the generated record ID (which includes content_hash) for deduplication
                                 batch_records_dict[record["id"]] = record
+                            except EmbeddingError:
+                                # A chunk that did not embed is unretrievable. Dropping it here
+                                # would commit the rest of the batch and report success, so the
+                                # failure is raised for ingestion to retry and record.
+                                raise
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
                         # Convert dict to list for upsert
-                        batch_records = list(batch_records_dict.values())
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records_dict.values() if r.get("embedding")]
                         if not batch_records:
                             log_info("No valid records to upsert in this batch.")
                             continue
 
                         # Upsert the batch of records
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
+                        set_clause: Dict[str, Any] = {
+                            "name": insert_stmt.excluded.name,
+                            "meta_data": insert_stmt.excluded.meta_data,
+                            "filters": insert_stmt.excluded.filters,
+                            "content": insert_stmt.excluded.content,
+                            "embedding": insert_stmt.excluded.embedding,
+                            "usage": insert_stmt.excluded.usage,
+                            "content_hash": insert_stmt.excluded.content_hash,
+                            "content_id": insert_stmt.excluded.content_id,
+                        }
+                        if self._user_id_column_exists():
+                            # The owner is folded into the id, so a conflict is always same-owner
+                            set_clause["user_id"] = insert_stmt.excluded.user_id
                         upsert_stmt = insert_stmt.on_conflict_do_update(
                             index_elements=["id"],
-                            set_={
-                                "name": insert_stmt.excluded.name,
-                                "meta_data": insert_stmt.excluded.meta_data,
-                                "filters": insert_stmt.excluded.filters,
-                                "content": insert_stmt.excluded.content,
-                                "embedding": insert_stmt.excluded.embedding,
-                                "usage": insert_stmt.excluded.usage,
-                                "content_hash": insert_stmt.excluded.content_hash,
-                                "content_id": insert_stmt.excluded.content_id,
-                            },
+                            set_=set_clause,
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently
@@ -505,21 +608,37 @@ class PgVector(VectorDb):
             log_error(f"Error upserting documents: {str(e)}")
             raise
 
+    def _scoped_record_id(self, base_id: str, content_hash: str, user_id: Optional[str]) -> str:
+        """Fold the owner into the deterministic record id so two users upserting the same content
+        get distinct primary keys. ``None`` keeps the stable base id.
+
+        ``base_id`` is collapsed into a fixed-length digest first, else the '_' boundary moves and
+        ('doc_1', 'alice') collides with ('doc', '1_alice').
+        """
+        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        if user_id is None:
+            return record_id
+        return md5(f"{record_id}_{user_id}".encode()).hexdigest()
+
     def _get_document_record(
-        self, doc: Document, filters: Optional[Dict[str, Any]] = None, content_hash: str = ""
+        self,
+        doc: Document,
+        filters: Optional[Dict[str, Any]] = None,
+        content_hash: str = "",
+        user_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
         # Include content_hash in ID to ensure uniqueness across different content hashes
         # This allows the same URL/content to be inserted with different descriptions
         base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
-        record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+        record_id = self._scoped_record_id(base_id, content_hash, user_id)
 
         meta_data = doc.meta_data or {}
         if filters:
             meta_data.update(filters)
 
-        return {
+        record = {
             "id": record_id,
             "name": doc.name,
             "meta_data": meta_data,
@@ -530,6 +649,10 @@ class PgVector(VectorDb):
             "content_hash": content_hash,
             "content_id": doc.content_id,
         }
+        # Omitted on unmigrated tables, whose INSERTs must not mention the column
+        if self._user_id_column_exists():
+            record["user_id"] = user_id
+        return record
 
     async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
         """
@@ -558,11 +681,12 @@ class PgVector(VectorDb):
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                if isinstance(e, EmbeddingError):
+                    # The embedder already classified this; prefer that over matching text.
+                    is_rate_limit = e.reason == "rate_limit"
+                else:
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -572,50 +696,12 @@ class PgVector(VectorDb):
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-                    # Check for exceptions and handle them
-                    for i, result in enumerate(results):
-                        if isinstance(result, Exception):
-                            error_msg = str(result)
-                            # If it's an event loop closure error, log it but don't fail
-                            if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
-                                log_warning(
-                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}: {e}",
-                                )
-
-                            else:
-                                log_error(f"Error embedding document {i}: {result}: {str(e)}")
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-            # Re-raise on rate limits to avoid writing NULL embeddings.
-            rate_limit_error: Optional[Exception] = None
-
-            # Check for exceptions and handle them
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    error_msg = str(result)
-
-                    error_str = error_msg.lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
-                    if is_rate_limit and rate_limit_error is None:
-                        rate_limit_error = result
-
-                    # If it's an event loop closure error, log it but don't fail
-                    if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
-                        log_warning(
-                            f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
-                        )
-                    else:
-                        log_error(f"Error embedding document {i}: {result}")
-
-            if rate_limit_error is not None:
-                raise rate_limit_error
+            raise_embedding_failures(results)
 
     async def async_upsert(
         self,
@@ -623,12 +709,20 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
-        """Upsert documents asynchronously by running in a thread."""
+        """Upsert documents asynchronously by running in a thread.
+
+        ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
+        """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
+        self._require_owner_column(user_id)
         try:
-            if self.content_hash_exists(content_hash):
-                self._delete_by_content_hash(content_hash)
-            await self._async_upsert(content_hash, documents, filters, batch_size)
+            if self.content_hash_exists(content_hash, user_id=user_id):
+                self._delete_by_content_hash(content_hash, user_id=user_id)
+            await self._async_upsert(content_hash, documents, filters, batch_size, user_id=user_id)
         except Exception as e:
             log_error(f"Error upserting documents by content hash: {str(e)}")
             raise
@@ -639,6 +733,7 @@ class PgVector(VectorDb):
         documents: List[Document],
         filters: Optional[Dict[str, Any]] = None,
         batch_size: int = 100,
+        user_id: Optional[str] = None,
     ) -> None:
         """
         Upsert (insert or update) documents in the database.
@@ -647,6 +742,7 @@ class PgVector(VectorDb):
             documents (List[Document]): List of documents to upsert.
             filters (Optional[Dict[str, Any]]): Filters to apply to the documents.
             batch_size (int): Number of documents to upsert in each batch.
+            user_id (Optional[str]): Owner of these chunks. ``None`` means shared.
         """
         try:
             with self.Session() as sess:
@@ -656,6 +752,9 @@ class PgVector(VectorDb):
                     try:
                         # Embed all documents in the batch
                         await self._async_embed_documents(batch_docs)
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_docs = retrievable_documents(batch_docs)
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID
@@ -665,7 +764,7 @@ class PgVector(VectorDb):
                                 # Include content_hash in ID to ensure uniqueness across different content hashes
                                 # This allows the same URL/content to be inserted with different descriptions
                                 base_id = doc.id or md5(cleaned_content.encode()).hexdigest()
-                                record_id = md5(f"{base_id}_{content_hash}".encode()).hexdigest()
+                                record_id = self._scoped_record_id(base_id, content_hash, user_id)
 
                                 if (
                                     doc.embedding is not None
@@ -689,30 +788,38 @@ class PgVector(VectorDb):
                                     "content_hash": content_hash,
                                     "content_id": doc.content_id,
                                 }
+                                if self._user_id_column_exists():
+                                    record["user_id"] = user_id
                                 batch_records_dict[record_id] = record  # This deduplicates by ID
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
                         # Convert dict to list for upsert
-                        batch_records = list(batch_records_dict.values())
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records_dict.values() if r.get("embedding")]
                         if not batch_records:
                             log_info("No valid records to upsert in this batch.")
                             continue
 
                         # Upsert the batch of records
                         insert_stmt = postgresql.insert(self.table).values(batch_records)
+                        set_clause: Dict[str, Any] = {
+                            "name": insert_stmt.excluded.name,
+                            "meta_data": insert_stmt.excluded.meta_data,
+                            "filters": insert_stmt.excluded.filters,
+                            "content": insert_stmt.excluded.content,
+                            "embedding": insert_stmt.excluded.embedding,
+                            "usage": insert_stmt.excluded.usage,
+                            "content_hash": insert_stmt.excluded.content_hash,
+                            "content_id": insert_stmt.excluded.content_id,
+                        }
+                        if self._user_id_column_exists():
+                            # The owner is folded into the id, so a conflict is always same-owner
+                            set_clause["user_id"] = insert_stmt.excluded.user_id
                         upsert_stmt = insert_stmt.on_conflict_do_update(
                             index_elements=["id"],
-                            set_={
-                                "name": insert_stmt.excluded.name,
-                                "meta_data": insert_stmt.excluded.meta_data,
-                                "filters": insert_stmt.excluded.filters,
-                                "content": insert_stmt.excluded.content,
-                                "embedding": insert_stmt.excluded.embedding,
-                                "usage": insert_stmt.excluded.usage,
-                                "content_hash": insert_stmt.excluded.content_hash,
-                                "content_id": insert_stmt.excluded.content_id,
-                            },
+                            set_=set_clause,
                         )
                         sess.execute(upsert_stmt)
                         sess.commit()  # Commit batch independently
@@ -753,7 +860,11 @@ class PgVector(VectorDb):
             raise
 
     def search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a search based on the configured search type.
@@ -762,25 +873,33 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Restrict results to this user's rows plus shared
+                (``user_id IS NULL``) rows. ``None`` applies no owner predicate.
 
         Returns:
             List[Document]: List of matching documents.
         """
+        # Outside the search helpers' catch-alls so a scoped search raises instead of returning []
+        self._require_owner_column(user_id)
         if self.search_type == SearchType.vector:
-            return self.vector_search(query=query, limit=limit, filters=filters)
+            return self.vector_search(query=query, limit=limit, filters=filters, user_id=user_id)
         elif self.search_type == SearchType.keyword:
-            return self.keyword_search(query=query, limit=limit, filters=filters)
+            return self.keyword_search(query=query, limit=limit, filters=filters, user_id=user_id)
         elif self.search_type == SearchType.hybrid:
-            return self.hybrid_search(query=query, limit=limit, filters=filters)
+            return self.hybrid_search(query=query, limit=limit, filters=filters, user_id=user_id)
         else:
             log_error(f"Invalid search type '{self.search_type}'.")
             return []
 
     async def async_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """Search asynchronously by running in a thread."""
-        return await asyncio.to_thread(self.search, query, limit, filters)
+        return await asyncio.to_thread(self.search, query, limit, filters, user_id)
 
     def _dsl_to_sqlalchemy(self, filter_expr, table) -> ColumnElement[bool]:
         op = filter_expr["op"]
@@ -803,8 +922,20 @@ class PgVector(VectorDb):
         else:
             raise ValueError(f"Unknown filter operator: {op}")
 
+    def _apply_user_scope(self, stmt, user_id: Optional[str]):
+        """AND ``user_id = X OR user_id IS NULL`` into ``stmt``. No-op when ``user_id`` is ``None``."""
+        if user_id is None:
+            return stmt
+        # Defense in depth for direct helper calls that bypass search()
+        self._require_owner_column(user_id)
+        return stmt.where(or_(self.table.c.user_id == user_id, self.table.c.user_id.is_(None)))
+
     def vector_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a vector similarity search.
@@ -813,6 +944,7 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Restrict results to this user's rows plus shared rows.
 
         Returns:
             List[Document]: List of matching documents.
@@ -846,6 +978,9 @@ class PgVector(VectorDb):
 
             # Build the base statement
             stmt = select(*columns)
+
+            # Apply the user scope first so the planner narrows on the user_id index before the ANN scan
+            stmt = self._apply_user_scope(stmt, user_id)
 
             # Apply filters if provided
             if filters is not None:
@@ -919,30 +1054,13 @@ class PgVector(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
             return search_results
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error during vector search: {str(e)}")
             return []
-
-    def enable_prefix_matching(self, query: str) -> str:
-        """
-        Preprocess the query for prefix matching.
-
-        Note: this helper is kept for backwards compatibility. The output
-        (``ani*``) is only meaningful when fed to ``to_tsquery``; with
-        ``websearch_to_tsquery`` (the default code path) the ``*`` is
-        silently dropped. New code should use ``_build_ts_query`` below,
-        which routes through ``to_tsquery`` when prefix matching is on.
-
-        Args:
-            query (str): The original query.
-
-        Returns:
-            str: The processed query with prefix matching enabled.
-        """
-        # Append '*' to each word for prefix matching
-        words = query.strip().split()
-        processed_words = [word + "*" for word in words]
-        return " ".join(processed_words)
 
     def _build_ts_query(self, query: str):
         """
@@ -972,7 +1090,11 @@ class PgVector(VectorDb):
         return func.to_tsquery(self.content_language, bindparam("query", value=prefix_query))
 
     def keyword_search(
-        self, query: str, limit: int = 5, filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None
+        self,
+        query: str,
+        limit: int = 5,
+        filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a keyword search on the 'content' column.
@@ -981,6 +1103,7 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Restrict results to this user's rows plus shared rows.
 
         Returns:
             List[Document]: List of matching documents.
@@ -998,6 +1121,9 @@ class PgVector(VectorDb):
 
             # Build the base statement
             stmt = select(*columns)
+
+            # Apply the user scope first so the planner narrows before the full-text scan
+            stmt = self._apply_user_scope(stmt, user_id)
 
             # Build the text search vector
             ts_vector = func.to_tsvector(self.content_language, self.table.c.content)
@@ -1069,6 +1195,7 @@ class PgVector(VectorDb):
         query: str,
         limit: int = 5,
         filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
+        user_id: Optional[str] = None,
     ) -> List[Document]:
         """
         Perform a hybrid search combining vector similarity and full-text search.
@@ -1077,6 +1204,7 @@ class PgVector(VectorDb):
             query (str): The search query.
             limit (int): Maximum number of results to return.
             filters (Optional[Union[Dict[str, Any], List[FilterExpr]]]): Filters to apply to the search.
+            user_id (Optional[str]): Restrict results to this user's rows plus shared rows.
 
         Returns:
             List[Document]: List of matching documents.
@@ -1153,6 +1281,9 @@ class PgVector(VectorDb):
             # Build the base statement, including the hybrid score
             stmt = select(*columns, hybrid_score.label("hybrid_score"))
 
+            # Apply the user scope first so the planner narrows before scoring
+            stmt = self._apply_user_scope(stmt, user_id)
+
             # Add the full-text search condition
             # stmt = stmt.where(ts_vector.op("@@")(ts_query))
 
@@ -1218,6 +1349,10 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
 
             return search_results
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error during hybrid search: {str(e)}")
             return []
@@ -1231,6 +1366,8 @@ class PgVector(VectorDb):
                 log_debug(f"Dropping table '{self.table.fullname}'.")
                 self.table.drop(self.db_engine)
                 log_info(f"Table '{self.table.fullname}' dropped successfully.")
+                # The next table under this name will have the owner column — re-resolve lazily
+                self._owner_column_exists = None
             except Exception as e:
                 log_error(f"Error dropping table '{self.table.fullname}': {str(e)}")
                 raise
@@ -1536,13 +1673,19 @@ class PgVector(VectorDb):
             sess.rollback()
             return False
 
-    def delete_by_content_id(self, content_id: str) -> bool:
+    def delete_by_content_id(self, content_id: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete content by content ID.
+        Delete content by content ID, scoped to ``user_id`` when set.
+
+        Without ``user_id`` the delete spans every owner, so it is for unscoped/admin callers only.
         """
+        # Outside the try so a scoped delete raises instead of returning False
+        self._require_owner_column(user_id)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_id == content_id)
+                if user_id is not None:
+                    stmt = stmt.where(self.table.c.user_id == user_id)
                 sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with content ID '{content_id}' from table '{self.table.fullname}'.")
@@ -1552,13 +1695,26 @@ class PgVector(VectorDb):
             sess.rollback()
             return False
 
-    def _delete_by_content_hash(self, content_hash: str) -> bool:
+    def _delete_by_content_hash(self, content_hash: str, user_id: Optional[str] = None) -> bool:
         """
-        Delete content by content hash.
+        Delete content by content hash, scoped to ``user_id`` when set.
+
+        Args:
+            content_hash (str): The content hash to delete.
+            user_id (Optional[str]): Owner to scope the delete to. None scopes to the shared
+                bucket (``user_id IS NULL``) so a shared re-upsert never wipes an owner's rows.
         """
+        # Every row on an unmigrated table is unowned, so the shared bucket is the whole table.
+        # Outside the try so a scoped delete raises instead of returning False
+        scope_to_owner = self._require_owner_column(user_id)
         try:
             with self.Session() as sess, sess.begin():
                 stmt = self.table.delete().where(self.table.c.content_hash == content_hash)
+                if scope_to_owner:
+                    if user_id is not None:
+                        stmt = stmt.where(self.table.c.user_id == user_id)
+                    else:
+                        stmt = stmt.where(self.table.c.user_id.is_(None))
                 sess.execute(stmt)
                 sess.commit()
                 log_info(f"Deleted records with content hash '{content_hash}' from table '{self.table.fullname}'.")
