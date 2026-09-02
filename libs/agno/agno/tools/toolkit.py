@@ -131,6 +131,7 @@ class Toolkit:
         cache_dir: Optional[str] = None,
         timeout: Optional[int] = None,
         auto_register: bool = True,
+        tool_name_prefix: Optional[str] = None,
     ):
         """Initialize a new Toolkit.
 
@@ -189,6 +190,7 @@ class Toolkit:
         self.cache_results: bool = cache_results
         self.cache_ttl: int = cache_ttl
         self.cache_dir: Optional[str] = cache_dir
+        self.tool_name_prefix: Optional[str] = tool_name_prefix
 
         # Only assign timeout when the caller explicitly passed one, or when the
         # subclass hasn't already set it before calling super().__init__(). This
@@ -302,8 +304,11 @@ class Toolkit:
             if self.exclude_tools is not None and tool_name in self.exclude_tools:
                 return
 
+            # Apply prefix after filter checks (filters match unprefixed names)
+            registered_name = f"{self.tool_name_prefix}_{tool_name}" if self.tool_name_prefix else tool_name
+
             f = Function(
-                name=tool_name,
+                name=registered_name,
                 entrypoint=function,
                 cache_results=self.cache_results,
                 cache_dir=self.cache_dir,
@@ -405,9 +410,12 @@ class Toolkit:
         requires_confirmation = function.requires_confirmation or tool_name in self.requires_confirmation_tools
         external_execution = function.external_execution or tool_name in self.external_execution_required_tools
 
+        # Apply prefix after filter checks (filters match unprefixed names)
+        registered_name = f"{self.tool_name_prefix}_{tool_name}" if self.tool_name_prefix else tool_name
+
         # Create new Function with bound method, preserving decorator settings
         f = Function(
-            name=tool_name,
+            name=registered_name,
             description=function.description,
             title=function.title,
             annotations=function.annotations,

@@ -83,8 +83,8 @@ class WorkspaceContextProvider(ContextProvider):
         if self.mode == ContextMode.tools:
             return (
                 f"`{self.name}`: inspect project files under {self.root}. Use read-only "
-                "`list_files`, `search_content`, and `read_file`. Paths are relative to "
-                f"the workspace root. {self._exclusion_sentence()}"
+                "`list_files`, `search_content`, `grep_content`, and `read_file`. "
+                f"Paths are relative to the workspace root. {self._exclusion_sentence()}"
             )
         return (
             f"`{self.name}`: call `{self.query_tool_name}(question)` to inspect project "
@@ -110,6 +110,14 @@ class WorkspaceContextProvider(ContextProvider):
 
     def _default_tools(self) -> list:
         return [self._query_tool()]
+
+    def _query_tool(self):
+        query_tool = super()._query_tool()
+        query_tool.description = (
+            f"Explore project files under {self.root} with a natural-language question. "
+            "Read-only: lists directories, searches/greps code, and reads file contents."
+        )
+        return query_tool
 
     def _all_tools(self) -> list:
         return [self._build_workspace_tools()]
@@ -155,9 +163,9 @@ You answer questions by inspecting project files under {root}.
 Workflow:
 1. **Map the workspace first.** Use `list_files(recursive=True)` with a
    modest `max_depth` to identify likely source, docs, and cookbook paths.
-2. **Search narrowly.** Use `search_content(query, directory=...)` once you
-   know the relevant subtree. Avoid whole-workspace searches unless the user
-   asks for a broad audit.
+2. **Search narrowly.** Use `search_content(query, directory=...)` for substring
+   search, or `grep_content(pattern, directory=...)` for regex search with line
+   numbers. Scope to the relevant subtree once you know it.
 3. **Read before citing.** Use `read_file(path)` or a line range for the
    files you rely on. Cite paths relative to the workspace root.
 4. **Ignore generated noise.** {exclusion}

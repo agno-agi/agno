@@ -41,6 +41,7 @@ from agno.utils.path_safety import safe_join_relative_path
 TEXT_EXTENSIONS = {
     # Markup and data
     ".md",
+    ".mdx",
     ".txt",
     ".csv",
     ".json",
@@ -302,7 +303,8 @@ class Workspace(Toolkit):
     | -------- | -------------------- | --------------------------------------- |
     | ``read``   | ``read_file``        | Read a file (line-numbered)             |
     | ``list``   | ``list_files``       | List a directory (recursive option)     |
-    | ``search`` | ``search_content``   | Recursive content grep                  |
+    | ``search`` | ``search_content``   | Recursive content search (substring)    |
+    | ``grep``   | ``grep_content``     | Regex search with line numbers          |
     | ``write``  | ``write_file``       | Create or overwrite a file (atomic)     |
     | ``edit``   | ``edit_file``        | Replace a substring (with ``replace_all``)|
     | ``move``   | ``move_file``        | Move or rename a file                   |
@@ -363,7 +365,7 @@ class Workspace(Toolkit):
     this session. Catches the "agent hallucinated the file's contents" bug class.
     """
 
-    READ_TOOLS: List[str] = ["read", "list", "search"]
+    READ_TOOLS: List[str] = ["read", "list", "search", "grep"]
     WRITE_TOOLS: List[str] = ["write", "edit", "move", "delete", "shell"]
     ALL_TOOLS: List[str] = READ_TOOLS + WRITE_TOOLS
 
@@ -372,12 +374,114 @@ class Workspace(Toolkit):
         "read": "read_file",
         "list": "list_files",
         "search": "search_content",
+        "grep": "grep_content",
         "write": "write_file",
         "edit": "edit_file",
         "move": "move_file",
         "delete": "delete_file",
         "shell": "run_command",
     }
+
+    @classmethod
+    def _build_instructions(cls, tool_names: List[str], prefix: Optional[str] = None) -> str:
+        """Build instructions based on which tools are actually enabled.
+
+        Only references tools the LLM can call — never mentions disabled tools.
+        When prefix is set, tool names in instructions are prefixed (e.g., docs_read_file).
+        """
+        enabled = set(tool_names)
+        sections: List[str] = []
+
+        # Compute prefix once (follows MCPTools pattern at mcp/mcp.py:786-788)
+        tool_prefix = f"{prefix}_" if prefix else ""
+
+        # Read tools
+        if "read_file" in enabled:
+            sections.append(
+                f"**{tool_prefix}read_file** — read a file with line numbers.\n"
+                "When to use: examining file contents, checking code, getting context.\n"
+                "Always read before editing or citing."
+            )
+
+        if "list_files" in enabled:
+            sections.append(
+                f"**{tool_prefix}list_files** — list directory contents.\n"
+                "When to use: discovering project structure, finding files.\n"
+                "Use `recursive=True` with `max_depth` for broad exploration."
+            )
+
+        if "search_content" in enabled:
+            text = (
+                f"**{tool_prefix}search_content** — substring search across files.\n"
+                "When to use: finding text, locating usages, discovering code."
+            )
+            if "grep_content" in enabled:
+                text += f"\nFor regex patterns or line numbers, use {tool_prefix}grep_content instead."
+            sections.append(text)
+
+        if "grep_content" in enabled:
+            text = (
+                f"**{tool_prefix}grep_content** — regex search with line numbers and context.\n"
+                "When to use: pattern matching, finding code with surrounding context."
+            )
+            if "search_content" in enabled:
+                text += f"\nFor simple substring search, use {tool_prefix}search_content instead."
+            sections.append(text)
+
+        # Write tools
+        if "write_file" in enabled:
+            sections.append(
+                f"**{tool_prefix}write_file** — create or overwrite a file.\n"
+                "When to use: creating new files, replacing entire file contents."
+            )
+
+        if "edit_file" in enabled:
+            text = (
+                f"**{tool_prefix}edit_file** — replace a substring in a file.\n"
+                "When to use: modifying existing code.\n"
+                f"IMPORTANT: Always {tool_prefix}read_file first — use the exact substring from the output."
+            )
+            if "write_file" in enabled:
+                text += f"\nUse {tool_prefix}write_file for new files; {tool_prefix}edit_file for modifications."
+            sections.append(text)
+
+        if "move_file" in enabled:
+            sections.append(
+                f"**{tool_prefix}move_file** — move or rename a file.\nWhen to use: reorganizing, renaming."
+            )
+
+        if "delete_file" in enabled:
+            sections.append(
+                f"**{tool_prefix}delete_file** — delete a file.\nWhen to use: removing files. Use with caution."
+            )
+
+        if "run_command" in enabled:
+            sections.append(
+                f"**{tool_prefix}run_command** — run a shell command in the workspace.\n"
+                "When to use: running tests, builds, or other commands.\n"
+                "Note: runs with cwd=workspace root."
+            )
+
+        if len(sections) < 2:
+            return ""
+
+        result = "## Workspace Tools\n\n" + "\n\n".join(sections)
+
+        # Routing guidance
+        routing: List[str] = []
+        if "list_files" in enabled:
+            routing.append(f"- Discover structure → {tool_prefix}list_files")
+        if "search_content" in enabled or "grep_content" in enabled:
+            routing.append(f"- Find code/text → {tool_prefix}search_content or {tool_prefix}grep_content")
+        if "read_file" in enabled:
+            routing.append(f"- Examine contents → {tool_prefix}read_file")
+        if "edit_file" in enabled:
+            routing.append(f"- Modify code → {tool_prefix}read_file first, then {tool_prefix}edit_file")
+
+        if routing:
+            result += "\n\n## Workflow\n" + "\n".join(routing)
+
+        return result
 
     def __init__(
         self,
@@ -387,6 +491,8 @@ class Workspace(Toolkit):
         require_read_before_write: bool = False,
         max_file_lines: int = 100_000,
         max_file_length: int = 10_000_000,
+        max_grep_matches: int = 500,
+        max_search_file_size: int = 500 * 1024,
         exclude_patterns: Optional[List[str]] = None,
         allow_paths: Optional[List[str]] = None,
         **kwargs,
@@ -399,6 +505,8 @@ class Workspace(Toolkit):
 
         self.max_file_lines = max_file_lines
         self.max_file_length = max_file_length
+        self.max_grep_matches = max_grep_matches
+        self.max_search_file_size = max_search_file_size
         self.require_read_before_write = require_read_before_write
         self.exclude_patterns: List[str] = _validate_exclude_patterns(exclude_patterns)
         _resolve_allow_paths(self.root, allow_paths)
@@ -422,18 +530,14 @@ class Workspace(Toolkit):
         sync_tools = [getattr(self, name) for name in registered]
         async_tools = [(getattr(self, "a" + name), name) for name in registered]
 
-        # Only nudge the agent about edit_file when edit_file is actually
-        # available — read-only surfaces (e.g. WikiContextProvider's read
-        # sub-agent) shouldn't be told how to use a tool they don't have.
-        edit_registered = "edit" in resolved_allowed_aliases or "edit" in resolved_confirm_aliases
+        # Build instructions dynamically based on enabled tools
         toolkit_kwargs: dict = {}
-        if edit_registered:
-            toolkit_kwargs["instructions"] = (
-                "Always read_file before editing — the line-numbered output gives you "
-                "the exact substring to pass to edit_file's old_str parameter. "
-                "Do not guess file contents or pass line numbers to edit_file."
-            )
-            toolkit_kwargs["add_instructions"] = True
+        prefix = kwargs.get("tool_name_prefix")
+        if kwargs.get("instructions") is None:
+            built = self._build_instructions(registered, prefix=prefix)
+            if built:
+                toolkit_kwargs["instructions"] = built
+                toolkit_kwargs.setdefault("add_instructions", True)
 
         super().__init__(
             name="workspace",
@@ -631,9 +735,10 @@ class Workspace(Toolkit):
             return None
         if file_path in self._read_paths:
             return None
+        read_tool = f"{self.tool_name_prefix}_read_file" if self.tool_name_prefix else "read_file"
         return (
             f"Error: require_read_before_write is enabled and {file_path.name} hasn't "
-            f"been read this session. Call read_file first to confirm contents before "
+            f"been read this session. Call {read_tool} first to confirm contents before "
             f"the {op}."
         )
 
@@ -673,18 +778,21 @@ class Workspace(Toolkit):
             contents = file_path.read_text(encoding=encoding)
             self._read_paths.add(file_path)
             if start_line is None and end_line is None:
+                # Only suggest search_content if it's actually enabled
+                search_tool = f"{self.tool_name_prefix}_search_content" if self.tool_name_prefix else "search_content"
+                search_hint = (
+                    f", or use {search_tool} to find specific text first" if search_tool in self.functions else ""
+                )
                 if len(contents) > self.max_file_length:
                     return (
                         f"Error: file too long ({len(contents)} chars > {self.max_file_length}). "
-                        "Use start_line/end_line to read a chunk, "
-                        "or use search_content to find specific text first."
+                        f"Use start_line/end_line to read a chunk{search_hint}."
                     )
                 line_count = contents.count("\n") + 1
                 if line_count > self.max_file_lines:
                     return (
                         f"Error: file too long ({line_count} lines > {self.max_file_lines}). "
-                        "Use start_line/end_line to read a chunk, "
-                        "or use search_content to find specific text first."
+                        f"Use start_line/end_line to read a chunk{search_hint}."
                     )
                 return _format_with_line_numbers(contents, start_line=1)
             lines = contents.split("\n")
@@ -811,7 +919,7 @@ class Workspace(Toolkit):
 
             lower_query = query.lower()
             matches: List[dict] = []
-            max_file_size = 500 * 1024
+            max_file_size = self.max_search_file_size
             walk_done = False
 
             for dirpath, dirnames, filenames in os.walk(search_dir):
@@ -849,6 +957,116 @@ class Workspace(Toolkit):
         except Exception as e:
             log_error(f"search_content failed: {e}")
             return f"Error searching content: {e}"
+
+    def grep_content(
+        self,
+        pattern: str,
+        directory: str = ".",
+        context_lines: int = 0,
+        limit: int = 100,
+    ) -> str:
+        """Regex search with line numbers across text files in the workspace.
+
+        Matching is always case-insensitive.
+
+        :param pattern: Regex pattern to search for.
+        :param directory: Subdirectory to scope the search to (default ".").
+        :param context_lines: Lines of context before and after each match (default 0).
+        :param limit: Maximum number of matches to return (default 100, capped by max_grep_matches).
+        :return: JSON with keys ``pattern``, ``total_matches``, ``truncated``, and ``matches``
+            (list of ``{"file", "line", "text"}``).
+        """
+        try:
+            if not pattern or not pattern.strip():
+                return "Error: pattern cannot be empty"
+
+            # Clamp parameters to valid ranges
+            context_lines = max(0, context_lines)
+            limit = max(1, min(limit, self.max_grep_matches))
+
+            # 1. Compile regex (always case-insensitive)
+            try:
+                rx = re.compile(pattern, re.IGNORECASE)
+            except re.error as exc:
+                return f"Error: invalid regex pattern: {exc}"
+
+            # 2. Resolve directory
+            err, search_dir = self._resolve(directory, what="directory")
+            if err:
+                return err
+            if not search_dir.is_dir():
+                return f"Error: not a directory: {directory}"
+
+            max_file_size = self.max_search_file_size
+            matches: List[dict] = []
+            total_matches = 0
+
+            # 3. Walk the directory tree
+            for dirpath, dirnames, filenames in os.walk(search_dir):
+                if total_matches >= limit:
+                    break
+                # Prune excluded directories
+                dirnames[:] = [name for name in dirnames if not self._is_excluded(Path(dirpath) / name)]
+
+                for filename in filenames:
+                    if total_matches >= limit:
+                        break
+                    file_path = Path(dirpath) / filename
+
+                    # Skip hidden/excluded files
+                    if self._hidden(file_path):
+                        continue
+                    if file_path.suffix.lower() not in TEXT_EXTENSIONS:
+                        continue
+                    try:
+                        if file_path.stat().st_size > max_file_size:
+                            continue
+                    except OSError:
+                        continue
+
+                    # Read and search
+                    try:
+                        content = file_path.read_text(encoding="utf-8", errors="ignore")
+                    except Exception:
+                        continue
+
+                    file_lines = content.splitlines()
+                    hits = [idx for idx, line in enumerate(file_lines) if rx.search(line)]
+
+                    if not hits:
+                        continue
+
+                    rel_path = file_path.relative_to(self.root).as_posix()
+
+                    # Collect matches with context
+                    shown: Set[int] = set()
+
+                    for hit in hits:
+                        if total_matches >= limit:
+                            break
+                        # Calculate context range
+                        start = max(0, hit - context_lines)
+                        end = min(len(file_lines), hit + context_lines + 1)
+
+                        for j in range(start, end):
+                            if j not in shown:
+                                shown.add(j)
+                                matches.append({"file": rel_path, "line": j + 1, "text": file_lines[j]})
+
+                        total_matches += 1
+
+            # 4. Format output as JSON
+            result = {
+                "pattern": pattern,
+                "total_matches": total_matches,
+                "truncated": total_matches >= limit,
+                "matches": matches,
+            }
+            return json.dumps(result, indent=2)
+
+        except Exception as e:
+            log_error(f"grep_content failed: {e}")
+            return f"Error in grep: {e}"
 
     # ------------------------------------------------------------------
     # Write operations (require confirmation by default)
@@ -1075,6 +1293,16 @@ class Workspace(Toolkit):
     async def asearch_content(self, query: str, directory: str = ".", limit: int = 10) -> str:
         """Async variant of ``search_content``."""
         return await asyncio.to_thread(self.search_content, query, directory, limit)
+
+    async def agrep_content(
+        self,
+        pattern: str,
+        directory: str = ".",
+        context_lines: int = 0,
+        limit: int = 100,
+    ) -> str:
+        """Async variant of ``grep_content``."""
+        return await asyncio.to_thread(self.grep_content, pattern, directory, context_lines, limit)
 
     async def awrite_file(self, path: str, content: str, overwrite: bool = True, encoding: str = "utf-8") -> str:
         """Async variant of ``write_file``."""

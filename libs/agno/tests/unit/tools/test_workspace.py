@@ -13,13 +13,14 @@ ALL_METHODS = [
     "read_file",
     "list_files",
     "search_content",
+    "grep_content",
     "write_file",
     "edit_file",
     "move_file",
     "delete_file",
     "run_command",
 ]
-READ_METHODS = ["read_file", "list_files", "search_content"]
+READ_METHODS = ["read_file", "list_files", "search_content", "grep_content"]
 WRITE_METHODS = ["write_file", "edit_file", "move_file", "delete_file", "run_command"]
 
 
@@ -121,24 +122,31 @@ def test_custom_partition_works():
         assert ws.functions["delete_file"].requires_confirmation is True
 
 
-def test_edit_instruction_only_added_when_edit_registered():
-    """The 'always read_file before editing' nudge is gated on edit_file actually being available."""
+def test_instructions_built_dynamically_from_enabled_tools():
+    """Instructions are built dynamically based on which tools are enabled."""
     with tempfile.TemporaryDirectory() as tmp_dir:
+        # Read-only tools get instructions about read/search/grep workflow
         read_only = Workspace(tmp_dir, allowed=Workspace.READ_TOOLS, confirm=[])
         assert "edit_file" not in read_only.functions
-        assert read_only.instructions is None
-        assert read_only.add_instructions is False
+        assert read_only.instructions is not None
+        assert "read_file" in read_only.instructions
+        assert "search_content" in read_only.instructions
+        assert "grep_content" in read_only.instructions
+        assert "edit_file" not in read_only.instructions
+        assert read_only.add_instructions is True
 
+        # With edit, instructions include edit guidance
         with_edit_allowed = Workspace(tmp_dir, allowed=["read", "edit"], confirm=[])
         assert "edit_file" in with_edit_allowed.functions
         assert with_edit_allowed.instructions is not None
         assert "edit_file" in with_edit_allowed.instructions
+        assert "Always read_file first" in with_edit_allowed.instructions
         assert with_edit_allowed.add_instructions is True
 
-        with_edit_confirm = Workspace(tmp_dir, allowed=["read"], confirm=["edit"])
-        assert "edit_file" in with_edit_confirm.functions
-        assert with_edit_confirm.instructions is not None
-        assert with_edit_confirm.add_instructions is True
+        # Single tool = no instructions (no routing needed)
+        single_tool = Workspace(tmp_dir, allowed=["read"], confirm=[])
+        assert single_tool.instructions is None
+        assert single_tool.add_instructions is False
 
 
 def test_root_kwarg_is_optional_positional():
@@ -474,6 +482,157 @@ def test_search_content_empty_query():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir)
         assert ws.search_content(query="").startswith("Error")
+
+
+# ------------------------------------------------------------------
+# grep_content (regex with line numbers, JSON output)
+# ------------------------------------------------------------------
+
+
+def test_grep_content_basic():
+    """grep_content returns JSON with matches."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("def foo():\n    pass\n\ndef bar():\n    return 1")
+
+        result = json.loads(ws.grep_content(pattern="def "))
+        assert result["pattern"] == "def "
+        assert result["total_matches"] == 2
+        files = [m["file"] for m in result["matches"]]
+        lines = [m["line"] for m in result["matches"]]
+        assert "code.py" in files[0]
+        assert 1 in lines
+        assert 4 in lines
+
+
+def test_grep_content_regex():
+    """grep_content supports regex patterns."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("async def run():\n    pass\ndef sync_run():\n    pass")
+
+        result = json.loads(ws.grep_content(pattern=r"async\s+def"))
+        assert result["total_matches"] == 1
+        assert result["matches"][0]["line"] == 1
+        assert "async def run" in result["matches"][0]["text"]
+
+
+def test_grep_content_case_insensitive():
+    """grep_content is always case-insensitive."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "doc.md").write_text("TODO: fix this\nTodo: later\ntodo: now")
+
+        result = json.loads(ws.grep_content(pattern="TODO"))
+        assert result["total_matches"] == 3
+
+
+def test_grep_content_context_lines():
+    """grep_content context_lines shows surrounding lines."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("# header\ndef target():\n    pass\n# footer")
+
+        result = json.loads(ws.grep_content(pattern="def target", context_lines=1))
+        lines = [m["line"] for m in result["matches"]]
+        assert 1 in lines  # header (context)
+        assert 2 in lines  # target (match)
+        assert 3 in lines  # pass (context)
+
+
+def test_grep_content_respects_limit():
+    """grep_content respects the limit parameter."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("\n".join(f"line{i}" for i in range(100)))
+
+        result = json.loads(ws.grep_content(pattern="line", limit=5))
+        assert result["total_matches"] == 5
+        assert result["truncated"] is True
+
+
+def test_grep_content_max_grep_matches_clamps_limit():
+    """grep_content clamps limit to max_grep_matches from constructor."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        # Constructor sets max_grep_matches=10, LLM requests limit=50
+        ws = Workspace(tmp_dir, max_grep_matches=10)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("\n".join(f"match{i}" for i in range(100)))
+
+        # Even though limit=50 is requested, max_grep_matches=10 wins
+        result = json.loads(ws.grep_content(pattern="match", limit=50))
+        assert result["total_matches"] == 10
+        assert result["truncated"] is True
+
+
+def test_grep_content_invalid_regex():
+    """grep_content returns error for invalid regex."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        result = ws.grep_content(pattern="[invalid")
+        assert result.startswith("Error: invalid regex")
+
+
+def test_grep_content_no_matches():
+    """grep_content returns empty matches when no matches."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "file.py").write_text("nothing here")
+
+        result = json.loads(ws.grep_content(pattern="NOTFOUND"))
+        assert result["total_matches"] == 0
+        assert result["matches"] == []
+
+
+def test_grep_content_skips_excluded():
+    """grep_content skips excluded directories."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "real.py").write_text("def real(): pass")
+        (base / ".venv").mkdir()
+        (base / ".venv" / "hidden.py").write_text("def hidden(): pass")
+
+        result = json.loads(ws.grep_content(pattern="def "))
+        files = [m["file"] for m in result["matches"]]
+        assert any("real.py" in f for f in files)
+        assert not any(".venv" in f for f in files)
+
+
+def test_agrep_content_async():
+    """agrep_content async variant works."""
+    import json
+
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir)
+        base = Path(tmp_dir)
+        (base / "code.py").write_text("def foo(): pass")
+
+        result = json.loads(asyncio.run(ws.agrep_content(pattern="def ")))
+        assert result["total_matches"] == 1
+        assert result["matches"][0]["file"] == "code.py"
 
 
 # ------------------------------------------------------------------
@@ -1693,3 +1852,52 @@ def test_empty_deny_list_with_only_exemptions_excludes_nothing():
         _write(base, ".env", "SECRET=1\n")
         ws = Workspace(tmp_dir, exclude_patterns=["!.env.example"])
         assert "SECRET=1" in ws.read_file(".env")
+
+
+# =============================================================================
+# tool_name_prefix tests
+# =============================================================================
+
+
+def test_tool_name_prefix_prefixes_tool_names(tmp_path):
+    """tool_name_prefix prepends prefix to all tool names."""
+    workspace = Workspace(root=tmp_path, tool_name_prefix="docs")
+
+    assert "docs_read_file" in workspace.functions
+    assert "docs_list_files" in workspace.functions
+    assert "read_file" not in workspace.functions
+
+
+def test_tool_name_prefix_updates_instructions(tmp_path):
+    """Instructions reference prefixed tool names when prefix is set."""
+    workspace = Workspace(root=tmp_path, tool_name_prefix="myapp")
+
+    # Check that instructions reference prefixed names
+    assert workspace.instructions is not None
+    assert "myapp_read_file" in workspace.instructions
+    assert "myapp_list_files" in workspace.instructions
+    # Should not have unprefixed names
+    assert "**read_file**" not in workspace.instructions
+
+
+def test_tool_name_prefix_none_keeps_original_names(tmp_path):
+    """When tool_name_prefix is None, names and instructions are unchanged."""
+    workspace = Workspace(root=tmp_path, tool_name_prefix=None)
+
+    assert "read_file" in workspace.functions
+    assert "docs_read_file" not in workspace.functions
+    if workspace.instructions:
+        assert "**read_file**" in workspace.instructions
+
+
+def test_multiple_workspaces_different_prefixes(tmp_path):
+    """Multiple Workspace instances can coexist with different prefixes."""
+    docs = Workspace(root=tmp_path, tool_name_prefix="docs")
+    code = Workspace(root=tmp_path, tool_name_prefix="code")
+
+    # Each has its own prefixed tools
+    assert "docs_read_file" in docs.functions
+    assert "code_read_file" in code.functions
+    # No collision
+    assert "docs_read_file" not in code.functions
+    assert "code_read_file" not in docs.functions
