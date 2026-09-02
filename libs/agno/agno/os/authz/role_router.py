@@ -55,12 +55,14 @@ Roles admin API -- get_roles_router (default prefix ``/authz``):
 User directory admin API -- get_users_router (default prefix ``/users``):
     GET    /users                                list users (paginated, roles merged in)
     POST   /users                                create a directory user
+    GET    /users/metrics                        daily user registration counts
     GET    /users/{user_id}                      a user
     PATCH  /users/{user_id}                      update profile / disable (the kill-switch)
     DELETE /users/{user_id}                      remove a user (cascades role revocation)
 """
 
 import time
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, List, Optional, Union
 
@@ -159,6 +161,19 @@ class AuthzUserSchema(BaseModel):
             created_at=user.get("created_at"),
             updated_at=user.get("updated_at"),
         )
+
+
+class DailyUserRegistrationMetric(BaseModel):
+    """Managed users created on one UTC calendar day."""
+
+    date: datetime = Field(description="UTC day for which registrations are aggregated")
+    users_created_count: int = Field(description="Users created on this day", ge=0)
+
+
+class UserRegistrationMetricsResponse(BaseModel):
+    metrics: List[DailyUserRegistrationMetric] = Field(
+        default_factory=list, description="Daily managed-user registration counts"
+    )
 
 
 class AvailableScopeItem(BaseModel):
@@ -560,6 +575,47 @@ def get_users_router(
     @router.post("", response_model=AuthzUserSchema)
     def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
         return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
+
+    @router.get(
+        "/metrics",
+        response_model=UserRegistrationMetricsResponse,
+        operation_id="get_user_registration_metrics",
+        summary="Get User Registration Metrics",
+    )
+    def get_user_registration_metrics(
+        starting_date: Optional[date] = Query(
+            default=None, description="Starting date for the metrics range (YYYY-MM-DD)"
+        ),
+        ending_date: Optional[date] = Query(default=None, description="Ending date for the metrics range (YYYY-MM-DD)"),
+    ) -> UserRegistrationMetricsResponse:
+        if starting_date is not None and ending_date is not None and starting_date > ending_date:
+            raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
+
+        starting_at = (
+            int(datetime(starting_date.year, starting_date.month, starting_date.day, tzinfo=timezone.utc).timestamp())
+            if starting_date is not None
+            else None
+        )
+        ending_before = (
+            int(
+                (
+                    datetime(ending_date.year, ending_date.month, ending_date.day, tzinfo=timezone.utc)
+                    + timedelta(days=1)
+                ).timestamp()
+            )
+            if ending_date is not None
+            else None
+        )
+        rows = user_store.creation_metrics(starting_at=starting_at, ending_before=ending_before)
+        return UserRegistrationMetricsResponse(
+            metrics=[
+                DailyUserRegistrationMetric(
+                    date=datetime.fromtimestamp(row["date"], tz=timezone.utc),
+                    users_created_count=row["users_created_count"],
+                )
+                for row in rows
+            ]
+        )
 
     @router.get("/{user_id}", response_model=AuthzUserSchema)
     def get_user(user_id: str):

@@ -329,6 +329,30 @@ class ManagedUserStore:
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
+    def creation_metrics(
+        self,
+        starting_at: Optional[int] = None,
+        ending_before: Optional[int] = None,
+    ) -> List[dict]:
+        """Return current directory-user counts grouped by UTC creation day."""
+        if self._mem is not None:
+            seconds_per_day = 24 * 60 * 60
+            counts: Dict[int, int] = {}
+            for row in self._mem.values():
+                created_at = int(row["created_at"])
+                if starting_at is not None and created_at < starting_at:
+                    continue
+                if ending_before is not None and created_at >= ending_before:
+                    continue
+                day_start = created_at - (created_at % seconds_per_day)
+                counts[day_start] = counts.get(day_start, 0) + 1
+            return [{"date": day_start, "users_created_count": count} for day_start, count in sorted(counts.items())]
+
+        return self._db.get_authz_user_creation_metrics(
+            starting_at=starting_at,
+            ending_before=ending_before,
+        )
+
     def is_disabled(self, id: Optional[str]) -> bool:
         """Fast path for the enforcement point: True only if the user exists AND is
         disabled. Unknown subjects are NOT disabled (the app may legitimately mint

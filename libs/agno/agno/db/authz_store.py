@@ -285,6 +285,33 @@ def count_users(engine: Engine, table: Any, include_disabled: bool = True, searc
         return int(conn.execute(stmt).scalar() or 0)
 
 
+def get_user_creation_metrics(
+    engine: Engine,
+    table: Any,
+    starting_at: Optional[int] = None,
+    ending_before: Optional[int] = None,
+) -> List[Dict[str, int]]:
+    """Count current directory users by their UTC creation day."""
+    seconds_per_day = 24 * 60 * 60
+    day_start = (table.c.created_at - (table.c.created_at % seconds_per_day)).label("date")
+    filters = []
+    if starting_at is not None:
+        filters.append(table.c.created_at >= starting_at)
+    if ending_before is not None:
+        filters.append(table.c.created_at < ending_before)
+
+    stmt = (
+        select(day_start, func.count().label("users_created_count"))
+        .where(*filters)
+        .group_by(day_start)
+        .order_by(day_start.asc())
+    )
+    with engine.connect() as conn:
+        return [
+            {"date": int(row.date), "users_created_count": int(row.users_created_count)} for row in conn.execute(stmt)
+        ]
+
+
 def upsert_user(engine: Engine, table: Any, user_id: str, values: Dict[str, Any]) -> None:
     """Write a directory row (email/name/metadata/timestamps).
 

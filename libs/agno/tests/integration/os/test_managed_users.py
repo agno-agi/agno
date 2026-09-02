@@ -80,6 +80,25 @@ def test_store_crud_and_disable(tmp_path, db_url):
     assert store.remove("u2") is False
 
 
+@pytest.mark.parametrize("db_url", [None, "sqlite"])
+def test_store_creation_metrics(tmp_path, db_url, monkeypatch):
+    url = None if db_url is None else f"sqlite:///{tmp_path / 'user-metrics.db'}"
+    store = ManagedUserStore(db_url=url)
+    timestamps = iter([100, 200, 86400 + 300])
+    monkeypatch.setattr("agno.os.authz.user_store._now", lambda: next(timestamps))
+
+    for user_id in ("u1", "u2", "u3"):
+        store.upsert(user_id)
+
+    assert store.creation_metrics() == [
+        {"date": 0, "users_created_count": 2},
+        {"date": 86400, "users_created_count": 1},
+    ]
+    assert store.creation_metrics(starting_at=86400, ending_before=172800) == [
+        {"date": 86400, "users_created_count": 1}
+    ]
+
+
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
     store = ManagedUserStore(audit=sink)
@@ -186,6 +205,16 @@ def test_users_api_crud_and_role_merge():
     assert [u["id"] for u in by_id] == sorted(u["id"] for u in by_id)
     assert client.get("/users?sort_by=evil", headers=_auth("alice")).status_code == 422
 
+    # Registration metrics are a daily series, separate from session activity metrics.
+    metrics = client.get(
+        "/users/metrics?starting_date=2000-01-01&ending_date=2100-01-01", headers=_auth("alice")
+    ).json()["metrics"]
+    assert len(metrics) == 1 and metrics[0]["users_created_count"] == 2
+    assert (
+        client.get("/users/metrics?starting_date=2026-08-02&ending_date=2026-08-01", headers=_auth("alice")).status_code
+        == 422
+    )
+
     # update + delete; PATCH {"disabled": ...} is the revocation kill-switch
     client.patch("/users/bob", headers=_auth("alice"), json={"name": "Bob"})
     assert client.get("/users/bob", headers=_auth("alice")).json()["name"] == "Bob"
@@ -211,6 +240,8 @@ def test_users_api_is_admin_only():
 
     assert client.get("/users", headers=_auth("bob")).status_code == 403  # non-admin
     assert client.get("/users").status_code == 401  # anonymous
+    assert client.get("/users/metrics", headers=_auth("bob")).status_code == 403
+    assert client.get("/users/metrics").status_code == 401
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
