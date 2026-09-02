@@ -46,6 +46,7 @@ def build_learning_id(
     entity_id: Optional[str] = None,
     entity_type: Optional[str] = None,
     namespace: Optional[str] = None,
+    run_id: Optional[str] = None,
 ) -> Optional[str]:
     """Deterministic primary key for the framework's identity-keyed learning stores.
 
@@ -59,6 +60,10 @@ def build_learning_id(
     Under ``namespace="user"``, the entity_memory id embeds a digest of ``user_id`` so
     each user's entity graph is physically isolated: two users recording the same
     entity name and type get distinct rows.
+
+    ``feedback`` is keyed by the run it reviews, so re-reviewing updates that row instead
+    of adding a second. It is only half identity-keyed -- feedback with no run falls back
+    to a generated id -- which is why it is absent from IDENTITY_KEYED_LEARNING_TYPES.
 
     Returns ``None`` for learning types that do not use a deterministic id (e.g.
     ``decision_log``, which keys each entry by its own uuid) or when the identity fields
@@ -81,6 +86,8 @@ def build_learning_id(
                 return None
             return f"entity_user_{_user_key_segment(user_id)}_{entity_type}_{entity_id}"
         return f"entity_{effective_namespace}_{entity_type}_{entity_id}"
+    if learning_type == "feedback":
+        return f"feedback_{run_id}" if run_id else None
     return None
 
 

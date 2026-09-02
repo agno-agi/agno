@@ -1,6 +1,7 @@
 """Unit tests for run_rollouts / arun_rollouts, hermetic overrides, and results."""
 
 import asyncio
+import inspect
 import json
 from uuid import uuid4
 
@@ -1440,6 +1441,70 @@ async def test_opaque_learning_store_in_standard_slot_dropped():
     machine.user_profile = OpaqueStore()
     isolated = _read_only_learning_machine(machine, source_db=InMemoryDb())
     assert isolated.user_profile is False
+
+
+async def test_every_learning_slot_is_covered_by_the_write_barrier():
+    # The slot map is hand-written: a store missing from it is never severed, and its
+    # writes reach the caller's real db from inside an attempt.
+    import re
+
+    from agno.environments.runner import _read_only_learning_machine
+    from agno.learn import LearningMachine
+
+    covered = set(re.findall(r'"(\w+)": \w+Config', inspect.getsource(_read_only_learning_machine)))
+    assert set(LearningMachine._STORE_CONFIG_CLASSES) - covered == set()
+
+
+async def test_opaque_store_in_every_learning_slot_dropped():
+    from agno.environments.runner import _read_only_learning_machine
+    from agno.learn import LearningMachine
+
+    class OpaqueStore:
+        def get_tools(self, **kwargs):
+            return [lambda value: None]
+
+    for slot in LearningMachine._STORE_CONFIG_CLASSES:
+        machine = LearningMachine()
+        setattr(machine, slot, OpaqueStore())
+        isolated = _read_only_learning_machine(machine, source_db=InMemoryDb())
+        assert getattr(isolated, slot) is False, slot
+
+
+async def test_agentic_write_tools_severed_in_every_learning_slot():
+    # Isolation severs writes by switching off every non-search agent_can_* flag, so a
+    # write tool gated on the mode alone would survive it.
+    from agno.environments.runner import _read_only_learning_machine
+    from agno.learn import LearningMachine
+    from agno.learn.config import LearningMode
+
+    for slot, config_cls in LearningMachine._STORE_CONFIG_CLASSES.items():
+        config = config_cls()
+        if getattr(config, "mode", None) is not None:
+            config.mode = LearningMode.AGENTIC
+        machine = LearningMachine(db=InMemoryDb())
+        setattr(machine, slot, config)
+        isolated = _read_only_learning_machine(machine, source_db=InMemoryDb())
+        store = isolated.stores.get(slot)
+        if store is None:
+            continue
+        # Reads survive, writes must not: agent_can_search* is deliberately left on.
+        surviving = [
+            getattr(tool, "__name__", "") for tool in store.get_tools(user_id="u1", session_id="s1", agent_id="a1")
+        ]
+        assert all(name.startswith("search_") for name in surviving), f"{slot}: {surviving}"
+
+
+async def test_agentic_feedback_tool_severed_by_rollout_isolation():
+    # Feedback's only agent tool is a write, so isolation must leave it with none.
+    from agno.environments.runner import _read_only_learning_machine
+    from agno.learn import LearningMachine
+    from agno.learn.config import FeedbackConfig, LearningMode
+
+    machine = LearningMachine(db=InMemoryDb(), feedback=FeedbackConfig(mode=LearningMode.AGENTIC))
+    assert machine.feedback_store.get_tools(agent_id="a1", session_id="s1") != []
+
+    isolated = _read_only_learning_machine(machine, source_db=InMemoryDb())
+    assert isolated.feedback_store.get_tools(agent_id="a1", session_id="s1") == []
 
 
 async def test_live_agent_with_nested_mcp_tools_rejected_at_run_start():

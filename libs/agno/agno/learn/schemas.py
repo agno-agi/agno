@@ -28,6 +28,7 @@ Schemas:
 - LearnedKnowledge: Reusable knowledge/insights
 - EntityMemory: Third-party entity facts
 - DecisionLog: Decision logs
+- Feedback: Behavioral feedback
 """
 
 from dataclasses import asdict, dataclass, field, fields
@@ -1157,3 +1158,111 @@ class DecisionLog:
 
     def __repr__(self) -> str:
         return f"DecisionLog(id={self.id}, decision={self.decision[:50]}...)"
+
+
+# =============================================================================
+# Feedback Schema
+# =============================================================================
+
+
+@dataclass
+class Feedback:
+    """Schema for Behavioral Feedback.
+
+    Captures a positive or negative signal about what worked and what
+    didn't on a run. Useful for:
+    - Reviewing runs (positive/negative with an optional comment)
+    - Adapting agent behavior based on what users liked or disliked
+    - Building instruction-improvement loops on top of feedback patterns
+
+    Example:
+        Feedback(
+            id="fbk_abc123",
+            signal="negative",
+            comment="Too verbose, I just wanted the number",
+            context="User query: 'What is the population of Tokyo?'",
+            run_id="run_xyz",
+        )
+
+    Attributes:
+        id: Unique identifier for this feedback entry.
+        signal: The feedback signal (positive or negative).
+        comment: Free-text feedback provided by the user.
+        learning: Distilled lesson extracted from the feedback (filled by the store).
+        context: The situation the feedback refers to (e.g. run input/output snippet).
+        run_id: Which run this feedback reviews.
+        session_id: Which session the reviewed run belongs to.
+        user_id: Which user gave the feedback.
+        agent_id: Which agent the feedback is for.
+        team_id: Which team context.
+        workflow_id: Which workflow the reviewed run belongs to.
+        created_at: When the feedback was given.
+        updated_at: When the feedback was last changed.
+    """
+
+    id: str
+    signal: str = field(metadata={"description": "Feedback signal: positive or negative"})
+    comment: Optional[str] = field(default=None, metadata={"description": "Free-text feedback from the user"})
+    learning: Optional[str] = field(
+        default=None, metadata={"description": "Distilled lesson extracted from the feedback"}
+    )
+    context: Optional[str] = field(default=None, metadata={"description": "The situation the feedback refers to"})
+    run_id: Optional[str] = field(default=None, metadata={"description": "The run this feedback reviews"})
+
+    # Scope
+    session_id: Optional[str] = field(default=None, metadata={"internal": True})
+    user_id: Optional[str] = field(default=None, metadata={"internal": True})
+    agent_id: Optional[str] = field(default=None, metadata={"internal": True})
+    team_id: Optional[str] = field(default=None, metadata={"internal": True})
+    workflow_id: Optional[str] = field(default=None, metadata={"internal": True})
+    created_at: Optional[str] = field(default=None, metadata={"internal": True})
+    updated_at: Optional[str] = field(default=None, metadata={"internal": True})
+
+    @classmethod
+    def from_dict(cls, data: Any) -> Optional["Feedback"]:
+        """Parse from dict/JSON, returning None on any failure."""
+        if data is None:
+            return None
+        if isinstance(data, cls):
+            return data
+
+        try:
+            parsed = _parse_json(data)
+            if not parsed:
+                log_debug(f"{cls.__name__}.from_dict: _parse_json returned None for data={_truncate_for_log(data)}")
+                return None
+
+            # id and signal are required
+            if not parsed.get("id") or not parsed.get("signal"):
+                log_debug(f"{cls.__name__}.from_dict: missing required fields 'id' or 'signal'")
+                return None
+
+            field_names = {f.name for f in fields(cls)}
+            kwargs = {k: v for k, v in parsed.items() if k in field_names}
+
+            return cls(**kwargs)
+        except Exception as e:
+            log_debug(f"{cls.__name__}.from_dict failed: {e}, data={_truncate_for_log(data)}")
+            return None
+
+    def to_dict(self) -> Dict[str, Any]:
+        """Convert to dict."""
+        try:
+            return asdict(self)
+        except Exception as e:
+            log_debug(f"{self.__class__.__name__}.to_dict failed: {e}")
+            return {}
+
+    def to_text(self) -> str:
+        """Convert to searchable text format."""
+        parts = [f"Signal: {self.signal}"]
+        if self.comment:
+            parts.append(f"Comment: {self.comment}")
+        if self.learning:
+            parts.append(f"Learning: {self.learning}")
+        if self.context:
+            parts.append(f"Context: {self.context}")
+        return "\n".join(parts)
+
+    def __repr__(self) -> str:
+        return f"Feedback(id={self.id}, signal={self.signal})"

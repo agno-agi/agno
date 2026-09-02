@@ -443,3 +443,58 @@ class DecisionLogConfig:
 
     def __repr__(self) -> str:
         return f"DecisionLogConfig(mode={self.mode.value})"
+
+
+@dataclass
+class FeedbackConfig:
+    """Configuration for Behavioral Feedback learning type.
+
+    Behavioral Feedback captures signals about what worked and what
+    didn't: positive or negative feedback on a run.
+    Recent feedback is injected into future runs so the agent adapts.
+
+    Feedback arrives three ways: explicitly via FeedbackStore.record()
+    (distills a lesson from the comment when a model is provided), over
+    the AgentOS run feedback endpoint (stores the raw comment), and in
+    ALWAYS mode extracted from the conversation itself after each run
+    ("that's wrong", "too long", "perfect") when a model is provided.
+    The ALWAYS-mode extraction pass adds one model call per run.
+
+    Modes: ALWAYS (background extraction, default) and AGENTIC (the agent
+    logs feedback itself via a record_feedback tool). PROPOSE and HITL are
+    not supported.
+
+    Scope: AGENT (fixed) - Stored and retrieved by agent_id.
+
+    Args:
+        max_updates_per_run: Max updates per extraction run. Default: 10.
+        agent_can_record: Allow the agent's record_feedback tool in AGENTIC mode.
+        system_message: Full override for the extraction system message.
+        instructions: Override the default extraction instructions.
+        additional_instructions: Extra instructions appended to the extraction prompt.
+        distillation_instructions: Override the instructions record() uses to
+            distil a lesson from a comment.
+    """
+
+    # Required fields
+    db: Optional[Union["BaseDb", "AsyncBaseDb"]] = None
+    model: Optional["Model"] = None
+
+    # Mode and extraction
+    mode: LearningMode = LearningMode.ALWAYS
+    schema: Optional[Type[Any]] = None
+
+    # Limits
+    max_updates_per_run: Optional[int] = None
+
+    # Agent tools
+    agent_can_record: bool = True
+
+    # Prompt customization
+    system_message: Optional[str] = None
+    instructions: Optional[str] = None
+    additional_instructions: Optional[str] = None
+    distillation_instructions: Optional[str] = None
+
+    def __repr__(self) -> str:
+        return f"FeedbackConfig(mode={self.mode.value})"

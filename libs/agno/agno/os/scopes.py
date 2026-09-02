@@ -457,6 +457,7 @@ def get_default_scope_mappings() -> Dict[str, List[str]]:
         "GET /sessions/*": ["sessions:read"],
         "POST /sessions": ["sessions:write"],
         "POST /sessions/*/rename": ["sessions:write"],
+        "POST /sessions/*/runs/*/feedback": ["sessions:write"],
         "PATCH /sessions/*": ["sessions:write"],
         "DELETE /sessions": ["sessions:delete"],
         "DELETE /sessions/*": ["sessions:delete"],
