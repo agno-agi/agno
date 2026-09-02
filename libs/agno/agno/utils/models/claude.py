@@ -4,7 +4,7 @@ from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
 from agno.media import File, Image
 from agno.models.message import Message
-from agno.utils.log import log_error, log_info, log_warning
+from agno.utils.log import log_debug, log_error, log_info, log_warning
 
 if TYPE_CHECKING:
     from agno.models.anthropic.claude import SystemPromptBlock
@@ -123,6 +123,56 @@ def _anthropic_coerce_content_block(item: Any) -> Optional[Any]:
         if isinstance(block_dict, dict) and block_dict.get("type"):
             return block_dict
     return None
+
+
+_ANTHROPIC_THINKING_BLOCK_TYPES = ("thinking", "redacted_thinking")
+
+
+def _anthropic_block_type(block: Any) -> Optional[str]:
+    """Return the ``type`` of a content block that may be a dict or an SDK block object."""
+    block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", None)
+    return block_type if isinstance(block_type, str) else None
+
+
+def serialize_content_blocks(blocks: Any) -> List[Dict[str, Any]]:
+    """Serialize a provider response's content blocks, in order, into plain dicts.
+
+    The result is stored on the assistant message so a later request can echo the turn back
+    exactly as the API produced it. The API signs thinking blocks and verifies them on replay,
+    so the stored sequence must keep every block, its order, and its signature.
+    """
+    serialized: List[Dict[str, Any]] = []
+    for block in blocks or []:
+        block_dict = _anthropic_coerce_content_block(block)
+        if block_dict is not None:
+            serialized.append(block_dict)
+    return serialized
+
+
+def _anthropic_stored_assistant_blocks(message: Message) -> Optional[List[Dict[str, Any]]]:
+    """Return the provider content blocks stored on an assistant message, ready to replay.
+
+    Returns None when the message carries no stored blocks (it predates block storage, or was
+    produced by another provider) so the caller rebuilds the turn from the convenience fields.
+    ``tool_use`` blocks are kept only when the message still carries the matching tool call: a
+    response truncated by ``max_tokens`` can contain a tool_use that never ran, and the API
+    rejects a tool_use that has no tool_result.
+    """
+    if not message.provider_data:
+        return None
+    stored = message.provider_data.get("content_blocks")
+    if not isinstance(stored, list) or not stored:
+        return None
+    tool_call_ids = {tc.get("id") for tc in (message.tool_calls or []) if isinstance(tc, dict)}
+    replay: List[Dict[str, Any]] = []
+    for item in stored:
+        block = _anthropic_coerce_content_block(item)
+        if block is None:
+            continue
+        if block.get("type") == "tool_use" and block.get("id") not in tool_call_ids:
+            continue
+        replay.append(block)
+    return replay
 
 
 def _format_image_for_message(image: Image) -> Optional[Dict[str, Any]]:
@@ -547,16 +597,32 @@ def format_messages(
 
             content = []
 
-            if message.reasoning_content is not None and message.provider_data is not None:
-                from anthropic.types import RedactedThinkingBlock, ThinkingBlock
+            stored_blocks = _anthropic_stored_assistant_blocks(message)
+            if stored_blocks is not None:
+                # Echo the turn exactly as the API produced it: block order, text boundaries and
+                # every signed thinking block. Rebuilding the turn from the convenience fields
+                # below loses all of those, and the API rejects a modified thinking sequence.
+                content.extend(stored_blocks)
+                chat_messages.append({"role": ROLE_MAP[message.role], "content": content})  # type: ignore
+                continue
 
-                content.append(
-                    ThinkingBlock(
-                        thinking=message.reasoning_content,
-                        signature=message.provider_data.get("signature"),
-                        type="thinking",
+            if message.reasoning_content is not None and message.provider_data is not None:
+                from anthropic.types import ThinkingBlock
+
+                signature = message.provider_data.get("signature")
+                if isinstance(signature, str) and signature:
+                    content.append(
+                        ThinkingBlock(
+                            thinking=message.reasoning_content,
+                            signature=signature,
+                            type="thinking",
+                        )
                     )
-                )
+                else:
+                    # The API verifies thinking blocks by signature, so one without a signature
+                    # (reasoning from another provider, or a partially stored response) can only
+                    # be omitted. Omitting prior thinking is permitted outside a tool-use turn.
+                    log_debug("Omitting reasoning content without a thinking signature from Anthropic history")
 
             if message.redacted_reasoning_content is not None:
                 from anthropic.types import RedactedThinkingBlock
@@ -660,6 +726,16 @@ def format_messages(
             curr_blocks = (
                 curr_content if isinstance(curr_content, list) else [{"type": "text", "text": str(curr_content)}]
             )
+            if msg["role"] == "assistant":
+                # Two assistant responses can only share one message by dropping the earlier
+                # response's thinking: the API verifies an assistant message's thinking sequence
+                # against a single original response and rejects a stitched sequence. Omitting
+                # that thinking is permitted because the earlier response ended without a tool
+                # call to continue (a thinking-only response truncated by max_tokens, or an
+                # injected assistant message).
+                prev_blocks = [
+                    b for b in prev_blocks if _anthropic_block_type(b) not in _ANTHROPIC_THINKING_BLOCK_TYPES
+                ]
             merged_messages[-1]["content"] = [*prev_blocks, *curr_blocks]
         else:
             merged_messages.append(msg)

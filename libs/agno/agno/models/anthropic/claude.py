@@ -23,6 +23,7 @@ from agno.utils.models.claude import (
     format_tools_for_model,
     resolve_http_client,
     route_sampling_params_to_extra_body,
+    serialize_content_blocks,
     supports_prefill,
 )
 from agno.utils.tokens import count_schema_tokens
@@ -1035,6 +1036,11 @@ class Claude(Model):
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
                     server_blocks.append(block.model_dump())
 
+            # Keep the response's content blocks verbatim and in order so history replay can echo
+            # the turn back exactly; the convenience fields above are lossy views of these blocks.
+            model_response.provider_data = model_response.provider_data or {}
+            model_response.provider_data["content_blocks"] = serialize_content_blocks(response.content)
+
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
             for block in response.content:
@@ -1206,6 +1212,14 @@ class Claude(Model):
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
                 model_response.provider_data.setdefault("server_tool_blocks", []).extend(server_tool_blocks)
+
+            # Keep the final content blocks verbatim and in order so history replay can echo the
+            # turn back exactly; the streamed deltas above are lossy views of these blocks.
+            content_blocks = serialize_content_blocks(response.message.content)  # type: ignore
+            if content_blocks:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["content_blocks"] = content_blocks
 
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication
