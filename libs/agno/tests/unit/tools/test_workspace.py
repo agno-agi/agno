@@ -709,6 +709,57 @@ def test_require_read_before_write_blocks_unread_edit():
         assert (Path(tmp_dir) / "doc.md").read_text() == "Hello, world."
 
 
+def test_require_read_before_write_not_satisfied_by_line_limit_error():
+    """A read rejected by max_file_lines returned no contents, so it isn't a read."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True, max_file_lines=3)
+        (Path(tmp_dir) / "big.txt").write_text("line\n" * 10)
+        assert "too long" in ws.read_file("big.txt")
+        result = ws.write_file("big.txt", "tampered")
+        assert "require_read_before_write" in result
+        assert (Path(tmp_dir) / "big.txt").read_text() == "line\n" * 10
+
+
+def test_require_read_before_write_not_satisfied_by_char_limit_error():
+    """Same for the max_file_length guard, which returns before the contents too."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True, max_file_length=5)
+        (Path(tmp_dir) / "big.txt").write_text("Hello, world.")
+        assert "too long" in ws.read_file("big.txt")
+        assert "require_read_before_write" in ws.edit_file("big.txt", old_str="world", new_str="Agno")
+        assert "require_read_before_write" in ws.delete_file("big.txt")
+        assert (Path(tmp_dir) / "big.txt").read_text() == "Hello, world."
+
+
+def test_require_read_before_write_satisfied_by_chunk_read_of_long_file():
+    """The escape hatch the error message points at still works: read a chunk, then write."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True, max_file_lines=3)
+        (Path(tmp_dir) / "big.txt").write_text("line\n" * 10)
+        assert "too long" in ws.read_file("big.txt")
+        assert ws.read_file("big.txt", start_line=1, end_line=3).startswith("     1\tline")
+        assert "Wrote" in ws.write_file("big.txt", "updated")
+
+
+def test_require_read_before_write_not_satisfied_by_out_of_range_chunk():
+    """A range past the end of the file yields an empty string — nothing was learned."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        (Path(tmp_dir) / "doc.md").write_text("one\ntwo\nthree\n")
+        assert ws.read_file("doc.md", start_line=9999, end_line=10000) == ""
+        assert "require_read_before_write" in ws.edit_file("doc.md", old_str="two", new_str="TWO")
+        assert (Path(tmp_dir) / "doc.md").read_text() == "one\ntwo\nthree\n"
+
+
+def test_require_read_before_write_satisfied_by_reading_empty_file():
+    """An empty file renders as an empty string, but the read was real and complete."""
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        ws = Workspace(tmp_dir, require_read_before_write=True)
+        (Path(tmp_dir) / "empty.txt").write_text("")
+        assert ws.read_file("empty.txt") == ""
+        assert "Wrote" in ws.write_file("empty.txt", "now has content")
+
+
 def test_require_read_before_write_blocks_unread_delete():
     with tempfile.TemporaryDirectory() as tmp_dir:
         ws = Workspace(tmp_dir, require_read_before_write=True)
