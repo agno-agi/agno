@@ -92,6 +92,34 @@ class AwsBedrock(Model):
         super().__post_init__()
         if self.append_trailing_user_message is None:
             self.append_trailing_user_message = not supports_prefill(self.id)
+        if self.async_client is not None:
+            self._check_async_client(self.async_client)
+
+    @staticmethod
+    def _check_async_client(client: Any) -> None:
+        """
+        Reject an `async_client` that cannot serve `await client.converse(...)`.
+
+        botocore generates `converse` as a plain function on both its sync and async clients, so the
+        sync client is recognised by its packages rather than by inspecting the method.
+        """
+        if not hasattr(client, "converse"):
+            message = (
+                f"`async_client` must be an initialized async Bedrock client, got {type(client).__name__} "
+                "with no `converse` method."
+            )
+            if hasattr(client, "__aenter__"):
+                message += (
+                    " Enter it first, e.g. `client = await AsyncExitStack().enter_async_context("
+                    "aioboto3.Session().client('bedrock-runtime'))`."
+                )
+            raise ValueError(message)
+        packages = {cls.__module__.split(".")[0] for cls in type(client).__mro__}
+        if "botocore" in packages and "aiobotocore" not in packages:
+            raise ValueError(
+                "`async_client` must be an initialized async Bedrock client, got a sync boto3 client "
+                f"({type(client).__name__}). Pass it as `client=` instead, or supply an aiobotocore client."
+            )
 
     def get_client(self) -> AwsClient:
         """
@@ -221,12 +249,7 @@ class AwsBedrock(Model):
         manager protocol. Otherwise a client is created for this request, then entered and closed.
         """
         if self.async_client is not None:
-            if not hasattr(self.async_client, "converse") and hasattr(self.async_client, "__aenter__"):
-                raise ValueError(
-                    "`async_client` must be an initialized async Bedrock client, not a client context manager. "
-                    "Enter it first, e.g. `client = await AsyncExitStack().enter_async_context("
-                    "aioboto3.Session().client('bedrock-runtime'))`."
-                )
+            self._check_async_client(self.async_client)
             yield self.async_client
             return
 

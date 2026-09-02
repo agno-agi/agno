@@ -224,15 +224,12 @@ class TestProvidedAsyncClientLifecycle:
         assert provided.closed is False
         assert provided.converse_calls == 2
 
-    @pytest.mark.asyncio
-    async def test_client_context_manager_rejected(self):
+    def test_client_context_manager_rejected(self):
         """An unentered client context manager is single use, so it is rejected with guidance."""
         provided = MagicMock(spec=["__aenter__", "__aexit__"])
-        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
 
-        with pytest.raises(ValueError, match="must be an initialized async Bedrock client"):
-            async with model._async_client():
-                pass
+        with pytest.raises(ValueError, match="must be an initialized async Bedrock client.*Enter it first"):
+            AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=provided)
 
     @pytest.mark.asyncio
     async def test_owned_client_is_entered_and_closed(self):
@@ -263,3 +260,45 @@ class TestSessionNullCredentials:
 
         with pytest.raises(ValueError, match="boto3 session has no credentials"):
             model.get_async_client()
+
+
+class TestAsyncClientGuard:
+    """Anything that cannot serve `await client.converse(...)` is rejected when the model is built."""
+
+    def test_sync_boto3_client_rejected_at_construction(self):
+        sync_client = Session().client(
+            "bedrock-runtime", region_name="us-east-1", aws_access_key_id="k", aws_secret_access_key="s"
+        )
+
+        with pytest.raises(ValueError, match="must be an initialized async Bedrock client.*BedrockRuntime"):
+            AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=sync_client)
+
+    def test_session_object_rejected_at_construction(self):
+        with pytest.raises(ValueError, match="must be an initialized async Bedrock client.*Session"):
+            AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=Session())
+
+    @pytest.mark.asyncio
+    async def test_client_assigned_after_construction_is_validated(self):
+        model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0")
+        model.async_client = Session()
+
+        with pytest.raises(ValueError, match="must be an initialized async Bedrock client"):
+            async with model._async_client():
+                pass
+
+    @pytest.mark.asyncio
+    async def test_entered_aiobotocore_client_accepted(self):
+        try:
+            import aioboto3
+        except ImportError:
+            pytest.skip("aioboto3 not installed")
+        from contextlib import AsyncExitStack
+
+        async with AsyncExitStack() as stack:
+            entered = await stack.enter_async_context(
+                aioboto3.Session().client("bedrock-runtime", region_name="us-east-1")
+            )
+            model = AwsBedrock(id="anthropic.claude-3-sonnet-20240229-v1:0", async_client=entered)
+
+            async with model._async_client() as client:
+                assert client is entered
