@@ -75,8 +75,8 @@ def read_json_lenient(path: Path) -> Optional[Dict[str, Any]]:
     if not path.exists():
         return None
     try:
-        parsed = json.loads(path.read_text())
-    except (OSError, json.JSONDecodeError):
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
         return None
     return parsed if isinstance(parsed, dict) else None
 
@@ -86,7 +86,12 @@ def read_json_strict(path: Path) -> Dict[str, Any]:
     if not path.exists():
         return {}
     try:
-        parsed = json.loads(path.read_text())
+        parsed = json.loads(path.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as e:
+        raise CLIError(
+            "Refusing to modify " + str(path) + ": the file is not valid UTF-8 (" + str(e) + ").",
+            hint="JSON must be UTF-8. Re-save the file as UTF-8, then re-run.",
+        )
     except (OSError, json.JSONDecodeError) as e:
         raise CLIError(
             "Refusing to modify " + str(path) + ": the existing file is not valid JSON (" + str(e) + ").",
@@ -127,7 +132,7 @@ def atomic_write_text(path: Path, text: str, *, secure: bool) -> None:
     fd, tmp_name = tempfile.mkstemp(dir=str(path.parent), prefix="." + path.name + ".", suffix=".tmp")
     tmp = Path(tmp_name)
     try:
-        with os.fdopen(fd, "w") as handle:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
             handle.write(text)
             handle.flush()
             os.fsync(handle.fileno())
