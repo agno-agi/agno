@@ -616,6 +616,59 @@ def scrub_history_messages_from_run_output(run_response: Union[RunOutput, TeamRu
         run_response.messages = [msg for msg in run_response.messages if not msg.from_history]
 
 
+def media_scrub_would_change(run_response: Union[RunOutput, TeamRunOutput]) -> bool:
+    """True when ``scrub_media_from_run_output(..., keep_references=False)`` would
+    change the run's stored form.
+
+    The judgment must match how each field serializes, or a skipped scrub writes
+    different bytes than a performed one: Message media and top-level run media
+    serialize only when truthy / not None (the scrub nulls them), while RunInput
+    media serialize only when non-empty (the scrub empties them). A run already
+    scrubbed on a previous save reports False at every level.
+    """
+    if run_response.input is not None and (
+        run_response.input.images or run_response.input.videos or run_response.input.audios or run_response.input.files
+    ):
+        return True
+    for message_list in (run_response.messages, run_response.additional_input, run_response.reasoning_messages):
+        for message in message_list or []:
+            if (
+                message.images
+                or message.videos
+                or message.audio
+                or message.files
+                or message.audio_output is not None
+                or message.image_output is not None
+                or message.video_output is not None
+            ):
+                return True
+    if (
+        run_response.images is not None
+        or run_response.videos is not None
+        or run_response.audio is not None
+        or run_response.files is not None
+    ):
+        return True
+    for member_response in getattr(run_response, "member_responses", None) or []:
+        if media_scrub_would_change(member_response):
+            return True
+    return False
+
+
+def tool_scrub_would_change(run_response: Union[RunOutput, TeamRunOutput]) -> bool:
+    """True when ``scrub_tool_results_from_run_output`` would change the run's
+    stored form. The scrub removes tool-result messages plus the assistant
+    messages that issued those calls, so nothing changes unless at least one
+    tool-result message is present."""
+    return any(message.role == "tool" for message in run_response.messages or [])
+
+
+def history_scrub_would_change(run_response: Union[RunOutput, TeamRunOutput]) -> bool:
+    """True when ``scrub_history_messages_from_run_output`` would change the
+    run's stored form: it drops the messages tagged ``from_history``."""
+    return any(message.from_history for message in run_response.messages or [])
+
+
 def isolate_media_scrub_targets(run_response: Union[RunOutput, TeamRunOutput]) -> None:
     """Give ``run_response`` its own shallow copies of the collections that media
     scrubbing mutates in place (Message objects and RunInput).

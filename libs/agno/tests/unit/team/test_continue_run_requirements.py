@@ -884,7 +884,17 @@ class TestContinueRunApprovalResolution:
             )
 
         assert result is sentinel
-        mock_apply.assert_called_once_with(team.db, "run-1", run_response)
+        mock_apply.assert_called_once()
+        apply_args = mock_apply.call_args.args
+        assert apply_args[0] is team.db
+        assert apply_args[1] == "run-1"
+        assert apply_args[2].run_id == "run-1"
+        # The dispatch resolves approvals on its own copy of the stored run:
+        # history run objects are shared between session reads, so the
+        # session-held object must not carry the resolution.
+        assert apply_args[2] is not run_response
+        assert apply_args[2].requirements[0].confirmation is True
+        assert requirement.confirmation is None
         mock_continue.assert_called_once()
 
     def test_acontinue_run_uses_resolved_admin_approval_without_requirements(self):
@@ -946,7 +956,17 @@ class TestContinueRunApprovalResolution:
                 )
 
             assert result is sentinel
-            mock_apply.assert_called_once_with(team.db, "run-1", run_response)
+            mock_apply.assert_called_once()
+            apply_args = mock_apply.call_args.args
+            assert apply_args[0] is team.db
+            assert apply_args[1] == "run-1"
+            assert apply_args[2].run_id == "run-1"
+            # The dispatch resolves approvals on its own copy of the stored
+            # run: history run objects are shared between session reads, so
+            # the session-held object must not carry the resolution.
+            assert apply_args[2] is not run_response
+            assert apply_args[2].requirements[0].confirmation is True
+            assert requirement.confirmation is None
 
         asyncio.run(_exercise())
 

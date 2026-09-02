@@ -37,7 +37,7 @@ from agno.utils.agent import (
     set_session_name_util,
     update_session_state_util,
 )
-from agno.utils.log import log_debug, log_warning
+from agno.utils.log import log_debug, log_info, log_warning
 
 # ---------------------------------------------------------------------------
 # Session read / write
@@ -333,6 +333,94 @@ def _scrub_member_responses_keeping_paused(
     return run
 
 
+def _member_responses_storage_view(
+    team: "Team",
+    member_responses: List[Union[TeamRunOutput, "RunOutput"]],
+) -> Optional[List[Union[TeamRunOutput, "RunOutput"]]]:
+    """A copy of ``member_responses`` with each response scrubbed per its own
+    member's storage flags, or None when scrubbing would change nothing.
+
+    Storage-view twin of the in-place ``Team._scrub_member_responses``: same
+    member resolution, same scrub calls, same nested-team recursion — but a
+    response the scrub would change is scrubbed on an isolated copy, so the run
+    tree the caller holds keeps its member data. History runs reloaded from the
+    store were scrubbed before they were written, so for them every level
+    reports "nothing to remove" and no copies are made.
+    """
+    from copy import copy
+
+    from agno.agent._run import scrub_run_output_for_storage
+    from agno.team._tools import _find_member_by_id
+    from agno.team.team import Team
+    from agno.utils.agent import (
+        history_scrub_would_change,
+        isolate_media_scrub_targets,
+        media_scrub_would_change,
+        tool_scrub_would_change,
+    )
+
+    changed = False
+    views: List[Union[TeamRunOutput, "RunOutput"]] = []
+    for member_response in member_responses:
+        member_id = None
+        if isinstance(member_response, RunOutput):
+            member_id = member_response.agent_id
+        elif isinstance(member_response, TeamRunOutput):
+            member_id = member_response.team_id
+
+        member = None
+        if not member_id:
+            log_info("Skipping member response with no ID")
+        else:
+            member_result = _find_member_by_id(team, member_id)
+            if member_result is None:
+                log_debug(f"Could not find member with ID: {member_id}")
+            else:
+                _, member = member_result
+
+        view = member_response
+        if member is not None:
+            if (
+                (not member.store_media and media_scrub_would_change(view))
+                or (not member.store_tool_messages and tool_scrub_would_change(view))
+                or (not member.store_history_messages and history_scrub_would_change(view))
+            ):
+                view = copy(member_response)
+                # The scrubs rewrite Message/RunInput objects and the nested
+                # member-response tree in place; give the copy its own.
+                isolate_media_scrub_targets(view)
+                scrub_run_output_for_storage(member, view)  # type: ignore[arg-type]
+            if isinstance(member, Team) and isinstance(view, TeamRunOutput) and view.member_responses:
+                nested = _member_responses_storage_view(member, view.member_responses)
+                if nested is not None:
+                    if view is member_response:
+                        view = copy(member_response)
+                    view.member_responses = nested
+        if view is not member_response:
+            changed = True
+        views.append(view)
+    return views if changed else None
+
+
+def _scrub_member_responses_storage_view(
+    team: "Team", run: Union[TeamRunOutput, "RunOutput"]
+) -> Union[TeamRunOutput, "RunOutput"]:
+    """A storage view of ``run`` with member responses scrubbed per member
+    storage flags (the ``store_member_responses=True`` save path), copying only
+    the levels a scrub changes; ``run`` itself is returned when nothing does."""
+    from copy import copy
+
+    member_responses = getattr(run, "member_responses", None)
+    if not member_responses:
+        return run
+    views = _member_responses_storage_view(team, member_responses)
+    if views is None:
+        return run
+    run = copy(run)
+    run.member_responses = views  # type: ignore[union-attr]
+    return run
+
+
 def save_session(team: "Team", session: TeamSession) -> None:
     """
     Save the TeamSession to storage
@@ -343,7 +431,6 @@ def save_session(team: "Team", session: TeamSession) -> None:
     from copy import copy
 
     from agno.team._init import _has_async_db
-    from agno.team._run import _scrub_member_responses
     from agno.team._storage import _upsert_session
 
     if _has_async_db(team):
@@ -375,10 +462,17 @@ def save_session(team: "Team", session: TeamSession) -> None:
                     for run in session.runs
                 ]
             else:
-                for run in session.runs:
-                    if hasattr(run, "member_responses"):
-                        # Scrub individual member responses based on their storage flags
-                        _scrub_member_responses(team, run.member_responses)
+                # Per-member-flag scrub, also as a view on a session of its
+                # own: scrubbing the caller's runs in place would strip member
+                # data off the shared run objects a cached session (and every
+                # other reader of it) still holds. History runs reloaded from
+                # the store are already scrubbed, so only runs with fresh
+                # member data are copied.
+                storage_session = copy(session)
+                storage_session.runs = [
+                    _scrub_member_responses_storage_view(team, run) if hasattr(run, "member_responses") else run
+                    for run in session.runs
+                ]
         _upsert_session(team, session=storage_session)
         log_debug(f"Created or updated TeamSession record: {session.session_id}")
 
@@ -393,7 +487,6 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
     from copy import copy
 
     from agno.team._init import _has_async_db
-    from agno.team._run import _scrub_member_responses
     from agno.team._storage import _aupsert_session, _upsert_session
 
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
@@ -417,10 +510,14 @@ async def asave_session(team: "Team", session: TeamSession) -> None:
                     for run in session.runs
                 ]
             else:
-                for run in session.runs:
-                    if hasattr(run, "member_responses"):
-                        # Scrub individual member responses based on their storage flags
-                        _scrub_member_responses(team, run.member_responses)
+                # See save_session: the per-member-flag scrub is a view too —
+                # in-place scrubbing would strip member data off the shared run
+                # objects other readers of this session hold.
+                storage_session = copy(session)
+                storage_session.runs = [
+                    _scrub_member_responses_storage_view(team, run) if hasattr(run, "member_responses") else run
+                    for run in session.runs
+                ]
 
         if _has_async_db(team):
             await _aupsert_session(team, session=storage_session)
@@ -441,7 +538,6 @@ def save_run(
     Use this instead of save_session() when only a single run has changed.
     """
     from agno.team._init import _has_async_db
-    from agno.team._run import _scrub_member_responses
     from agno.team._storage import _upsert_run
 
     if _has_async_db(team):
@@ -453,7 +549,7 @@ def save_run(
             if not team.store_member_responses:
                 storage_run = _scrub_member_responses_keeping_paused(team, run)
             else:
-                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+                storage_run = _scrub_member_responses_storage_view(team, run)
         _upsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
         log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
 
@@ -466,7 +562,6 @@ async def asave_run(
     run_index: Optional[int] = None,
 ) -> None:
     """Async version of ``save_run``."""
-    from agno.team._run import _scrub_member_responses
     from agno.team._storage import _aupsert_run
 
     if team.db is not None and team.parent_team_id is None and team.workflow_id is None:
@@ -475,7 +570,7 @@ async def asave_run(
             if not team.store_member_responses:
                 storage_run = _scrub_member_responses_keeping_paused(team, run)
             else:
-                _scrub_member_responses(team, run.member_responses)  # type: ignore[union-attr]
+                storage_run = _scrub_member_responses_storage_view(team, run)
         await _aupsert_run(team, run=storage_run, session_id=session_id, user_id=user_id, run_index=run_index)
         log_debug(f"Saved run {getattr(run, 'run_id', '?')} to session {session_id}")
 
