@@ -70,18 +70,21 @@ async def run_entity(
 
         ui_deps = extract_context(run_input.context)
 
-        # 3. Build RunContext with client_tools and session_state
+        # 3. Build RunContext with client_tools and session_state.
+        # Do NOT pre-seed run_context.dependencies: that bypasses resolve_run_options
+        # merge and clobbers Agent/Team.dependencies whenever the client sends context
+        # (e.g. assistant-ui system items). Pass UI deps via the public kwargs instead.
         run_context = RunContext(
             run_id=run_id,
             session_id=run_input.thread_id,
             user_id=user_id,
             client_tools=client_tools,
-            dependencies=ui_deps,
             session_state=session_state,
         )
 
         run_kwargs: dict = {}
         if ui_deps:
+            run_kwargs["dependencies"] = ui_deps
             run_kwargs["add_dependencies_to_context"] = True
 
         # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
