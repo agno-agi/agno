@@ -557,6 +557,20 @@ class TestDeepCopyClientOwnership:
             deepcopy(Cloudflare(id="@cf/meta/llama-3-8b-instruct", api_key="test", client=sentinel)).client is sentinel
         )
 
+    def test_rebuilt_client_not_shared_on_deepcopy(self):
+        # If a provider rebuilds a closed caller-supplied client, the replacement is agno-built and
+        # must not be shared on a copy. Ownership is by object identity, not attribute name.
+        from agno.models.anthropic import Claude
+
+        caller = MagicMock()
+        caller.is_closed.return_value = True
+        model = Claude(id="claude-3-5-sonnet-20241022", api_key="test", client=caller)
+
+        rebuilt = model.get_client()
+        assert model.client is rebuilt and model.client is not caller
+
+        assert deepcopy(model).client is None
+
 
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
