@@ -230,30 +230,20 @@ async def _aread_session(
 
 def _upsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
     """Upsert a Session into the database."""
-
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        return team.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        log_warning(f"Error upserting session into db: {str(e)}")
-    return None
+    if not team.db:
+        raise ValueError("Db not initialized")
+    return team.db.upsert_session(session=session)  # type: ignore
 
 
 async def _aupsert_session(team: "Team", session: TeamSession) -> Optional[TeamSession]:
     """Upsert a Session into the database."""
     from agno.team._init import _has_async_db
 
-    try:
-        if not team.db:
-            raise ValueError("Db not initialized")
-        if _has_async_db(team):
-            return await team.db.upsert_session(session=session)  # type: ignore
-        else:
-            return team.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        log_warning(f"Error upserting session into db: {str(e)}")
-    return None
+    if not team.db:
+        raise ValueError("Db not initialized")
+    if _has_async_db(team):
+        return await team.db.upsert_session(session=session)  # type: ignore
+    return team.db.upsert_session(session=session)  # type: ignore
 
 
 def _upsert_run(
@@ -280,8 +270,6 @@ def _upsert_run(
         team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
         log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
-    except Exception as e:
-        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 async def _aupsert_run(
@@ -309,8 +297,6 @@ async def _aupsert_run(
             team.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
         log_debug(f"{type(team.db).__name__} does not implement upsert_run; skipping per-run write")
-    except Exception as e:
-        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 def _read_or_create_session(team: "Team", session_id: str, user_id: Optional[str] = None) -> TeamSession:

@@ -413,16 +413,9 @@ def upsert_session(
         session: The session to upsert.
     """
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        return agent.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    return agent.db.upsert_session(session=session)  # type: ignore
 
 
 async def aupsert_session(
@@ -439,19 +432,11 @@ async def aupsert_session(
     """
     from agno.agent import _init
 
-    try:
-        if not agent.db:
-            raise ValueError("Db not initialized")
-        if _init.has_async_db(agent):
-            return await agent.db.upsert_session(session=session)  # type: ignore
-        else:
-            return agent.db.upsert_session(session=session)  # type: ignore
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error upserting session into db: {str(e)}")
-        return None
+    if not agent.db:
+        raise ValueError("Db not initialized")
+    if _init.has_async_db(agent):
+        return await agent.db.upsert_session(session=session)  # type: ignore
+    return agent.db.upsert_session(session=session)  # type: ignore
 
 
 def upsert_run(
@@ -490,11 +475,6 @@ def upsert_run(
         # Adapter has not been ported to v3 storage; runs are persisted inline
         # via upsert_session instead. Silent no-op.
         log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 async def aupsert_run(
@@ -537,11 +517,6 @@ async def aupsert_run(
             agent.db.upsert_run(run=run, session_id=session_id, user_id=user_id, run_index=run_index)  # type: ignore[union-attr]
     except NotImplementedError:
         log_debug(f"{type(agent.db).__name__} does not implement upsert_run; skipping per-run write")
-    except Exception as e:
-        import traceback
-
-        traceback.print_exc(limit=3)
-        log_warning(f"Error upserting run into db: {str(e)}")
 
 
 # ---------------------------------------------------------------------------
