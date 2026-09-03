@@ -30,12 +30,13 @@ except ImportError:
     raise ImportError("`valkey-glide-sync` not installed. Please install it using `pip install valkey-glide-sync`")
 
 from agno.filters import FilterExpr
+from agno.exceptions import EmbeddingError
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -610,6 +611,9 @@ class ValkeyDb(VectorDb):
         Strategy: delete existing docs with the same content_hash (scoped to the
         caller's bucket), then insert new docs.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         try:
@@ -789,6 +793,10 @@ class ValkeyDb(VectorDb):
                 documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error in vector search: {str(e)}")
             return []

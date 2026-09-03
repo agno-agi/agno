@@ -4,11 +4,12 @@ from datetime import timedelta
 from hashlib import md5
 from typing import Any, Dict, List, Optional, Union
 
+from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 
 try:
     from acouchbase.bucket import AsyncBucket
@@ -451,6 +452,9 @@ class CouchbaseSearch(VectorDb):
             filters: Optional filters to apply to the documents
             user_id: Owner of the chunks for per-user isolation. None means shared.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         logger.info(f"Upserting {len(documents)} documents")
@@ -475,6 +479,10 @@ class CouchbaseSearch(VectorDb):
                 # and the value is the document content itself.
                 doc_id = doc_data.pop("_id")
                 docs_to_upsert[doc_id] = doc_data
+            except EmbeddingError:
+                # A chunk that did not embed is unretrievable. Swallowing it here would
+                # report a successful upsert for content the agent can never find.
+                raise
             except Exception:
                 logger.exception(f"Error preparing document '{document.name}'")
 
@@ -1089,12 +1097,8 @@ class CouchbaseSearch(VectorDb):
                         logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
@@ -1103,11 +1107,13 @@ class CouchbaseSearch(VectorDb):
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         for document in documents:
             try:
@@ -1164,6 +1170,9 @@ class CouchbaseSearch(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously."""
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         # Scope the dedupe-delete so re-upserting doesn't wipe another owner's chunks
@@ -1202,12 +1211,8 @@ class CouchbaseSearch(VectorDb):
                         logger.exception(f"Error assigning batch embedding to document '{doc.name}'")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
@@ -1216,11 +1221,13 @@ class CouchbaseSearch(VectorDb):
                     log_warning(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [document.async_embed(embedder=self.embedder) for document in documents]
-            await asyncio.gather(*embed_tasks, return_exceptions=True)
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         for document in documents:
             try:
