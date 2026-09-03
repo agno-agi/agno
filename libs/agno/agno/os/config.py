@@ -55,6 +55,17 @@ class MCPConfig(BaseModel):
     # not silently serve a different tool surface.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
+    # What the server says about itself in the initialize response. ``name`` defaults
+    # to the AgentOS name and ``version`` to ``AgentOS(version=...)``; with neither set,
+    # fastmcp reports its own package version. ``instructions`` is guidance for the
+    # calling model -- what the tools are for, which one to start with, and any
+    # conventions to follow -- and clients such as Claude, Cursor, and ChatGPT read
+    # it at connect time. It is NOT derived from ``AgentOS(description=...)``, which
+    # is written for humans.
+    name: Optional[str] = None
+    version: Optional[str] = None
+    instructions: Optional[str] = None
+
     # The tool surface of this MCP server. Each entry may be:
     #
     #   - a plain callable or an Agno ``@tool``/``Function`` -- a custom tool
