@@ -14,6 +14,8 @@ OS_METRICS = "os_metrics"
 OS_METRICS_TABLE_SCHEMA = {
     "id": {"type": String, "primary_key": True, "nullable": False},
     "users_created_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "authorization_allowed_count": {"type": BigInteger, "nullable": False, "default": 0},
+    "authorization_denied_count": {"type": BigInteger, "nullable": False, "default": 0},
     "date": {"type": BigInteger, "nullable": False, "index": True, "unique": True},
     "created_at": {"type": BigInteger, "nullable": False},
     "updated_at": {"type": BigInteger, "nullable": False},

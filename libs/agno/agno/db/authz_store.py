@@ -20,7 +20,7 @@ Two properties this layer must preserve, because the authorization model depends
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy import case, delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -394,3 +394,28 @@ def count_events(
             stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
+
+
+def aggregate_decisions_by_day(engine: Engine, table: Any) -> List[Dict[str, Any]]:
+    """Count allowed and denied authorization decisions for each UTC day."""
+    seconds_per_day = 24 * 60 * 60
+    day_start = (table.c.created_at - (table.c.created_at % seconds_per_day)).label("date")
+    statement = (
+        select(
+            day_start,
+            func.sum(case((table.c.action == "access.allowed", 1), else_=0)).label("authorization_allowed_count"),
+            func.sum(case((table.c.action == "access.denied", 1), else_=0)).label("authorization_denied_count"),
+        )
+        .where(table.c.action.in_(("access.allowed", "access.denied")))
+        .group_by(day_start)
+        .order_by(day_start.asc())
+    )
+    with engine.connect() as conn:
+        return [
+            {
+                "date": int(row.date),
+                "authorization_allowed_count": int(row.authorization_allowed_count or 0),
+                "authorization_denied_count": int(row.authorization_denied_count or 0),
+            }
+            for row in conn.execute(statement)
+        ]

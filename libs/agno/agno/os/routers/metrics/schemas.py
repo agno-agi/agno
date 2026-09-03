@@ -56,6 +56,8 @@ class DayAggregatedOSMetrics(BaseModel):
 
     id: str = Field(..., description="Unique identifier for the metrics record")
     users_created_count: int = Field(..., description="Users registered on this day", ge=0)
+    authorization_allowed_count: int = Field(..., description="Allowed authorization decisions on this day", ge=0)
+    authorization_denied_count: int = Field(..., description="Denied authorization decisions on this day", ge=0)
     date: datetime = Field(..., description="UTC day for which these metrics are aggregated")
     created_at: datetime = Field(..., description="Timestamp when metrics were created")
     updated_at: datetime = Field(..., description="Timestamp when metrics were last updated")
@@ -67,6 +69,8 @@ class DayAggregatedOSMetrics(BaseModel):
         return cls(
             id=metrics_dict.get("id", ""),
             users_created_count=metrics_dict.get("users_created_count", 0),
+            authorization_allowed_count=metrics_dict.get("authorization_allowed_count", 0),
+            authorization_denied_count=metrics_dict.get("authorization_denied_count", 0),
             date=to_utc_datetime(metrics_dict.get("date")) or datetime.now(timezone.utc),
             created_at=created_at,
             updated_at=updated_at,

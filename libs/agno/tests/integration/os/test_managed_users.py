@@ -90,8 +90,29 @@ def test_store_creation_metrics(tmp_path, db_url, monkeypatch):
     for user_id in ("u1", "u2", "u3"):
         store.upsert(user_id)
 
-    rebuilt = store.calculate_os_metrics()
-    assert [(row["date"], row["users_created_count"]) for row in rebuilt] == [(0, 2), (86400, 1)]
+    rebuilt = store.calculate_os_metrics(
+        decision_metrics=[
+            {
+                "date": 0,
+                "authorization_allowed_count": 3,
+                "authorization_denied_count": 1,
+            },
+            {
+                "date": 172800,
+                "authorization_allowed_count": 2,
+                "authorization_denied_count": 0,
+            },
+        ]
+    )
+    assert [
+        (
+            row["date"],
+            row["users_created_count"],
+            row["authorization_allowed_count"],
+            row["authorization_denied_count"],
+        )
+        for row in rebuilt
+    ] == [(0, 2, 3, 1), (86400, 1, 0, 0), (172800, 0, 2, 0)]
     cached, updated_at = store.os_metrics(starting_at=86400, ending_before=172800)
     assert [(row["date"], row["users_created_count"]) for row in cached] == [(86400, 1)]
     assert updated_at is not None
@@ -250,6 +271,29 @@ def test_users_api_is_admin_only():
     assert client.post("/metrics/os/refresh", headers=_auth("bob")).status_code == 403
     assert client.get("/metrics/os", headers=_auth("carol")).status_code == 200
     assert client.post("/metrics/os/refresh", headers=_auth("carol")).status_code == 403
+
+
+def test_os_metrics_include_authorization_decisions():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.assign("alice", "admin")
+    metrics_db_url = _db_url()
+    users = ManagedUserStore(db_url=metrics_db_url)
+    audit = DbAuditSink(db_url=metrics_db_url)
+    audit.record(AuditEvent(action="access.allowed", actor="alice", target="GET /agents", timestamp=100))
+    audit.record(AuditEvent(action="access.denied", actor="bob", target="GET /agents", timestamp=200))
+
+    client = TestClient(_os(roles, users, audit=audit).get_app())
+    refreshed = client.post("/metrics/os/refresh", headers=_auth("alice"))
+    assert refreshed.status_code == 200, refreshed.text
+
+    metrics = client.get("/metrics/os?starting_date=1970-01-01&ending_date=1970-01-01", headers=_auth("alice")).json()[
+        "metrics"
+    ]
+    assert len(metrics) == 1
+    assert metrics[0]["users_created_count"] == 0
+    assert metrics[0]["authorization_allowed_count"] == 1
+    assert metrics[0]["authorization_denied_count"] == 1
 
 
 def test_os_metrics_auto_mount_with_composite_authorization_provider():

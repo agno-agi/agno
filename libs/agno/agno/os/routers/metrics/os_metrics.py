@@ -18,6 +18,7 @@ from agno.os.settings import AgnoAPISettings
 from agno.os.utils import to_utc_datetime
 
 if TYPE_CHECKING:
+    from agno.os.authz.audit import AuditSink
     from agno.os.authz.user_store import ManagedUserStore
 
 logger = logging.getLogger(__name__)
@@ -25,6 +26,7 @@ logger = logging.getLogger(__name__)
 
 def get_os_metrics_router(
     user_store: "ManagedUserStore",
+    audit_sink: Optional["AuditSink"] = None,
     settings: AgnoAPISettings = AgnoAPISettings(),
     prefix: str = "/metrics/os",
 ) -> APIRouter:
@@ -35,6 +37,10 @@ def get_os_metrics_router(
         dependencies=[Depends(get_authentication_dependency(settings))],
     )
     refresh_state: Optional[MetricsRefreshStatusResponse] = None
+
+    def _calculate_os_metrics() -> List[dict]:
+        decision_metrics = audit_sink.aggregate_decisions_by_day() if audit_sink is not None else []
+        return user_store.calculate_os_metrics(decision_metrics=decision_metrics)
 
     def _date_bounds(starting_date: Optional[date], ending_date: Optional[date]) -> tuple[Optional[int], Optional[int]]:
         if starting_date is not None and ending_date is not None and starting_date > ending_date:
@@ -70,7 +76,7 @@ def get_os_metrics_router(
 
     async def _do_refresh() -> None:
         try:
-            await run_in_threadpool(user_store.calculate_os_metrics)
+            await run_in_threadpool(_calculate_os_metrics)
         except Exception as error:
             logger.exception("OS metrics refresh failed")
             _record_outcome(str(error))
@@ -118,7 +124,7 @@ def get_os_metrics_router(
             return MetricsRefreshResponse(status="started", message="OS metrics refresh started in background")
 
         try:
-            rows = await run_in_threadpool(user_store.calculate_os_metrics)
+            rows = await run_in_threadpool(_calculate_os_metrics)
         except Exception as error:
             _record_outcome(str(error))
             raise HTTPException(status_code=500, detail=f"Error refreshing OS metrics: {str(error)}")

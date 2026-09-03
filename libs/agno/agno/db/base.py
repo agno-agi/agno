@@ -1697,7 +1697,7 @@ class BaseDb(ABC):
         """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
-    def calculate_os_metrics(self) -> List[Dict[str, Any]]:
+    def calculate_os_metrics(self, decision_metrics: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         """Rebuild aggregates derived from OS-level data sources."""
         raise NotImplementedError
 
@@ -1751,6 +1751,10 @@ class BaseDb(ABC):
 
     def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
         """How many audit events match, for pagination."""
+        raise NotImplementedError
+
+    def aggregate_authz_decisions_by_day(self) -> List[Dict[str, Any]]:
+        """Daily allowed/denied authorization decision counts."""
         raise NotImplementedError
 
     # --- Service Accounts (Optional) ---

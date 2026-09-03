@@ -87,6 +87,10 @@ class AuditSink(ABC):
         """Persist/emit one event. Must not raise into the caller's path."""
         ...
 
+    def aggregate_decisions_by_day(self) -> List[Dict[str, Any]]:
+        """Return daily authorization decision counts when the sink is queryable."""
+        return []
+
 
 class LoggingAuditSink(AuditSink):
     """Emit each event as one JSON line to a logger (default ``agno.authz.audit``)."""
@@ -363,3 +367,7 @@ class DbAuditSink(AuditSink):
     def count_decisions(self, search: Optional[str] = None) -> int:
         """Total number of decision events (for pagination), honouring ``search``."""
         return self._count(True, search)
+
+    def aggregate_decisions_by_day(self) -> List[Dict[str, Any]]:
+        """Daily allowed/denied counts used by the OS metrics refresh job."""
+        return self._db.aggregate_authz_decisions_by_day()

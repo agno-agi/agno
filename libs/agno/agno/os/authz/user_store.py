@@ -331,10 +331,10 @@ class ManagedUserStore:
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
-    def calculate_os_metrics(self) -> List[dict]:
+    def calculate_os_metrics(self, decision_metrics: Optional[List[Dict[str, Any]]] = None) -> List[dict]:
         """Rebuild cached daily aggregates derived from OS-level data."""
         if self._mem is None:
-            return self._db.calculate_os_metrics()
+            return self._db.calculate_os_metrics(decision_metrics=decision_metrics)
 
         seconds_per_day = 24 * 60 * 60
         counts: Dict[int, int] = {}
@@ -344,16 +344,21 @@ class ManagedUserStore:
             counts[day_start] = counts.get(day_start, 0) + 1
 
         now = _now()
-        rows: List[Dict[str, Any]] = [
-            {
-                "id": str(day_start),
-                "date": day_start,
-                "users_created_count": count,
-                "created_at": now,
-                "updated_at": now,
-            }
-            for day_start, count in sorted(counts.items())
-        ]
+        decisions_by_day = {int(row["date"]): row for row in decision_metrics or []}
+        rows: List[Dict[str, Any]] = []
+        for day_start in sorted(counts.keys() | decisions_by_day.keys()):
+            decision_row = decisions_by_day.get(day_start, {})
+            rows.append(
+                {
+                    "id": str(day_start),
+                    "date": day_start,
+                    "users_created_count": counts.get(day_start, 0),
+                    "authorization_allowed_count": int(decision_row.get("authorization_allowed_count", 0)),
+                    "authorization_denied_count": int(decision_row.get("authorization_denied_count", 0)),
+                    "created_at": now,
+                    "updated_at": now,
+                }
+            )
         self._os_metrics_mem = {int(row["date"]): row for row in rows}
         return [dict(row) for row in rows]
 

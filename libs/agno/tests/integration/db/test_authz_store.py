@@ -17,6 +17,8 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
+from sqlalchemy import inspect  # noqa: E402
+
 from agno.db.sqlite import SqliteDb  # noqa: E402
 
 
@@ -180,8 +182,35 @@ def test_os_metrics_are_cached_and_filtered_by_utc_day(db):
             },
         )
 
-    rebuilt = db.calculate_os_metrics()
-    assert [(row["date"], row["users_created_count"]) for row in rebuilt] == [(0, 2), (86400, 1)]
+    for event_id, created_at, action in [
+        ("metric-decision-1", 300, "access.allowed"),
+        ("metric-decision-2", 400, "access.denied"),
+        ("metric-decision-3", 86400 + 500, "access.allowed"),
+    ]:
+        db.record_authz_decision(
+            {
+                "event_id": event_id,
+                "created_at": created_at,
+                "actor": "metric-user",
+                "action": action,
+                "target": "GET /agents",
+                "token_ref": None,
+                "required": None,
+                "scopes": None,
+            }
+        )
+
+    decision_metrics = db.aggregate_authz_decisions_by_day()
+    rebuilt = db.calculate_os_metrics(decision_metrics=decision_metrics)
+    assert [
+        (
+            row["date"],
+            row["users_created_count"],
+            row["authorization_allowed_count"],
+            row["authorization_denied_count"],
+        )
+        for row in rebuilt
+    ] == [(0, 2, 1, 1), (86400, 1, 1, 0)]
     cached, updated_at = db.get_os_metrics(starting_at=86400, ending_before=172800)
     assert [(row["date"], row["users_created_count"]) for row in cached] == [(86400, 1)]
     assert updated_at is not None
@@ -200,9 +229,51 @@ def test_os_metrics_are_cached_and_filtered_by_utc_day(db):
     )
     cached, _ = db.get_os_metrics(starting_at=86400, ending_before=172800)
     assert cached[0]["users_created_count"] == 1
-    db.calculate_os_metrics()
+    db.calculate_os_metrics(decision_metrics=db.aggregate_authz_decisions_by_day())
     cached, _ = db.get_os_metrics(starting_at=86400, ending_before=172800)
     assert cached[0]["users_created_count"] == 2
+
+
+def test_existing_os_metrics_cache_adds_authorization_columns(db):
+    with db.db_engine.begin() as connection:
+        connection.exec_driver_sql(
+            """
+            CREATE TABLE agno_os_metrics (
+                id VARCHAR NOT NULL PRIMARY KEY,
+                users_created_count BIGINT NOT NULL,
+                date BIGINT NOT NULL UNIQUE,
+                created_at BIGINT NOT NULL,
+                updated_at BIGINT NOT NULL
+            )
+            """
+        )
+        connection.exec_driver_sql(
+            """
+            INSERT INTO agno_os_metrics
+                (id, users_created_count, date, created_at, updated_at)
+            VALUES ('0', 2, 0, 1, 1)
+            """
+        )
+
+    cached, _ = db.get_os_metrics()
+
+    assert cached[0]["users_created_count"] == 2
+    assert cached[0]["authorization_allowed_count"] == 0
+    assert cached[0]["authorization_denied_count"] == 0
+    assert {column["name"] for column in inspect(db.db_engine).get_columns("agno_os_metrics")} >= {
+        "authorization_allowed_count",
+        "authorization_denied_count",
+    }
+
+
+def test_invalid_os_metrics_table_is_not_modified(db):
+    with db.db_engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE agno_os_metrics (id VARCHAR PRIMARY KEY)")
+
+    with pytest.raises(ValueError, match="invalid schema"):
+        db.get_os_metrics()
+
+    assert {column["name"] for column in inspect(db.db_engine).get_columns("agno_os_metrics")} == {"id"}
 
 
 def test_both_audit_trails_are_separate_and_searchable(db):

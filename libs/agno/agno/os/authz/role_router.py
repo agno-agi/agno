@@ -21,14 +21,15 @@ of the MCP catch-all mount. That ordering matters: a router included AFTER
 
 That caveat still applies to the multi-plane setup, which composes providers instead
 of naming a store (``authorization_provider=[ScopeAuthorizationProvider(), roles.provider]``)
-and so has no ``role_store`` for AgentOS to find. Mount it yourself there -- and if you
-also run ``mcp_server=True``, mount it before the MCP app is added or it will 404:
-
-    from agno.os.routers.metrics.os_metrics import get_os_metrics_router
+and so has no ``role_store`` for AgentOS to find. Mount the management routers yourself
+there -- and if you also run ``mcp_server=True``, mount them before the MCP app is added
+or they will 404:
 
     app.include_router(get_roles_router(roles))
     app.include_router(get_users_router(users, role_store=roles))  # the /users directory
-    app.include_router(get_os_metrics_router(users))
+
+The OS metrics router is mounted automatically whenever ``AgentOS`` has a managed user
+directory, including when authorization providers are composed manually.
 
 Response shapes mirror the agno cloud RBAC API so a frontend can reuse its
 integration: roles are objects (slug/name/description/is_default/created_at/

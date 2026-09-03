@@ -778,6 +778,9 @@ class SqliteDb(BaseDb):
                 authz_cache[table_name] = table
             return table
 
+        if table_type == OS_METRICS:
+            os_metrics_store.upgrade_authorization_count_columns(self.db_engine, table_name)
+
         # SQLite version of table validation (no schema)
         if not is_valid_table(db_engine=self.db_engine, table_name=table_name, table_type=table_type):
             raise ValueError(f"Table {table_name} has an invalid schema")
@@ -6465,10 +6468,12 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_store.count_users(self.db_engine, table, include_disabled, search)
 
-    def calculate_os_metrics(self) -> List[Dict[str, Any]]:
+    def calculate_os_metrics(self, decision_metrics: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
         users_table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         metrics_table = self._get_table(table_type=OS_METRICS, create_table_if_not_found=True)
-        return os_metrics_store.calculate_os_metrics(self.db_engine, users_table, metrics_table)
+        return os_metrics_store.calculate_os_metrics(
+            self.db_engine, users_table, metrics_table, decision_metrics=decision_metrics
+        )
 
     def get_os_metrics(
         self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
@@ -6521,3 +6526,7 @@ class SqliteDb(BaseDb):
         columns = ["actor", "action", "target"]
         table = self._get_table(table_type=table_type, create_table_if_not_found=True)
         return authz_store.count_events(self.db_engine, table, search, search_columns=columns)
+
+    def aggregate_authz_decisions_by_day(self) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type=AUTHZ_DECISIONS, create_table_if_not_found=True)
+        return authz_store.aggregate_decisions_by_day(self.db_engine, table)

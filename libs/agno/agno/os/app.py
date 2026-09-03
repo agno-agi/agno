@@ -1264,7 +1264,8 @@ class AgentOS:
         if directory_store is not None:
             from agno.os.routers.metrics.os_metrics import get_os_metrics_router
 
-            routers.append(get_os_metrics_router(directory_store, settings=self.settings))
+            audit_sink = getattr(authz_config, "audit", None) if authz_config is not None else None
+            routers.append(get_os_metrics_router(directory_store, audit_sink=audit_sink, settings=self.settings))
 
         if role_store is not None:
             from agno.os.authz.role_router import get_roles_router
