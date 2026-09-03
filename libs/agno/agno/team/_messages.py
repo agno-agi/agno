@@ -941,6 +941,36 @@ def _get_formatted_session_state_for_system_message(team: "Team", session_state:
     return f"\n<session_state>\n{session_state}\n</session_state>\n\n"
 
 
+def _is_roleful_message_list(input_message: Any) -> bool:
+    """A non-empty list of ``Message`` objects or role dicts, i.e. ready-made provider messages."""
+    return (
+        isinstance(input_message, list)
+        and len(input_message) > 0
+        and (
+            isinstance(input_message[0], Message) or (isinstance(input_message[0], dict) and "role" in input_message[0])
+        )
+    )
+
+
+def _append_input_messages(run_messages: RunMessages, input_messages: List[Any]) -> None:
+    """Append roleful input to the run as-is, mirroring ``agent._messages.get_run_messages``."""
+    if run_messages.extra_messages is None:
+        run_messages.extra_messages = []
+    for _m in input_messages:
+        if isinstance(_m, Message):
+            message = _m
+        elif isinstance(_m, dict):
+            try:
+                message = Message.model_validate(_m)
+            except Exception as e:
+                log_warning(f"Failed to validate message: {str(e)}")
+                continue
+        else:
+            continue
+        run_messages.messages.append(message)
+        run_messages.extra_messages.append(message)
+
+
 def _get_run_messages(
     team: "Team",
     *,
@@ -1051,24 +1081,30 @@ def _get_run_messages(
             run_messages.messages += history_copy
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
-    # 5.1 Build user message if message is None, str or list
-    user_message = _get_user_message(
-        team,
-        run_response=run_response,
-        run_context=run_context,
-        input_message=input_message,
-        user_id=user_id,
-        audio=audio,
-        images=images,
-        videos=videos,
-        files=files,
-        add_dependencies_to_context=add_dependencies_to_context,
-        **kwargs,
-    )
-    # Add user message to run_messages
-    if user_message is not None:
-        run_messages.user_message = user_message
-        run_messages.messages.append(user_message)
+    if _is_roleful_message_list(input_message):
+        # 5.1 A list of Message/role dicts is provider input in its own right: keep
+        # every message and its role, as the Agent builder does, instead of
+        # flattening the list into one user string.
+        _append_input_messages(run_messages, input_message)  # type: ignore[arg-type]
+    else:
+        # 5.2 Build user message if message is None, str or list
+        user_message = _get_user_message(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            input_message=input_message,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
+        # Add user message to run_messages
+        if user_message is not None:
+            run_messages.user_message = user_message
+            run_messages.messages.append(user_message)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1185,24 +1221,30 @@ async def _aget_run_messages(
             run_messages.messages += history_copy
 
     # 5. Add user message to run_messages (message second as per Dirk's requirement)
-    # 5.1 Build user message if message is None, str or list
-    user_message = await _aget_user_message(
-        team,
-        run_response=run_response,
-        run_context=run_context,
-        input_message=input_message,
-        user_id=user_id,
-        audio=audio,
-        images=images,
-        videos=videos,
-        files=files,
-        add_dependencies_to_context=add_dependencies_to_context,
-        **kwargs,
-    )
-    # Add user message to run_messages
-    if user_message is not None:
-        run_messages.user_message = user_message
-        run_messages.messages.append(user_message)
+    if _is_roleful_message_list(input_message):
+        # 5.1 A list of Message/role dicts is provider input in its own right: keep
+        # every message and its role, as the Agent builder does, instead of
+        # flattening the list into one user string.
+        _append_input_messages(run_messages, input_message)  # type: ignore[arg-type]
+    else:
+        # 5.2 Build user message if message is None, str or list
+        user_message = await _aget_user_message(
+            team,
+            run_response=run_response,
+            run_context=run_context,
+            input_message=input_message,
+            user_id=user_id,
+            audio=audio,
+            images=images,
+            videos=videos,
+            files=files,
+            add_dependencies_to_context=add_dependencies_to_context,
+            **kwargs,
+        )
+        # Add user message to run_messages
+        if user_message is not None:
+            run_messages.user_message = user_message
+            run_messages.messages.append(user_message)
 
     # Set messages on run_context so tool hooks can access the current message history
     run_context.messages = run_messages.messages
@@ -1250,9 +1292,6 @@ def _get_user_message(
             if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                 # This is multimodal content (text + images/audio/video), preserve the structure
                 input_content = input_message
-            elif len(input_message) > 0 and isinstance(input_message[0], Message):
-                # This is a list of Message objects, extract text content from them
-                input_content = get_text_from_message(input_message)
             elif all(isinstance(item, str) for item in input_message):
                 input_content = "\n".join([str(item) for item in input_message])
             else:
@@ -1408,9 +1447,6 @@ async def _aget_user_message(
             if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                 # This is multimodal content (text + images/audio/video), preserve the structure
                 input_content = input_message
-            elif len(input_message) > 0 and isinstance(input_message[0], Message):
-                # This is a list of Message objects, extract text content from them
-                input_content = get_text_from_message(input_message)
             elif all(isinstance(item, str) for item in input_message):
                 input_content = "\n".join([str(item) for item in input_message])
             else:
