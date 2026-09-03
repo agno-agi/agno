@@ -36,7 +36,7 @@ OutputDimension = Literal[256, 512, 1024, 1536]
 @dataclass
 class AwsBedrockEmbedder(Embedder):
     """
-    AWS Bedrock embedder supporting Cohere Embed v3 and v4 models.
+    AWS Bedrock embedder supporting Cohere Embed v3/v4 and Amazon Titan Embed v2 models.
 
     To use this embedder, you need to either:
     1. Set the following environment variables:
@@ -47,27 +47,30 @@ class AwsBedrockEmbedder(Embedder):
 
     Args:
         id (str): The model ID to use. Default is 'cohere.embed-multilingual-v3'.
-            - v3 models: 'cohere.embed-multilingual-v3', 'cohere.embed-english-v3'
-            - v4 model: 'cohere.embed-v4:0'
+            - Cohere v3 models: 'cohere.embed-multilingual-v3', 'cohere.embed-english-v3'
+            - Cohere v4 model: 'cohere.embed-v4:0'
+            - Titan v2 model: 'amazon.titan-embed-text-v2:0'
         dimensions (Optional[int]): The dimensions of the embeddings.
-            - v3: Fixed at 1024
-            - v4: Configurable via output_dimension (256, 512, 1024, 1536). Default 1536.
-        input_type (str): Prepends special tokens to differentiate types. Options:
+            - Cohere v3: Fixed at 1024
+            - Cohere v4: Configurable via output_dimension (256, 512, 1024, 1536). Default 1536.
+            - Titan v2: 256, 512, or 1024 (default 1024). Pass via request_params: {"dimensions": 512}.
+        input_type (str): (Cohere only) Prepends special tokens to differentiate types. Options:
             'search_document', 'search_query', 'classification', 'clustering'. Default is 'search_query'.
-        truncate (Optional[str]): How to handle inputs longer than the maximum token length.
+        truncate (Optional[str]): (Cohere only) How to handle inputs longer than the maximum token length.
             - v3: 'NONE', 'START', 'END'
             - v4: 'NONE', 'LEFT', 'RIGHT'
-        embedding_types (Optional[List[str]]): Types of embeddings to return. Options:
+        embedding_types (Optional[List[str]]): (Cohere only) Types of embeddings to return. Options:
             'float', 'int8', 'uint8', 'binary', 'ubinary'. Default is ['float'].
-        output_dimension (Optional[int]): (v4 only) Vector length. Options: 256, 512, 1024, 1536.
+        output_dimension (Optional[int]): (Cohere v4 only) Vector length. Options: 256, 512, 1024, 1536.
             Default is 1536 if unspecified.
-        max_tokens (Optional[int]): (v4 only) Truncation budget per input object.
+        max_tokens (Optional[int]): (Cohere v4 only) Truncation budget per input object.
             The model supports up to ~128,000 tokens.
         aws_region (Optional[str]): The AWS region to use.
         aws_access_key_id (Optional[str]): The AWS access key ID to use.
         aws_secret_access_key (Optional[str]): The AWS secret access key to use.
         session (Optional[Session]): A boto3 Session object to use for authentication.
         request_params (Optional[Dict[str, Any]]): Additional parameters to pass to the API requests.
+            For Titan v2, supports optional keys: 'dimensions' (256|512|1024), 'normalize' (bool).
         client_params (Optional[Dict[str, Any]]): Additional parameters to pass to the boto3 client.
     """
 
@@ -96,7 +99,10 @@ class AwsBedrockEmbedder(Embedder):
             self.enable_batch = False
 
         # Set appropriate default dimensions based on model version
-        if self._is_v4_model():
+        if self._is_titan_model():
+            # Titan Embed v2: default 1024 dimensions (256|512|1024 supported)
+            self.dimensions = 1024
+        elif self._is_v4_model():
             # v4 default is 1536, but can be overridden by output_dimension
             if self.output_dimension:
                 self.dimensions = self.output_dimension
@@ -105,6 +111,10 @@ class AwsBedrockEmbedder(Embedder):
         else:
             # v3 models are fixed at 1024
             self.dimensions = 1024
+
+    def _is_titan_model(self) -> bool:
+        """Check if the current model is an Amazon Titan Embed model."""
+        return "titan-embed" in self.id.lower()
 
     def _is_v4_model(self) -> bool:
         """Check if the current model is a Cohere Embed v4 model."""
@@ -209,7 +219,16 @@ class AwsBedrockEmbedder(Embedder):
         Returns:
             str: The formatted request body as a JSON string.
         """
-        request_body: Dict[str, Any] = {
+        if self._is_titan_model():
+            # Amazon Titan Embed v2 schema
+            request_body: Dict[str, Any] = {"inputText": text}
+            # request_params can pass optional: dimensions (256|512|1024), normalize (bool)
+            if self.request_params:
+                request_body.update(self.request_params)
+            return json.dumps(request_body)
+
+        # Cohere v3/v4 schema
+        request_body = {
             "texts": [text],
             "input_type": self.input_type,
         }
@@ -292,7 +311,7 @@ class AwsBedrockEmbedder(Embedder):
 
     def _extract_embeddings(self, response_body: Dict[str, Any]) -> List[float]:
         """
-        Extract embeddings from the response body, handling both v3 and v4 formats.
+        Extract embeddings from the response body, handling Titan v2, Cohere v3, and Cohere v4 formats.
 
         Args:
             response_body: The parsed response body from the API.
@@ -301,6 +320,11 @@ class AwsBedrockEmbedder(Embedder):
             List[float]: The embedding vector.
         """
         try:
+            # Titan Embed v2 returns {"embedding": [...], "inputTextTokenCount": n}
+            if "embedding" in response_body:
+                return response_body["embedding"]
+
+            # Cohere v3/v4 returns {"embeddings": [[...]] or {"embeddings": {"float": [[...]], ...}}}
             if "embeddings" in response_body:
                 embeddings = response_body["embeddings"]
 
