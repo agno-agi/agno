@@ -16,6 +16,7 @@ from urllib.parse import urlparse
 
 import httpx
 from defusedxml import ElementTree
+from defusedxml.common import DefusedXmlException
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType
@@ -121,7 +122,7 @@ class SitemapReader(Reader):
         """
         try:
             root = ElementTree.fromstring(SitemapReader._decode_sitemap_bytes(raw))
-        except ElementTree.ParseError:
+        except (ElementTree.ParseError, DefusedXmlException):
             return None
         tag = root.tag.rsplit("}", 1)[-1]
         if tag not in ("urlset", "sitemapindex"):

@@ -46,6 +46,17 @@ def sitemapindex_xml(*locs: str) -> str:
     return f'<?xml version="1.0" encoding="UTF-8"?><sitemapindex xmlns="{SITEMAP_NS}">{entries}</sitemapindex>'
 
 
+@pytest.mark.parametrize("compressed", [False, True])
+def test_parse_sitemap_rejects_xml_entities(compressed):
+    payload = (
+        b'<!DOCTYPE urlset [<!ENTITY page "https://example.com/injected">]>'
+        b"<urlset><url><loc>&page;</loc></url></urlset>"
+    )
+    if compressed:
+        payload = gzip.compress(payload)
+    assert SitemapReader._parse_sitemap(payload) is None
+
+
 def html_page(title: str, body: str) -> str:
     return f"<html><head><title>{title}</title></head><body><main>{body}</main></body></html>"
 
@@ -578,20 +589,36 @@ def test_reader_factory_sitemap(monkeypatch):
 # ----------------------------------------------------------------------
 
 
-def test_failed_index_child_marks_documents_discovery_incomplete():
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize(
+    "child_xml",
+    [
+        None,
+        '<!DOCTYPE urlset [<!ENTITY page "https://example.com/injected">]><urlset><url><loc>&page;</loc></url></urlset>',
+    ],
+)
+def test_failed_index_child_marks_documents_discovery_incomplete(async_mode, child_xml):
     routes = {
         "https://example.com/sitemap.xml": (
             sitemapindex_xml("https://example.com/sitemap-a.xml", "https://example.com/sitemap-b.xml"),
             "application/xml",
         ),
         "https://example.com/sitemap-a.xml": (urlset_xml("https://example.com/page-a"), "application/xml"),
-        # sitemap-b.xml is unrouted -> 404: an entire shard is missing from this read
+        # An unavailable or rejected sitemap shard must not be interpreted as removed content.
         "https://example.com/page-a": (html_page("A", "Alpha content"), "text/html"),
     }
+    if child_xml is not None:
+        routes["https://example.com/sitemap-b.xml"] = (child_xml, "application/xml")
     with mock_site(routes):
-        documents = make_reader().read("https://example.com/sitemap.xml")
+        reader = make_reader()
+        documents = (
+            asyncio.run(reader.async_read("https://example.com/sitemap.xml"))
+            if async_mode
+            else reader.read("https://example.com/sitemap.xml")
+        )
 
-    assert documents, "the reachable shard's pages are still read"
+    assert len(documents) == 1, "only the reachable shard's page is read"
+    assert documents[0].meta_data["url"] == "https://example.com/page-a"
     assert all(doc.meta_data.get("discovery_incomplete") is True for doc in documents), (
         "every document must carry the incomplete-discovery flag so the insert path suppresses pruning"
     )

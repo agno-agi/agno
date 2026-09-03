@@ -1,5 +1,6 @@
 import json
 from typing import Any, Dict, List, Optional
+from xml.etree.ElementTree import Element
 
 import httpx
 from defusedxml import ElementTree
@@ -43,14 +44,14 @@ class PubmedTools(Toolkit):
         root = ElementTree.fromstring(response.content)
         return [id_elem.text for id_elem in root.findall(".//Id") if id_elem.text is not None]
 
-    def fetch_details(self, pubmed_ids: List[str]) -> ElementTree.Element:
+    def fetch_details(self, pubmed_ids: List[str]) -> Element:
         url = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils/efetch.fcgi"
         params = {"db": "pubmed", "id": ",".join(pubmed_ids), "retmode": "xml"}
         response = httpx.get(url, params=params, timeout=self.timeout)
         response.raise_for_status()
         return ElementTree.fromstring(response.content)
 
-    def parse_details(self, xml_root: ElementTree.Element) -> List[Dict[str, Any]]:
+    def parse_details(self, xml_root: Element) -> List[Dict[str, Any]]:
         articles = []
         for article in xml_root.findall(".//PubmedArticle"):
             # Get existing fields

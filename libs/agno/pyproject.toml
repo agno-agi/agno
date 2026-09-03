@@ -51,6 +51,7 @@ dev = [
   "timeout-decorator",
   "types-pyyaml",
   "types-aiofiles",
+  "types-defusedxml",
   "fastapi",
   "python-multipart>=0.0.18",
   "uvicorn",
