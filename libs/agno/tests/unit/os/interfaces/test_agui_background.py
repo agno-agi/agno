@@ -182,6 +182,108 @@ def test_normalize_payload_garbage_returns_none():
 
 
 # ----------------------------------------------------------------------
+# find_active_run_id
+# ----------------------------------------------------------------------
+
+
+class _ProbeStream:
+    """Event stream stub whose liveness answer varies per run_id."""
+
+    def __init__(self, statuses):
+        self.statuses = statuses
+
+    async def get_run_status(self, run_id):
+        return self.statuses.get(run_id)
+
+
+def _run_stub(run_id, status):
+    run = MagicMock()
+    run.run_id = run_id
+    run.status = status
+    return run
+
+
+def _entity_with_session_runs(runs):
+    from unittest.mock import AsyncMock
+
+    session = MagicMock()
+    session.runs = runs
+    entity = MagicMock()
+    entity.db = MagicMock()
+    entity.aget_session = AsyncMock(return_value=session)
+    return entity
+
+
+@pytest.mark.asyncio
+async def test_find_active_run_id_picks_newest_live_run(monkeypatch):
+    stream = _ProbeStream({"r1": RunStatus.running, "r2": RunStatus.running})
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _entity_with_session_runs(
+        [_run_stub("r0", RunStatus.completed), _run_stub("r1", RunStatus.running), _run_stub("r2", RunStatus.pending)]
+    )
+
+    from agno.os.interfaces.agui.reattach import find_active_run_id
+
+    assert await find_active_run_id(entity, thread_id="t", user_id=None) == "r2"
+
+
+@pytest.mark.asyncio
+async def test_find_active_run_id_skips_runs_the_buffer_no_longer_knows(monkeypatch):
+    # Server restarted: r2's row still says RUNNING but its buffer is gone
+    stream = _ProbeStream({"r1": RunStatus.running})
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _entity_with_session_runs([_run_stub("r1", RunStatus.running), _run_stub("r2", RunStatus.running)])
+
+    from agno.os.interfaces.agui.reattach import find_active_run_id
+
+    assert await find_active_run_id(entity, thread_id="t", user_id=None) == "r1"
+
+
+@pytest.mark.asyncio
+async def test_find_active_run_id_returns_none_when_nothing_is_live(monkeypatch):
+    stream = _ProbeStream({})
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _entity_with_session_runs([_run_stub("r1", RunStatus.running)])
+
+    from agno.os.interfaces.agui.reattach import find_active_run_id
+
+    assert await find_active_run_id(entity, thread_id="t", user_id=None) is None
+
+
+@pytest.mark.asyncio
+async def test_find_active_run_id_ignores_paused_runs(monkeypatch):
+    # PAUSED runs wait on HITL input and follow the resume flow, not reattach
+    stream = _ProbeStream({"r1": RunStatus.paused})
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _entity_with_session_runs([_run_stub("r1", RunStatus.paused)])
+
+    from agno.os.interfaces.agui.reattach import find_active_run_id
+
+    assert await find_active_run_id(entity, thread_id="t", user_id=None) is None
+
+
+@pytest.mark.asyncio
+async def test_find_active_run_id_without_db_returns_none():
+    from agno.os.interfaces.agui.reattach import find_active_run_id
+
+    entity = MagicMock()
+    entity.db = None
+    assert await find_active_run_id(entity, thread_id="t", user_id=None) is None
+
+
+@pytest.mark.asyncio
+async def test_find_active_run_id_without_session_returns_none():
+    from unittest.mock import AsyncMock
+
+    from agno.os.interfaces.agui.reattach import find_active_run_id
+
+    entity = MagicMock()
+    entity.db = MagicMock()
+    entity.aget_session = AsyncMock(return_value=None)
+    assert await find_active_run_id(entity, thread_id="t", user_id=None) is None
+
+
+# ----------------------------------------------------------------------
 # find_reattach_target
 # ----------------------------------------------------------------------
 
@@ -432,6 +534,74 @@ def test_route_reattach_unknown_run_is_404():
 
     response = client.post("/agui", json=_agui_payload(forwarded_props={"reattach": True}))
     assert response.status_code == 404
+
+
+def _make_reattach_route_entity(runs):
+    """Entity whose session carries `runs`; db.get_session returns None so the
+    session-writable probe treats the thread as not yet owned."""
+    from unittest.mock import AsyncMock
+
+    session = MagicMock()
+    session.runs = runs
+    entity = MagicMock()
+    entity.db = MagicMock()
+    entity.db.get_session = MagicMock(return_value=None)
+    entity.aget_session = AsyncMock(return_value=session)
+    return entity
+
+
+def test_route_reattach_empty_run_id_resolves_active_run(monkeypatch):
+    stream = FakeEventStream(
+        status=RunStatus.completed,
+        replay=[(0, _content_event("done")), (1, _completed_event())],
+    )
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _make_reattach_route_entity([_run_stub("r-active", RunStatus.running)])
+    client = _make_client(entity)
+
+    response = client.post("/agui", json=_agui_payload(run_id="", forwarded_props={"reattach": True}))
+
+    assert response.status_code == 200
+    # The stream opens with RUN_STARTED carrying the RESOLVED run_id, so the
+    # client learns which run it was attached to
+    first_frame = response.text.split("\n\n")[0]
+    assert "RUN_STARTED" in first_frame
+    assert "r-active" in first_frame
+
+
+def test_route_reattach_empty_run_id_without_active_run_is_404(monkeypatch):
+    stream = FakeEventStream(status=None)
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _make_reattach_route_entity([_run_stub("r0", RunStatus.completed)])
+    client = _make_client(entity)
+
+    response = client.post("/agui", json=_agui_payload(run_id="", forwarded_props={"reattach": True}))
+    assert response.status_code == 404
+    assert "No active run" in response.json()["detail"]
+
+
+def test_route_reattach_empty_run_id_without_db_is_400():
+    entity = MagicMock()
+    entity.db = None
+    client = _make_client(entity)
+
+    response = client.post("/agui", json=_agui_payload(run_id="", forwarded_props={"reattach": True}))
+    assert response.status_code == 400
+    assert "database" in response.json()["detail"]
+
+
+def test_route_reattach_explicit_unknown_run_id_never_auto_resolves(monkeypatch):
+    # Strictness guard: a named-but-unknown run 404s even when the thread HAS
+    # an active run — auto-resolution only triggers on the empty-string sentinel
+    stream = _ProbeStream({"r-active": RunStatus.running})
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _make_reattach_route_entity([_run_stub("r-active", RunStatus.running)])
+    entity.aget_run_output = MagicMock(return_value=_coro(None))
+    client = _make_client(entity)
+
+    response = client.post("/agui", json=_agui_payload(run_id="r-typo", forwarded_props={"reattach": True}))
+    assert response.status_code == 404
+    assert "r-typo" in response.json()["detail"]
 
 
 # ----------------------------------------------------------------------

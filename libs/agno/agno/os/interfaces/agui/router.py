@@ -31,7 +31,7 @@ from agno.os.interfaces.agui.input import (
     parse_client_tools,
     validate_state,
 )
-from agno.os.interfaces.agui.reattach import find_reattach_target, reattach_run_events
+from agno.os.interfaces.agui.reattach import find_active_run_id, find_reattach_target, reattach_run_events
 from agno.os.interfaces.agui.resume import resume_paused_run
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
@@ -267,27 +267,53 @@ def attach_routes(
                 )
             if run_input.resume:
                 raise HTTPException(status_code=400, detail="reattach cannot be combined with HITL resume entries")
-            await _verify_reattach_binding(
-                entity,  # type: ignore[arg-type]
-                run_id=run_input.run_id,
-                thread_id=run_input.thread_id,
-                user_id=user_id,
-            )
+
+            # Empty run_id is the auto-resolve sentinel: the protocol requires a
+            # run_id, so a client that never held one (fresh window, new device)
+            # sends "" and the server finds the thread's in-progress run itself.
+            run_id = run_input.run_id
+            resolved = False
+            if not run_id:
+                if getattr(entity, "db", None) is None:
+                    raise HTTPException(
+                        status_code=400,
+                        detail="reattach with an empty run_id requires a database to resolve the active run; "
+                        "pass an explicit run_id",
+                    )
+                resolved_run_id = await find_active_run_id(
+                    entity,  # type: ignore[arg-type]
+                    thread_id=run_input.thread_id,
+                    user_id=user_id,
+                )
+                if resolved_run_id is None:
+                    raise HTTPException(status_code=404, detail=f"No active run for thread {run_input.thread_id}")
+                run_id = resolved_run_id
+                resolved = True
+
+            if not resolved:
+                # Auto-resolved runs came from a session read already scoped to
+                # this thread and caller, so the binding check is redundant.
+                await _verify_reattach_binding(
+                    entity,  # type: ignore[arg-type]
+                    run_id=run_id,
+                    thread_id=run_input.thread_id,
+                    user_id=user_id,
+                )
             buffer_status, stored_run = await find_reattach_target(
                 entity,  # type: ignore[arg-type]
-                run_id=run_input.run_id,
+                run_id=run_id,
                 session_id=run_input.thread_id,
                 user_id=user_id,
             )
             if buffer_status is None and stored_run is None:
-                raise HTTPException(status_code=404, detail=f"Run {run_input.run_id} not found")
+                raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
             return StreamingResponse(
                 _encode_with_keepalive(
                     reattach_run_events(
                         entity,  # type: ignore[arg-type]
                         thread_id=run_input.thread_id,
-                        run_id=run_input.run_id,
+                        run_id=run_id,
                         user_id=user_id,
                         buffer_status=buffer_status,
                         stored_run=stored_run,

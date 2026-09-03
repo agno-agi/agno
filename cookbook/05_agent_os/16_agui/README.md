@@ -105,6 +105,54 @@ uses `REASONING_*`; shared state uses `STATE_SNAPSHOT` and `STATE_DELTA`.
 `threadId` becomes the Agno session ID, so later requests can continue the same
 conversation.
 
+## Background runs and reattach
+
+With `forwarded_props: {"background": true}` the run executes in a detached server task: closing the SSE connection does not cancel it, and its events are buffered server-side so any client can reattach later. This powers refresh-proof chats — a user can reload the page, switch devices, or open a second tab while an answer is still generating. Background execution requires a database on the agent or team, and is not available for remote entities.
+
+The recovery contract is a single call. Whenever a thread view mounts — page load, refresh, new window, SPA reconnect — the client reattaches before loading history:
+
+```typescript
+// threadId is known from the route; runId is "" when the client never stored one
+const response = await fetch(`${AGUI_BASE}/agui`, {
+  method: "POST",
+  headers: { "Content-Type": "application/json" },
+  body: JSON.stringify({
+    thread_id: threadId,
+    run_id: storedRunId ?? "",  // "" = server resolves the thread's active run
+    messages: [],               // reattach never appends input
+    tools: [],
+    context: [],
+    state: {},
+    forwarded_props: { reattach: true },
+  }),
+});
+
+if (response.status === 404) {
+  // No in-progress run: load history from the session API as usual.
+  await loadHistory(threadId);
+} else {
+  // 200: the stream opens with RUN_STARTED carrying the real run_id,
+  // then a MESSAGES_SNAPSHOT with everything produced so far, then live
+  // deltas (or RUN_FINISHED immediately if the run already ended).
+  await consumeStream(response.body);
+}
+```
+
+How the server answers a reattach:
+
+| Client sends | Server state | Response |
+|---|---|---|
+| `run_id` of a live run | Run active | `RUN_STARTED` → `MESSAGES_SNAPSHOT` of the missed prefix → live events |
+| `run_id` of a finished run | Buffer still holds it (1h) | `RUN_STARTED` → `MESSAGES_SNAPSHOT` → `RUN_FINISHED` |
+| `run_id` of a finished run | Buffer expired | Same, rebuilt from the stored run in the database |
+| `run_id: ""` | Thread has a PENDING/RUNNING run | Resolves it, then behaves like a named reattach |
+| `run_id: ""` | Nothing in progress | `404` — the client loads history |
+| `run_id` that never existed | — | `404`; an explicit id is never silently swapped for another run |
+
+Rendering notes: the replayed prefix arrives as one idempotent `MESSAGES_SNAPSHOT`, not append-only deltas, so a fresh page renders correctly with no special handling. On an in-place SPA reconnect, clear the run's rendered messages first and let the snapshot rebuild them. Multiple tabs may subscribe to the same run concurrently; each gets its own event copy.
+
+Operational notes: only PENDING/RUNNING runs resolve — a PAUSED run waits on human input and follows the HITL resume flow instead. Runs keep executing after disconnect, so a "stop generating" button must call `POST /agents/{agent_id}/runs/{run_id}/cancel`; closing the connection no longer stops anything. Run state lives in memory (or Redis, with the Redis event-stream backend), so after a server restart auto-resolution finds nothing and the client falls back to history, which is unaffected.
+
 ## Frontend tools and backend HITL are different
 
 These two pause patterns look similar in a UI but have different ownership:

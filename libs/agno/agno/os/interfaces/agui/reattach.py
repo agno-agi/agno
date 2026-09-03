@@ -164,6 +164,40 @@ def _normalize_payload(payload: Any, is_team: bool) -> Optional[BaseRunOutputEve
     return payload
 
 
+async def find_active_run_id(
+    entity: Union[Agent, Team],
+    thread_id: str,
+    user_id: Optional[str] = None,
+) -> Optional[str]:
+    """Resolve the thread's in-progress run for sentinel reattach (run_id="").
+
+    A client that never held the original run_id (fresh window, new device,
+    incognito) can reattach with an empty run_id; the server finds the run
+    itself. Only PENDING/RUNNING runs qualify — PAUSED runs wait on HITL
+    input and follow the resume flow instead.
+
+    Candidates come from the stored session (already scoped to session_id +
+    user_id, so the lookup doubles as the run-thread binding check), then
+    each is probed against the event stream: a PENDING/RUNNING row the buffer
+    no longer knows (e.g. the server restarted, or the run died without a
+    terminal write) is skipped, so callers get None and the client falls back
+    to loading history. Runs are stored oldest-first, so scan in reverse.
+    """
+    if getattr(entity, "db", None) is None:
+        return None
+    session = await entity.aget_session(session_id=thread_id, user_id=user_id)
+    if session is None or not session.runs:
+        return None
+    event_stream = get_event_stream()
+    for run in reversed(session.runs):
+        if getattr(run, "status", None) not in (RunStatus.pending, RunStatus.running):
+            continue
+        run_id = getattr(run, "run_id", None)
+        if run_id and await event_stream.get_run_status(run_id) is not None:
+            return run_id
+    return None
+
+
 async def find_reattach_target(
     entity: Union[Agent, Team],
     run_id: str,

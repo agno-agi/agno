@@ -39,6 +39,22 @@ then keeps streaming live events (or RUN_FINISHED if the run already ended):
         "state": {},
         "forwarded_props": {"reattach": true}
       }'
+
+Reattach WITHOUT the run_id (fresh window, new device, incognito — the client
+never stored it): send an empty run_id and the server resolves the thread's
+in-progress run itself. A 404 means nothing is running — load history instead:
+
+    curl -N -X POST http://localhost:7777/agui \
+      -H "Content-Type: application/json" \
+      -d '{
+        "thread_id": "demo-thread",
+        "run_id": "",
+        "messages": [],
+        "tools": [],
+        "context": [],
+        "state": {},
+        "forwarded_props": {"reattach": true}
+      }'
 """
 
 from agno.agent import Agent
