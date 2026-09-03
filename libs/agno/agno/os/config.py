@@ -296,6 +296,13 @@ class AuthorizationConfig(BaseModel):
     # one IdP can produce tokens your verification keys accept.
     issuer: Optional[str] = None
     admin_scope: Optional[str] = None
+    # Extra route paths to leave PUBLIC (no JWT / RBAC), ADDED to the built-in defaults
+    # (``/``, ``/health``, ``/info``, ``/docs``, ``/redoc``, ``/openapi.json``). fnmatch
+    # patterns are supported (e.g. ``"/chat/*"``). Use this for endpoints your own frontend
+    # must reach unauthenticated -- e.g. a ``/chat/token`` route that mints a session token --
+    # so AgentOS's auth layer skips them instead of 401-ing. Adding paths never drops the
+    # defaults, so /health and the docs stay reachable.
+    excluded_route_paths: Optional[List[str]] = None
     # Pluggable authorization strategy. When None, AgentOS uses scope-based RBAC
     # (JWT/PAT scopes, no external dependency). Supply an AuthorizationProvider to
     # swap in a richer model (managed roles, ReBAC/ABAC, OpenFGA, ...) enforced at

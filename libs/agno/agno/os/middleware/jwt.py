@@ -427,6 +427,20 @@ def jwt_kwargs_have_key_source(kwargs: Dict[str, Any]) -> bool:
     return bool(kwargs.get("verification_keys") or kwargs.get("jwks_file") or kwargs.get("validate") is False)
 
 
+# Routes AgentOS leaves public by default (health/discovery/docs), never JWT/RBAC-gated.
+# AuthorizationConfig.excluded_route_paths is ADDED to this set, so a caller opting a route
+# public (e.g. "/chat/token") never drops these.
+DEFAULT_EXCLUDED_ROUTE_PATHS: List[str] = [
+    "/",
+    "/health",
+    "/info",
+    "/docs",
+    "/redoc",
+    "/openapi.json",
+    "/docs/oauth2-redirect",
+]
+
+
 def build_jwt_middleware_kwargs(
     authorization_config: Optional[Any],
     *,
@@ -462,6 +476,17 @@ def build_jwt_middleware_kwargs(
         issuer = authorization_config.issuer
         admin_scope = authorization_config.admin_scope
         user_isolation = authorization_config.user_isolation
+
+    # Public routes the operator declared are ADDED to the middleware defaults, so opting
+    # e.g. "/chat/token" public does not drop /health or the docs. An explicit
+    # excluded_route_paths arg (e.g. MCP OAuth exemptions) is the base when present; otherwise
+    # the defaults are.
+    config_excluded = (
+        list(getattr(authorization_config, "excluded_route_paths", None) or []) if authorization_config else []
+    )
+    if config_excluded:
+        base = list(excluded_route_paths) if excluded_route_paths else list(DEFAULT_EXCLUDED_ROUTE_PATHS)
+        excluded_route_paths = base + [p for p in config_excluded if p not in base]
 
     kwargs: Dict[str, Any] = {
         "verification_keys": verification_keys,
@@ -772,15 +797,7 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
-        return [
-            "/",
-            "/health",
-            "/info",
-            "/docs",
-            "/redoc",
-            "/openapi.json",
-            "/docs/oauth2-redirect",
-        ]
+        return list(DEFAULT_EXCLUDED_ROUTE_PATHS)
 
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """
