@@ -371,3 +371,69 @@ def test_vertexai_temperature_none_excluded():
     params = model.get_request_params()
     assert "temperature" not in params
     assert "extra_body" not in params
+
+
+# =============================================================================
+# thinking / models without sampling support: a temperature, top_p or top_k the API
+# would reject with a 400 is dropped from the request instead of failing it (#9931).
+# =============================================================================
+
+THINKING = {"type": "enabled", "budget_tokens": 1024}
+
+
+def test_anthropic_thinking_drops_temperature():
+    """temperature=0 with thinking on is rejected by Anthropic, so it must not be sent."""
+    model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.0, thinking=THINKING)
+    params = model.get_request_params()
+    assert params["thinking"] == THINKING
+    assert "extra_body" not in params
+
+
+def test_anthropic_thinking_keeps_allowed_sampling_values():
+    """temperature=1 and top_p>=0.95 are accepted alongside thinking and stay in extra_body."""
+    model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=1.0, top_p=0.95, thinking=THINKING)
+    params = model.get_request_params()
+    assert params["extra_body"] == {"temperature": 1.0, "top_p": 0.95}
+
+
+def test_anthropic_thinking_from_request_params_is_seen():
+    """thinking passed through request_params counts too: the filter runs on the merged dict."""
+    model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.0, request_params={"thinking": THINKING})
+    params = model.get_request_params()
+    assert "extra_body" not in params
+
+
+def test_anthropic_model_without_sampling_support_drops_them_without_thinking():
+    """Claude Sonnet 5 rejects a non-default temperature, top_p or top_k on every request."""
+    model = AnthropicClaude(id="claude-sonnet-5", temperature=0.0, top_p=1.0, top_k=1)
+    params = model.get_request_params()
+    assert "extra_body" not in params
+
+
+def test_aws_thinking_drops_temperature():
+    pytest.importorskip("boto3")
+    from agno.models.aws.claude import Claude as AwsClaude
+
+    model = AwsClaude(id="us.anthropic.claude-sonnet-4-5-20250929-v1:0", temperature=0.0, thinking=THINKING)
+    params = model.get_request_params()
+    assert params["thinking"] == THINKING
+    assert "extra_body" not in params
+
+
+def test_vertexai_thinking_drops_temperature():
+    model = VertexAIClaude(id="claude-sonnet-4-5@20250929", temperature=0.0, thinking=THINKING)
+    params = model.get_request_params()
+    assert params["thinking"] == THINKING
+    assert "extra_body" not in params
+
+
+def test_azure_thinking_drops_temperature():
+    from agno.models.azure import AzureFoundryClaude
+
+    # 0.5 rather than 0: AzureFoundryClaude still gates sampling params on truthiness.
+    model = AzureFoundryClaude(
+        id="claude-sonnet-4-5", api_key="test-key", resource="my-resource", temperature=0.5, thinking=THINKING
+    )
+    params = model.get_request_params()
+    assert params["thinking"] == THINKING
+    assert "extra_body" not in params

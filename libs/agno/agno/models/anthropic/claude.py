@@ -19,6 +19,7 @@ from agno.utils.models.claude import (
     MCPServerConfiguration,
     _validate_cache_ttl_order,
     build_system_blocks,
+    drop_unsupported_sampling_params,
     format_messages,
     format_tools_for_model,
     resolve_http_client,
@@ -578,6 +579,7 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
+        drop_unsupported_sampling_params(_request_params, self.id)
         return route_sampling_params_to_extra_body(_request_params)
 
     @staticmethod

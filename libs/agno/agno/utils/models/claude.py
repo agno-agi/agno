@@ -39,8 +39,40 @@ _PREFILL_SUPPORTED_ALIASES = {
 }
 
 
-def supports_prefill(model_id: str) -> bool:
-    """Return True if the given model ID supports assistant message prefill.
+# Models that honour the temperature / top_p / top_k sampling parameters. This is a
+# closed set: Claude Opus 4.7, Claude Sonnet 5 and all future models reject a
+# non-default value on every request ("`temperature` is deprecated for this model"),
+# whether or not thinking is on.
+_SAMPLING_SUPPORTED_PREFIXES = (
+    "claude-3-",
+    "claude-sonnet-4-0",
+    "claude-sonnet-4-1",
+    "claude-sonnet-4-2",
+    "claude-sonnet-4-5",
+    "claude-sonnet-4-6",
+    "claude-opus-4-0",
+    "claude-opus-4-1",
+    "claude-opus-4-2",
+    "claude-opus-4-5",
+    "claude-opus-4-6",
+    "claude-haiku-4-0",
+    "claude-haiku-4-1",
+    "claude-haiku-4-2",
+    "claude-haiku-4-5",
+    "claude-haiku-4-6",
+)
+
+# Aliases like "claude-sonnet-4" point to the latest version in that family
+# (currently 4-0). Exact matches only, for the same reason as the prefill aliases.
+_SAMPLING_SUPPORTED_ALIASES = {
+    "claude-sonnet-4",
+    "claude-opus-4",
+    "claude-haiku-4",
+}
+
+
+def _core_model_id(model_id: str) -> str:
+    """Strip provider-specific decoration from a Claude model ID.
 
     Handles provider-specific ID formats:
       - Anthropic direct:  "claude-sonnet-4-5-20250929"
@@ -57,11 +89,67 @@ def supports_prefill(model_id: str) -> bool:
     # Strip Bedrock version suffix (e.g. "claude-sonnet-4-5-20250929-v1:0")
     if ":0" in core_id:
         core_id = core_id.split("-v")[0] if "-v" in core_id else core_id.split(":")[0]
+    return core_id
+
+
+def supports_prefill(model_id: str) -> bool:
+    """Return True if the given model ID supports assistant message prefill."""
+    core_id = _core_model_id(model_id)
 
     if not core_id.startswith("claude"):
         return True  # Non-Claude models are unaffected — don't inject trailing messages
 
     return core_id in _PREFILL_SUPPORTED_ALIASES or core_id.startswith(_PREFILL_SUPPORTED_PREFIXES)
+
+
+def supports_sampling_params(model_id: str) -> bool:
+    """Return True if the given model ID accepts temperature, top_p and top_k at all.
+
+    Claude Opus 4.7, Claude Sonnet 5 and later models reject any non-default sampling
+    value on every request, whether or not thinking is on.
+    """
+    core_id = _core_model_id(model_id)
+
+    if not core_id.startswith("claude"):
+        return True  # Non-Claude models are unaffected
+
+    return core_id in _SAMPLING_SUPPORTED_ALIASES or core_id.startswith(_SAMPLING_SUPPORTED_PREFIXES)
+
+
+def drop_unsupported_sampling_params(request_params: Dict[str, Any], model_id: str) -> Dict[str, Any]:
+    """Remove the sampling parameters Anthropic would reject for this request.
+
+    With thinking on (``enabled`` or ``adaptive``) ``temperature`` may only be 1, ``top_p``
+    must be at least 0.95 and ``top_k`` must be unset. Models without sampling support
+    (see ``supports_sampling_params``) apply that on every request and reject any ``top_p``.
+    A value that would have been rejected is dropped with a warning instead, so a
+    ``temperature=0`` carried over from an older configuration degrades to the API default
+    rather than failing every request with a 400.
+
+    Mutates and returns the dict it is given, like ``route_sampling_params_to_extra_body``.
+    """
+    thinking = request_params.get("thinking")
+    thinking_on = bool(thinking) and thinking.get("type") != "disabled"
+    locked = not supports_sampling_params(model_id)
+    if not thinking_on and not locked:
+        return request_params
+
+    temperature = request_params.get("temperature")
+    top_p = request_params.get("top_p")
+    rejected = {
+        "temperature": temperature is not None and temperature != 1,
+        "top_p": top_p is not None and (locked or top_p < 0.95),
+        "top_k": request_params.get("top_k") is not None,
+    }
+    dropped = [f"{name}={request_params.pop(name)}" for name, reject in rejected.items() if reject]
+    if dropped:
+        reason = (
+            f"model '{model_id}' does not accept them"
+            if locked
+            else "Anthropic does not accept them while thinking is on"
+        )
+        log_warning(f"Dropping {', '.join(dropped)} from the request: {reason}. Unset them to silence this warning.")
+    return request_params
 
 
 @dataclass

@@ -6,7 +6,12 @@ from pydantic import BaseModel
 
 from agno.models.anthropic import Claude as AnthropicClaude
 from agno.utils.log import log_debug, log_warning
-from agno.utils.models.claude import format_tools_for_model, resolve_http_client, route_sampling_params_to_extra_body
+from agno.utils.models.claude import (
+    drop_unsupported_sampling_params,
+    format_tools_for_model,
+    resolve_http_client,
+    route_sampling_params_to_extra_body,
+)
 
 try:
     from anthropic import AnthropicBedrock, AsyncAnthropicBedrock
@@ -214,6 +219,7 @@ class Claude(AnthropicClaude):
         if self.request_params:
             _request_params.update(self.request_params)
 
+        drop_unsupported_sampling_params(_request_params, self.id)
         route_sampling_params_to_extra_body(_request_params)
 
         if _request_params:
