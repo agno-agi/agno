@@ -48,6 +48,15 @@ def test_bulk_upsert_still_updates_the_owners_own_session(tmp_path):
     assert db.get_session("shared").session_data["session_state"] == {"owner": "v2"}
 
 
+def test_bulk_upsert_with_duplicate_id_returns_the_accepted_session(tmp_path):
+    db = SqliteDb(db_file=str(tmp_path / "t.db"))
+
+    accepted = db.upsert_sessions([_session("alice", "alice-data"), _session("bob", "bob-data")])
+
+    assert [session.user_id for session in accepted] == ["alice"]
+    assert db.get_session("shared").user_id == "alice"
+
+
 @pytest.mark.asyncio
 async def test_async_bulk_upsert_does_not_reassign_another_users_session(tmp_path):
     db = AsyncSqliteDb(db_file=str(tmp_path / "t.db"))
