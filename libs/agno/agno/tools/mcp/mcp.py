@@ -10,7 +10,7 @@ from agno.tools import Toolkit
 from agno.tools.function import Function
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.log import log_debug, log_error, log_warning
-from agno.utils.mcp import get_default_toolkit_name, get_entrypoint_for_tool, ping_session, prepare_command
+from agno.utils.mcp import MCPSession, get_default_toolkit_name, get_entrypoint_for_tool, ping_session, prepare_command
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -227,7 +227,9 @@ class MCPTools(Toolkit):
                 parameters (URL or command), so multiple MCP toolkits in one registry stay
                 distinguishable and selectable by name. Falls back to "MCPTools" when only
                 a session is provided.
-            session: An initialized MCP ClientSession connected to an MCP server
+            session: An initialized MCP ClientSession connected to an MCP server. When
+                omitted, the toolkit builds its own connection and ``self.session`` holds
+                a ``fastmcp.Client`` instead.
             server_params: Parameters for creating a new session
             command: The command to run to start the server. Should be used in conjunction with env.
             url: The URL endpoint for SSE or Streamable HTTP connection when transport is "sse" or "streamable-http".
@@ -346,7 +348,9 @@ class MCPTools(Toolkit):
             self.header_provider = header_provider
 
         self.timeout_seconds = timeout_seconds
-        self.session: Optional[ClientSession] = session
+        # Either a caller-supplied ClientSession or the fastmcp Client built for an
+        # internally-created connection; MCPSession is the surface both satisfy.
+        self.session: Optional[MCPSession] = session
         self.server_params: Optional[Union[StdioServerParameters, SSEClientParams, StreamableHTTPClientParams]] = (
             server_params
         )
@@ -377,7 +381,7 @@ class MCPTools(Toolkit):
 
         # Session management for per-agent-run sessions with dynamic headers
         # Maps run_id to (session, timestamp) for TTL-based cleanup
-        self._run_sessions: dict[str, Tuple[ClientSession, float]] = {}
+        self._run_sessions: dict[str, Tuple[MCPSession, float]] = {}
         self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
         self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
@@ -509,7 +513,7 @@ class MCPTools(Toolkit):
         run_context: Optional["RunContext"] = None,
         agent: Optional["Agent"] = None,
         team: Optional["Team"] = None,
-    ) -> AsyncIterator[ClientSession]:
+    ) -> AsyncIterator[MCPSession]:
         """
         Create a dynamic-header session for one tool call and close it in the
         same task that opened it.
@@ -534,7 +538,7 @@ class MCPTools(Toolkit):
             return
 
         client = _build_fastmcp_client(
-            self.transport,  # type: ignore[arg-type]
+            self.transport,
             self._connection_params(dynamic_headers),
             self.server_params,
             self.timeout_seconds,
@@ -548,7 +552,7 @@ class MCPTools(Toolkit):
         run_context: Optional["RunContext"] = None,
         agent: Optional["Agent"] = None,
         team: Optional["Team"] = None,
-    ) -> ClientSession:
+    ) -> MCPSession:
         """
         Get or create a session for the given run context.
 
@@ -561,7 +565,8 @@ class MCPTools(Toolkit):
             team: The Team instance (if running within a team)
 
         Returns:
-            ClientSession for the run
+            The session object for the run: a fastmcp Client for an internally-created
+            connection, or the caller-supplied ClientSession.
         """
         # If no header_provider or no run_context, use the default session
         if not self.header_provider or not run_context:
@@ -612,7 +617,7 @@ class MCPTools(Toolkit):
             # The client unwinds itself if the handshake fails, so a partially-entered
             # connection needs no hand-rolled teardown here.
             context = _build_fastmcp_client(
-                self.transport,  # type: ignore[arg-type]
+                self.transport,
                 self._connection_params(dynamic_headers),
                 self.server_params,
                 self.timeout_seconds,
@@ -691,7 +696,7 @@ class MCPTools(Toolkit):
 
         if self._context is not None:
             try:
-                await self._context.aclose()  # type: ignore[attr-defined]
+                await self._context.aclose()
             except BaseException:
                 try:
                     await self._context.__aexit__(None, None, None)
@@ -836,7 +841,7 @@ class MCPTools(Toolkit):
 
         try:
             # Get the list of tools from the MCP server
-            listed = await self.session.list_tools()  # type: ignore
+            listed = await self.session.list_tools()
             # fastmcp's Client yields a plain list; a user-supplied ClientSession
             # yields a ListToolsResult carrying .tools.
             available_tools = listed if isinstance(listed, list) else listed.tools
@@ -866,7 +871,7 @@ class MCPTools(Toolkit):
                     # Get an entrypoint for the tool
                     entrypoint = get_entrypoint_for_tool(
                         tool=tool,
-                        session=self.session,  # type: ignore
+                        session=self.session,
                         mcp_tools_instance=self,
                     )
                     # Create a Function for the tool

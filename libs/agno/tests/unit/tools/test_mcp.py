@@ -2010,3 +2010,31 @@ def test_build_fastmcp_client_normalizes_a_timedelta_sse_read_timeout():
     http_client = client.transport.httpx_client_factory(headers=None, auth=None)
 
     assert http_client.timeout.read == 120.0
+
+
+def test_both_session_types_satisfy_the_mcp_session_protocol():
+    """MCPSession is what keeps the shared paths checked instead of falling back to Any.
+
+    A connection is driven either by a fastmcp Client the toolkit built or by a
+    ClientSession the caller supplied; the two are unrelated classes, so the structural
+    type has to accept both or the annotations are a lie.
+    """
+    from fastmcp import Client
+    from mcp import ClientSession
+
+    from agno.utils.mcp import MCPSession
+
+    assert isinstance(Client("http://localhost:8080/mcp"), MCPSession)
+    assert issubclass(ClientSession, MCPSession)
+
+
+def test_mcp_session_protocol_excludes_the_ping_methods():
+    """ping is deliberately absent: the two types spell it differently.
+
+    ClientSession has send_ping, fastmcp's Client has ping. Requiring either would
+    exclude one of them, so ping_session resolves the name at its single call site.
+    """
+    from agno.utils.mcp import MCPSession
+
+    assert not hasattr(MCPSession, "ping")
+    assert not hasattr(MCPSession, "send_ping")
