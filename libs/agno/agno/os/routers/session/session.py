@@ -11,6 +11,7 @@ from agno.db.utils import deserialize_session_by_type, resolve_session_type
 from agno.exceptions import AgnoError
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
+from agno.os.event_streams import find_active_run
 from agno.os.middleware.user_scope import (
     enforce_owner_on_entity,
     get_scoped_user_id,
@@ -46,6 +47,26 @@ from agno.utils.log import log_debug
 from agno.utils.media_offload import adelete_media_keys, session_media_keys
 
 logger = logging.getLogger(__name__)
+
+
+async def _active_run_payload(session: Session) -> Optional[Dict[str, Any]]:
+    """Build the active_run field for a session detail response: the thread's in-progress run, if any.
+
+    Only PENDING/RUNNING runs whose event stream is still live qualify — the probe inside
+    find_active_run skips rows that outlived their producer (server restart, crashed run), so a
+    client can treat the field's absence as "settled history, nothing to reattach to". PAUSED
+    runs wait on human input and follow the HITL resume flow, not reattach.
+    """
+    runs = getattr(session, "runs", None)
+    if not runs:
+        return None
+    run = await find_active_run(runs)
+    if run is None:
+        return None
+    return {
+        "run_id": run.run_id,
+        "status": run.status.value if hasattr(run.status, "value") else run.status,
+    }
 
 
 def get_session_router(
@@ -555,9 +576,13 @@ def attach_routes(
             )
 
         if session_type == SessionType.AGENT:
-            return AgentSessionDetailSchema.from_session(session)  # type: ignore
+            detail = AgentSessionDetailSchema.from_session(session)  # type: ignore
+            detail.active_run = await _active_run_payload(session)
+            return detail
         elif session_type == SessionType.TEAM:
-            return TeamSessionDetailSchema.from_session(session)  # type: ignore
+            detail = TeamSessionDetailSchema.from_session(session)  # type: ignore
+            detail.active_run = await _active_run_payload(session)
+            return detail
         else:
             return WorkflowSessionDetailSchema.from_session(session)  # type: ignore
 

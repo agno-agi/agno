@@ -41,20 +41,18 @@ then keeps streaming live events (or RUN_FINISHED if the run already ended):
       }'
 
 Reattach WITHOUT the run_id (fresh window, new device, incognito — the client
-never stored it): send an empty run_id and the server resolves the thread's
-in-progress run itself. A 404 means nothing is running — load history instead:
+Reattach WITHOUT the run_id (fresh window, new device, incognito — the client
+never stored it): the dedicated reattach route makes run_id optional and
+resolves the thread's in-progress run. A 404 means nothing is running:
 
-    curl -N -X POST http://localhost:7777/agui \
+    curl -N -X POST http://localhost:7777/agui/reattach \
       -H "Content-Type: application/json" \
-      -d '{
-        "thread_id": "demo-thread",
-        "run_id": "",
-        "messages": [],
-        "tools": [],
-        "context": [],
-        "state": {},
-        "forwarded_props": {"reattach": true}
-      }'
+      -d '{"thread_id": "demo-thread"}'
+
+For the fuller recovery flow, GET /sessions/{session_id} reports an
+"active_run" field whenever the thread has a run in progress; feed its run_id
+into the reattach call above (or omit run_id and let the server resolve it).
+See the README's "Background runs and reattach" section.
 """
 
 from agno.agent import Agent

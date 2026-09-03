@@ -107,51 +107,43 @@ conversation.
 
 ## Background runs and reattach
 
-With `forwarded_props: {"background": true}` the run executes in a detached server task: closing the SSE connection does not cancel it, and its events are buffered server-side so any client can reattach later. This powers refresh-proof chats — a user can reload the page, switch devices, or open a second tab while an answer is still generating. Background execution requires a database on the agent or team, and is not available for remote entities.
+With `forwarded_props: {"background": true}` the run executes in a detached server task: closing the SSE connection does not cancel it, and its events are buffered server-side so any client can reattach later. This powers refresh-proof chats — a user can reload the page, switch devices, or open a second tab while an answer is still generating. Background execution requires a database on the agent or team, is not available for remote entities, and mirrors the per-request opt-in of the REST run endpoints.
 
-The recovery contract is a single call. Whenever a thread view mounts — page load, refresh, new window, SPA reconnect — the client reattaches before loading history:
+The recovery flow builds on the session APIs the frontend already calls. `GET /sessions/{session_id}` reports an `active_run` field (`run_id` + `status`) whenever the thread has a PENDING/RUNNING run whose event stream is still live, and `POST /agui/reattach` subscribes to that run's AG-UI events without starting a new run:
 
 ```typescript
-// threadId is known from the route; runId is "" when the client never stored one
-const response = await fetch(`${AGUI_BASE}/agui`, {
-  method: "POST",
-  headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({
-    thread_id: threadId,
-    run_id: storedRunId ?? "",  // "" = server resolves the thread's active run
-    messages: [],               // reattach never appends input
-    tools: [],
-    context: [],
-    state: {},
-    forwarded_props: { reattach: true },
-  }),
-});
+// 1. Open the conversation — the same call that loads history also answers
+//    "is this thread still generating?"
+const session = await fetch(`${AGENTOS_BASE}/sessions/${threadId}?type=agent`).then(r => r.json());
+renderHistory(session.chat_history);
 
-if (response.status === 404) {
-  // No in-progress run: load history from the session API as usual.
-  await loadHistory(threadId);
-} else {
-  // 200: the stream opens with RUN_STARTED carrying the real run_id,
-  // then a MESSAGES_SNAPSHOT with everything produced so far, then live
-  // deltas (or RUN_FINISHED immediately if the run already ended).
+// 2. If a run is in progress, reattach to its event stream
+if (session.active_run) {
+  const response = await fetch(`${AGENTOS_BASE}/agui/reattach`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ thread_id: threadId, run_id: session.active_run.run_id }),
+  });
+  // RUN_STARTED → MESSAGES_SNAPSHOT (everything produced so far) → live deltas
+  // (or RUN_FINISHED immediately if the run already ended)
   await consumeStream(response.body);
 }
 ```
 
-How the server answers a reattach:
+`run_id` is optional on `POST /agui/reattach`: omit it and the server resolves the thread's in-progress run itself (404 when nothing is running — the client renders history alone). An explicit but unknown `run_id` also 404s; it is never silently swapped for another run. Reattach is also available in flag form on the run endpoint (`POST /agui` with `forwarded_props: {"reattach": true}` and an empty-string `run_id` as the auto-resolve sentinel, since the AG-UI protocol requires the field) for clients built on `@ag-ui/client`'s `HttpAgent`; the dedicated route is preferred for new integrations.
 
-| Client sends | Server state | Response |
-|---|---|---|
-| `run_id` of a live run | Run active | `RUN_STARTED` → `MESSAGES_SNAPSHOT` of the missed prefix → live events |
-| `run_id` of a finished run | Buffer still holds it (1h) | `RUN_STARTED` → `MESSAGES_SNAPSHOT` → `RUN_FINISHED` |
-| `run_id` of a finished run | Buffer expired | Same, rebuilt from the stored run in the database |
-| `run_id: ""` | Thread has a PENDING/RUNNING run | Resolves it, then behaves like a named reattach |
-| `run_id: ""` | Nothing in progress | `404` — the client loads history |
-| `run_id` that never existed | — | `404`; an explicit id is never silently swapped for another run |
+Server behavior on reattach:
 
-Rendering notes: the replayed prefix arrives as one idempotent `MESSAGES_SNAPSHOT`, not append-only deltas, so a fresh page renders correctly with no special handling. On an in-place SPA reconnect, clear the run's rendered messages first and let the snapshot rebuild them. Multiple tabs may subscribe to the same run concurrently; each gets its own event copy.
+| Run state | Response |
+|---|---|
+| Active (PENDING/RUNNING) | `RUN_STARTED` → `MESSAGES_SNAPSHOT` of the missed prefix → live events |
+| Finished, buffer retained (1h) | `RUN_STARTED` → `MESSAGES_SNAPSHOT` → `RUN_FINISHED` |
+| Finished, buffer expired | Same, rebuilt from the stored run in the database |
+| Errored | Prefix replay, then a terminal `RUN_ERROR` |
 
-Operational notes: only PENDING/RUNNING runs resolve — a PAUSED run waits on human input and follows the HITL resume flow instead. Runs keep executing after disconnect, so a "stop generating" button must call `POST /agents/{agent_id}/runs/{run_id}/cancel`; closing the connection no longer stops anything. Run state lives in memory (or Redis, with the Redis event-stream backend), so after a server restart auto-resolution finds nothing and the client falls back to history, which is unaffected.
+Rendering notes: history comes from `chat_history`; the in-progress run's content comes only from the reattach stream, so there is no overlap. The replayed prefix arrives as one idempotent `MESSAGES_SNAPSHOT` (AG-UI events carry no sequence numbers, so replace-semantics snapshot replay is used instead of a cursor), then live deltas continue on the same message IDs. A fresh page renders correctly with no special handling; on an in-place SPA reconnect, clear the run's rendered messages first and let the snapshot rebuild them. Multiple tabs may subscribe to the same run concurrently.
+
+Operational notes: `active_run` and auto-resolution report only PENDING/RUNNING runs whose event stream is still live — a PAUSED run waits on human input and follows the HITL resume flow, and stale RUNNING rows left by a server restart are filtered out, so the field's absence reliably means "settled history". Runs keep executing after disconnect, so a "stop generating" button must call `POST /agents/{agent_id}/runs/{run_id}/cancel`. Run state lives in memory (or Redis, with the Redis event-stream backend, which also makes reattach work across replicas).
 
 ## Frontend tools and backend HITL are different
 
