@@ -50,9 +50,9 @@ def test_verbosity_names_every_sdk_value():
 
 def test_service_tier_names_every_sdk_value():
     from openai.types.chat.chat_completion import ChatCompletion
-    from openai.types.responses.service_tier import ServiceTier as SDKServiceTier
+    from openai.types.responses.response import Response
 
-    assert named_values(SDKServiceTier) <= named_values(ServiceTier)
+    assert named_values(Response.model_fields["service_tier"].annotation) <= named_values(ServiceTier)
     assert named_values(ChatCompletion.model_fields["service_tier"].annotation) <= named_values(ServiceTier)
 
 
