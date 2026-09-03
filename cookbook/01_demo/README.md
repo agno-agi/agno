@@ -1,6 +1,6 @@
 # Agno Demo
 
-A demo AgentOS built from wiki agents. Ingest URLs, images, voice memos, or PDFs. Store them as clean, linked pages across three backends: local markdown files, a git repo, or Notion.
+A demo AgentOS running multiple wiki agents. Ingest URLs, images, voice memos, or PDFs. Store them as clean, linked pages across three backends: local markdown files, a git repo, or Notion.
 
 Built on AgentOS with SQLite-backed sessions. The codebase is small enough to grok in an afternoon, and stable enough to build on.
 
@@ -98,11 +98,11 @@ The local mirror lands under `data/notion-wiki/` (gitignored). On startup the ba
 
 ## Try it
 
-- **Ingest a URL** with LocalWiki: *"Add https://docs.agno.com/ to the wiki."* It fetches, digests, and files a page.
-- **Ingest media** by attaching `evals/assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this and file it under notes/."*
-- **Ask the wiki:** *"What's in the wiki?"* or *"What does the wiki say about X?"*
-- **Code Q&A** with CodeSearch: *"Which agents are registered in this demo?"*
-- **Generate HTML** with LocalWiki: *"Render the wiki's docs page as a standalone HTML page."* It returns a downloadable `.html` file.
+- **Ingest a URL** with LocalWiki: *"Read docs.agno.com and file a tight summary under guides/."* It fetches, digests, and hands you the digest — not just a "done."
+- **Ingest media** by attaching `evals/assets/sample-diagram.png` (or your own image or PDF) to LocalWiki: *"Digest this diagram into a page under notes/."* It reads the image itself and files the markdown.
+- **Generate HTML** with LocalWiki: *"Generate a standalone HTML landing page for a coffee shop, 'Bean There'."* You get a downloadable `.html` file.
+- **See the backend** with GitWiki or NotionWiki: *"Draft a deploy runbook and push it"* lands a real commit; *"File a call summary for Acme Corp"* shows up as a Notion page your team opens.
+- **Code Q&A** with CodeSearch: *"Where is generate_html_file wired into the wiki agents?"* — answered with `file:line` citations.
 
 ## Evals
 
