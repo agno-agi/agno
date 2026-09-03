@@ -1669,6 +1669,7 @@ class AgentOS:
         Called whenever any credential is configured: ``authorization=True`` (JWT),
         an ``OS_SECURITY_KEY``, or a service-account verifier (a db is present).
         """
+        from agno.os.config import DEFAULT_PUBLIC_ROUTES
         from agno.os.middleware.jwt import AuthMiddleware, JWTValidator, build_jwt_middleware_kwargs
         from agno.os.scopes import AgentOSScope
 
@@ -1752,15 +1753,7 @@ class AgentOS:
         if custom_excluded_paths or interface_prefixes or mcp_auth_paths:
             excluded_route_paths = list(
                 dict.fromkeys(
-                    [
-                        "/",
-                        "/health",
-                        "/info",
-                        "/docs",
-                        "/redoc",
-                        "/openapi.json",
-                        "/docs/oauth2-redirect",
-                    ]
+                    list(DEFAULT_PUBLIC_ROUTES)
                     + (custom_excluded_paths or [])
                     + interface_prefixes
                     + mcp_auth_paths
