@@ -1,8 +1,46 @@
+import re
 from dataclasses import dataclass
 from enum import Enum
 from typing import Any, Dict, List, Optional, Union
 
 from agno.models.message import Message
+
+# Credential shapes that provider error messages sometimes echo back. Applied to text
+# that gets persisted or served over an API, where it reaches a wider audience than logs.
+_SECRET_PATTERNS = [
+    # Key-shaped tokens. Asterisks and bullets are included because some providers
+    # echo a partially masked key, which should still be normalised to [redacted].
+    # Prefixes that are followed by a separator (sk-..., xoxb-...).
+    re.compile(r"\b(?:sk|pk|rk|ghp|gho|xoxb|xoxp|pa)[-_][A-Za-z0-9\-_*•]{8,}", re.IGNORECASE),
+    # Prefixes that run straight into the key body: Google (AIzaSy...), HuggingFace (hf_...),
+    # Jina (jina_...) and AWS access key ids (AKIA/ASIA + 16 uppercase alphanumerics).
+    re.compile(r"\bAIza[A-Za-z0-9\-_*•]{10,}"),
+    re.compile(r"\b(?:hf|jina)_[A-Za-z0-9\-_*•]{8,}", re.IGNORECASE),
+    re.compile(r"\b(?:AKIA|ASIA|AGPA|AIDA|AROA|AIPA|ANPA|ANVA)[A-Z0-9]{12,}\b"),
+    re.compile(r"\bBearer\s+[A-Za-z0-9\-._~+/]{8,}=*", re.IGNORECASE),
+    re.compile(r"\b(api[-_]?key|access[-_]?token|secret)\s*[=:]\s*\S+", re.IGNORECASE),
+    # Long hex runs only when labelled as a credential: bare 32-char hex is also the
+    # shape of md5 content hashes and chunk ids, which are useful diagnostics.
+    re.compile(
+        r"\b(?:token|secret|key|password|signature|credential)\b[^A-Za-z0-9]{0,3}[A-Fa-f0-9]{32,}\b",
+        re.IGNORECASE,
+    ),
+]
+
+# Credentials embedded in a URL (scheme://user:secret@host). Kept apart from
+# ``_SECRET_PATTERNS`` because only the password is replaced, not the whole match.
+_URL_CREDENTIAL_PATTERN = re.compile(r"([A-Za-z][A-Za-z0-9+.\-]*://[^\s:/@]+):[^\s@]+@")
+
+
+def redact_secrets(text: str) -> str:
+    """Replace credential-like fragments in ``text`` with ``[redacted]``."""
+    text = _URL_CREDENTIAL_PATTERN.sub(r"\1:[redacted]@", text)
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(
+            lambda m: f"{m.group(1)}=[redacted]" if m.re.groups and m.group(1) else "[redacted]",
+            text,
+        )
+    return text
 
 
 class AgentRunException(Exception):
@@ -172,6 +210,120 @@ class ContextWindowExceededError(ModelProviderError):
     ):
         super().__init__(message, status_code, model_name, model_id)
         self.error_id = "context_window_exceeded_error"
+
+
+class EmbeddingError(AgnoError):
+    """Raised when an embedder fails to produce an embedding.
+
+    Embedding failures must never be silent: a chunk that fails to embed is a
+    chunk the agent can never retrieve, so returning an empty vector would let
+    ingestion report success while the content is unsearchable.
+    """
+
+    # Substrings that identify the underlying cause, checked against the provider's message
+    _AUTH_PATTERNS = [
+        "api key",
+        "api_key",
+        "unauthorized",
+        "authentication",
+        "invalid_api_key",
+        "permission denied",
+        "forbidden",
+    ]
+    _RATE_LIMIT_PATTERNS = [
+        "rate limit",
+        "rate_limit",
+        "too many requests",
+        "quota",
+        "429",
+    ]
+    _TOO_LARGE_PATTERNS = [
+        "maximum context length",
+        "too long",
+        "too large",
+        "exceeds",
+        "max_tokens",
+        "token limit",
+    ]
+
+    def __init__(
+        self,
+        message: str,
+        status_code: Optional[int] = None,
+        model_id: Optional[str] = None,
+        provider: Optional[str] = None,
+    ):
+        # ``status_code`` is None when the provider reported no HTTP status. The attribute
+        # still exposes 502 so the API surface always has a code, but classification keys
+        # off ``provider_status_code`` so a synthesized default never outranks the message.
+        self.provider_status_code = status_code
+        super().__init__(message, status_code if status_code is not None else 502)
+        self.model_id = model_id
+        self.provider = provider
+
+        self.type = "embedding_error"
+        self.error_id = "embedding_error"
+
+    @property
+    def reason(self) -> str:
+        """Best-effort category of the failure, for user-facing recovery hints.
+
+        One of: ``authentication``, ``rate_limit``, ``content_too_large``, ``unknown``.
+        """
+        message = str(self.message).lower()
+
+        # A status code the provider actually reported outranks the message text. Providers
+        # routinely name the credential in a throttling message ("rate limit exceeded for
+        # your api key"), and matching that text first would report a retryable 429 as a
+        # permanent auth failure. A synthesized default is not the provider's word, so it
+        # is left out of this check and classification falls through to the text below.
+        status_code = self.provider_status_code
+        if status_code == 429:
+            return "rate_limit"
+        if status_code in {401, 403}:
+            return "authentication"
+        # A server-side fault is transient regardless of what the body happens to mention.
+        if status_code is not None and 500 <= status_code < 600:
+            return "unknown"
+
+        if any(p in message for p in self._RATE_LIMIT_PATTERNS):
+            return "rate_limit"
+        if any(p in message for p in self._AUTH_PATTERNS):
+            return "authentication"
+        if any(p in message for p in self._TOO_LARGE_PATTERNS):
+            return "content_too_large"
+        return "unknown"
+
+    @property
+    def recovery_hint(self) -> str:
+        """A short, actionable next step for the user, derived from ``reason``."""
+        return {
+            "authentication": "Check the embedder's API key and permissions.",
+            "rate_limit": "The embedding provider rate-limited this request; "
+            "wait for the limit to reset, or lower the embedder batch size.",
+            "content_too_large": "One or more chunks exceed the embedder's input limit; reduce the chunk size.",
+            "unknown": "If the failure persists, check the embedder configuration.",
+        }[self.reason]
+
+    @property
+    def is_retryable(self) -> bool:
+        """Whether re-sending the same request could plausibly succeed.
+
+        Authentication and oversized-input failures are deterministic: the same credential
+        is rejected, and the same chunk is too large, on every attempt, so retrying only
+        delays the report. Every other category may be transient, and losing a chunk costs
+        more than a wasted attempt.
+        """
+        return self.reason not in ("authentication", "content_too_large")
+
+    @property
+    def safe_message(self) -> str:
+        """The provider's message with credential-like fragments removed.
+
+        This message is persisted to the contents database and returned by the
+        knowledge API, so it reaches a wider audience than the process logs.
+        """
+        return redact_secrets(str(self.message))
 
 
 class EvalError(Exception):

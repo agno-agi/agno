@@ -100,10 +100,13 @@ async def test_trimmed_result_carries_answer_and_ids_only():
     result = await _call_run_agent(os)
 
     assert result.content[0].text == "the answer"
+    # The answer is mirrored into structuredContent: clients that render it when
+    # present (Claude Code among them) would otherwise show metadata with no answer.
     assert result.structured_content == {
         "run_id": "run-1",
         "session_id": "sess-1",
         "status": "COMPLETED",
+        "content": "the answer",
     }
 
 
@@ -131,7 +134,7 @@ async def test_binary_media_becomes_image_content_block():
 
     image_blocks = [b for b in result.content if getattr(b, "type", None) == "image"]
     assert len(image_blocks) == 1
-    assert image_blocks[0].mimeType == "image/png"
+    assert image_blocks[0].mime_type == "image/png"
     assert image_blocks[0].data  # base64 payload present
 
 
