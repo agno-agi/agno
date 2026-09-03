@@ -73,11 +73,20 @@ def run_smoke():
         assert client.get("/agents").status_code == 401
         # Protected route works with token
         token = jwt.encode(
-            {"sub": "user", "scopes": ["agents:read"], "exp": datetime.now(UTC) + timedelta(hours=1)},
+            {
+                "sub": "user",
+                "scopes": ["agents:read"],
+                "exp": datetime.now(UTC) + timedelta(hours=1),
+            },
             JWT_SECRET,
             algorithm="HS256",
         )
-        assert client.get("/agents", headers={"Authorization": f"Bearer {token}"}).status_code == 200
+        assert (
+            client.get(
+                "/agents", headers={"Authorization": f"Bearer {token}"}
+            ).status_code
+            == 200
+        )
 
 
 if __name__ == "__main__":

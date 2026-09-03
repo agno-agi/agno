@@ -13,7 +13,6 @@ from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
 from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
-from agno.os.config import DEFAULT_PUBLIC_ROUTES
 from agno.os.scopes import (
     AgentOSScope,
     check_route_scopes,
@@ -34,6 +33,7 @@ if TYPE_CHECKING:
 # auth. The mount short-circuit reads THIS, not the public request.state.authenticated
 # flag, so no other middleware can trip it.
 _AUTH_COMPLETE_ATTR = "_agno_auth_complete"
+
 
 # The built-in MCP OAuth server mints request identities as ``__oauth__:<client_id>``.
 # A double-underscore sentinel (like ``__scheduler__``), not a bare ``oauth:`` prefix, so
@@ -722,7 +722,15 @@ class AuthMiddleware(BaseHTTPMiddleware):
 
     def _get_default_excluded_routes(self) -> List[str]:
         """Get default routes that should be excluded from RBAC checks."""
-        return list(DEFAULT_PUBLIC_ROUTES)
+        return [
+            "/",
+            "/health",
+            "/info",
+            "/docs",
+            "/redoc",
+            "/openapi.json",
+            "/docs/oauth2-redirect",
+        ]
 
     def _extract_resource_id_from_path(self, path: str, resource_type: str) -> Optional[str]:
         """

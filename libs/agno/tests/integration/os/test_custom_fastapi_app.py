@@ -394,35 +394,6 @@ def test_authorization_config_wildcard_pattern_matching(test_agent: Agent):
     assert client.get("/sessions").status_code == 401
 
 
-def test_authorization_config_deduplicates_overlapping_routes(test_agent: Agent):
-    """Passing routes that overlap with defaults should be deduplicated (no duplicates in final list)."""
-    from agno.os.config import DEFAULT_PUBLIC_ROUTES
-
-    app = AgentOS(
-        agents=[test_agent],
-        authorization=True,
-        authorization_config=AuthorizationConfig(
-            verification_keys=["test-secret"],
-            algorithm="HS256",
-            excluded_route_paths=["/health", "/docs", "/custom"],  # /health and /docs are already defaults
-        ),
-    ).get_app()
-
-    # Get the middleware's excluded_route_paths
-    middleware = next(m for m in app.user_middleware if m.cls is JWTMiddleware)
-    excluded_paths = middleware.kwargs.get("excluded_route_paths", [])
-
-    # Verify no duplicates
-    assert len(excluded_paths) == len(set(excluded_paths)), "excluded_route_paths contains duplicates"
-
-    # Verify defaults are present
-    for default_route in DEFAULT_PUBLIC_ROUTES:
-        assert default_route in excluded_paths
-
-    # Verify custom route is present
-    assert "/custom" in excluded_paths
-
-
 def test_available_endpoints_with_custom_app(test_agent: Agent, test_team: Team, test_workflow: Workflow):
     """Test that all expected AgentOS endpoints are available with custom app."""
     # Create custom FastAPI app
