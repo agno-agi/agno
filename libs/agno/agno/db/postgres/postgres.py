@@ -1174,7 +1174,7 @@ class PostgresDb(BaseDb):
         # run_ids are parameterized via bindparam to avoid SQL injection.
         stmt = text(
             f"""
-            UPDATE {sessions_table.name}
+            UPDATE {sessions_table.fullname}
             SET runs = COALESCE(
                 (SELECT jsonb_agg(elem)
                  FROM jsonb_array_elements(runs) elem
