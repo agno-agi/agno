@@ -233,7 +233,7 @@ class TestGetRequestKwargs:
         model = self._make_model()
         messages = [Message(role="user", content="Hello")]
         kwargs = model._get_request_kwargs(messages)
-        assert kwargs["model"] == "gemini-3-flash-preview"
+        assert kwargs["model"] == "gemini-3.7-flash"
         assert "input" in kwargs
         assert "system_instruction" not in kwargs
 
@@ -1309,7 +1309,7 @@ class TestInvoke:
 
         mock_client.interactions.create.assert_called_once()
         call_kwargs = mock_client.interactions.create.call_args[1]
-        assert call_kwargs["model"] == "gemini-3-flash-preview"
+        assert call_kwargs["model"] == "gemini-3.7-flash"
         assert "input" in call_kwargs
 
     def test_invoke_passes_tools(self):
@@ -2293,7 +2293,7 @@ class TestToDict:
     def test_basic_serialization(self):
         model = GeminiInteractions(api_key="test-key")
         d = model.to_dict()
-        assert d["id"] == "gemini-3-flash-preview"
+        assert d["id"] == "gemini-3.7-flash"
         assert d["name"] == "GeminiInteractions"
         assert d["provider"] == "Google"
 

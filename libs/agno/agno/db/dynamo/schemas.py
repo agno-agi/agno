@@ -254,49 +254,6 @@ METRICS_TABLE_SCHEMA = {
     "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
 }
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "TableName": "agno_cultural_knowledge",
-    "KeySchema": [{"AttributeName": "id", "KeyType": "HASH"}],
-    "AttributeDefinitions": [
-        {"AttributeName": "id", "AttributeType": "S"},
-        {"AttributeName": "name", "AttributeType": "S"},
-        {"AttributeName": "agent_id", "AttributeType": "S"},
-        {"AttributeName": "team_id", "AttributeType": "S"},
-        {"AttributeName": "created_at", "AttributeType": "N"},
-    ],
-    "GlobalSecondaryIndexes": [
-        {
-            "IndexName": "name-created_at-index",
-            "KeySchema": [
-                {"AttributeName": "name", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
-            ],
-            "Projection": {"ProjectionType": "ALL"},
-            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
-        },
-        {
-            "IndexName": "agent_id-created_at-index",
-            "KeySchema": [
-                {"AttributeName": "agent_id", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
-            ],
-            "Projection": {"ProjectionType": "ALL"},
-            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
-        },
-        {
-            "IndexName": "team_id-created_at-index",
-            "KeySchema": [
-                {"AttributeName": "team_id", "KeyType": "HASH"},
-                {"AttributeName": "created_at", "KeyType": "RANGE"},
-            ],
-            "Projection": {"ProjectionType": "ALL"},
-            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
-        },
-    ],
-    "BillingMode": "PROVISIONED",
-    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
-}
-
 TRACE_TABLE_SCHEMA = {
     "TableName": "agno_traces",
     "KeySchema": [{"AttributeName": "trace_id", "KeyType": "HASH"}],
@@ -414,6 +371,91 @@ SPAN_TABLE_SCHEMA = {
 }
 
 
+SCHEMA_VERSIONS_TABLE_SCHEMA = {
+    "TableName": "agno_schema_versions",
+    "KeySchema": [{"AttributeName": "table_name", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "table_name", "AttributeType": "S"},
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
+
+RUNS_TABLE_SCHEMA = {
+    "TableName": "agno_runs",
+    "KeySchema": [{"AttributeName": "run_id", "KeyType": "HASH"}],
+    "AttributeDefinitions": [
+        {"AttributeName": "run_id", "AttributeType": "S"},
+        {"AttributeName": "session_id", "AttributeType": "S"},
+        {"AttributeName": "agent_id", "AttributeType": "S"},
+        {"AttributeName": "team_id", "AttributeType": "S"},
+        {"AttributeName": "workflow_id", "AttributeType": "S"},
+        {"AttributeName": "user_id", "AttributeType": "S"},
+        {"AttributeName": "status", "AttributeType": "S"},
+        {"AttributeName": "created_at", "AttributeType": "N"},
+    ],
+    "GlobalSecondaryIndexes": [
+        {
+            "IndexName": "session_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "session_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "user_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "user_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "agent_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "agent_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "team_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "team_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "workflow_id-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "workflow_id", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+        {
+            "IndexName": "status-created_at-index",
+            "KeySchema": [
+                {"AttributeName": "status", "KeyType": "HASH"},
+                {"AttributeName": "created_at", "KeyType": "RANGE"},
+            ],
+            "Projection": {"ProjectionType": "ALL"},
+            "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+        },
+    ],
+    "BillingMode": "PROVISIONED",
+    "ProvisionedThroughput": {"ReadCapacityUnits": 5, "WriteCapacityUnits": 5},
+}
+
+
 def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
     """
     Get the expected schema definition for the given table.
@@ -426,11 +468,11 @@ def get_table_schema_definition(table_type: str) -> Dict[str, Any]:
     """
     schemas = {
         "sessions": SESSION_TABLE_SCHEMA,
+        "runs": RUNS_TABLE_SCHEMA,
         "memories": USER_MEMORY_TABLE_SCHEMA,
         "evals": EVAL_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "spans": SPAN_TABLE_SCHEMA,
     }
