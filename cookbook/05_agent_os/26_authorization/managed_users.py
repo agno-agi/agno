@@ -22,7 +22,9 @@ This file creates a few users, gives them roles, then:
 - lists the directory,
 - shows bob working normally,
 - DISABLES bob and shows his next request bounce (same valid token),
-- re-enables him.
+- re-enables him,
+- and shows a brand-new user auto-provision on their first request, landing usable
+  with the default role - no admin step in between.
 
 Run it:
     pip install "agno[roles]"
@@ -49,7 +51,11 @@ os.makedirs("tmp", exist_ok=True)
 
 # Roles: what each role can do (same as managed_roles.py).
 roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_users_roles.db")
-roles.set_role_scopes("viewer", ["agents:*:read"])
+# Flag "viewer" as the DEFAULT role: a user who is auto-provisioned on first login (see
+# auto_provision below) is granted it automatically, so they land usable instead of with no
+# permissions. Single-role model, so exactly one role is the default - flagging another one
+# moves the flag.
+roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
 roles.set_role_scopes("admin", ["agent_os:admin"])
 
 # Users: the directory. Just people, no passwords. We give each one a role too.
@@ -80,16 +86,23 @@ agent_os = AgentOS(
         algorithm="HS256",
         verify_audience=True,
         audience=OS_ID,
-        authorization_provider=roles.provider,
+        # Pass the STORE (not roles.provider): enforcement is identical (AgentOS builds the
+        # provider from it), and the OS also keeps the store, which is what lets it grant the
+        # default role on auto-provision and auto-mount the /users + /authz admin API.
+        role_store=roles,
     ),
-    user_directory=UserDirectoryConfig(
-        store=users
-    ),  # <- the directory + disabled kill-switch
+    # The directory + the disabled kill-switch. auto_provision=True means a user we have
+    # never seen is created from their token claims on their first authenticated request,
+    # and granted the default role (the is_default one above) so they land usable, not inert.
+    # To pin the default in code instead of flagging a role, pass default_role="viewer" here
+    # (it overrides is_default).
+    user_directory=UserDirectoryConfig(store=users, auto_provision=True),
 )
 app = agent_os.get_app()
-# The directory is managed through the store itself here (upsert / set_disabled), which
-# is all the enforcement needs. An admin HTTP API for it (/users, /authz/roles)
-# ships with the `/authz` router -- see manage_users_and_roles.py.
+# We manage the directory through the store directly here (upsert / set_disabled), which is
+# all the enforcement needs for this transcript. Because we passed role_store=, AgentOS also
+# auto-mounts the admin HTTP API (/users, /authz/roles) -- see manage_users_and_roles.py for
+# a frontend that drives it.
 
 
 if __name__ == "__main__":
@@ -152,6 +165,20 @@ if __name__ == "__main__":
         "bob asks to LOOK at the agent",
         client.get("/agents/research-agent", headers=auth("bob")),
         "allowed again, instantly",
+    )
+
+    print(
+        "\n  >> a brand-new user (dave) we've NEVER seen makes his first request...\n"
+    )
+    print(f"    dave in the directory beforehand?  {users.get('dave') is not None}")
+    show(
+        "dave (unknown) asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("dave")),
+        "auto-provisioned + granted the default role, so he's allowed on the same request",
+    )
+    dave_role = (roles.roles_of("dave") or [None])[0]
+    print(
+        f"    dave in the directory now?         {users.get('dave') is not None}  role={dave_role}"
     )
 
     print("=" * 80)

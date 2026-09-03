@@ -15,6 +15,7 @@ from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import (
     get_authentication_dependency,
     get_effective_auth_mode,
+    provision_user_with_default_role,
     validate_websocket_token,
     verify_websocket_service_account,
 )
@@ -533,13 +534,20 @@ def get_websocket_router(
                             if user_store is not None and ws_user_id:
                                 try:
                                     if getattr(websocket.app.state, "user_auto_provision", False):
-                                        user_store.provision_from_claims(
+                                        provisioned = provision_user_with_default_role(
+                                            user_store,
+                                            getattr(websocket.app.state, "role_store", None),
+                                            getattr(websocket.app.state, "user_default_role", None),
                                             ws_user_id,
                                             payload,
                                             email_claim=getattr(websocket.app.state, "user_email_claim", "email"),
                                             name_claim=getattr(websocket.app.state, "user_name_claim", "name"),
                                         )
-                                    ws_disabled = user_store.is_disabled(ws_user_id)
+                                        ws_disabled = (
+                                            bool(provisioned.get("disabled")) if provisioned is not None else False
+                                        )
+                                    else:
+                                        ws_disabled = user_store.is_disabled(ws_user_id)
                                 except Exception as e:  # directory unreachable: honour configured policy
                                     fail_closed = bool(
                                         getattr(websocket.app.state, "user_directory_fail_closed", False)

@@ -207,6 +207,14 @@ class UserDirectoryConfig(BaseModel):
     # outage cannot silently re-enable every disabled/compromised account.
     fail_closed: bool = False
 
+    # The role granted to a user the first time they are auto-provisioned (JIT). Single-role
+    # model (a subject holds one role): this is the code-first override -- it wins over the
+    # role flagged ``is_default`` in the role store. When None, provisioning falls back to
+    # that ``is_default`` role. If neither resolves, a new user is left with no role (denied
+    # until an admin assigns one) and a warning is logged -- never a silent grant. Only
+    # meaningful under managed roles; the scope plane has no roles to grant.
+    default_role: Optional[str] = None
+
 
 class EvalsDomainConfig(BaseModel):
     """Configuration for the Evals domain of the AgentOS"""

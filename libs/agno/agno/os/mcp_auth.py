@@ -26,6 +26,7 @@ agno adds two things on top of the provider:
 import json
 from typing import TYPE_CHECKING, Any, Dict, List, Optional
 
+from agno.os.auth import provision_user_with_default_role
 from agno.os.middleware.jwt import is_reserved_principal as _is_reserved_principal
 from agno.utils.log import log_warning
 
@@ -186,6 +187,8 @@ class MCPIdentityBridgeMiddleware:
         user_email_claim: str = "email",
         user_name_claim: str = "name",
         user_directory_fail_closed: bool = False,
+        role_store: Any = None,
+        default_role: Optional[str] = None,
     ) -> None:
         self.app = app
         self.admin_scope = admin_scope
@@ -198,6 +201,10 @@ class MCPIdentityBridgeMiddleware:
         self.user_email_claim = user_email_claim
         self.user_name_claim = user_name_claim
         self.user_directory_fail_closed = user_directory_fail_closed
+        # Role store + explicit default role, so a first-time auto-provision here grants the
+        # same default role it would on the HTTP/WebSocket paths (shared choke-point helper).
+        self.role_store = role_store
+        self.user_default_role = default_role
 
     async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
         if scope["type"] == "http":
@@ -235,13 +242,18 @@ class MCPIdentityBridgeMiddleware:
                 if self.user_store is not None and user_id and service_account_name is None:
                     try:
                         if self.user_auto_provision:
-                            self.user_store.provision_from_claims(
+                            provisioned = provision_user_with_default_role(
+                                self.user_store,
+                                self.role_store,
+                                self.user_default_role,
                                 user_id,
                                 claims,
                                 email_claim=self.user_email_claim,
                                 name_claim=self.user_name_claim,
                             )
-                        disabled = self.user_store.is_disabled(user_id)
+                            disabled = bool(provisioned.get("disabled")) if provisioned is not None else False
+                        else:
+                            disabled = self.user_store.is_disabled(user_id)
                     except Exception as e:  # directory unreachable: honour the configured policy
                         disabled = self.user_directory_fail_closed
                         log_warning(

@@ -12,7 +12,12 @@ from fastapi import Request, Response
 from fastapi.responses import JSONResponse
 from starlette.middleware.base import BaseHTTPMiddleware
 
-from agno.os.auth import INTERNAL_SCHEDULER_USER_ID, INTERNAL_SERVICE_SCOPES, build_insufficient_permissions_detail
+from agno.os.auth import (
+    INTERNAL_SCHEDULER_USER_ID,
+    INTERNAL_SERVICE_SCOPES,
+    build_insufficient_permissions_detail,
+    provision_user_with_default_role,
+)
 from agno.os.scopes import (
     AgentOSScope,
     RouteScopeCheck,
@@ -1279,7 +1284,10 @@ class AuthMiddleware(BaseHTTPMiddleware):
                     if getattr(request.app.state, "user_auto_provision", False):
                         # Provisioning already reads the row; read `disabled` off it rather
                         # than issuing a second query for the same row every request.
-                        provisioned = user_store.provision_from_claims(
+                        provisioned = provision_user_with_default_role(
+                            user_store,
+                            getattr(request.app.state, "role_store", None),
+                            getattr(request.app.state, "user_default_role", None),
                             user_id,
                             payload,
                             email_claim=getattr(request.app.state, "user_email_claim", "email"),

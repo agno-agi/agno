@@ -1744,6 +1744,21 @@ class AgentOS:
         fastapi_app.state.user_email_claim = directory.email_claim if directory is not None else "email"
         fastapi_app.state.user_name_claim = directory.name_claim if directory is not None else "name"
         fastapi_app.state.user_directory_fail_closed = directory.fail_closed if directory is not None else False
+        # The role store + explicit default role, for granting a role on first auto-provision
+        # (the provisioning choke points read these to call provision_user_with_default_role).
+        authz = self.authorization_config
+        fastapi_app.state.role_store = getattr(authz, "role_store", None) if authz is not None else None
+        fastapi_app.state.user_default_role = directory.default_role if directory is not None else None
+        if fastapi_app.state.user_default_role and fastapi_app.state.role_store is None:
+            # A default role is granted through the store; with roles passed as
+            # authorization_provider= (e.g. a composite) the OS has only the engine, not the
+            # store, so the grant would silently never happen. Say so at boot rather than
+            # leave every new user mysteriously inert.
+            log_warning(
+                "UserDirectoryConfig(default_role=...) is set but no role_store is configured. "
+                "Default roles are granted through the role store, so configure managed roles via "
+                "AuthorizationConfig(role_store=...) (not authorization_provider=) for it to apply."
+            )
 
     def get_routes(self) -> List[Any]:
         """Retrieve all routes from the FastAPI app.

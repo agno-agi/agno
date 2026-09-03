@@ -200,7 +200,19 @@ class ManagedRoleStore:
                 row["is_default"] = bool(is_default)
             row["updated_at"] = now
         self._meta_write(row)
+        if is_default is True:
+            # Single-default model: only one role may carry the flag, so ``default_role()``
+            # is unambiguous (mirrors assign()'s one-role-per-subject). Clear it elsewhere.
+            self._clear_other_defaults(slug, now)
         return row
+
+    def _clear_other_defaults(self, keep: str, now: int) -> None:
+        """Unset ``is_default`` on every role except ``keep`` (single-default model)."""
+        if self._meta_db is None:
+            return
+        for slug, row in self._meta_get_all().items():
+            if slug != keep and row.get("is_default"):
+                self._meta_write({**row, "slug": slug, "is_default": False, "updated_at": now})
 
     def _meta_write(self, row: dict) -> None:
         self._require_meta()
@@ -364,6 +376,18 @@ class ManagedRoleStore:
             meta = meta_all.get(slug) or {"slug": slug, **default, "name": slug}
             out.append({**meta, "scopes": self.get_role_scope_entries(slug)})
         return out
+
+    def default_role(self) -> Optional[str]:
+        """The role flagged ``is_default``, granted to a user on first JIT provision.
+
+        Single-role model (mirrors :meth:`assign`, one role per subject): at most one role
+        should carry the flag -- the metadata setters clear it from the others when a new
+        default is set. If legacy data somehow has several, the lowest slug wins so the
+        choice is deterministic. Returns ``None`` when no default is set (or no metadata db)."""
+        if self._meta_db is None:
+            return None
+        defaults = sorted(slug for slug, row in self._meta_get_all().items() if row.get("is_default"))
+        return defaults[0] if defaults else None
 
     # ------------------------------------------------------------- assignments
     def assign(self, subject: str, role: str, actor: Optional[str] = None) -> None:

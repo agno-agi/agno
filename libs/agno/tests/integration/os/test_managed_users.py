@@ -103,10 +103,12 @@ def test_store_emits_audit_with_actor_and_diff():
 
 def test_provision_from_claims_is_idempotent():
     store = ManagedUserStore()
-    created = store.provision_from_claims("u1", {"email": "u1@co", "name": "One"})
-    assert created["email"] == "u1@co" and created["name"] == "One"
-    # second call is a no-op, returns existing (doesn't overwrite)
-    again = store.provision_from_claims("u1", {"email": "changed@co"})
+    user, was_created = store.provision_from_claims("u1", {"email": "u1@co", "name": "One"})
+    assert was_created is True
+    assert user["email"] == "u1@co" and user["name"] == "One"
+    # second call is a no-op: returns the existing row, created=False (doesn't overwrite)
+    again, was_created_again = store.provision_from_claims("u1", {"email": "changed@co"})
+    assert was_created_again is False
     assert again["email"] == "u1@co"
 
 
@@ -284,6 +286,26 @@ def test_auto_provision_from_claims_at_the_gate():
     assert r.status_code == 200
     provisioned = users.get("carol")
     assert provisioned is not None and provisioned["email"] == "carol@co" and provisioned["name"] == "Carol"
+
+
+def test_auto_provision_grants_default_role_at_the_gate():
+    """A user auto-provisioned on first request is granted the role flagged is_default,
+    so they land usable rather than inert. Single-role model (one role)."""
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("member", ["agents:*:read"], is_default=True)
+    users = ManagedUserStore(db_url=_db_url())
+
+    client = TestClient(_os(roles, users, auto_provision=True).get_app())
+
+    assert roles.roles_of("dave") == []
+    # dave's first authenticated request provisions him AND grants the default role,
+    # so the very same request is already authorized to read the agent (agents:*:read).
+    r = client.get("/agents/research-agent", headers=_auth("dave", email="dave@co", name="Dave"))
+    assert r.status_code == 200, r.text
+    assert roles.roles_of("dave") == ["member"]
+    # a second request does not re-grant / duplicate
+    client.get("/agents/research-agent", headers=_auth("dave"))
+    assert roles.roles_of("dave") == ["member"]
 
 
 def test_stores_share_one_agno_db(tmp_path):

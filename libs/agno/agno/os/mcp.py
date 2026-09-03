@@ -1242,6 +1242,10 @@ def _identity_bridge_kwargs(os: "AgentOS") -> Dict[str, Any]:
         "user_email_claim": directory.email_claim if directory is not None else "email",
         "user_name_claim": directory.name_claim if directory is not None else "name",
         "user_directory_fail_closed": bool(directory.fail_closed) if directory is not None else False,
+        # Role store + explicit default role so a first-time auto-provision on the MCP path
+        # grants the same default role it would on the HTTP/WebSocket paths.
+        "role_store": getattr(config, "role_store", None) if config is not None else None,
+        "default_role": directory.default_role if directory is not None else None,
     }
 
 

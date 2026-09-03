@@ -31,7 +31,7 @@ in-memory when neither is given (fine for tests, not for production).
 
 import json
 import time
-from typing import TYPE_CHECKING, Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple
 
 if TYPE_CHECKING:
     from agno.os.authz.audit import AuditSink
@@ -251,18 +251,24 @@ class ManagedUserStore:
         email_claim: str = "email",
         name_claim: str = "name",
         actor: Optional[str] = None,
-    ) -> dict:
-        """Just-in-time: create a directory row for ``subject`` from token claims if
-        it doesn't exist yet. No-op if the user is already present. Returns the user."""
+    ) -> Tuple[dict, bool]:
+        """Just-in-time: create a directory row for ``subject`` from token claims if it
+        doesn't exist yet.
+
+        Returns ``(user, created)``. ``created`` is True only when a new row was made, so a
+        caller can grant a default role exactly once (on first login, not every request). If
+        the user is already present this is a no-op that returns ``(existing_row, False)``.
+        """
         existing = self.get(subject)
         if existing is not None:
-            return existing
-        return self.upsert(
+            return existing, False
+        user = self.upsert(
             subject,
             email=claims.get(email_claim),
             name=claims.get(name_claim),
             actor=actor or "system:jit",
         )
+        return user, True
 
     # ------------------------------------------------------------------ reads
     def get(self, id: str) -> Optional[dict]:
