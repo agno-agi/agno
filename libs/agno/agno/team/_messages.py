@@ -1292,6 +1292,9 @@ def _get_user_message(
             if len(input_message) > 0 and isinstance(input_message[0], dict) and "type" in input_message[0]:
                 # This is multimodal content (text + images/audio/video), preserve the structure
                 input_content = input_message
+            elif len(input_message) > 0 and isinstance(input_message[0], Message):
+                # The delegation tool still uses this helper to pass team input to members.
+                input_content = get_text_from_message(input_message)
             elif all(isinstance(item, str) for item in input_message):
                 input_content = "\n".join([str(item) for item in input_message])
             else:

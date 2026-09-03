@@ -16,7 +16,10 @@ import pytest
 from agno.models.message import Message
 from agno.models.openai.chat import OpenAIChat
 from agno.models.response import ModelResponse
+from agno.run import RunContext
+from agno.run.team import TeamRunOutput
 from agno.team import Team
+from agno.team._messages import _get_user_message
 
 
 @dataclass
@@ -34,8 +37,32 @@ class _RecordingModel(OpenAIChat):
         return ModelResponse(content="ok")
 
 
-def _team(model: _RecordingModel) -> Team:
-    return Team(name="roleful", model=model, members=[], markdown=False, telemetry=False)
+@dataclass
+class _RecordingMemoryManager:
+    model: Any = None
+    db: Any = None
+    seen: List[Message] = field(default_factory=list)
+
+    def create_user_memories(self, *, messages: List[Message], **_kwargs: Any) -> str:
+        self.seen = list(messages)
+        return "ok"
+
+    async def acreate_user_memories(self, *, messages: List[Message], **_kwargs: Any) -> str:
+        self.seen = list(messages)
+        return "ok"
+
+
+def _team(model: _RecordingModel, memory_manager: Any = None) -> Team:
+    return Team(
+        name="roleful",
+        model=model,
+        members=[],
+        markdown=False,
+        telemetry=False,
+        memory_manager=memory_manager,
+        update_memory_on_run=memory_manager is not None,
+        add_memories_to_context=False,
+    )
 
 
 ROLEFUL_INPUT = [
@@ -76,6 +103,33 @@ async def test_team_keeps_message_list_input_roleful_async():
     ]
 
 
+def test_team_processes_roleful_input_for_memory():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    memory_manager = _RecordingMemoryManager()
+
+    _team(model, memory_manager).run(ROLEFUL_INPUT)
+
+    assert [(message.role, message.content) for message in memory_manager.seen] == [
+        ("user", "stored question"),
+        ("assistant", "stored answer"),
+        ("user", "current question"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_team_processes_roleful_input_for_memory_async():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    memory_manager = _RecordingMemoryManager()
+
+    await _team(model, memory_manager).arun(ROLEFUL_INPUT)
+
+    assert [(message.role, message.content) for message in memory_manager.seen] == [
+        ("user", "stored question"),
+        ("assistant", "stored answer"),
+        ("user", "current question"),
+    ]
+
+
 def test_team_accepts_role_dicts_and_skips_invalid_entries():
     model = _RecordingModel(id="gpt-test", api_key="sk-test")
 
@@ -90,3 +144,17 @@ def test_team_still_joins_a_list_of_strings():
     _team(model).run(["first line", "second line"])
 
     assert _conversation(model) == [("user", "first line\nsecond line")]
+
+
+def test_roleful_list_still_flattens_for_verbatim_member_input():
+    model = _RecordingModel(id="gpt-test", api_key="sk-test")
+    team = _team(model)
+
+    message = _get_user_message(
+        team,
+        run_response=TeamRunOutput(),
+        run_context=RunContext(run_id="run-id", session_id="session-id"),
+        input_message=ROLEFUL_INPUT,
+    )
+
+    assert message.content == "stored question\ncurrent question"
