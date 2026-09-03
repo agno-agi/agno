@@ -7,6 +7,11 @@ Workflow. Two labelers (different providers) run concurrently, a reviewer
 diffs them field by field, and an adjudicator runs only when the reviewer
 flags disagreement. Every run is persisted to SQLite for traceability.
 
+The demo runs two inputs: a clean one where the labelers agree and the
+adjudication step is skipped, and one with genuinely conflicting details
+where the adjudicator resolves the disagreement. The full step trail is
+printed for both.
+
 The same shape composes on top of any extraction primitive in this
 directory (text, image, audio, document).
 """
@@ -168,10 +173,37 @@ workflow = Workflow(
 # ---------------------------------------------------------------------------
 # Run
 # ---------------------------------------------------------------------------
+def print_step_outputs(step_results) -> None:
+    """Walk the step trail, descending into Parallel / Condition children."""
+    for step in step_results:
+        if step.steps:
+            print_step_outputs(step.steps)
+        elif step.content is not None:
+            pprint({"step": step.step_name, "output": step.content})
+
+
 if __name__ == "__main__":
-    text = (
-        "Sarah Johnson, VP Marketing at Acme Corp. "
-        "Reach me at sarah@acme.com or +1-555-0102."
+    clean = (
+        "Liam Ortega is a Support Engineer at Meadow and can be reached "
+        "at liam@meadow.io."
     )
-    response = workflow.run(input=text)
-    pprint(response.content)
+    # Conflicting details by construction - two phone numbers, a rebranded
+    # company, a compound title, a preferred short name - so independent
+    # labelers serialize at least one field differently and the
+    # adjudication path runs.
+    conflicting = (
+        "Forwarded note: you can reach Dr. Sarah Chen-Watanabe (she goes "
+        "by Sarah Chen) about the platform work. Sarah is Principal "
+        "Scientist and acting Head of Platform at NovaLabs, which recently "
+        "rebranded from Nova Biotech. Email s.chen@nova-labs.io. The "
+        "555-0123 number on the website is stale; her direct line is "
+        "+1-415-555-0177."
+    )
+
+    print("=== clean input: labelers expected to agree ===")
+    response = workflow.run(input=clean)
+    print_step_outputs(response.step_results)
+
+    print("\n=== conflicting input: adjudicator expected to run ===")
+    response = workflow.run(input=conflicting)
+    print_step_outputs(response.step_results)

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Mapping, Optional, Tuple, Union
 
@@ -7,6 +8,7 @@ from pydantic import BaseModel
 
 from agno.models.message import Message
 from agno.run.agent import RunOutput, RunStatus
+from agno.run.base import HISTORY_SKIP_STATUSES
 from agno.run.team import TeamRunOutput
 from agno.session.summary import SessionSummary
 from agno.utils.log import log_debug, log_warning
@@ -42,10 +44,18 @@ class TeamSession:
     # The unix timestamp when this session was last updated
     updated_at: Optional[int] = None
 
-    def to_dict(self) -> Dict[str, Any]:
-        session_dict = asdict(self)
+    def to_dict(self, include_runs: bool = True) -> Dict[str, Any]:
+        # Exclude runs from asdict to avoid the deep serialization cost. Serialize
+        # a shallow copy so we never mutate a live (possibly shared/cached) session
+        # while another thread reads self.runs.
+        session_copy = copy.copy(self)
+        session_copy.runs = None
+        session_dict = asdict(session_copy)
 
-        session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        if include_runs:
+            session_dict["runs"] = [run.to_dict() for run in self.runs] if self.runs else None
+        else:
+            session_dict.pop("runs", None)
         session_dict["summary"] = self.summary.to_dict() if self.summary else None
 
         return session_dict
@@ -104,6 +114,12 @@ class TeamSession:
 
         for i, existing_run in enumerate(self.runs or []):
             if existing_run.run_id == run_response.run_id:
+                # queue_attempt is sticky: the generation stamp lives on the
+                # stored row (written by the queue worker's fenced patch), and
+                # a whole-run save from execution - which never knows its
+                # attempt - must not erase it
+                if getattr(run_response, "queue_attempt", None) is None:
+                    run_response.queue_attempt = getattr(existing_run, "queue_attempt", None)
                 self.runs[i] = run_response
                 break
         else:
@@ -151,15 +167,15 @@ class TeamSession:
                 return True
             return False
 
-        if member_ids is not None and skip_member_messages:
-            log_debug("Member IDs to filter by were provided. The skip_member_messages flag will be ignored.")
+        if (member_ids is not None or team_id is not None) and skip_member_messages:
+            log_debug("Member or team IDs to filter by were provided. The skip_member_messages flag will be ignored.")
             skip_member_messages = False
 
         if not self.runs:
             return []
 
         if skip_statuses is None:
-            skip_statuses = [RunStatus.paused, RunStatus.cancelled, RunStatus.error]
+            skip_statuses = list(HISTORY_SKIP_STATUSES)
 
         session_runs = self.runs
 
@@ -288,10 +304,17 @@ class TeamSession:
                                 return tool_calls
         return tool_calls
 
-    def get_team_history(self, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
-        """Get team history as structured data (input, response pairs) -> This is the history of the team leader, not the members.
+    def get_team_history(self, team_id: Optional[str] = None, num_runs: Optional[int] = None) -> List[Tuple[str, str]]:
+        """Get team history as structured data (input, response pairs).
+
+        When called without ``team_id``, returns only top-level team runs
+        (those with ``parent_run_id is None``) — i.e. the team leader's own
+        history.  When *team_id* is provided, returns runs belonging to that
+        specific team regardless of nesting depth, which is useful for
+        retrieving a sub-team's history from a shared session.
 
         Args:
+            team_id: If provided, filter runs to this specific team.
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
         if not self.runs:
@@ -300,7 +323,16 @@ class TeamSession:
         from agno.run.base import RunStatus
 
         # Get completed runs only (exclude current/pending run)
-        completed_runs = [run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None]
+        if team_id is not None:
+            completed_runs = [
+                run
+                for run in self.runs
+                if run.status == RunStatus.completed and getattr(run, "team_id", None) == team_id
+            ]
+        else:
+            completed_runs = [
+                run for run in self.runs if run.status == RunStatus.completed and run.parent_run_id is None
+            ]
 
         if num_runs is not None:
             if num_runs <= 0:
@@ -333,13 +365,14 @@ class TeamSession:
 
         return history_data
 
-    def get_team_history_context(self, num_runs: Optional[int] = None) -> Optional[str]:
-        """Get formatted team history context for steps
+    def get_team_history_context(self, team_id: Optional[str] = None, num_runs: Optional[int] = None) -> Optional[str]:
+        """Get formatted team history context for steps.
 
         Args:
+            team_id: If provided, return history for this specific team.
             num_runs: Number of recent runs to include. If None, returns all available history.
         """
-        history_data = self.get_team_history(num_runs)
+        history_data = self.get_team_history(team_id=team_id, num_runs=num_runs)
 
         if not history_data:
             return None

@@ -386,7 +386,9 @@ def test_empty_message_list(gmail_tools, mock_gmail_service):
     mock_gmail_service.users().messages().list().execute.return_value = mock_messages
 
     result = gmail_tools.get_latest_emails(count=1)
-    assert "No emails found" in result
+    parsed = json.loads(result)
+    assert parsed["emails"] == []
+    assert parsed["count"] == 0
 
 
 def test_malformed_message(gmail_tools, mock_gmail_service):
@@ -1256,7 +1258,7 @@ def test_search_threads(gmail_tools, mock_gmail_service):
     result = json.loads(gmail_tools.search_threads("is:unread", count=5))
 
     assert len(result["threads"]) == 2
-    assert result["resultSizeEstimate"] == 2
+    assert result["totalEstimate"] == 2
 
 
 def test_search_threads_http_error(gmail_tools, mock_gmail_service):
@@ -1334,7 +1336,7 @@ def test_list_drafts(gmail_tools, mock_gmail_service):
     result = json.loads(gmail_tools.list_drafts(count=10))
 
     assert len(result["drafts"]) == 2
-    assert result["resultSizeEstimate"] == 2
+    assert result["totalEstimate"] == 2
 
 
 def test_list_drafts_http_error(gmail_tools, mock_gmail_service):

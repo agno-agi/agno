@@ -106,39 +106,47 @@ class ScavioTools(Toolkit):
     def google_search(
         self,
         query: str,
-        country_code: Optional[str] = None,
-        language: Optional[str] = None,
-        page: Optional[int] = None,
-        search_type: Optional[str] = None,
+        gl: Optional[str] = None,
+        hl: Optional[str] = None,
+        start: Optional[int] = None,
         device: Optional[str] = None,
         nfpr: Optional[bool] = None,
-        light_request: Optional[bool] = None,
+        google_domain: Optional[str] = None,
+        location: Optional[str] = None,
+        safe: Optional[str] = None,
+        time_period: Optional[str] = None,
     ) -> str:
-        """Search Google for real-time web results.
+        """Search Google for real-time organic web results.
 
         Args:
             query (str): The search query.
-            country_code (Optional[str]): Two-letter country code to localize results (e.g. "us").
-            language (Optional[str]): Two-letter language code for results (e.g. "en").
-            page (Optional[int]): Result page number (1-based).
-            search_type (Optional[str]): Result type: "classic", "news", "maps", or "images".
+            gl (Optional[str]): Two-letter country code to localize results (e.g. "us").
+            hl (Optional[str]): Two-letter UI language code (e.g. "en").
+            start (Optional[int]): Result offset for pagination (0, 10, 20, ...).
             device (Optional[str]): "desktop" or "mobile".
             nfpr (Optional[bool]): Disable auto-correction / spelling suggestions when True.
-            light_request (Optional[bool]): Return a lighter, cheaper response when True.
+            google_domain (Optional[str]): Regional Google domain (e.g. "google.co.uk").
+            location (Optional[str]): Canonical location to search from (e.g. "New York,New York,United States").
+            safe (Optional[str]): SafeSearch filter; "active" filters adult content.
+            time_period (Optional[str]): Restrict to a recent window: "last_hour", "last_day",
+                "last_week", "last_month", or "last_year".
 
         Returns:
-            str: JSON string of search results.
+            str: JSON string with an ``organic_results`` list (each item has title and link,
+            and usually a snippet). Costs 1 credit.
         """
         return self._call(
             self.client.google.search,
             query,
-            country_code=country_code,
-            language=language,
-            page=page,
-            search_type=search_type,
+            gl=gl,
+            hl=hl,
+            start=start,
             device=device,
             nfpr=nfpr,
-            light_request=light_request,
+            google_domain=google_domain,
+            location=location,
+            safe=safe,
+            time_period=time_period,
         )
 
     # ------------------------------------------------------------------ Amazon

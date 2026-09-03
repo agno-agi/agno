@@ -13,6 +13,7 @@ from ag_ui.core import (
     ReasoningMessageEndEvent,
     ReasoningMessageStartEvent,
     ReasoningStartEvent,
+    RunErrorEvent as AGUIRunErrorEvent,
     RunFinishedEvent,
     StateDeltaEvent,
     StateSnapshotEvent,
@@ -97,6 +98,32 @@ def _emit_state_delta(state: StreamState) -> List[BaseEvent]:
         return []
     state.set_state_snapshot(state.run_state)
     return [StateDeltaEvent(type=EventType.STATE_DELTA, delta=ops)]
+
+
+def _close_open_spans(state: StreamState) -> List[BaseEvent]:
+    """End any reasoning, tool call, or text message still open, so a terminal event never leaves a dangling span."""
+    events: List[BaseEvent] = []
+
+    # Close orphaned reasoning session
+    if state.reasoning_message_id is not None:
+        events.append(
+            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=state.reasoning_message_id)
+        )
+        events.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=state.reasoning_message_id))
+        state.end_reasoning()
+
+    # Close remaining active tool calls
+    for tool_call_id in list(state.active_tool_call_ids):
+        if tool_call_id not in state.ended_tool_call_ids:
+            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
+            state.end_tool_call(tool_call_id)
+
+    # Close open text message
+    if state.text_message_open:
+        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
+        state.close_text_message()
+
+    return events
 
 
 def on_run_content(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
@@ -314,27 +341,30 @@ def on_unknown_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[Base
     return [RawEvent(type=EventType.RAW, event=raw_dict, source="agno")]
 
 
-def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    events: List[BaseEvent] = []
+def on_run_error(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    """Close open spans, then emit the terminal AG-UI error event. Nothing may follow RUN_ERROR."""
+    try:
+        raw_event: Any = chunk.to_dict()
+    except Exception:
+        raw_event = {"event": str(getattr(chunk, "event", "RunError"))}
 
-    # Close orphaned reasoning session
-    if state.reasoning_message_id is not None:
-        events.append(
-            ReasoningMessageEndEvent(type=EventType.REASONING_MESSAGE_END, message_id=state.reasoning_message_id)
+    message = getattr(chunk, "content", None) or "Run failed"
+    error_type = getattr(chunk, "error_type", None)
+
+    events = _close_open_spans(state)
+    events.append(
+        AGUIRunErrorEvent(
+            type=EventType.RUN_ERROR,
+            message=str(message),
+            code=error_type,
+            rawEvent=raw_event,
         )
-        events.append(ReasoningEndEvent(type=EventType.REASONING_END, message_id=state.reasoning_message_id))
-        state.end_reasoning()
+    )
+    return events
 
-    # Close remaining active tool calls
-    for tool_call_id in list(state.active_tool_call_ids):
-        if tool_call_id not in state.ended_tool_call_ids:
-            events.append(ToolCallEndEvent(type=EventType.TOOL_CALL_END, tool_call_id=tool_call_id))
-            state.end_tool_call(tool_call_id)
 
-    # Close open text message
-    if state.text_message_open:
-        events.append(TextMessageEndEvent(type=EventType.TEXT_MESSAGE_END, message_id=state.text_message_id))
-        state.close_text_message()
+def on_run_completed(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
+    events = _close_open_spans(state)
 
     # 1. Collect paused tools for frontend rendering
     paused_tools: List[ToolExecution] = []
@@ -427,19 +457,21 @@ HANDLERS: Dict[str, EventHandler] = {
     RunEvent.custom_event.value: on_custom_event,
 }
 
-# Terminal events that trigger completion handling
+# Terminal events that trigger terminal handling
 _COMPLETION_EVENTS = frozenset(
     {
         RunEvent.run_completed.value,
+        RunEvent.run_error.value,
         RunEvent.run_paused.value,
         TeamRunEvent.run_completed.value,
+        TeamRunEvent.run_error.value,
         TeamRunEvent.run_paused.value,
     }
 )
 
 
 def is_completion_event(chunk: BaseRunOutputEvent) -> bool:
-    """Check if this event signals stream completion."""
+    """Check if this event is terminal for the stream (completed, paused, or error)."""
     event = getattr(chunk, "event", None)
     if event is None:
         return False
@@ -464,5 +496,9 @@ def process_event(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEve
 
 
 def process_completion(chunk: BaseRunOutputEvent, state: StreamState) -> List[BaseEvent]:
-    """Process completion event (run_completed/run_paused) and return cleanup events."""
+    """Process a terminal event and return the corresponding AG-UI events."""
+    event = getattr(chunk, "event", None)
+    event_value = event.value if event is not None and hasattr(event, "value") else str(event)
+    if _normalize_event(event_value) == RunEvent.run_error.value:
+        return on_run_error(chunk, state)
     return on_run_completed(chunk, state)

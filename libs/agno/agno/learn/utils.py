@@ -22,6 +22,22 @@ DEFAULT_LEARNING_NAMESPACE = "global"
 IDENTITY_KEYED_LEARNING_TYPES = frozenset({"user_profile", "user_memory", "session_context", "entity_memory"})
 
 
+def _user_key_segment(user_id: str) -> str:
+    """Fixed-width digest of the user id for the "user"-namespace entity key.
+
+    The key's other segments (entity_type, entity_id) are underscore-joined free
+    text, so embedding the raw user id would let a crafted user id or entity type
+    shift the segment boundary and collide with another user's key. A fixed-width
+    hex digest cannot contain a separator, and keeps raw user ids (often emails)
+    out of an id that appears in REST URLs and access logs.
+    """
+    from hashlib import sha256
+
+    # str() mirrors the f-string coercion the other stores' keys apply to
+    # non-string user ids, so an int user id degrades identically here.
+    return sha256(str(user_id).encode("utf-8")).hexdigest()[:16]
+
+
 def build_learning_id(
     learning_type: str,
     *,
@@ -40,9 +56,15 @@ def build_learning_id(
 
     This is the single source of truth: the stores' ``_build_*_id`` helpers delegate here.
 
+    Under ``namespace="user"``, the entity_memory id embeds a digest of ``user_id`` so
+    each user's entity graph is physically isolated: two users recording the same
+    entity name and type get distinct rows.
+
     Returns ``None`` for learning types that do not use a deterministic id (e.g.
     ``decision_log``, which keys each entry by its own uuid) or when the identity fields
     required for the id are missing -- callers should fall back to a generated id then.
+    For entity_memory under ``namespace="user"``, ``user_id`` is a required identity
+    field.
     """
     if learning_type == "user_profile":
         return f"user_profile_{user_id}" if user_id else None
@@ -51,10 +73,126 @@ def build_learning_id(
     if learning_type == "session_context":
         return f"session_context_{session_id}" if session_id else None
     if learning_type == "entity_memory":
-        if entity_id and entity_type:
-            return f"entity_{namespace or DEFAULT_LEARNING_NAMESPACE}_{entity_type}_{entity_id}"
-        return None
+        if not (entity_id and entity_type):
+            return None
+        effective_namespace = namespace or DEFAULT_LEARNING_NAMESPACE
+        if effective_namespace == "user":
+            if not user_id:
+                return None
+            return f"entity_user_{_user_key_segment(user_id)}_{entity_type}_{entity_id}"
+        return f"entity_{effective_namespace}_{entity_type}_{entity_id}"
     return None
+
+
+def legacy_entity_learning_id(
+    entity_id: str,
+    entity_type: str,
+    namespace: Optional[str] = None,
+) -> str:
+    """The entity_memory id shape from before the "user" namespace embedded the user.
+
+    Rows written by older versions under ``namespace="user"`` carry this user-less id;
+    the store's write path and the re-key migration use it to find and retire them.
+    For non-"user" namespaces this is identical to ``build_learning_id``'s output.
+    """
+    return f"entity_{namespace or DEFAULT_LEARNING_NAMESPACE}_{entity_type}_{entity_id}"
+
+
+def same_user(left: Any, right: Any) -> bool:
+    """Whether two user ids identify the same user.
+
+    The owner column is a string column, so a non-string user id reads back as its
+    ``str()``. The entity key applies the same coercion (see :func:`build_learning_id`),
+    so ``123`` and ``"123"`` address the same record and must compare equal here too.
+
+    ``None`` means "no owner" and matches nothing, not even another ``None``.
+    """
+    if left is None or right is None:
+        return False
+    return str(left) == str(right)
+
+
+def content_values_text(content: Any) -> str:
+    """Flatten a content payload to a lowercased text of its VALUES only.
+
+    Used to verify text-search hits: the db-side ILIKE matches the whole
+    serialized JSON document, keys included, so a query like "facts" or "name"
+    would match every row. Matching against the value projection restores
+    value-scoped precision without dropping any field.
+    """
+    parts: List[str] = []
+
+    def walk(node: Any) -> None:
+        if isinstance(node, dict):
+            for value in node.values():
+                walk(value)
+        elif isinstance(node, (list, tuple)):
+            for value in node:
+                walk(value)
+        elif node is not None:
+            parts.append(str(node))
+
+    walk(content)
+    # casefold, not lower: a stored "Ος" has to match a query of "ΟΣ".
+    return "\n".join(parts).casefold()
+
+
+def separator_folded(text: str) -> str:
+    """Collapse runs of space, underscore and hyphen to one space, casefolded.
+
+    The db-side pattern turns each separator run into the LIKE single-char
+    wildcard, which matches ANY separator. A verifier that enumerates uniform
+    rewrites cannot express mixed-separator text, so it threw away hits the
+    server had legitimately found: "end-to-end tests" stored and "end to end
+    tests" asked (or the reverse) verified as a miss, and the store answered
+    "no entities matching" for a fact it was holding. Folding both sides is
+    what the wildcard already means.
+
+    Newlines are left alone: they separate one stored value from the next, and
+    a match must not span two of them.
+    """
+    import re
+
+    return re.sub(r"[ \t\r\f\v_\-]+", " ", text.casefold())
+
+
+def values_match_query(content: Any, query: str) -> bool:
+    """Whether the content's VALUES contain the query, separator-insensitively.
+
+    The value-scoped half of the loose-prefilter/precise-verify pair: the
+    db-side ILIKE matches the whole serialized document, key names included,
+    so "facts" or "name" would otherwise match every row.
+    """
+    needle = separator_folded(query).strip()
+    if not needle:
+        return False
+    return needle in separator_folded(content_values_text(content))
+
+
+def query_variants(query: str) -> List[str]:
+    """Lowercased query variants with word separators swapped.
+
+    Mirrors the space/underscore(/hyphen) crossing the db-side search performs
+    with the LIKE single-char wildcard, so a client-side verification pass does
+    not drop hits the server legitimately matched ("sarah chen" vs sarah_chen).
+
+    The query itself is the first variant. Rewriting every separator to one
+    character produces no form that matches a query which MIXES them - the db
+    matches "end-to-end tests" through the single-char wildcard, and a verifier
+    that only knows "end to end tests" / "end_to_end_tests" throws that hit
+    away.
+    """
+    import re
+
+    lowered = query.strip().casefold()
+    if not lowered:
+        return []
+    variants: List[str] = [lowered]
+    for separator in (" ", "_", "-"):
+        variant = re.sub(r"[\s_\-]+", separator, lowered)
+        if variant and variant not in variants:
+            variants.append(variant)
+    return variants
 
 
 def _safe_get(data: Any, key: str, default: Any = None) -> Any:

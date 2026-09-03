@@ -5,6 +5,8 @@ from agno.run.agent import RunInput, RunOutput
 from agno.run.base import RunStatus
 from agno.run.team import TeamRunOutput
 from agno.session.team import TeamSession
+from agno.team._tools import _get_history_for_member_agent
+from agno.team.team import Team
 
 
 def _make_member_run(agent_id: str, run_id: str) -> RunOutput:
@@ -71,6 +73,34 @@ def _session_with_runs(n: int) -> TeamSession:
             content=f"out{i}",
         )
         for i in range(n)
+    ]
+    return session
+
+
+def _nested_team_history_session() -> TeamSession:
+    """Build a flat session containing parent and nested-team runs."""
+    session = TeamSession(session_id="nested-team-session", team_id="parent-team")
+    session.runs = [
+        TeamRunOutput(
+            run_id="parent-run",
+            team_id="parent-team",
+            parent_run_id=None,
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Parent request"),
+                Message(role="assistant", content="Parent response"),
+            ],
+        ),
+        TeamRunOutput(
+            run_id="nested-run",
+            team_id="nested-team",
+            parent_run_id="parent-run",
+            status=RunStatus.completed,
+            messages=[
+                Message(role="user", content="Nested request"),
+                Message(role="assistant", content="Nested response"),
+            ],
+        ),
     ]
     return session
 
@@ -232,6 +262,41 @@ class TestGetMessagesMemberDedup:
 
         # Verify we got exactly one copy
         assert len(messages) == 4
+
+
+class TestNestedTeamHistory:
+    """Tests for retrieving history for nested Teams from a shared session."""
+
+    def test_team_id_filter_includes_nested_runs_by_default(self):
+        """An explicit team filter must include the selected nested team's runs."""
+        session = _nested_team_history_session()
+
+        messages = session.get_messages(team_id="nested-team")
+
+        assert [message.content for message in messages] == ["Nested request", "Nested response"]
+
+    def test_default_history_filter_still_returns_only_top_level_runs(self):
+        """Without an explicit team filter, member runs remain excluded."""
+        session = _nested_team_history_session()
+
+        messages = session.get_messages()
+
+        assert [message.content for message in messages] == ["Parent request", "Parent response"]
+
+    def test_nested_team_history_helper_returns_selected_team_history(self):
+        """The delegation history helper must pass nested-team history to the member."""
+        session = _nested_team_history_session()
+        parent_team = Team(id="parent-team", name="Parent Team", members=[])
+        nested_team = Team(
+            id="nested-team",
+            name="Nested Team",
+            members=[],
+            add_history_to_context=True,
+        )
+
+        history = _get_history_for_member_agent(parent_team, session, nested_team)
+
+        assert [message.content for message in history] == ["Nested request", "Nested response"]
 
 
 class TestGetTeamHistoryZeroCount:

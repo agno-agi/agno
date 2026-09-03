@@ -30,6 +30,7 @@ from agno.run.base import RunStatus
 from agno.run.team import RunErrorEvent as TeamRunErrorEvent
 from agno.run.team import TeamRunOutput
 from agno.run.workflow import WorkflowErrorEvent
+from agno.scorer.base import Score, Scorer
 from agno.team.team import Team
 
 if TYPE_CHECKING:
@@ -95,6 +96,17 @@ class Case:
     setup: Optional[Callable[[], Any]] = None
     teardown: Optional[Callable[[Any, "CaseResult"], Any]] = None
 
+    # Scorer check - set `scorer` to score the run in-process (agno.scorer protocol:
+    # anything with `async ascore(run, expected)`). Runs only on gradeable runs,
+    # inside the case timeout, and receives (result.response, case.expected) -- for a
+    # team case that is the TeamRunOutput, so a scorer written against agent content
+    # sees the leader's synthesis. `expected` is the value handed to the scorer.
+    # Field order is load-bearing: these dataclasses are not kw_only, so new fields
+    # must be appended last -- inserting mid-class would silently reassign positional
+    # callers.
+    scorer: Optional[Scorer] = None
+    expected: Optional[Any] = None
+
     def __post_init__(self) -> None:
         # Exactly one of agent/team: neither has anything to run, both is ambiguous.
         if self.agent is None and self.team is None:
@@ -103,9 +115,9 @@ class Case:
             raise ValueError(f"case {self.name!r}: provide only one of 'agent' or 'team'")
         # Truthiness, not `is None`: criteria="" or expected_tool_calls=() would
         # otherwise construct a case whose checks pass vacuously - a green CI gate
-        # that verified nothing.
-        if not self.criteria and not self.expected_tool_calls:
-            raise ValueError(f"case {self.name!r} has no checks: set criteria and/or expected_tool_calls")
+        # that verified nothing. A scorer instance is always truthy, so `is None`.
+        if not self.criteria and not self.expected_tool_calls and self.scorer is None:
+            raise ValueError(f"case {self.name!r} has no checks: set criteria, expected_tool_calls, and/or scorer")
         # A raw string bypasses the JudgeMode type, so reject an unknown mode and, for NUMERIC, a
         # judge_threshold outside 1-10. Membership accepts the enum members and their equal strings.
         if self.judge_mode not in (JudgeMode.BINARY, JudgeMode.NUMERIC):
@@ -142,12 +154,17 @@ class CaseResult:
     # Raw run output - full programmatic access to content, tool calls, metrics.
     # Excluded from to_dict(). A team case stores its TeamRunOutput.
     response: Optional[Union[RunOutput, TeamRunOutput]] = None
+    # Scorer verdict; None = check not configured. Must stay the last field: not
+    # kw_only, so positional construction depends on field order.
+    score: Optional[Score] = None
 
     @property
     def passed(self) -> bool:
         if self.error:
             return False
         checks = [c for c in (self.judge_passed, self.reliability_passed) if c is not None]
+        if self.score is not None:
+            checks.append(self.score.passed)
         return bool(checks) and all(checks)
 
 
@@ -204,6 +221,11 @@ class SuiteResult:
                     "skipped": result.skipped,
                     "passed": result.passed,
                     "error": result.error,
+                    # Appended at the end of the case payload (2.8.0): purely additive
+                    # for CI consumers -- all three are null when no scorer is set.
+                    "score_value": result.score.value if result.score is not None else None,
+                    "score_passed": result.score.passed if result.score is not None else None,
+                    "score_reason": result.score.reason if result.score is not None else None,
                 }
                 for result in self.results
             ],
@@ -323,8 +345,8 @@ async def _run_case_body(
                 # The final run output arrives in-stream (yield_run_output=True). It is
                 # captured, not forwarded to on_run_event - on_case_end delivers it.
                 # Response AND evidence fields are committed immediately: the stream can
-                # stall after the final output (e.g. a hung telemetry call in transport
-                # cleanup) and a timeout then must not discard what the run produced.
+                # stall after the final output (e.g. a hung persistence or user cleanup
+                # call) and a timeout then must not discard what the run produced.
                 response = event
                 result.response = event
                 _extract_evidence(result, event)
@@ -388,8 +410,8 @@ async def _run_case_body(
                 model=case.judge_model or judge_model,
                 db=db,
                 show_spinner=False,
-                # The eval awaits its telemetry POST before returning; on a blackholed
-                # network that burns case-timeout budget after the verdict is computed.
+                # Preserve EvalSuite's existing policy: its internally-created evals
+                # do not emit hidden telemetry, and the suite has no telemetry option.
                 telemetry=False,
             ).arun(input=case.input, output=result.output or "")
         except Exception as exc:
@@ -426,6 +448,14 @@ async def _run_case_body(
                 _append_error(result, "reliability: returned no result")
             else:
                 result.reliability_passed = reliability.eval_status == "PASSED"
+
+    if case.scorer is not None and response is not None:
+        # Same placement as the judge: inside the case timeout, gradeable runs only
+        # (non-gradeable runs returned above -- the scorer is skipped, not failed).
+        try:
+            result.score = await case.scorer.ascore(response, case.expected)
+        except Exception as exc:
+            _append_error(result, f"scorer: {type(exc).__name__}: {exc}")
 
 
 async def _arun_case(
@@ -781,8 +811,16 @@ async def acli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
-    """Async variant of cli() for callers already inside an event loop."""
+    """Async variant of cli() for callers already inside an event loop.
+
+    mcp_tools: MCP toolkits (e.g. the case components' registry tools) to
+    connect in this loop before the cases run and close again afterwards --
+    what the AgentOS lifespan does for a server, for an eval process. Connect
+    failures are logged per tool and the cases still run; a tool that never
+    connected is not closed.
+    """
     import argparse
 
     from rich.console import Console
@@ -835,6 +873,91 @@ async def acli(
                 return 1
         return 0
 
+    # Connected here, after the --list and no-match early returns, so only an
+    # actual run pays for (and has to tear down) live MCP sessions.
+    connected_mcp_tools: List[Any] = []
+
+    def _genuinely_cancelled() -> bool:
+        # Detectable on Python 3.11+; below that a genuine cancel during this
+        # bookkeeping is absorbed like a connect failure.
+        cancelling = getattr(asyncio.current_task(), "cancelling", None)
+        return cancelling is not None and cancelling() > 0
+
+    async def _drop_partial_mcp_state(tool: Any) -> None:
+        # A failed connect can leave partially-entered transport contexts that
+        # poison a later reconnect; connect()'s own cleanup does not always
+        # run (a CancelledError bypasses it, and initialize() failures return
+        # with the dead session still attached).
+        safe_cleanup = getattr(tool, "_safe_cleanup", None)
+        if safe_cleanup is None:
+            return
+        try:
+            maybe = safe_cleanup()
+            if isawaitable(maybe):
+                await maybe
+        except BaseException:
+            pass
+
+    async def _close_connected_mcp_tools() -> None:
+        cancelled: Optional[BaseException] = None
+        for tool in connected_mcp_tools:
+            try:
+                await tool.close()
+            except asyncio.CancelledError as exc:
+                # Keep releasing the remaining tools, then let the host's
+                # cancel land instead of reporting a normal exit.
+                if _genuinely_cancelled():
+                    cancelled = exc
+            except BaseException:
+                pass
+            if cancelled is None and _genuinely_cancelled():
+                # The real MCPTools.close() swallows everything it is handed,
+                # a delivered cancel included -- the task-level counter is the
+                # only trace left of it.
+                cancelled = asyncio.CancelledError()
+        if cancelled is not None:
+            raise cancelled
+
+    try:
+        for tool in mcp_tools or []:
+            if getattr(tool, "initialized", False):
+                # Connected by someone else (a server lifespan, the caller
+                # itself); not ours to manage -- connect() would no-op and
+                # closing it afterwards would tear down a session we never
+                # opened.
+                continue
+            try:
+                await tool.connect()
+            except BaseException as exc:
+                # BaseException: the mcp client surfaces an unreachable server
+                # as CancelledError out of its cancel scopes, bypassing
+                # connect()'s own fail-soft handler. Unlike a private loop,
+                # this coroutine runs on the caller's loop where cancellation
+                # can also be genuine -- re-raise that so the host's cancel
+                # still lands.
+                if isinstance(exc, asyncio.CancelledError) and _genuinely_cancelled():
+                    await _drop_partial_mcp_state(tool)
+                    raise
+                await _drop_partial_mcp_state(tool)
+                console.print(f"[yellow]warning:[/yellow] failed to connect MCP tool: {escape(repr(exc))}")
+            else:
+                if getattr(tool, "initialized", True):
+                    connected_mcp_tools.append(tool)
+                else:
+                    # connect() is fail-soft and can return without a usable
+                    # session (initialize() failures leave the toolkit
+                    # uninitialized); close() would no-op on it, so it is not
+                    # connected for our purposes.
+                    await _drop_partial_mcp_state(tool)
+                    tool_name = getattr(tool, "name", type(tool).__name__)
+                    console.print(
+                        f"[yellow]warning:[/yellow] failed to connect MCP tool: "
+                        f"{escape(str(tool_name))} did not yield a usable session"
+                    )
+    except BaseException:
+        await _close_connected_mcp_tools()
+        raise
+
     renderer = _CliRenderer(console=console, total=len(selected), verbose=args.verbose)
     try:
         suite = await arun_cases(
@@ -849,6 +972,7 @@ async def acli(
     finally:
         # Restore the terminal (stop the spinner) even on error or Ctrl-C.
         renderer.close()
+        await _close_connected_mcp_tools()
 
     _print_summary(console, suite)
 
@@ -865,6 +989,7 @@ def cli(
     judge_model: Optional[Model] = None,
     default_timeout: int = 120,
     argv: Optional[Sequence[str]] = None,
+    mcp_tools: Optional[Sequence[Any]] = None,
 ) -> int:
     """Run an argparse CLI over the given cases and return the exit code.
 
@@ -872,6 +997,16 @@ def cli(
     --json-output write), 2 no cases matched the selector. Built purely on the
     public runner API - call it from a template's __main__.py with
     `sys.exit(cli(CASES, db=my_db))`. Inside an already-running event loop, use
-    `await acli(...)` instead.
+    `await acli(...)` instead. mcp_tools are connected in the run's loop before
+    the cases and closed afterwards (see acli).
     """
-    return asyncio.run(acli(cases, db=db, judge_model=judge_model, default_timeout=default_timeout, argv=argv))
+    return asyncio.run(
+        acli(
+            cases,
+            db=db,
+            judge_model=judge_model,
+            default_timeout=default_timeout,
+            argv=argv,
+            mcp_tools=mcp_tools,
+        )
+    )

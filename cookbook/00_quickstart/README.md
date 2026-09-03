@@ -1,154 +1,185 @@
-# The Agent Quickstart: 12 Guided Cookbooks
+# Build an Agent That Can Act, Remember, and Improve
 
-Learn how to build agents with 12 guided cookbooks. We'll go from single tool-using agent to multi-agent teams and step-based workflows through clean, runnable examples.
+Start with one useful Gemini-powered agent. Add typed outputs, sessions,
+memory, state, knowledge, learning, safety, teams, and workflows. Then launch
+the whole system in AgentOS.
 
-Each example can be run independently and contains detailed comments to help you understand what's happening under the hood. We'll use Gemini 3.5 Flash — fast, affordable, and excellent at tool calling but you can swap in any model with a one line change.
+**One API key. No Docker. Every example runs independently.**
 
-## What You'll Build
+This is a capability ladder, not a collection of unrelated demos. Each file
+upgrades the same market-research partner and ends with something you can
+inspect: a tool call, typed object, stored session, recalled memory, state
+change, knowledge result, learning, blocked request, approval, team response,
+or workflow output.
 
-| # | File | What You'll Learn | Key Features |
-|:--|:---------|:------------------|:-------------|
-| 01 | `agent_with_tools.py` | Give an agent tools to fetch real-time data | Tool Calling, Data Fetching |
-| 02 | `agent_with_structured_output.py` | Return typed Pydantic objects | Structured Output, Type Safety |
-| 03 | `agent_with_typed_input_output.py` | Full type safety on input and output | Input Schema, Output Schema |
-| 04 | `agent_with_storage.py` | Persist conversations across runs | Persistent Storage, Session Management |
-| 05 | `agent_with_memory.py` | Remember user preferences across sessions | Memory Manager, Personalization |
-| 06 | `agent_with_state_management.py` | Track, modify, and persist structured state | Session State, State Management |
-| 07 | `agent_search_over_knowledge.py` | Load documents into a knowledge base and search with hybrid search | Chunking, Embedding, Hybrid Search, Agentic Retrieval |
-| 08 | `custom_tool_for_self_learning.py` | How to write your own tools and add self-learning capabilities | Custom Tools, Self-Learning |
-| 09 | `agent_with_guardrails.py` | Add input validation and safety checks | Guardrails, PII Detection, Prompt Injection |
-| 10 | `human_in_the_loop.py` | Require user confirmation before executing tools | Human in the Loop, Tool Confirmation |
-| 11 | `multi_agent_team.py` | Coordinate multiple agents by organizing them into a team | Multi-Agent Team, Dynamic Collaboration |
-| 12 | `sequential_workflow.py` | Sequentially execute agents/teams/functions | Agentic Workflow, Pipelines |
+## Start Here
 
-## Key Concepts
+From the repository root:
 
-| Concept | What It Does | When to Use |
-|:--------|:-------------|:------------|
-| **Tools** | Let agents take actions | Fetch data, call APIs, run code |
-| **Storage** | Persist conversation history | Multi-turn conversations and state management |
-| **Knowledge** | Searchable document store | RAG, documentation Q&A |
-| **Memory** | Remember user preferences | Personalization |
-| **State** | Structured data the agent manages | Tracking progress, managing lists |
-| **Teams** | Multiple agents collaborating | Dynamic collaboration of specialized agents |
-| **Workflows** | Sequential agent pipelines | Predictable multi-step processes and data flow |
-| **Guardrails** | Validate and filter input | Block PII, prevent prompt injection |
-| **Human in the Loop** | Require confirmation for actions | Sensitive operations, safety-critical tools |
-
-## Getting Started
-
-### 1. Clone the repo
-```bash
-git clone https://github.com/agno-agi/agno.git
-cd agno
-```
-
-### 2. Create and activate a virtual environment
 ```bash
 uv venv .venvs/quickstart --python 3.12
 source .venvs/quickstart/bin/activate
-```
-
-### 3. Install dependencies
-```bash
 uv pip install -r cookbook/00_quickstart/requirements.txt
-```
-
-### 4. Set your API key
-```bash
 export GOOGLE_API_KEY=your-google-api-key
-```
-
-### 5. Run any cookbook
-```bash
 python cookbook/00_quickstart/agent_with_tools.py
 ```
 
-**That's it.** No Docker, no Postgres — just Python and an API key.
+The first example is the complete minimum:
 
-## Run via Agent OS
+```python
+from agno.agent import Agent
+from agno.models.google import Gemini
+from agno.tools.yfinance import YFinanceTools
 
-Agent OS provides a web interface for interacting with your agents. Start the server:
+agent = Agent(
+    model=Gemini(id="gemini-3.6-flash"),
+    tools=[YFinanceTools()],
+)
+
+agent.print_response("What's AAPL's current price?", stream=True)
+```
+
+Gemini 3.6 Flash is the stable default for this quickstart. It supports the
+tool calling, structured output, and multi-step agent work used throughout
+the folder. See the [official model page](https://ai.google.dev/gemini-api/docs/models/gemini-3.6-flash).
+
+## The Capability Ladder
+
+Follow the files in order for the full journey, or jump directly to the
+capability you need. Every example is standalone.
+
+### 1. Core — Make the Agent Useful
+
+| # | Cookbook | What You Add | Proof |
+|---:|:---------|:-------------|:------|
+| 01 | [`agent_with_tools.py`](agent_with_tools.py) | Live tools | The agent chooses and calls Yahoo Finance tools |
+| 02 | [`agent_with_structured_output.py`](agent_with_structured_output.py) | Typed output | The run returns a validated Pydantic object |
+| 03 | [`agent_with_typed_input_output.py`](agent_with_typed_input_output.py) | Input and output contracts | Both sides of the agent boundary are validated |
+
+### 2. Context — Make It Durable
+
+| # | Cookbook | What You Add | Proof |
+|---:|:---------|:-------------|:------|
+| 04 | [`agent_with_storage.py`](agent_with_storage.py) | Conversation storage | A fixed session continues across runs |
+| 05 | [`agent_with_memory.py`](agent_with_memory.py) | User memory | Preferences survive across sessions |
+| 06 | [`agent_with_state_management.py`](agent_with_state_management.py) | Structured state | The agent updates and restores a watchlist |
+| 07 | [`agent_search_over_knowledge.py`](agent_search_over_knowledge.py) | Searchable knowledge | The answer is grounded in a versioned local Agno overview |
+| 08 | [`agent_with_learning.py`](agent_with_learning.py) | Shared learned knowledge | One user teaches a rule another user can reuse |
+
+### 3. Trust — Keep the Human in Control
+
+| # | Cookbook | What You Add | Proof |
+|---:|:---------|:-------------|:------|
+| 09 | [`agent_with_guardrails.py`](agent_with_guardrails.py) | Built-in and custom guardrails | PII, injection, and spam inputs end with `RunStatus.error` |
+| 10 | [`human_in_the_loop.py`](human_in_the_loop.py) | Approval gates | The run pauses before a simulated publish action |
+
+### 4. Scale — Move Beyond One Agent
+
+| # | Cookbook | What You Add | Proof |
+|---:|:---------|:-------------|:------|
+| 11 | [`multi_agent_team.py`](multi_agent_team.py) | Dynamic collaboration | Bull and bear researchers are coordinated by a leader |
+| 12 | [`sequential_workflow.py`](sequential_workflow.py) | Explicit orchestration | Gather, analyze, and write steps run in order |
+
+### 5. Ship — Run the Complete System
+
+[`run.py`](run.py) registers every agent, the team, and the workflow in one
+AgentOS runtime. [`config.yaml`](config.yaml) adds ready-to-run prompts for the
+AgentOS chat interface.
+
+## The Mental Model
+
+These concepts sound similar until you ask what each one owns:
+
+| Concept | What It Owns | Use It For |
+|:--------|:-------------|:-----------|
+| **Tools** | Actions the model can choose | APIs, search, code, database operations |
+| **Structured output** | The response contract | Pipelines, APIs, UIs, reliable parsing |
+| **Storage** | The conversation record | Continue the same thread later |
+| **Memory** | Durable facts about a user | Preferences and personalization |
+| **State** | Mutable structured data | Lists, counters, carts, task progress |
+| **Knowledge** | Information the agent can search | Docs, policies, product data, RAG |
+| **Learning** | Reusable lessons from prior work | Shared heuristics and better future behavior |
+| **Guardrails** | Input and output boundaries | Privacy, policy, and validation |
+| **Human in the loop** | Approval for a pending action | Publishing, writes, payments, deployments |
+| **Team** | Dynamic delegation between agents | Multiple perspectives or specialists |
+| **Workflow** | Explicit execution order | Repeatable multi-step processes |
+
+Start with one agent. Add a team only when independent specialists improve the
+answer. Add a workflow when the order of operations must be predictable.
+
+## Run the Complete System in AgentOS
+
+Load the local Agno overview used by the knowledge agent once:
+
+```bash
+python cookbook/00_quickstart/agent_search_over_knowledge.py
+```
+
+Start AgentOS:
 
 ```bash
 python cookbook/00_quickstart/run.py
 ```
 
-Then visit [os.agno.com](https://os.agno.com?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=agentos) and add `http://localhost:7777` as an endpoint.
-
-Here's how it looks in action — chat with your agents, explore sessions, monitor traces, manage knowledge and memories, all through a beautiful visual UI.
+Open [os.agno.com](https://os.agno.com), add
+`http://localhost:7777` as an endpoint, and choose any quickstart agent, team,
+or workflow. You can chat, inspect sessions, view traces, and explore memory
+and knowledge from the same interface.
 
 https://github.com/user-attachments/assets/aae0086b-86f6-4939-a0ce-e1ec9b87ba1f
 
-> [!TIP]
-> To run the agent-with-knowledge, remember to load the knowledge base first using:
-> ```bash
-> python cookbook/00_quickstart/agent_search_over_knowledge.py
-> ```
+## Why Market Research?
 
-## Swap Models Anytime
+The scenario makes agent behavior visible: facts change, tools matter,
+comparisons benefit from structure, and opposing researchers have a real
+reason to collaborate. Yahoo Finance also works without a second API key.
 
-Agno is model-agnostic. Same code, different provider:
+The examples teach agent architecture, not investment advice. Replace the
+tools and instructions with your own domain while keeping the same patterns.
+
+## Swap Models
+
+Each file declares its own model so it stays copy-pasteable:
 
 ```python
-# Gemini (default in these examples)
 from agno.models.google import Gemini
-model = Gemini(id="gemini-3.5-flash")
 
-# OpenAI
-from agno.models.openai import OpenAIResponses
-model = OpenAIResponses(id="gpt-5.2")
-
-# Anthropic
-from agno.models.anthropic import Claude
-model = Claude(id="claude-sonnet-4-5")
+model = Gemini(id="gemini-3.6-flash")
 ```
 
-## Run Cookbooks Individually
+Replace that model in the example you are using. The memory example also has a
+dedicated memory model, while the knowledge and learning examples use
+`GeminiEmbedder`; those components can be configured independently.
+
+Browse [`cookbook/90_models/`](../90_models) for other providers and
+provider-specific capabilities.
+
+## Local State
+
+Persistent examples write only to `tmp/quickstart/`, with a separate SQLite
+database or Chroma collection per capability. This keeps examples independent
+and prevents one run from contaminating another. Delete that directory when
+you want a completely fresh start.
+
+## Verify the Folder
+
+Check the cookbook structure and compile every file:
 
 ```bash
-# 01 - Tools: Fetch real market data
-python cookbook/00_quickstart/agent_with_tools.py
-
-# 02 - Structured Output: Get typed responses
-python cookbook/00_quickstart/agent_with_structured_output.py
-
-# 03 - Typed I/O: Full type safety
-python cookbook/00_quickstart/agent_with_typed_input_output.py
-
-# 04 - Storage: Remember conversations
-python cookbook/00_quickstart/agent_with_storage.py
-
-# 05 - Memory: Remember user preferences
-python cookbook/00_quickstart/agent_with_memory.py
-
-# 06 - State: Manage watchlists
-python cookbook/00_quickstart/agent_with_state_management.py
-
-# 07 - Knowledge: Search your documents
-python cookbook/00_quickstart/agent_search_over_knowledge.py
-
-# 08 - Custom Tools: Write your own
-python cookbook/00_quickstart/custom_tool_for_self_learning.py
-
-# 09 - Guardrails: Input validation and safety
-python cookbook/00_quickstart/agent_with_guardrails.py
-
-# 10 - Human in the Loop: Confirm before executing
-python cookbook/00_quickstart/human_in_the_loop.py
-
-# 11 - Teams: Bull vs Bear analysis
-python cookbook/00_quickstart/multi_agent_team.py
-
-# 12 - Workflows: Research pipeline
-python cookbook/00_quickstart/sequential_workflow.py
+python3 cookbook/scripts/check_cookbook_pattern.py \
+  --base-dir cookbook/00_quickstart
+python -m compileall -q cookbook/00_quickstart
 ```
 
-## Async Patterns
+Use [`TEST_PROMPT.md`](TEST_PROMPT.md) for the live behavioral test plan and
+[`TEST_LOG.md`](TEST_LOG.md) for the latest verified results.
 
-All examples in this Quick Start use synchronous code for simplicity. For async/await patterns (recommended for production), see `cookbook/02_agents/` which includes async variants of most features.
+## Go Deeper
 
-## Learn More
-
-- [Agno Documentation](https://docs.agno.com?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=docs)
-- [Agent OS Overview](https://docs.agno.com/agent-os/introduction?utm_source=github&utm_medium=example-repo&utm_campaign=ab-examples-data-labeling&utm_term=data-labeling&utm_content=docs)
+- [Agents](../02_agents) — tools, multimodal input, reasoning, hooks, and advanced patterns
+- [Teams](../03_teams) — delegation, collaboration, and team coordination
+- [Workflows](../04_workflows) — conditions, loops, routers, and parallel steps
+- [AgentOS](../05_agent_os) — production runtime, interfaces, and deployment
+- [Knowledge](../07_knowledge) — readers, chunking, embedders, and vector databases
+- [Learning](../08_learning) — profiles, entity memory, learned knowledge, and decision logs
+- [Agno documentation](https://docs.agno.com)

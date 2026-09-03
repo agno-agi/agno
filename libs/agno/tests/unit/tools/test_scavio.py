@@ -117,6 +117,28 @@ def test_google_search_returns_json(scavio_tools, mock_scavio_client):
     assert call.args[0] == "agno framework"
 
 
+def test_google_search_forwards_v2_params_verbatim(scavio_tools, mock_scavio_client):
+    """google_search mirrors the SDK: every v2 param is forwarded verbatim (no aliasing, no transform)."""
+    mock_scavio_client.google.search.return_value = {"organic_results": []}
+
+    kwargs = {
+        "gl": "us",
+        "hl": "en",
+        "start": 10,
+        "device": "mobile",
+        "nfpr": True,
+        "google_domain": "google.de",
+        "location": "Berlin,Germany",
+        "safe": "active",
+        "time_period": "last_week",
+    }
+    scavio_tools.google_search("agno framework", **kwargs)
+
+    call = mock_scavio_client.google.search.call_args
+    assert call.args[0] == "agno framework"
+    assert call.kwargs == kwargs
+
+
 def test_amazon_product_passes_asin(scavio_tools, mock_scavio_client):
     """amazon_product forwards the ASIN to the SDK."""
     mock_scavio_client.amazon.product.return_value = {"asin": "B000"}
