@@ -1951,6 +1951,8 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            # Same owner check as upsert_session: never hand a stored session to another user.
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, agent_data)
 
@@ -1960,6 +1962,10 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id.get(row._mapping["session_id"])
+                            if submitted is not None and row._mapping["user_id"] != submitted.user_id:
+                                # The conflict update was refused: the row belongs to another user.
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_agent_session = AgentSession.from_dict(session_dict)
@@ -2004,6 +2010,8 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            # Same owner check as upsert_session: never hand a stored session to another user.
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, team_data)
 
@@ -2013,6 +2021,10 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id.get(row._mapping["session_id"])
+                            if submitted is not None and row._mapping["user_id"] != submitted.user_id:
+                                # The conflict update was refused: the row belongs to another user.
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_team_session = TeamSession.from_dict(session_dict)
@@ -2057,6 +2069,8 @@ class SqliteDb(BaseDb):
                                 summary=stmt.excluded.summary,
                                 updated_at=stmt.excluded.updated_at,
                             ),
+                            # Same owner check as upsert_session: never hand a stored session to another user.
+                            where=(table.c.user_id == stmt.excluded.user_id) | (table.c.user_id.is_(None)),
                         )
                         sess.execute(stmt, workflow_data)
 
@@ -2066,6 +2080,10 @@ class SqliteDb(BaseDb):
                         result = sess.execute(select_stmt).fetchall()
 
                         for row in result:
+                            submitted = sessions_by_id.get(row._mapping["session_id"])
+                            if submitted is not None and row._mapping["user_id"] != submitted.user_id:
+                                # The conflict update was refused: the row belongs to another user.
+                                continue
                             session_dict = _attach_runs(deserialize_session_json_fields(dict(row._mapping)))
                             if deserialize:
                                 deserialized_workflow_session = WorkflowSession.from_dict(session_dict)
