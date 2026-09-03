@@ -1829,43 +1829,73 @@ def test_build_fastmcp_client_builds_a_stdio_transport_from_server_params():
 
 
 @pytest.mark.asyncio
-async def test_terminate_on_close_false_warns_that_it_is_ignored():
-    """terminate_on_close=False is not forwardable, so the caller is told, not ignored.
+async def test_terminate_on_close_false_uses_the_forwarding_transport():
+    """terminate_on_close=False must reach the SDK, not be silently dropped.
 
-    fastmcp's StreamableHttpTransport does not accept or forward the flag, so the SDK
-    default (terminate the session on close) always applies.
+    fastmcp's stock StreamableHttpTransport omits the flag, so a caller asking to
+    retain the server session would have it torn down anyway. The subclass forwards it.
     """
     from agno.tools.mcp.mcp import _build_fastmcp_client
 
-    warnings: list = []
-    with patch("agno.tools.mcp.mcp.log_warning", side_effect=lambda msg, *a, **kw: warnings.append(msg)):
-        _build_fastmcp_client(
-            "streamable-http",
-            {"url": "http://localhost:8080/mcp", "terminate_on_close": False},
-            None,
-            10,
-            "legacy",
-        )
+    client = _build_fastmcp_client(
+        "streamable-http",
+        {"url": "http://localhost:8080/mcp", "terminate_on_close": False},
+        None,
+        10,
+        "legacy",
+    )
 
-    assert any("terminate_on_close" in w for w in warnings), f"expected a warning, got: {warnings}"
+    assert client.transport._terminate_on_close is False
+    assert type(client.transport).__name__ == "_RetainSessionTransport"
 
 
 @pytest.mark.asyncio
-async def test_terminate_on_close_default_does_not_warn():
-    """The warning is only for the unsupported case."""
+async def test_terminate_on_close_none_still_retains_the_session():
+    """Regression: StreamableHTTPClientParams defaults the field to None.
+
+    The SDK gates its DELETE on ``session_id and terminate_on_close``, so None has
+    always meant "keep the session". Treating None as True would silently start
+    terminating sessions for every caller using the dataclass default.
+    """
+    from dataclasses import asdict
+
     from agno.tools.mcp.mcp import _build_fastmcp_client
 
-    warnings: list = []
-    with patch("agno.tools.mcp.mcp.log_warning", side_effect=lambda msg, *a, **kw: warnings.append(msg)):
-        _build_fastmcp_client(
-            "streamable-http",
-            {"url": "http://localhost:8080/mcp"},
-            None,
-            10,
-            "legacy",
-        )
+    params = asdict(StreamableHTTPClientParams(url="http://localhost:8080/mcp"))
+    assert params["terminate_on_close"] is None
 
-    assert not [w for w in warnings if "terminate_on_close" in w]
+    client = _build_fastmcp_client("streamable-http", params, None, 10, "legacy")
+
+    assert type(client.transport).__name__ == "_RetainSessionTransport"
+    assert client.transport._terminate_on_close is False
+
+
+@pytest.mark.asyncio
+async def test_terminate_on_close_true_stays_on_the_stock_transport():
+    """The override is only taken when asked for; everyone else keeps fastmcp's own."""
+    from fastmcp.client.transports import StreamableHttpTransport
+
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    client = _build_fastmcp_client(
+        "streamable-http", {"url": "http://localhost:8080/mcp", "terminate_on_close": True}, None, 10, "legacy"
+    )
+    assert type(client.transport) is StreamableHttpTransport
+
+
+@pytest.mark.asyncio
+async def test_terminate_on_close_transport_keeps_the_stream_read_timeout():
+    """The subclass must not lose the httpx factory that bounds long-lived streams."""
+    from dataclasses import asdict
+
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    params = asdict(StreamableHTTPClientParams(url="http://localhost:8080/mcp", terminate_on_close=False))
+    client = _build_fastmcp_client("streamable-http", params, None, 10, "legacy")
+
+    http_client = client.transport.httpx_client_factory(headers=None, auth=None)
+
+    assert http_client.timeout.read == 300.0
 
 
 @pytest.mark.asyncio
@@ -1928,3 +1958,55 @@ async def test_ping_session_probes_on_the_session_based_era():
     await ping_session(session)
 
     session.send_ping.assert_awaited_once()
+
+
+def test_build_fastmcp_client_keeps_sse_read_timeout_on_streamable_http():
+    """Regression: the stream read must stay bounded by sse_read_timeout, not the
+    session timeout.
+
+    fastmcp derives its HTTP read timeout from read_timeout_seconds, so without a
+    custom httpx factory a 10s session timeout would cut long-lived streams from
+    300s down to 10s -- contradicting StreamableHTTPClientParams' documented contract.
+    """
+    from dataclasses import asdict
+
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    params = asdict(StreamableHTTPClientParams(url="http://localhost:8080/mcp"))
+    client = _build_fastmcp_client("streamable-http", params, None, 10, "legacy")
+
+    http_client = client.transport.httpx_client_factory(headers=None, auth=None)
+
+    assert http_client.timeout.read == 300.0
+    assert http_client.timeout.connect == 30.0
+
+
+def test_build_fastmcp_client_maps_both_streamable_http_timeouts():
+    """Each knob lands on its own axis: timeout on connect, sse_read_timeout on read."""
+    from dataclasses import asdict
+
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    params = asdict(StreamableHTTPClientParams(url="http://localhost:8080/mcp", timeout=5, sse_read_timeout=600))
+    client = _build_fastmcp_client("streamable-http", params, None, 10, "legacy")
+
+    http_client = client.transport.httpx_client_factory(headers=None, auth=None)
+
+    assert http_client.timeout.connect == 5.0
+    assert http_client.timeout.read == 600.0
+
+
+def test_build_fastmcp_client_normalizes_a_timedelta_sse_read_timeout():
+    """A timedelta from an older config is accepted on the stream-read knob too."""
+    from dataclasses import asdict
+    from datetime import timedelta
+
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    params = asdict(StreamableHTTPClientParams(url="http://localhost:8080/mcp"))
+    params["sse_read_timeout"] = timedelta(seconds=120)
+    client = _build_fastmcp_client("streamable-http", params, None, 10, "legacy")
+
+    http_client = client.transport.httpx_client_factory(headers=None, auth=None)
+
+    assert http_client.timeout.read == 120.0

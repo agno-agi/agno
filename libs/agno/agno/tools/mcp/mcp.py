@@ -24,6 +24,93 @@ except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
+def _retain_session_transport_class() -> Any:
+    """A transport that keeps the server session alive when the client closes.
+
+    fastmcp's StreamableHttpTransport calls the SDK's ``streamable_http_client`` without
+    ``terminate_on_close``, so the SDK default (send DELETE on close) always wins and a
+    caller asking to retain the session silently loses it.
+
+    This subclasses fastmcp's public ``ClientTransport`` base and drives the MCP SDK
+    directly, which is the layer that owns the flag. Nothing is copied from fastmcp's
+    own transport internals, so a 4.x upgrade cannot silently change what this does --
+    it depends only on ``ClientTransport``'s documented contract and the SDK signature.
+
+    Used only when the caller asks to retain the session; every other connection stays
+    on fastmcp's stock transport.
+    """
+    import contextlib
+
+    from fastmcp.client.transports import ClientTransport
+    from mcp import ClientSession
+    from mcp.client.streamable_http import streamable_http_client
+
+    class _RetainSessionTransport(ClientTransport):
+        def __init__(
+            self,
+            url: str,
+            *,
+            headers: Optional[dict] = None,
+            httpx_client_factory: Any = None,
+            terminate_on_close: Any = False,
+        ) -> None:
+            super().__init__()
+            self.url = url
+            self.headers = headers or {}
+            self.httpx_client_factory = httpx_client_factory
+            self._terminate_on_close = bool(terminate_on_close)
+
+        @contextlib.asynccontextmanager
+        async def connect_session(self, *, transport_options: Any = None, **session_kwargs: Any) -> Any:
+            from mcp.shared._httpx_utils import create_mcp_http_client
+
+            factory = self.httpx_client_factory or create_mcp_http_client
+            http_client = factory(headers=dict(self.headers), auth=None)
+
+            session_class = getattr(transport_options, "session_class", None) or ClientSession
+            async with (
+                http_client,
+                streamable_http_client(
+                    self.url,
+                    http_client=http_client,
+                    terminate_on_close=self._terminate_on_close,
+                ) as (read_stream, write_stream),
+                session_class(read_stream, write_stream, **session_kwargs) as session,
+            ):
+                yield session
+
+    return _RetainSessionTransport
+
+
+def _http_client_factory(timeout: Any, sse_read_timeout: Any) -> Any:
+    """Build the httpx client factory that keeps operation and stream timeouts distinct.
+
+    ``timeout`` covers connect/write/pool; ``sse_read_timeout`` bounds the long-lived
+    stream read. Either knob left unset keeps the SDK default (30s ops, 300s read)
+    rather than going unbounded -- ``read=None`` means no read limit at all.
+    """
+    import httpx2
+    from mcp.shared._httpx_utils import create_mcp_http_client
+
+    # A timedelta may arrive from an older config; normalize to seconds.
+    if timeout is not None and hasattr(timeout, "total_seconds"):
+        timeout = timeout.total_seconds()
+    if sse_read_timeout is not None and hasattr(sse_read_timeout, "total_seconds"):
+        sse_read_timeout = sse_read_timeout.total_seconds()
+
+    op_timeout = float(timeout) if timeout is not None else 30.0
+    read_timeout = float(sse_read_timeout) if sse_read_timeout is not None else 300.0
+
+    def factory(*, headers: Any = None, auth: Any = None, **_: Any) -> Any:
+        return create_mcp_http_client(
+            headers=headers,
+            auth=auth,
+            timeout=httpx2.Timeout(op_timeout, read=read_timeout),
+        )
+
+    return factory
+
+
 def _is_fastmcp_client(session: Any) -> bool:
     """True when the session is a fastmcp Client (which handshakes on its own)."""
     try:
@@ -52,18 +139,28 @@ def _build_fastmcp_client(
     from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
 
     if transport == "streamable-http":
-        # The MCP SDK still accepts terminate_on_close, but fastmcp's transport does not
-        # forward it, so the SDK default (send DELETE on close) always applies. Say so
-        # rather than dropping the setting quietly.
-        if params.get("terminate_on_close") is False:
-            log_warning(
-                "terminate_on_close=False cannot be applied: the fastmcp transport does not forward it, "
-                "so the MCP session is still terminated when the connection closes."
-            )
-        fastmcp_transport: Any = StreamableHttpTransport(
-            params["url"],
-            headers=params.get("headers") or None,
-        )
+        # fastmcp derives the HTTP read timeout from the session timeout, which would
+        # cut long-lived streams down to it. Build the httpx client here instead so
+        # ``sse_read_timeout`` keeps bounding the stream read, as params.py documents.
+        transport_kwargs: dict = {
+            "headers": params.get("headers") or None,
+            "httpx_client_factory": _http_client_factory(params.get("timeout"), params.get("sse_read_timeout")),
+        }
+        # fastmcp's transport drops terminate_on_close, which would tear down a session
+        # the caller asked to keep. Swap in the subclass that forwards it, and only then
+        # -- the default path stays on the stock transport.
+        #
+        # Falsy, not just False: StreamableHTTPClientParams defaults the field to None,
+        # and the SDK gates the DELETE on `session_id and terminate_on_close`, so None
+        # has always meant "keep the session". Treating it as True here would silently
+        # start terminating sessions for every caller using the dataclass default.
+        terminate_on_close = params.get("terminate_on_close", True)
+        if terminate_on_close:
+            transport_cls: Any = StreamableHttpTransport
+        else:
+            transport_cls = _retain_session_transport_class()
+            transport_kwargs["terminate_on_close"] = terminate_on_close
+        fastmcp_transport: Any = transport_cls(params["url"], **transport_kwargs)
         timeout = params.get("timeout")
     elif transport == "sse":
         fastmcp_transport = SSETransport(
