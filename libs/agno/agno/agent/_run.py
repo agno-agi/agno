@@ -134,6 +134,7 @@ _CANCEL_BYPASS_EVENT_TYPES = (
     RunCompletedEvent,
 )
 
+
 # ---------------------------------------------------------------------------
 # Run dependency resolution
 # ---------------------------------------------------------------------------
@@ -3134,6 +3135,8 @@ def _fork_run(run_response: RunOutput, message_index: int) -> RunOutput:
     forked.created_at = int(_time())
     forked.events = None
     _truncate_run_to_checkpoint(forked, message_index)
+    # Capture AFTER truncation so fork's executed_tool_count starts at 0
+    forked.tool_count_at_fork = sum(1 for t in forked.tools if t.result is not None) if forked.tools else 0
     return forked
 
 
@@ -6309,7 +6312,9 @@ def _sync_run_response_with_model_response(
     intermediate snapshot.
     """
     if model_response.tool_executions is not None:
-        run_response.tools = list(model_response.tool_executions)
+        from agno.agent._response import _merge_tool_executions
+
+        run_response.tools = _merge_tool_executions(run_response.tools, model_response.tool_executions)
     run_response.messages = [m for m in run_messages.messages if m.add_to_agent_memory]
 
 

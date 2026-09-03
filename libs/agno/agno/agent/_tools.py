@@ -690,11 +690,12 @@ def handle_get_user_input_tool_update(
         for user_input_field in tool.user_input_schema or []
     ]
     content = f"User inputs retrieved: {json.dumps(user_input_result, ensure_ascii=False)}"
+    tool.result = _offload_continue_result(agent, run_response, tool, content)
     # Add the tool call result to the run_messages
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=_offload_continue_result(agent, run_response, tool, content),
+            content=tool.result,
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,
@@ -715,10 +716,11 @@ def handle_ask_user_tool_update(
         {"question": q.question, "selected": q.selected_options or []} for q in tool.user_feedback_schema
     ]
     content = f"User feedback received: {json.dumps(feedback_result, ensure_ascii=False)}"
+    tool.result = _offload_continue_result(agent, run_response, tool, content)
     run_messages.messages.append(
         Message(
             role=agent.model.tool_message_role,
-            content=_offload_continue_result(agent, run_response, tool, content),
+            content=tool.result,
             tool_call_id=tool.tool_call_id,
             tool_name=tool.tool_name,
             tool_args=tool.tool_args,

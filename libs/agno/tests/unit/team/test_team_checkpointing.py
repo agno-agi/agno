@@ -472,7 +472,7 @@ class TestTeamFlushHelper:
         assert rr.messages[0].content == "kept"
 
 
-class TestTeamCheckpointSyncPreservesChildRunId:
+class TestTeamCheckpointToolMerge:
     """A mid-run checkpoint must not drop the delegation -> member-run link.
 
     child_run_id is patched onto run_response.tools during tool execution, but
@@ -521,6 +521,85 @@ class TestTeamCheckpointSyncPreservesChildRunId:
         team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
 
         assert run_response.tools[0].child_run_id == "member-new"
+
+    def test_merge_retains_inherited_tools_and_refreshes_current_branch(self):
+        inherited = ToolExecution(
+            tool_call_id="parent",
+            tool_name="delegate_task_to_member",
+            result="parent",
+            child_run_id="member-parent",
+        )
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tool_count_at_fork=1,
+            tools=[
+                inherited,
+                ToolExecution(
+                    tool_call_id="branch-1",
+                    tool_name="delegate_task_to_member",
+                    result="stale",
+                    child_run_id="member-branch",
+                ),
+            ],
+        )
+        model_response = self._model_response(
+            [
+                ToolExecution(tool_call_id="branch-1", tool_name="delegate_task_to_member", result="fresh"),
+                ToolExecution(
+                    tool_call_id="branch-2",
+                    tool_name="delegate_task_to_member",
+                    result="new",
+                    child_run_id="member-new",
+                ),
+            ]
+        )
+
+        team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
+
+        assert run_response.tools is not None
+        assert [tool.tool_call_id for tool in run_response.tools] == ["parent", "branch-1", "branch-2"]
+        assert run_response.tools[0] is inherited
+        assert run_response.tools[1].result == "fresh"
+        assert run_response.tools[1].child_run_id == "member-branch"
+        assert run_response.tools[2].child_run_id == "member-new"
+        assert run_response.executed_tool_count == 2
+
+    def test_missing_ids_do_not_repeat_or_inherit_child_run_id(self):
+        run_response = TeamRunOutput(
+            run_id="team-1",
+            tool_count_at_fork=1,
+            tools=[
+                ToolExecution(
+                    tool_call_id=None,
+                    tool_name="parent",
+                    result="parent",
+                    child_run_id="member-parent",
+                )
+            ],
+        )
+        branch = ToolExecution(tool_call_id=None, tool_name="branch", result="branch", child_run_id=None)
+        model_response = self._model_response([branch])
+
+        team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
+        model_response.tool_executions.append(
+            ToolExecution(tool_call_id=None, tool_name="branch-2", result="branch-2", child_run_id=None)
+        )
+        team_run._sync_team_run_response_with_model_response(run_response, self._run_messages(), model_response)
+
+        assert run_response.tools is not None
+        assert [tool.tool_name for tool in run_response.tools] == ["parent", "branch", "branch-2"]
+        assert run_response.tools[0].child_run_id == "member-parent"
+        assert run_response.tools[1].child_run_id is None
+        assert run_response.tools[2].child_run_id is None
+        assert run_response.executed_tool_count == 2
+
+        team_response_mod._update_run_response(
+            Team(members=[], name="t"), model_response, run_response, self._run_messages()
+        )
+
+        assert [tool.tool_name for tool in run_response.tools] == ["parent", "branch", "branch-2"]
+        assert run_response.tools[0].child_run_id == "member-parent"
+        assert run_response.executed_tool_count == 2
 
 
 class TestTeamCheckpointScrubIsolation:
