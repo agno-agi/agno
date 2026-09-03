@@ -166,11 +166,15 @@ class TestBuildInput:
             )
         ]
         steps = model._build_input(messages)
-        assert len(steps) == 1
+        # A function_call with no recorded result is paired with a placeholder
+        # function_result so the request stays valid.
+        assert len(steps) == 2
         assert steps[0]["type"] == "function_call"
         assert steps[0]["id"] == "call_123"
         assert steps[0]["name"] == "get_weather"
         assert steps[0]["arguments"] == {"city": "Paris"}
+        assert steps[1]["type"] == "function_result"
+        assert steps[1]["call_id"] == "call_123"
 
     def test_tool_result_message(self):
         model = self._make_model()
