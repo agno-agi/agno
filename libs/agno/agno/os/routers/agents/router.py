@@ -54,6 +54,7 @@ from agno.os.job_queue import (
 )
 from agno.os.middleware.user_scope import (
     SESSION_ID_REQUIRED,
+    assert_run_id_available,
     assert_session_matches_component,
     assert_session_writable,
     caller_is_admin,
@@ -746,6 +747,11 @@ def get_agent_router(
             session_type=SessionType.AGENT,
             is_admin=caller_is_admin(request),
         )
+
+        # A caller-supplied run_id is honored (pre-allocation, idempotent retry) but must
+        # not collide: upsert_run overwrites ON CONFLICT with no ownership predicate, so
+        # an existing id would silently destroy that run's row.
+        await assert_run_id_available(getattr(agent, "db", None) or os.db, kwargs.get("run_id"))
 
         if session_id is None or session_id == "":
             log_debug("Creating new session")
