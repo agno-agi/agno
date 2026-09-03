@@ -88,12 +88,9 @@ agent_os = AgentOS(
     authorization_config=AuthorizationConfig(
         verification_keys=[JWT_SECRET],
         algorithm="HS256",
-        verify_audience=True,
-        audience=OS_ID,
-        # Custom routes to exclude from JWT auth
         excluded_route_paths=[
-            "/public/*",      # All public routes
-            "/webhooks/*",    # All webhook endpoints
+            "/public/*",
+            "/webhooks/*",
         ],
     ),
 )
@@ -111,7 +108,6 @@ def create_token(sub: str = "demo-user") -> str:
     return jwt.encode(
         {
             "sub": sub,
-            "aud": OS_ID,
             "scopes": ["agents:read", "agents:run"],
             "iat": now,
             "exp": now + timedelta(hours=1),
