@@ -1972,8 +1972,13 @@ class Model(ABC):
                 else:
                     stream_data.response_provider_data[key] = value
 
-        # Update stream_data tool calls
-        if model_response_delta.tool_calls is not None:
+        # Update stream_data tool calls.
+        # Truthiness, not `is not None`: tool_calls is field(default_factory=list),
+        # so every delta carries [] and an `is not None` gate fired on metadata-only
+        # chunks, yielding zero-payload events that are only dropped further
+        # downstream. Matches provider_data/images/videos above, which already
+        # test truthiness.
+        if model_response_delta.tool_calls:
             if stream_data.response_tool_calls is None:
                 stream_data.response_tool_calls = []
             stream_data.response_tool_calls.extend(model_response_delta.tool_calls)
