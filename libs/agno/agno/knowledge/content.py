@@ -11,6 +11,9 @@ class ContentStatus(str, Enum):
 
     PROCESSING = "processing"
     COMPLETED = "completed"
+    # Some chunks embedded and are retrievable, others failed. The content is
+    # searchable but incomplete, so it is neither COMPLETED nor FAILED.
+    PARTIAL = "partial"
     FAILED = "failed"
 
 

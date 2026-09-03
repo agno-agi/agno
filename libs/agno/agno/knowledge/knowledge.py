@@ -14,6 +14,7 @@ from httpx import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow
+from agno.exceptions import EmbeddingError
 from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
@@ -57,6 +58,12 @@ class Knowledge(RemoteKnowledge):
     # Requires re-indexing existing data to add linked_to metadata.
     # Default is False for backwards compatibility with existing data.
     isolate_vector_search: bool = False
+    # Extra attempts when embedding fails during ingestion. Off by default: a retry
+    # re-embeds the whole document, so a late failure in a large file re-bills every
+    # chunk, and concurrent workers retry into the same rate limit they are waiting on.
+    max_embedding_retries: int = 0
+    # Seconds before the first retry; each subsequent wait doubles.
+    embedding_retry_backoff: float = 1.0
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
@@ -615,6 +622,10 @@ class Knowledge(RemoteKnowledge):
         except ValueError:
             # The adapters raise these outside their own catch-alls on purpose.
             raise
+        except EmbeddingError as e:
+            # The provider's raw text can echo the credential; log the redacted form.
+            log_error(f"Error searching for documents: {e.safe_message}")
+            return []
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -665,6 +676,10 @@ class Knowledge(RemoteKnowledge):
         except ValueError:
             # See the matching comment in ``search``.
             raise
+        except EmbeddingError as e:
+            # The provider's raw text can echo the credential; log the redacted form.
+            log_error(f"Error searching for documents: {e.safe_message}")
+            return []
         except Exception as e:
             log_error(f"Error searching for documents: {str(e)}")
             return []
@@ -1465,7 +1480,38 @@ class Knowledge(RemoteKnowledge):
             # Never let status bookkeeping mask the original error.
             pass
 
-    def _should_skip(self, content_hash: str, skip_if_exists: bool, user_id: Optional[str] = None) -> bool:
+    def _prior_status(self, content_id: Optional[str], user_id: Optional[str] = None) -> Optional[ContentStatus]:
+        """Read the status stored for ``content_id`` before this ingest overwrites it."""
+        if not content_id or self.contents_db is None or isinstance(self.contents_db, AsyncBaseDb):
+            return None
+        try:
+            row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Could not read prior status for {content_id}: {e}")
+            return None
+        return self._parse_content_status(row.status) if row and row.status else None
+
+    async def _aprior_status(self, content_id: Optional[str], user_id: Optional[str] = None) -> Optional[ContentStatus]:
+        """Asynchronous twin of ``_prior_status``."""
+        if not content_id or self.contents_db is None:
+            return None
+        try:
+            if isinstance(self.contents_db, AsyncBaseDb):
+                row = await self.contents_db.get_knowledge_content(content_id, user_id=user_id)
+            else:
+                row = self.contents_db.get_knowledge_content(content_id, user_id=user_id)
+        except Exception as e:
+            log_debug(f"Could not read prior status for {content_id}: {e}")
+            return None
+        return self._parse_content_status(row.status) if row and row.status else None
+
+    def _should_skip(
+        self,
+        content_hash: str,
+        skip_if_exists: bool,
+        user_id: Optional[str] = None,
+        prior_status: Optional[ContentStatus] = None,
+    ) -> bool:
         """
         Handle the skip_if_exists logic for content that already exists in the vector database.
 
@@ -1474,11 +1520,18 @@ class Knowledge(RemoteKnowledge):
             skip_if_exists: Whether to skip if content already exists
             user_id: Owner of the content being loaded. The existence check is scoped to that
                 owner, so ``None`` matches the shared bucket alone.
+            prior_status: Status recorded for this content before the current ingest. Content
+                that did not finish embedding is never skipped, because the chunks it is
+                missing would stay missing and the row would be marked complete.
 
         Returns:
             bool: True if should skip processing, False if should continue
         """
         from agno.vectordb import VectorDb
+
+        if prior_status in (ContentStatus.PARTIAL, ContentStatus.FAILED):
+            log_debug(f"Content {content_hash} is {prior_status.value}; re-ingesting instead of skipping")
+            return False
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if (
@@ -1696,8 +1749,14 @@ class Knowledge(RemoteKnowledge):
                 if not content.name:
                     content.name = path.name
 
+                prior_status = await self._aprior_status(content.id, user_id=content.user_id)
                 await self._ainsert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+                if self._should_skip(
+                    content.content_hash,  # type: ignore[arg-type]
+                    skip_if_exists,
+                    user_id=content.user_id,
+                    prior_status=prior_status,
+                ):
                     content.status = ContentStatus.COMPLETED
                     await self._aupdate_content(content)
                     return
@@ -1735,7 +1794,7 @@ class Knowledge(RemoteKnowledge):
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
-                await self._ahandle_vector_db_insert(content, read_documents, upsert)
+                await self._ahandle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
         elif path.is_dir():
             await self._aload_dir_as_folder(content, path, upsert, skip_if_exists, include, exclude)
@@ -1765,8 +1824,14 @@ class Knowledge(RemoteKnowledge):
                 if not content.name:
                     content.name = path.name
 
+                prior_status = self._prior_status(content.id, user_id=content.user_id)
                 self._insert_contents_db(content)
-                if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+                if self._should_skip(
+                    content.content_hash,  # type: ignore[arg-type]
+                    skip_if_exists,
+                    user_id=content.user_id,
+                    prior_status=prior_status,
+                ):
                     content.status = ContentStatus.COMPLETED
                     self._update_content(content)
                     return
@@ -1804,7 +1869,7 @@ class Knowledge(RemoteKnowledge):
                     content.id = generate_id(content.content_hash or "")
                 self._prepare_documents_for_insert(read_documents, content.id, metadata=content.metadata)
 
-                self._handle_vector_db_insert(content, read_documents, upsert)
+                self._handle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
         elif path.is_dir():
             self._load_dir_as_folder(content, path, upsert, skip_if_exists, include, exclude)
@@ -1853,6 +1918,7 @@ class Knowledge(RemoteKnowledge):
         previous_children, previous_row_owned_vectors = await self._aget_previous_children(content)
 
         # 1. Add content to contents database
+        prior_status = await self._aprior_status(content.id, user_id=content.user_id)
         if previous_row_owned_vectors:
             await self._ainsert_contents_db(content, vectors_indexed=True)
         else:
@@ -1870,7 +1936,12 @@ class Knowledge(RemoteKnowledge):
             marker = Content(id=content.id, user_id=content.user_id)
             marker.metadata = set_agno_metadata(None, "vectors_indexed", True)
             await self._aupdate_content(marker)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
@@ -1992,7 +2063,7 @@ class Knowledge(RemoteKnowledge):
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
-        await self._ahandle_vector_db_insert(content, read_documents, upsert)
+        await self._ahandle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
     def _load_from_url(
         self,
@@ -2038,6 +2109,7 @@ class Knowledge(RemoteKnowledge):
         previous_children, previous_row_owned_vectors = self._get_previous_children(content)
 
         # 1. Add content to contents database
+        prior_status = self._prior_status(content.id, user_id=content.user_id)
         if previous_row_owned_vectors:
             self._insert_contents_db(content, vectors_indexed=True)
         else:
@@ -2050,7 +2122,12 @@ class Knowledge(RemoteKnowledge):
             marker = Content(id=content.id, user_id=content.user_id)
             marker.metadata = set_agno_metadata(None, "vectors_indexed", True)
             self._update_content(marker)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
@@ -2169,7 +2246,7 @@ class Knowledge(RemoteKnowledge):
         if not content.id:
             content.id = generate_id(content.content_hash or "")
         self._prepare_documents_for_insert(read_documents, content.id, calculate_sizes=True)
-        self._handle_vector_db_insert(content, read_documents, upsert)
+        self._handle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
     # --- Per-file rows for folder loads ---
 
@@ -3074,8 +3151,14 @@ class Knowledge(RemoteKnowledge):
 
         log_info(f"Adding content from {content.name}")
 
+        prior_status = await self._aprior_status(content.id, user_id=content.user_id)
         await self._ainsert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.status = ContentStatus.COMPLETED
             await self._aupdate_content(content)
             return
@@ -3145,7 +3228,7 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
-        await self._ahandle_vector_db_insert(content, read_documents, upsert)
+        await self._ahandle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
     def _load_from_content(
         self,
@@ -3181,8 +3264,14 @@ class Knowledge(RemoteKnowledge):
 
         log_info(f"Adding content from {content.name}")
 
+        prior_status = self._prior_status(content.id, user_id=content.user_id)
         self._insert_contents_db(content)
-        if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):  # type: ignore[arg-type]
+        if self._should_skip(
+            content.content_hash,  # type: ignore[arg-type]
+            skip_if_exists,
+            user_id=content.user_id,
+            prior_status=prior_status,
+        ):
             content.status = ContentStatus.COMPLETED
             self._update_content(content)
             return
@@ -3252,7 +3341,7 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
-        self._handle_vector_db_insert(content, read_documents, upsert)
+        self._handle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
     async def _aload_from_topics(
         self,
@@ -3284,8 +3373,11 @@ class Knowledge(RemoteKnowledge):
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
+            prior_status = await self._aprior_status(content.id, user_id=content.user_id)
             await self._ainsert_contents_db(content)
-            if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):
+            if self._should_skip(
+                content.content_hash, skip_if_exists, user_id=content.user_id, prior_status=prior_status
+            ):
                 content.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content)
                 continue  # Skip to next topic, don't exit loop
@@ -3309,7 +3401,7 @@ class Knowledge(RemoteKnowledge):
                 content.status_message = "No content found for topic"
                 await self._aupdate_content(content)
 
-            await self._ahandle_vector_db_insert(content, read_documents, upsert)
+            await self._ahandle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
     def _load_from_topics(
         self,
@@ -3342,8 +3434,11 @@ class Knowledge(RemoteKnowledge):
             content.content_hash = self._build_content_hash(content)
             content.id = generate_id(content.content_hash)
 
+            prior_status = self._prior_status(content.id, user_id=content.user_id)
             self._insert_contents_db(content)
-            if self._should_skip(content.content_hash, skip_if_exists, user_id=content.user_id):
+            if self._should_skip(
+                content.content_hash, skip_if_exists, user_id=content.user_id, prior_status=prior_status
+            ):
                 content.status = ContentStatus.COMPLETED
                 self._update_content(content)
                 continue  # Skip to next topic, don't exit loop
@@ -3367,7 +3462,7 @@ class Knowledge(RemoteKnowledge):
                 content.status_message = "No content found for topic"
                 self._update_content(content)
 
-            self._handle_vector_db_insert(content, read_documents, upsert)
+            self._handle_vector_db_insert(content, read_documents, upsert, prior_status=prior_status)
 
     # ==========================================
     # PRIVATE - CONVERSION & DATA METHODS
@@ -3597,7 +3692,7 @@ class Knowledge(RemoteKnowledge):
             metadata=content_row.metadata,
             file_type=content_row.type,
             size=content_row.size,
-            status=ContentStatus(content_row.status) if content_row.status else None,
+            status=self._parse_content_status(content_row.status) if content_row.status else None,
             status_message=content_row.status_message,
             created_at=content_row.created_at,
             updated_at=content_row.updated_at if content_row.updated_at else content_row.created_at,
@@ -3641,9 +3736,14 @@ class Knowledge(RemoteKnowledge):
         try:
             return ContentStatus(status_str.lower()) if status_str else ContentStatus.PROCESSING
         except ValueError:
-            if status_str and "failed" in status_str.lower():
+            # "partial" is checked first so a compound legacy value such as
+            # "partially_failed" is not reported as a total failure.
+            lowered = status_str.lower() if status_str else ""
+            if "partial" in lowered:
+                return ContentStatus.PARTIAL
+            elif "failed" in lowered:
                 return ContentStatus.FAILED
-            elif status_str and "completed" in status_str.lower():
+            elif "completed" in lowered:
                 return ContentStatus.COMPLETED
             return ContentStatus.PROCESSING
 
@@ -3679,7 +3779,200 @@ class Knowledge(RemoteKnowledge):
 
     # --- Vector DB Insert Helpers ---
 
-    async def _ahandle_vector_db_insert(self, content: Content, read_documents, upsert):
+    @staticmethod
+    def _count_embedded(read_documents) -> Tuple[int, int]:
+        """Return ``(embedded, total)`` for the given documents.
+
+        A document with a falsy embedding never reached the vector store in a
+        retrievable form, so it does not count as ingested.
+        """
+        documents = list(read_documents or [])
+        embedded = sum(1 for doc in documents if getattr(doc, "embedding", None))
+        return embedded, len(documents)
+
+    def _embeds_locally(self) -> bool:
+        """Whether the configured vector store embeds documents in this process.
+
+        Stores that embed server-side (LlamaIndex, LangChain, LightRag) never
+        populate ``Document.embedding``, so chunk counts say nothing about
+        whether their ingestion succeeded.
+        """
+        return getattr(self.vector_db, "embedder", None) is not None
+
+    def _set_embedding_success_status(self, content: Content, read_documents) -> None:
+        """Set the final status after the vector store accepted the write.
+
+        The write not raising is not proof every chunk is retrievable: batch
+        embedding paths can skip individual documents without failing the batch.
+        Status therefore reflects how many chunks actually carry an embedding.
+        """
+        if not self._embeds_locally():
+            content.status = ContentStatus.COMPLETED
+            content.status_message = None
+            return
+
+        embedded, total = Knowledge._count_embedded(read_documents)
+
+        if total == 0 or embedded == total:
+            content.status = ContentStatus.COMPLETED
+            content.status_message = None
+        elif embedded == 0:
+            content.status = ContentStatus.FAILED
+            content.status_message = (
+                f"No chunks could be embedded ({total} attempted), so this content is not retrievable. "
+                "Retry ingestion. If the failure persists, check the embedder configuration."
+            )
+        else:
+            failed = total - embedded
+            content.status = ContentStatus.PARTIAL
+            content.status_message = (
+                f"{embedded} of {total} chunks were embedded; {failed} failed and are not retrievable. "
+                "Re-ingest this content to retry the missing chunks."
+            )
+
+    def _retry_attempts(self) -> int:
+        """Total attempts for a vector-store write, including the first."""
+        return max(0, int(self.max_embedding_retries or 0)) + 1
+
+    def _retry_delay(self, attempt: int) -> float:
+        """Seconds to wait before the attempt after ``attempt`` (0-based), doubling each time.
+
+        Clamped at zero: a negative backoff would make the sleep raise and lose both the
+        remaining retries and the real embedding error.
+        """
+        return max(0.0, float(self.embedding_retry_backoff or 0.0)) * (2**attempt)
+
+    async def _aretry_vector_write(
+        self, write, content: Content, idempotent: bool = False
+    ) -> Tuple[Optional[EmbeddingError], int]:
+        """Run ``write`` with retries, returning the final error (if any) and attempts used.
+
+        Only embedding failures are retried here; every other exception propagates to
+        the caller, which reports it without implying the write is worth repeating.
+        """
+        attempts = self._retry_attempts()
+        for attempt in range(attempts):
+            try:
+                await write()
+                return None, attempt + 1
+            except EmbeddingError as e:
+                if not e.is_retryable or attempt == attempts - 1:
+                    return e, attempt + 1
+                delay = self._retry_delay(attempt)
+                log_warning(
+                    f"Embedding failed for '{content.name or content.id}' "
+                    f"(attempt {attempt + 1}/{attempts}, {e.reason}); retrying in {delay:.1f}s"
+                )
+                await asyncio.sleep(delay)
+                # An append-only write may already have committed the batches that
+                # succeeded, so they are cleared before the next attempt re-writes them.
+                if not idempotent:
+                    self._clear_partial_chunks(content, "retrying the write")
+        return None, attempts
+
+    def _retry_vector_write(
+        self, write, content: Content, idempotent: bool = False
+    ) -> Tuple[Optional[EmbeddingError], int]:
+        """Synchronous twin of ``_aretry_vector_write``."""
+        attempts = self._retry_attempts()
+        for attempt in range(attempts):
+            try:
+                write()
+                return None, attempt + 1
+            except EmbeddingError as e:
+                if not e.is_retryable or attempt == attempts - 1:
+                    return e, attempt + 1
+                delay = self._retry_delay(attempt)
+                log_warning(
+                    f"Embedding failed for '{content.name or content.id}' "
+                    f"(attempt {attempt + 1}/{attempts}, {e.reason}); retrying in {delay:.1f}s"
+                )
+                time.sleep(delay)
+                if not idempotent:
+                    self._clear_partial_chunks(content, "retrying the write")
+        return None, attempts
+
+    def _clear_partial_chunks(self, content: Content, reason: str) -> None:
+        """Drop any chunks already written for ``content`` before it is written again."""
+        from agno.vectordb import VectorDb
+
+        if self.vector_db is None or not content.id:
+            return
+
+        self.vector_db = cast(VectorDb, self.vector_db)
+        try:
+            self.vector_db.delete_by_content_id(
+                content.id, **strict_user_id_kwarg(self.vector_db.delete_by_content_id, content.user_id)
+            )
+            log_debug(f"Cleared previously written chunks for {content.id} before {reason}")
+        except Exception as e:
+            log_warning(f"Could not clear previously written chunks for {content.id} before {reason}: {e}")
+
+    def _describe_embedder(self, error: EmbeddingError) -> str:
+        """Identify the embedder that failed, so a multi-provider setup is unambiguous."""
+        parts = [p for p in (error.provider, error.model_id) if p]
+        if parts:
+            return " ".join(parts)
+        embedder = getattr(self.vector_db, "embedder", None)
+        return type(embedder).__name__ if embedder is not None else "unknown embedder"
+
+    @staticmethod
+    def _reingest_instruction(content: Content) -> str:
+        """State how to re-run ingestion for this content.
+
+        The instruction depends on whether the source can still be reached. Uploaded
+        bytes are never persisted, so for those the caller has to supply the file again.
+        """
+        source_url = get_agno_metadata(content.metadata, "source_url") or content.url
+        if source_url:
+            return f"Re-ingest {source_url} once the cause is resolved."
+        if content.path:
+            return f"Re-ingest {content.path} once the cause is resolved."
+        if content.remote_content is not None:
+            return "Re-ingest this content from its remote source once the cause is resolved."
+        return "The original file is not retained, so upload it again once the cause is resolved."
+
+    def _set_embedding_failure_status(
+        self, content: Content, error: EmbeddingError, read_documents, operation: str, attempts: int = 1
+    ) -> None:
+        """Record an embedding failure with the reason, the embedder, and the fix.
+
+        The message is persisted and served over the knowledge API, so the provider's
+        text is redacted and the recovery step is stated explicitly rather than left
+        for the reader to infer.
+        """
+        # The write raised, so no chunk is known to have committed and the status is
+        # FAILED rather than PARTIAL. ``Document.embedding`` is assigned in place as the
+        # store embeds, but a store that writes only after embedding the whole batch
+        # discards all of it on an exception, so those values describe in-memory work
+        # rather than retrievable chunks and are deliberately not counted here.
+        _, total = Knowledge._count_embedded(read_documents) if self._embeds_locally() else (0, 0)
+        name = content.name or content.id or "content"
+
+        content.status = ContentStatus.FAILED
+        counted = f" (0 of {total} chunks embedded)" if total else ""
+        headline = f'Embedding failed for "{name}"{counted}.'
+
+        if error.is_retryable:
+            tried = f" after {attempts} attempts" if attempts > 1 else ""
+            closing = f"Retrying did not succeed{tried}. {error.recovery_hint}"
+        else:
+            closing = f"Retrying will not help: the same request fails every attempt. {error.recovery_hint}"
+        closing = f"{closing} {Knowledge._reingest_instruction(content)}"
+
+        content.status_message = " ".join(
+            (
+                headline,
+                f"Embedder: {self._describe_embedder(error)}.",
+                f"Reason: {error.reason} (HTTP {error.status_code}).",
+                f"Provider said: {error.safe_message.rstrip().rstrip('.')}.",
+                closing,
+            )
+        )
+
+    async def _ahandle_vector_db_insert(
+        self, content: Content, read_documents, upsert, prior_status: Optional[ContentStatus] = None
+    ):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -3708,42 +4001,64 @@ class Knowledge(RemoteKnowledge):
             await self._aupdate_content(content)
             return
 
-        if self.vector_db.upsert_available() and upsert:
+        use_upsert = self.vector_db.upsert_available() and upsert
+        operation = "upsert" if use_upsert else "insert"
+        vector_db = self.vector_db
+
+        if not use_upsert and prior_status in (ContentStatus.PARTIAL, ContentStatus.FAILED):
+            # Embed before clearing: an insert-only store cannot roll the delete back, so
+            # a failure here would leave the caller with less than they started with.
+            from agno.vectordb.base import aembed_before_replace
+
             try:
-                await self.vector_db.async_upsert(
+                await aembed_before_replace(read_documents, getattr(vector_db, "embedder", None))
+            except EmbeddingError as e:
+                log_error(f"Error {operation}ing document: {e.safe_message}")
+                self._set_embedding_failure_status(content, e, read_documents, operation)
+                await self._aupdate_content(content)
+                return
+            self._clear_partial_chunks(content, "re-ingesting incomplete content")
+
+        async def write() -> None:
+            if use_upsert:
+                await vector_db.async_upsert(
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error upserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not upsert embedding"
-                await self._aupdate_content(content)
-                return
-        else:
-            try:
-                await self.vector_db.async_insert(
+            else:
+                await vector_db.async_insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error inserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not insert embedding"
-                await self._aupdate_content(content)
-                return
+
+        try:
+            embedding_error, attempts = await self._aretry_vector_write(write, content, idempotent=use_upsert)
+        except Exception as e:
+            log_error(f"Error {operation}ing document: {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Could not {operation} embedding"
+            await self._aupdate_content(content)
+            return
+
+        if embedding_error is not None:
+            log_error(f"Error {operation}ing document: {embedding_error.safe_message}")
+            self._set_embedding_failure_status(content, embedding_error, read_documents, operation, attempts)
+            await self._aupdate_content(content)
+            return
 
         # The row now provably owns vectors; deletion reads this marker to tell an
         # operational False apart from a zero-match no-op.
         content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
-        content.status = ContentStatus.COMPLETED
+        self._set_embedding_success_status(content, read_documents)
         await self._aupdate_content(content)
 
-    def _handle_vector_db_insert(self, content: Content, read_documents, upsert):
+    def _handle_vector_db_insert(
+        self, content: Content, read_documents, upsert, prior_status: Optional[ContentStatus] = None
+    ):
         """Synchronously handle vector database insertion."""
         from agno.vectordb import VectorDb
 
@@ -3769,38 +4084,58 @@ class Knowledge(RemoteKnowledge):
             self._update_content(content)
             return
 
-        if self.vector_db.upsert_available() and upsert:
+        use_upsert = self.vector_db.upsert_available() and upsert
+        operation = "upsert" if use_upsert else "insert"
+        vector_db = self.vector_db
+
+        if not use_upsert and prior_status in (ContentStatus.PARTIAL, ContentStatus.FAILED):
+            # Embed before clearing: an insert-only store cannot roll the delete back, so
+            # a failure here would leave the caller with less than they started with.
+            from agno.vectordb.base import embed_before_replace
+
             try:
-                self.vector_db.upsert(
+                embed_before_replace(read_documents, getattr(vector_db, "embedder", None))
+            except EmbeddingError as e:
+                log_error(f"Error {operation}ing document: {e.safe_message}")
+                self._set_embedding_failure_status(content, e, read_documents, operation)
+                self._update_content(content)
+                return
+            self._clear_partial_chunks(content, "re-ingesting incomplete content")
+
+        def write() -> None:
+            if use_upsert:
+                vector_db.upsert(
                     content.content_hash,  # type: ignore[arg-type]
                     read_documents,
                     content.metadata,
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error upserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not upsert embedding"
-                self._update_content(content)
-                return
-        else:
-            try:
-                self.vector_db.insert(
+            else:
+                vector_db.insert(
                     content.content_hash,  # type: ignore[arg-type]
                     documents=read_documents,
                     filters=content.metadata,  # type: ignore[arg-type]
                     **owner_kwargs,
                 )
-            except Exception as e:
-                log_error(f"Error inserting document: {str(e)}")
-                content.status = ContentStatus.FAILED
-                content.status_message = "Could not insert embedding"
-                self._update_content(content)
-                return
+
+        try:
+            embedding_error, attempts = self._retry_vector_write(write, content, idempotent=use_upsert)
+        except Exception as e:
+            log_error(f"Error {operation}ing document: {str(e)}")
+            content.status = ContentStatus.FAILED
+            content.status_message = f"Could not {operation} embedding"
+            self._update_content(content)
+            return
+
+        if embedding_error is not None:
+            log_error(f"Error {operation}ing document: {embedding_error.safe_message}")
+            self._set_embedding_failure_status(content, embedding_error, read_documents, operation, attempts)
+            self._update_content(content)
+            return
 
         # See the matching marker in _ahandle_vector_db_insert.
         content.metadata = set_agno_metadata(content.metadata, "vectors_indexed", True)
-        content.status = ContentStatus.COMPLETED
+        self._set_embedding_success_status(content, read_documents)
         self._update_content(content)
 
     # --- Content Update ---
