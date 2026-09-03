@@ -76,6 +76,11 @@ agent_os = AgentOS(
 `instructions` tells the calling model what the tools are for and how to use them;
 Claude, Cursor and ChatGPT read it when they connect.
 
+Open `/mcp` in a browser and you are sent to `/mcp/server-card`, a JSON Server Card
+with the name, version, description and endpoint URL in the shape of the MCP Server
+Card extension. It lists no tools; `tools/list` does that. `MCPConfig(server_card=False)`
+turns it off.
+
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/server_identity.py
 ```

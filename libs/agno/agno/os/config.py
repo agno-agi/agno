@@ -14,6 +14,9 @@ MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "lifecycle"})
 # string values while keeping the API stringly-typed (callers still pass ``{"core"}``).
 MCPBuiltinTag = Literal["core", "session", "lifecycle"]
 
+# Where the MCP server publishes its Server Card: the MCP endpoint path plus ``/server-card``.
+MCP_SERVER_CARD_PATH = "/mcp/server-card"
+
 
 def _apply_legacy_enable_builtin_tools(data: Dict[str, Any]) -> Dict[str, Any]:
     """Map the deprecated ``enable_builtin_tools`` key onto ``default_tools`` in a dict
@@ -61,6 +64,11 @@ class MCPConfig(BaseModel):
     name: Optional[str] = None
     version: Optional[str] = None
     instructions: Optional[str] = None
+
+    # Publish a Server Card at ``/mcp/server-card`` (name, version, description and the
+    # endpoint URL, no tools) and send a browser that opens ``/mcp`` to it. The card is
+    # public even when the server is gated; it carries nothing secret.
+    server_card: bool = True
 
     # The tool surface of this MCP server. Each entry may be:
     #

@@ -1261,3 +1261,117 @@ async def test_initialize_response_carries_name_version_and_instructions():
     assert result.server_info.name == "Docs"
     assert result.server_info.version == "1.0.0"
     assert result.instructions == "Cite the page you used."
+
+
+# ----------------------------- server card -----------------------------
+
+SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
+
+
+def _docs_os(**mcp_kwargs) -> AgentOS:
+    return AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description="Search the docs.",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com"], **mcp_kwargs),
+    )
+
+
+@asynccontextmanager
+async def _mcp_client(app, base_url: str = "http://example.com") -> AsyncIterator[httpx.AsyncClient]:
+    """An HTTP client on the app with its lifespan running, so fastmcp's transport is live."""
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base_url) as client:
+            yield client
+
+
+def test_card_name_is_reverse_dns_and_slugged():
+    assert mcp_mod._card_name("docs.agno.com", "Agno Docs AgentOS") == "com.agno.docs/agno-docs-agentos"
+    assert mcp_mod._card_name("localhost", "Ops") == "localhost/ops"
+    assert mcp_mod._card_name("[::1]", "") == "localhost/agentos"
+    assert mcp_mod._card_name("127.0.0.1", "Ops") == "localhost/ops"
+
+
+async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        response = await client.get("/mcp/server-card", headers={"accept": "application/mcp-server-card+json"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/mcp-server-card+json")
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert response.headers["cache-control"] == "public, max-age=300"
+    assert response.json() == {
+        "$schema": SERVER_CARD_SCHEMA,
+        "name": "com.example/agno-docs",
+        "title": "Agno Docs",
+        "version": "1.0.0",
+        "description": "Search the docs.",
+        "remotes": [{"type": "streamable-http", "url": "http://example.com/mcp"}],
+    }
+
+
+async def test_server_card_endpoint_follows_the_proxy_headers(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        response = await client.get(
+            "/mcp/server-card", headers={"x-forwarded-proto": "https", "x-forwarded-host": "docs.agno.com"}
+        )
+
+    card = response.json()
+    assert card["remotes"][0]["url"] == "https://docs.agno.com/mcp"
+    assert card["name"] == "com.agno.docs/agno-docs"
+
+
+async def test_gated_server_card_declares_the_bearer_header(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: False)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert card["remotes"][0]["headers"] == [
+        {"name": "Authorization", "description": "Bearer token", "isRequired": True, "isSecret": True}
+    ]
+
+
+async def test_browser_get_on_mcp_redirects_to_the_card():
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        for path in ("/mcp", "/mcp/"):
+            response = await client.get(path, headers={"accept": "text/html,*/*"})
+            assert response.status_code == 302, path
+            assert response.headers["location"] == "/mcp/server-card"
+        # An MCP client's GET (it always accepts text/event-stream) is left to fastmcp.
+        response = await client.get("/mcp", headers={"accept": "text/event-stream"})
+        assert response.status_code != 302
+
+
+async def test_server_card_can_be_turned_off():
+    app = get_mcp_server(_docs_os(server_card=False))
+
+    async with _mcp_client(app) as client:
+        assert (await client.get("/mcp/server-card")).status_code == 404
+        assert (await client.get("/mcp", headers={"accept": "text/html"})).status_code == 406
+
+
+async def test_server_card_is_public_on_an_authorized_agentos():
+    os = AgentOS(
+        agents=[_agent()],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=["dummy"]),
+        mcp=True,
+    )
+    app = os.get_app()
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        assert (await client.get("/mcp/server-card")).status_code == 200
+        assert (await client.get("/sessions")).status_code == 401  # the auth layer is on
+        # The endpoint itself stays behind the auth layer; only the card is public.
+        assert (await client.get("/mcp", headers={"accept": "text/html"})).status_code == 401

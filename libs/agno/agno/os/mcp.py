@@ -74,6 +74,7 @@ logger = logging.getLogger(__name__)
 # tag set lives in agno/os/config.py next to the MCPConfig fields that consume it --
 # single source of truth so adding a new tag is a one-place change.
 from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
+from agno.os.config import MCP_SERVER_CARD_PATH  # noqa: E402
 
 # Names of the default (built-in) tools by tag set, used to detect name collisions with
 # exposed components before registration. Keep in sync with the ``name=`` / ``tags=``
@@ -1974,6 +1975,94 @@ def _register_exposed_components(
         mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
 
+SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
+SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
+_MCP_PATH = "/mcp"
+
+
+def _server_card_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
+    return mcp_config is None or mcp_config.server_card
+
+
+def _card_name(hostname: str, server_name: str) -> str:
+    """The card's reverse-DNS name: the request host reversed, a slash, the server name as a slug."""
+    is_ip_literal = hostname.startswith("[") or re.fullmatch(r"[\d.]+", hostname) is not None
+    namespace = "" if is_ip_literal else ".".join(reversed(hostname.lower().split(".")))
+    namespace = re.sub(r"[^a-z0-9.-]+", "", namespace).strip(".-")
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", server_name).strip("-.").lower()
+    return f"{namespace or 'localhost'}/{slug or 'agentos'}"
+
+
+def _server_card(mcp: FastMCP, os: "AgentOS", request: Any) -> Dict[str, Any]:
+    """The Server Card for one request. The endpoint URL follows the proxy headers when present."""
+    scheme = request.headers.get("x-forwarded-proto", "").split(",")[0].strip() or request.url.scheme
+    host = (
+        request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        or request.headers.get("host")
+        or request.url.netloc
+    )
+    remote: Dict[str, Any] = {"type": "streamable-http", "url": f"{scheme}://{host}{_MCP_PATH}"}
+    if not _mcp_server_is_open(os):
+        remote["headers"] = [
+            {"name": "Authorization", "description": "Bearer token", "isRequired": True, "isSecret": True}
+        ]
+    return {
+        "$schema": SERVER_CARD_SCHEMA,
+        "name": _card_name(_mcp_request_hostname(host), mcp.name),
+        "title": mcp.name,
+        "version": str(mcp.version),
+        "description": getattr(os, "description", None) or f"{mcp.name} MCP server",
+        "remotes": [remote],
+    }
+
+
+def _register_server_card(mcp: FastMCP, os: "AgentOS") -> None:
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response
+
+    @mcp.custom_route(MCP_SERVER_CARD_PATH, methods=["GET"], include_in_schema=False)
+    async def server_card(request: Request) -> Response:
+        return JSONResponse(
+            _server_card(mcp, os, request),
+            media_type=SERVER_CARD_MEDIA_TYPE,
+            headers={
+                "Cache-Control": "public, max-age=300",
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET",
+                "Access-Control-Allow-Headers": "Content-Type, If-None-Match",
+                "Access-Control-Expose-Headers": "ETag",
+            },
+        )
+
+
+def _add_browser_redirect_middleware(mcp_app: StarletteWithLifespan) -> None:
+    """Send a browser that opens the MCP endpoint to the Server Card.
+
+    MCP clients send ``Accept: text/event-stream`` on a GET; a GET without it is a person
+    in a browser, who would otherwise get a JSON-RPC 406 or a 405.
+    """
+
+    class _BrowserRedirectMiddleware:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            if (
+                scope["type"] == "http"
+                and scope.get("method") == "GET"
+                and scope.get("path", "").rstrip("/") == _MCP_PATH
+            ):
+                accept = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"accept"), "")
+                if "text/event-stream" not in accept:
+                    headers = [(b"location", MCP_SERVER_CARD_PATH.encode()), (b"content-length", b"0")]
+                    await send({"type": "http.response.start", "status": 302, "headers": headers})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
+            await self.app(scope, receive, send)
+
+    mcp_app.add_middleware(_BrowserRedirectMiddleware)
+
+
 def build_mcp_server(
     os: "AgentOS",
 ) -> FastMCP:
@@ -1998,6 +2087,8 @@ def build_mcp_server(
         version=server_version,
         auth=os._get_mcp_auth_provider(),
     )
+    if _server_card_enabled(mcp_config):
+        _register_server_card(mcp, os)
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
     # whether components are exposed (the lifecycle pair rides along with exposure).
@@ -2730,6 +2821,9 @@ def get_mcp_server(
         for mw in reversed(mcp_config.middleware):
             cls, args, kwargs = mw
             mcp_app.add_middleware(cls, *args, **kwargs)
+
+    if _server_card_enabled(mcp_config):
+        _add_browser_redirect_middleware(mcp_app)
 
     # Outermost: built-in DNS-rebinding protection (runs first, before auth and tools).
     #
