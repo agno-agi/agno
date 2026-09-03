@@ -1,8 +1,8 @@
 import json
 from typing import Any, Dict, List, Optional
-from xml.etree import ElementTree
 
 import httpx
+from defusedxml import ElementTree
 
 from agno.tools import Toolkit
 from agno.utils.log import log_debug

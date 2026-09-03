@@ -13,9 +13,9 @@ reads run concurrently.
 import gzip
 from typing import Generator, List, Optional, Tuple
 from urllib.parse import urlparse
-from xml.etree import ElementTree
 
 import httpx
+from defusedxml import ElementTree
 
 from agno.knowledge.chunking.fixed import FixedSizeChunking
 from agno.knowledge.chunking.strategy import ChunkingStrategy, ChunkingStrategyType

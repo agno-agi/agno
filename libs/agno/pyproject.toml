@@ -25,6 +25,7 @@ classifiers = [
 
 dependencies = [
   "agnoctl>=0.2.0",
+  "defusedxml",
   "docstring-parser",
   # Prevent the request-smuggling CVE in h11 < 0.16
   "h11>=0.16.0",
