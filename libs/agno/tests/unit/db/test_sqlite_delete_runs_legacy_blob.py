@@ -20,7 +20,7 @@ import sqlite3
 
 import pytest
 
-from agno.db.sqlite import SqliteDb
+from agno.db.sqlite import AsyncSqliteDb, SqliteDb
 from agno.run.agent import RunOutput
 
 _LEGACY_SESSIONS_DDL = (
@@ -99,3 +99,37 @@ def test_a_failed_scrub_rolls_back_the_row_delete(tmp_path):
     # Neither surface changed: the row delete did not commit without the scrub.
     assert _blob_ids(db_file) == ["r0", "r1"]
     assert _loaded_ids(db) == ["r0", "r1", "r2"]
+
+
+@pytest.mark.asyncio
+async def test_async_delete_runs_scrubs_the_blob_before_any_run_row_exists(tmp_path):
+    _, db_file = _legacy_db(tmp_path, ["r0", "r1", "r2"])
+    db = AsyncSqliteDb(db_file=db_file)
+    try:
+        await db.delete_runs(["r1"])
+        assert _blob_ids(db_file) == ["r0", "r2"]
+    finally:
+        await db.close()
+
+
+@pytest.mark.asyncio
+async def test_async_failed_scrub_rolls_back_the_row_delete(tmp_path):
+    _, db_file = _legacy_db(tmp_path, ["r0", "r1"])
+    db = AsyncSqliteDb(db_file=db_file)
+    try:
+        await db.upsert_run(RunOutput(run_id="r2", agent_id="a1", session_id="s1"), session_id="s1")
+        con = sqlite3.connect(db_file)
+        con.execute(
+            "CREATE TRIGGER refuse_blob_rewrite BEFORE UPDATE OF runs ON agno_sessions "
+            "BEGIN SELECT RAISE(ABORT, 'blob rewrite refused'); END"
+        )
+        con.commit()
+        con.close()
+
+        with pytest.raises(Exception, match="blob rewrite refused"):
+            await db.delete_runs(["r0", "r2"])
+
+        assert _blob_ids(db_file) == ["r0", "r1"]
+        assert await db.get_run("r2") is not None
+    finally:
+        await db.close()
