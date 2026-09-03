@@ -1676,9 +1676,6 @@ class AgentOS:
             self.authorization_config,
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
-            excluded_route_paths=(
-                self.authorization_config.excluded_route_paths if self.authorization_config is not None else None
-            ),
         )
         middleware_kwargs["security_key"] = security_key
         algorithm = middleware_kwargs["algorithm"]
@@ -1749,7 +1746,9 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
-        custom_excluded_paths = middleware_kwargs["excluded_route_paths"]
+        custom_excluded_paths = (
+            self.authorization_config.excluded_route_paths if self.authorization_config is not None else None
+        )
         if custom_excluded_paths or interface_prefixes or mcp_auth_paths:
             excluded_route_paths = list(
                 dict.fromkeys(

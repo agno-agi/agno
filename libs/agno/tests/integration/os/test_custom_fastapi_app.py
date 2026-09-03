@@ -316,6 +316,84 @@ def test_authorization_config_extends_default_route_exclusions(test_agent: Agent
     assert protected_response.status_code == 401
 
 
+def test_authorization_config_with_none_excluded_paths_uses_defaults(test_agent: Agent):
+    """excluded_route_paths=None should use the default public routes."""
+    app = AgentOS(
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["test-secret"],
+            algorithm="HS256",
+            excluded_route_paths=None,
+        ),
+    ).get_app()
+
+    client = TestClient(app)
+
+    # Default exclusions should still work
+    assert client.get("/health").status_code == 200
+    assert client.get("/info").status_code == 200
+    assert client.get("/docs").status_code == 200
+
+    # Protected routes require auth
+    assert client.get("/sessions").status_code == 401
+
+
+def test_authorization_config_with_empty_list_uses_defaults(test_agent: Agent):
+    """excluded_route_paths=[] should still use default public routes (it's additive)."""
+    app = AgentOS(
+        agents=[test_agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["test-secret"],
+            algorithm="HS256",
+            excluded_route_paths=[],
+        ),
+    ).get_app()
+
+    client = TestClient(app)
+
+    # Default exclusions should still work (empty list is additive, not a replacement)
+    assert client.get("/health").status_code == 200
+    assert client.get("/info").status_code == 200
+
+    # Protected routes require auth
+    assert client.get("/sessions").status_code == 401
+
+
+def test_authorization_config_wildcard_pattern_matching(test_agent: Agent):
+    """Wildcard patterns like /public/* should match nested paths via fnmatch."""
+    custom_app = FastAPI(title="Custom App")
+
+    @custom_app.get("/public/data")
+    async def public_data():
+        return {"type": "data"}
+
+    @custom_app.get("/public/admin/secret")
+    async def public_admin_secret():
+        return {"type": "secret"}
+
+    app = AgentOS(
+        agents=[test_agent],
+        base_app=custom_app,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["test-secret"],
+            algorithm="HS256",
+            excluded_route_paths=["/public/*"],
+        ),
+    ).get_app()
+
+    client = TestClient(app)
+
+    # Wildcard should match nested paths
+    assert client.get("/public/data").status_code == 200
+    assert client.get("/public/admin/secret").status_code == 200
+
+    # Protected routes still require auth
+    assert client.get("/sessions").status_code == 401
+
+
 def test_available_endpoints_with_custom_app(test_agent: Agent, test_team: Team, test_workflow: Workflow):
     """Test that all expected AgentOS endpoints are available with custom app."""
     # Create custom FastAPI app
