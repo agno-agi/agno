@@ -1206,3 +1206,58 @@ async def test_assigning_config_to_mcp_server_attribute_applies_config():
     assert os.mcp_server is True
     assert os.mcp_config is not None
     assert await _tool_names(os) == {"ping"}
+
+
+# ----------------------------- server identity -----------------------------
+
+
+def test_server_identity_defaults_to_the_agentos_name_and_version():
+    os = AgentOS(name="Ops OS", version="2.3.4", agents=[_agent()], mcp=True)
+
+    server = build_mcp_server(os)
+
+    assert server.name == "Ops OS"
+    assert server.version == "2.3.4"
+    assert server.instructions is None
+
+
+def test_server_identity_without_any_value_keeps_the_fastmcp_defaults():
+    """No name or version anywhere: the server is called AgentOS and reports fastmcp's version."""
+    import fastmcp
+
+    server = build_mcp_server(AgentOS(agents=[_agent()], mcp=True))
+
+    assert server.name == "AgentOS"
+    assert server.version == fastmcp.__version__
+    assert server.instructions is None
+
+
+def test_mcp_config_identity_overrides_the_agentos_values():
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="0.1.0",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Prefer the docs over prior knowledge."),
+    )
+
+    server = build_mcp_server(os)
+
+    assert server.name == "Docs"
+    assert server.version == "1.0.0"
+    assert server.instructions == "Prefer the docs over prior knowledge."
+
+
+async def test_initialize_response_carries_name_version_and_instructions():
+    """The values reach a client through the handshake, not only the server object."""
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Cite the page you used."),
+    )
+
+    async with Client(build_mcp_server(os), mode="legacy") as client:
+        result = client.initialize_result
+
+    assert result is not None
+    assert result.server_info.name == "Docs"
+    assert result.server_info.version == "1.0.0"
+    assert result.instructions == "Cite the page you used."
