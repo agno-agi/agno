@@ -133,6 +133,11 @@ DOCUMENT_FORMATS = [
     ("doc.rtf", "text/rtf"),
 ]
 
+ZIP_MIME_ALIASES = [
+    "application/x-zip",
+    "application/x-zip-compressed",
+]
+
 
 class TestClassifyUploadFile:
     """Tests for classify_upload_file, including the extension fallback for ambiguous content types."""
@@ -152,6 +157,10 @@ class TestClassifyUploadFile:
     @pytest.mark.parametrize("filename, content_type", DOCUMENT_FORMATS)
     def test_all_document_content_types_route_to_document(self, filename, content_type):
         assert classify_upload_file(_make_upload_file(filename, content_type)) == "document"
+
+    @pytest.mark.parametrize("content_type", ZIP_MIME_ALIASES)
+    def test_zip_mime_aliases_route_to_document(self, content_type):
+        assert classify_upload_file(_make_upload_file("archive.zip", content_type)) == "document"
 
     @pytest.mark.parametrize("filename, _content_type", DOCUMENT_FORMATS)
     @pytest.mark.parametrize("ambiguous", ["application/octet-stream", "", None])
@@ -189,6 +198,14 @@ class TestProcessDocument:
         assert result is not None
         assert result.mime_type == content_type
         assert result.format == filename.rsplit(".", 1)[-1]
+
+    @pytest.mark.parametrize("content_type", ZIP_MIME_ALIASES)
+    def test_zip_mime_aliases_are_canonicalized(self, content_type):
+        result = process_document(_make_upload_file("archive.zip", content_type, b"zip-data"))
+
+        assert result is not None
+        assert result.mime_type == "application/zip"
+        assert result.format == "zip"
 
     def test_empty_file_raises(self):
         from fastapi import HTTPException

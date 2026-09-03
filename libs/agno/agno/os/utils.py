@@ -1069,6 +1069,14 @@ DOCUMENT_MIME_TYPES = {
     "text/rtf",
 }
 
+# Some clients use legacy ZIP MIME types instead of the registered `application/zip`.
+# Normalize these at the upload boundary so the file is accepted without leaking a
+# non-canonical MIME type to FileMedia or model providers.
+_DOCUMENT_MIME_TYPE_ALIASES = {
+    "application/x-zip": "application/zip",
+    "application/x-zip-compressed": "application/zip",
+}
+
 # Fallback mapping from file extension to media category. Used when the browser sends a
 # missing or ambiguous content type (e.g. `application/octet-stream` or empty for `.md`
 # and `.pptx`, which are not in every OS MIME registry).
@@ -1131,6 +1139,12 @@ EXTENSION_CATEGORY: Dict[str, str] = {
 _AMBIGUOUS_CONTENT_TYPES = {None, "", "application/octet-stream"}
 
 
+def _normalize_document_mime_type(content_type: Optional[str]) -> Optional[str]:
+    if content_type is None:
+        return None
+    return _DOCUMENT_MIME_TYPE_ALIASES.get(content_type, content_type)
+
+
 def classify_upload_file(file: UploadFile) -> Optional[str]:
     """Classify an uploaded file into one of: image, audio, video, document.
 
@@ -1138,7 +1152,7 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
     filename extension. Returns None if the file type is not supported.
     """
-    content_type = file.content_type
+    content_type = _normalize_document_mime_type(file.content_type)
     if content_type in IMAGE_MIME_TYPES:
         return "image"
     if content_type in AUDIO_MIME_TYPES:
@@ -1212,12 +1226,13 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
     mime_type accepted by `FileMedia`.
     """
-    if file.content_type and file.content_type in DOCUMENT_MIME_TYPES:
-        return file.content_type
+    content_type = _normalize_document_mime_type(file.content_type)
+    if content_type and content_type in DOCUMENT_MIME_TYPES:
+        return content_type
     if file.filename and "." in file.filename:
         extension = file.filename.rsplit(".", 1)[-1].lower()
         return _DOCUMENT_EXTENSION_MIME.get(extension)
-    return file.content_type
+    return content_type
 
 
 def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Optional[FileMedia]:
