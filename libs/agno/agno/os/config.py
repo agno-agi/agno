@@ -359,8 +359,10 @@ class UserDirectoryConfig(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    # A ManagedUserStore (typed Any to avoid importing the concrete store here). Needs a SQL
-    # database -- AgentOS adopts the OS db if the store was created without one.
+    # A ManagedUserStore (typed Any to avoid importing the concrete store here), OR ``True`` to
+    # have AgentOS build one from its own ``db`` -- the zero-ceremony path, equivalent to
+    # ``AgentOS(user_directory=True)``. Needs a SQL database: AgentOS adopts the OS db if the
+    # store was created without one (and requires ``AgentOS(db=...)`` when you pass ``True``).
     store: Any
     # Just-in-time provisioning: when True, the first valid token from a subject not yet in
     # the directory creates a row from the token claims below.

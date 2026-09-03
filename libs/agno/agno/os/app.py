@@ -294,7 +294,7 @@ class AgentOS:
         a2a_interface: bool = False,
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
-        user_directory: Optional[UserDirectoryConfig] = None,
+        user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -458,7 +458,9 @@ class AgentOS:
         self.authorization_config = authorization_config
         # The credential-less user directory is a PEER of authorization (who the users are +
         # the disabled kill-switch), configured separately from authorization_config.
-        self.user_directory = user_directory
+        # ``user_directory=True`` (or ``store=True`` on the config) is a shorthand: AgentOS
+        # builds the ManagedUserStore from its own db, so callers avoid the manual wiring.
+        self.user_directory = self._resolve_user_directory(user_directory)
 
         # CORS configuration - merge user-provided origins with defaults from settings
         self.cors_allowed_origins = resolve_origins(cors_allowed_origins, self.settings.cors_origin_list)
@@ -1942,6 +1944,32 @@ class AgentOS:
         # sink) must be mirrored onto it -- see _mirror_authz_state_to_mcp_app. Seeding
         # runs after the mount, so this is where the first mirror happens.
         self._mirror_authz_state_to_mcp_app(fastapi_app)
+
+    def _resolve_user_directory(
+        self, user_directory: Optional[Union[bool, UserDirectoryConfig]]
+    ) -> Optional[UserDirectoryConfig]:
+        """Normalise the ``user_directory`` shorthand into a ``UserDirectoryConfig``.
+
+        ``True`` (or ``UserDirectoryConfig(store=True)``) means "build the ManagedUserStore from
+        the OS db", so a caller gets a working directory with zero store wiring. ``False`` /
+        ``None`` means no directory. An explicit config with a real store is returned unchanged
+        (its store is adopted onto the OS db later, in ``_seed_user_directory``).
+        """
+        if not user_directory:  # None or False
+            return None
+        if user_directory is True:
+            user_directory = UserDirectoryConfig(store=True)
+        if getattr(user_directory, "store", None) is True:
+            if self.db is None:
+                raise ValueError(
+                    "AgentOS(user_directory=True) (or UserDirectoryConfig(store=True)) needs AgentOS(db=...): "
+                    "the user directory backs the disabled-user kill switch and must persist. Pass a SQL db, "
+                    "or build the store yourself (UserDirectoryConfig(store=ManagedUserStore(db=...)))."
+                )
+            from agno.os.authz.user_store import ManagedUserStore
+
+            user_directory = user_directory.model_copy(update={"store": ManagedUserStore(db=self.db)})
+        return user_directory
 
     def _seed_user_directory(self, fastapi_app: FastAPI) -> None:
         """Seed the credential-less user directory onto ``app.state`` from
