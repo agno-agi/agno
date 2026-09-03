@@ -134,6 +134,7 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
 
 
@@ -249,6 +250,28 @@ def test_users_api_is_admin_only():
     assert client.post("/metrics/os/refresh", headers=_auth("bob")).status_code == 403
     assert client.get("/metrics/os", headers=_auth("carol")).status_code == 200
     assert client.post("/metrics/os/refresh", headers=_auth("carol")).status_code == 403
+
+
+def test_os_metrics_auto_mount_with_composite_authorization_provider():
+    roles = ManagedRoleStore(db_url=_db_url())
+    users = ManagedUserStore(db_url=_db_url())
+    agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
+
+    app = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            authorization_provider=[ScopeAuthorizationProvider(), roles.provider],
+        ),
+        user_directory=UserDirectoryConfig(store=users),
+    ).get_app()
+
+    client = TestClient(app)
+    response = client.get("/metrics/os", headers=_auth("operator", scopes=["metrics:read"]))
+    assert response.status_code == 200, response.text
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
