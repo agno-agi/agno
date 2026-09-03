@@ -84,19 +84,17 @@ def test_store_crud_and_disable(tmp_path, db_url):
 def test_store_creation_metrics(tmp_path, db_url, monkeypatch):
     url = None if db_url is None else f"sqlite:///{tmp_path / 'user-metrics.db'}"
     store = ManagedUserStore(db_url=url)
-    timestamps = iter([100, 200, 86400 + 300])
+    timestamps = iter([100, 200, 86400 + 300, 172800])
     monkeypatch.setattr("agno.os.authz.user_store._now", lambda: next(timestamps))
 
     for user_id in ("u1", "u2", "u3"):
         store.upsert(user_id)
 
-    assert store.creation_metrics() == [
-        {"date": 0, "users_created_count": 2},
-        {"date": 86400, "users_created_count": 1},
-    ]
-    assert store.creation_metrics(starting_at=86400, ending_before=172800) == [
-        {"date": 86400, "users_created_count": 1}
-    ]
+    rebuilt = store.calculate_os_metrics()
+    assert [(row["date"], row["users_created_count"]) for row in rebuilt] == [(0, 2), (86400, 1)]
+    cached, updated_at = store.os_metrics(starting_at=86400, ending_before=172800)
+    assert [(row["date"], row["users_created_count"]) for row in cached] == [(86400, 1)]
+    assert updated_at is not None
 
 
 def test_store_emits_audit_with_actor_and_diff():
@@ -205,15 +203,19 @@ def test_users_api_crud_and_role_merge():
     assert [u["id"] for u in by_id] == sorted(u["id"] for u in by_id)
     assert client.get("/users?sort_by=evil", headers=_auth("alice")).status_code == 422
 
-    # Registration metrics are a daily series, separate from session activity metrics.
-    metrics = client.get(
-        "/users/metrics?starting_date=2000-01-01&ending_date=2100-01-01", headers=_auth("alice")
-    ).json()["metrics"]
+    # OS metrics are refreshed independently from database-scoped session metrics.
+    refreshed = client.post("/metrics/os/refresh?background=true", headers=_auth("alice"))
+    assert refreshed.status_code == 202 and refreshed.json()["status"] == "started"
+    metrics = client.get("/metrics/os?starting_date=2000-01-01&ending_date=2100-01-01", headers=_auth("alice")).json()[
+        "metrics"
+    ]
     assert len(metrics) == 1 and metrics[0]["users_created_count"] == 2
     assert (
-        client.get("/users/metrics?starting_date=2026-08-02&ending_date=2026-08-01", headers=_auth("alice")).status_code
+        client.get("/metrics/os?starting_date=2026-08-02&ending_date=2026-08-01", headers=_auth("alice")).status_code
         == 422
     )
+    status = client.get("/metrics/os/refresh/status", headers=_auth("alice")).json()
+    assert status["status"] == "completed" and status["finished_at"] is not None
 
     # update + delete; PATCH {"disabled": ...} is the revocation kill-switch
     client.patch("/users/bob", headers=_auth("alice"), json={"name": "Bob"})
@@ -231,8 +233,10 @@ def test_users_api_is_admin_only():
     roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.set_role_scopes("metrics-reader", ["metrics:read"])
     roles.assign("alice", "admin")
     roles.assign("bob", "viewer")
+    roles.assign("carol", "metrics-reader")
     users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
@@ -240,8 +244,11 @@ def test_users_api_is_admin_only():
 
     assert client.get("/users", headers=_auth("bob")).status_code == 403  # non-admin
     assert client.get("/users").status_code == 401  # anonymous
-    assert client.get("/users/metrics", headers=_auth("bob")).status_code == 403
-    assert client.get("/users/metrics").status_code == 401
+    assert client.get("/metrics/os", headers=_auth("bob")).status_code == 403
+    assert client.get("/metrics/os").status_code == 401
+    assert client.post("/metrics/os/refresh", headers=_auth("bob")).status_code == 403
+    assert client.get("/metrics/os", headers=_auth("carol")).status_code == 200
+    assert client.post("/metrics/os/refresh", headers=_auth("carol")).status_code == 403
 
 
 def test_disabled_user_is_denied_even_with_valid_token():

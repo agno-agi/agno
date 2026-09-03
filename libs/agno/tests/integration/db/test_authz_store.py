@@ -165,7 +165,7 @@ def test_user_listing_filters_and_sorts(db):
     assert [u["id"] for u in db.list_authz_users(sort_by="created_at", order="asc")] == ["u0", "u1", "u2"]
 
 
-def test_user_creation_metrics_group_and_filter_by_utc_day(db):
+def test_os_metrics_are_cached_and_filtered_by_utc_day(db):
     timestamps = [100, 200, 86400 + 300]
     for i, created_at in enumerate(timestamps):
         db.upsert_authz_user(
@@ -180,13 +180,29 @@ def test_user_creation_metrics_group_and_filter_by_utc_day(db):
             },
         )
 
-    assert db.get_authz_user_creation_metrics() == [
-        {"date": 0, "users_created_count": 2},
-        {"date": 86400, "users_created_count": 1},
-    ]
-    assert db.get_authz_user_creation_metrics(starting_at=86400, ending_before=172800) == [
-        {"date": 86400, "users_created_count": 1}
-    ]
+    rebuilt = db.calculate_os_metrics()
+    assert [(row["date"], row["users_created_count"]) for row in rebuilt] == [(0, 2), (86400, 1)]
+    cached, updated_at = db.get_os_metrics(starting_at=86400, ending_before=172800)
+    assert [(row["date"], row["users_created_count"]) for row in cached] == [(86400, 1)]
+    assert updated_at is not None
+
+    # Reads use the aggregate table; source changes appear only after refresh.
+    db.upsert_authz_user(
+        "metric-user-3",
+        {
+            "email": None,
+            "name": None,
+            "disabled": False,
+            "created_at": 86400 + 400,
+            "updated_at": 86400 + 400,
+            "metadata": None,
+        },
+    )
+    cached, _ = db.get_os_metrics(starting_at=86400, ending_before=172800)
+    assert cached[0]["users_created_count"] == 1
+    db.calculate_os_metrics()
+    cached, _ = db.get_os_metrics(starting_at=86400, ending_before=172800)
+    assert cached[0]["users_created_count"] == 2
 
 
 def test_both_audit_trails_are_separate_and_searchable(db):

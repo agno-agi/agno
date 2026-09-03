@@ -7,7 +7,7 @@ if TYPE_CHECKING:
     from agno.run.status_persist import RunPersistOutcome
     from agno.tracing.schemas import Span, Trace
 
-from agno.db import authz_store, mcp_oauth_store
+from agno.db import authz_store, mcp_oauth_store, os_metrics_store
 from agno.db.base import BaseDb, ComponentType, SessionType
 from agno.db.migrations.manager import MigrationManager
 from agno.db.postgres.schemas import get_table_schema_definition
@@ -44,6 +44,7 @@ from agno.db.schemas.mcp_oauth import (
     MCP_OAUTH_TRANSACTIONS,
 )
 from agno.db.schemas.memory import UserMemory
+from agno.db.schemas.os_metrics import OS_METRICS
 from agno.db.schemas.service_accounts import (
     resolve_service_account_sort_column,
     validate_service_account_update,
@@ -756,6 +757,13 @@ class PostgresDb(BaseDb):
             return self._get_or_create_table(
                 table_name=getattr(self, AUTHZ_TABLE_NAME_ATTRS[table_type]),
                 table_type=table_type,
+                create_table_if_not_found=create_table_if_not_found,
+            )
+
+        if table_type == OS_METRICS:
+            return self._get_or_create_table(
+                table_name=self.os_metrics_table_name,
+                table_type=OS_METRICS,
                 create_table_if_not_found=create_table_if_not_found,
             )
 
@@ -7352,11 +7360,16 @@ class PostgresDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_store.count_users(self.db_engine, table, include_disabled, search)
 
-    def get_authz_user_creation_metrics(
+    def calculate_os_metrics(self) -> List[Dict[str, Any]]:
+        users_table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        metrics_table = self._get_table(table_type=OS_METRICS, create_table_if_not_found=True)
+        return os_metrics_store.calculate_os_metrics(self.db_engine, users_table, metrics_table)
+
+    def get_os_metrics(
         self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
-    ) -> List[Dict[str, int]]:
-        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
-        return authz_store.get_user_creation_metrics(self.db_engine, table, starting_at, ending_before)
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        table = self._get_table(table_type=OS_METRICS, create_table_if_not_found=True)
+        return os_metrics_store.get_os_metrics(self.db_engine, table, starting_at, ending_before)
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)

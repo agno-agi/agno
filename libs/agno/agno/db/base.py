@@ -82,6 +82,7 @@ class BaseDb(ABC):
         self.culture_table_name = culture_table or "agno_culture"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        self.os_metrics_table_name = "agno_os_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -1696,12 +1697,16 @@ class BaseDb(ABC):
         """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
-    def get_authz_user_creation_metrics(
+    def calculate_os_metrics(self) -> List[Dict[str, Any]]:
+        """Rebuild aggregates derived from OS-level data sources."""
+        raise NotImplementedError
+
+    def get_os_metrics(
         self,
         starting_at: Optional[int] = None,
         ending_before: Optional[int] = None,
-    ) -> List[Dict[str, int]]:
-        """Current directory users grouped by their UTC creation day."""
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Read cached OS-level daily aggregates and their latest update time."""
         raise NotImplementedError
 
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:

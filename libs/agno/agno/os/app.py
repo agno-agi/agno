@@ -1263,14 +1263,16 @@ class AgentOS:
             routers.append(get_roles_router(role_store))
             if directory_store is not None:
                 from agno.os.authz.role_router import get_users_router
+                from agno.os.routers.metrics.os_metrics import get_os_metrics_router
 
                 # The user DIRECTORY admin API (/users) is a peer of the /authz roles API,
                 # configured via AgentOS(user_directory=...). Auto-mounted here alongside
                 # the roles router ONLY in the role_store shortcut, mirroring it: with a
                 # composite/custom provider (or a directory on plain scope RBAC) the operator
-                # mounts both routers themselves (get_roles_router + get_users_router), so we
-                # do not auto-mount a second, role-store-less /users that would shadow theirs.
+                # mounts the management routers themselves, so we do not auto-mount a
+                # second, role-store-less /users that would shadow theirs.
                 routers.append(get_users_router(directory_store, role_store=role_store))
+                routers.append(get_os_metrics_router(directory_store, settings=self.settings))
 
         for router in routers:
             self._add_router(fastapi_app, router)

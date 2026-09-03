@@ -24,8 +24,11 @@ of naming a store (``authorization_provider=[ScopeAuthorizationProvider(), roles
 and so has no ``role_store`` for AgentOS to find. Mount it yourself there -- and if you
 also run ``mcp_server=True``, mount it before the MCP app is added or it will 404:
 
+    from agno.os.routers.metrics.os_metrics import get_os_metrics_router
+
     app.include_router(get_roles_router(roles))
     app.include_router(get_users_router(users, role_store=roles))  # the /users directory
+    app.include_router(get_os_metrics_router(users))
 
 Response shapes mirror the agno cloud RBAC API so a frontend can reuse its
 integration: roles are objects (slug/name/description/is_default/created_at/
@@ -33,12 +36,10 @@ updated_at + parsed scopes), scopes are ``{raw, namespace, sub_namespace,
 permission, value}``, and list endpoints use the SDK ``PaginatedResponse``
 ({data, meta}). Single-OS: scopes are a flat list (no org/os split).
 
-Every route is admin-only — admin comes from an admin role in the store OR, when a
-scope plane actually enforces on this OS, an ``agent_os:admin`` token scope. Under a
-role-store-only (or ReBAC-only) deployment the token's scopes carry no authorization
-weight anywhere else, so they are not trusted here either (see ``require_admin``).
-Unauthenticated requests are rejected (401) by the JWT middleware before these
-handlers; a valid-but-non-admin caller gets 403.
+Every role and user-directory route is admin-only — admin comes from an admin role in
+the store OR, when a scope plane actually enforces on this OS, an ``agent_os:admin``
+token scope. The OS metrics routes follow the normal ``metrics:read`` / ``metrics:write``
+scope mappings. Unauthenticated requests are rejected (401) by the JWT middleware.
 
 Roles admin API -- get_roles_router (default prefix ``/authz``):
     GET    /authz/roles                          list roles (paginated)
@@ -55,14 +56,17 @@ Roles admin API -- get_roles_router (default prefix ``/authz``):
 User directory admin API -- get_users_router (default prefix ``/users``):
     GET    /users                                list users (paginated, roles merged in)
     POST   /users                                create a directory user
-    GET    /users/metrics                        daily user registration counts
     GET    /users/{user_id}                      a user
     PATCH  /users/{user_id}                      update profile / disable (the kill-switch)
     DELETE /users/{user_id}                      remove a user (cascades role revocation)
+
+OS metrics API -- get_os_metrics_router (default prefix ``/metrics/os``):
+    GET    /metrics/os                           cached daily OS-level metrics
+    POST   /metrics/os/refresh                   rebuild OS-level metrics
+    GET    /metrics/os/refresh/status            most recent refresh status
 """
 
 import time
-from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 from typing import TYPE_CHECKING, Any, List, Optional, Union
 
@@ -161,19 +165,6 @@ class AuthzUserSchema(BaseModel):
             created_at=user.get("created_at"),
             updated_at=user.get("updated_at"),
         )
-
-
-class DailyUserRegistrationMetric(BaseModel):
-    """Managed users created on one UTC calendar day."""
-
-    date: datetime = Field(description="UTC day for which registrations are aggregated")
-    users_created_count: int = Field(description="Users created on this day", ge=0)
-
-
-class UserRegistrationMetricsResponse(BaseModel):
-    metrics: List[DailyUserRegistrationMetric] = Field(
-        default_factory=list, description="Daily managed-user registration counts"
-    )
 
 
 class AvailableScopeItem(BaseModel):
@@ -575,47 +566,6 @@ def get_users_router(
     @router.post("", response_model=AuthzUserSchema)
     def create_user(body: CreateUserRequest, actor: str = Depends(require_admin)):
         return _user(user_store.upsert(body.id, email=body.email, name=body.name, actor=actor))
-
-    @router.get(
-        "/metrics",
-        response_model=UserRegistrationMetricsResponse,
-        operation_id="get_user_registration_metrics",
-        summary="Get User Registration Metrics",
-    )
-    def get_user_registration_metrics(
-        starting_date: Optional[date] = Query(
-            default=None, description="Starting date for the metrics range (YYYY-MM-DD)"
-        ),
-        ending_date: Optional[date] = Query(default=None, description="Ending date for the metrics range (YYYY-MM-DD)"),
-    ) -> UserRegistrationMetricsResponse:
-        if starting_date is not None and ending_date is not None and starting_date > ending_date:
-            raise HTTPException(status_code=422, detail="starting_date must be on or before ending_date")
-
-        starting_at = (
-            int(datetime(starting_date.year, starting_date.month, starting_date.day, tzinfo=timezone.utc).timestamp())
-            if starting_date is not None
-            else None
-        )
-        ending_before = (
-            int(
-                (
-                    datetime(ending_date.year, ending_date.month, ending_date.day, tzinfo=timezone.utc)
-                    + timedelta(days=1)
-                ).timestamp()
-            )
-            if ending_date is not None
-            else None
-        )
-        rows = user_store.creation_metrics(starting_at=starting_at, ending_before=ending_before)
-        return UserRegistrationMetricsResponse(
-            metrics=[
-                DailyUserRegistrationMetric(
-                    date=datetime.fromtimestamp(row["date"], tz=timezone.utc),
-                    users_created_count=row["users_created_count"],
-                )
-                for row in rows
-            ]
-        )
 
     @router.get("/{user_id}", response_model=AuthzUserSchema)
     def get_user(user_id: str):
