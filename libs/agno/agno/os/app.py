@@ -1753,7 +1753,7 @@ class AgentOS:
         if custom_excluded_paths or interface_prefixes or mcp_auth_paths:
             excluded_route_paths = list(
                 dict.fromkeys(
-                    list(DEFAULT_PUBLIC_ROUTES)
+                    DEFAULT_PUBLIC_ROUTES
                     + (custom_excluded_paths or [])
                     + interface_prefixes
                     + mcp_auth_paths
