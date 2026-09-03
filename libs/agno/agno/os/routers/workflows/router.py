@@ -33,6 +33,7 @@ from agno.os.auth import (
     INTERNAL_SCHEDULER_USER_ID,
     get_auth_token_from_request,
     get_authentication_dependency,
+    require_approval_resolved,
     require_resource_access,
 )
 from agno.os.event_streams import get_event_stream
@@ -207,6 +208,19 @@ async def handle_workflow_via_websocket(
                 user_id = user_id or jwt_user_id
             else:
                 user_id = jwt_user_id
+
+        # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         # Owner scope for DB-backed workflow components; ``None`` for admins and unscoped callers.
         # Fails closed (403) for an identity-less token under isolation, like the REST routes.
@@ -700,6 +714,18 @@ async def handle_workflow_continue_via_websocket(
         session_id = message.get("session_id")
         user_id = message.get("user_id")
         step_requirements_data = message.get("step_requirements")
+        # Owner scope for DB-backed workflow components on continue.
+        # Fails closed (403) for an identity-less token under isolation, like the REST routes.
+        try:
+            scoped_user_id = get_scoped_user_id_for_ws(
+                user_id,
+                jwt_enabled=bool(ws_auth and ws_auth.jwt_enabled),
+                is_admin=bool(ws_auth and ws_auth.is_admin),
+                user_isolation_enabled=bool(ws_auth and ws_auth.user_isolation_enabled),
+            )
+        except HTTPException:
+            await websocket.send_text(json.dumps({"event": "error", "error": MISSING_USER_IDENTITY}))
+            return
 
         # Defense-in-depth: an authenticated caller's identity is the token,
         # never the client frame. The WS dispatcher in router.py already forces
@@ -2054,7 +2080,14 @@ def get_workflow_router(
                 "description": "Run is not paused. Only PAUSED runs can be continued.",
             },
         },
-        dependencies=[Depends(require_resource_access("workflows", "run", "workflow_id"))],
+        dependencies=[
+            Depends(require_resource_access("workflows", "run", "workflow_id")),
+            # Same admin-approval gate agents and teams (and the MCP continue_run tool)
+            # enforce: a run paused on an admin-required approval must not be continued by
+            # its own initiator on `workflows:run` alone -- only a holder of approvals:write
+            # may resolve it. Without this the initiator could self-approve over REST.
+            Depends(require_approval_resolved(os.db)),
+        ],
     )
     async def continue_workflow_run(
         workflow_id: str,

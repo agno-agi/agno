@@ -1,0 +1,192 @@
+"""
+Managed Users - a user directory for AgentOS, no identity provider needed
+
+Already did managed_roles.py? That showed ROLES (who can do what). This shows
+USERS (who exists), for the case where you DON'T have an external login system
+(no Okta/Auth0/WorkOS). Your own app still signs people in its own way and hands
+them a token; AgentOS keeps the list of users and decides what they can do.
+
+Important: AgentOS does NOT store passwords and does not log anyone in. It keeps
+a directory - just id, optional email/name, and an on/off switch per person -
+plus their roles. Think "address book with an off switch", not "login system".
+
+Why bother keeping users at all (instead of only roles)?
+1. You can SEE everyone who exists and pick a person to give a role to, instead
+   of typing a raw id you have to remember.
+2. You get a real OFF SWITCH. Disable someone and their very next request is
+   blocked - even though their token is still valid and unexpired. A token alone
+   can't be "un-issued"; the directory can.
+3. The audit trail can say "bob@co" instead of an opaque id.
+
+This file creates a few users, gives them roles, then:
+- lists the directory,
+- shows bob working normally,
+- DISABLES bob and shows his next request bounce (same valid token),
+- re-enables him,
+- and shows a brand-new user auto-provision on their first request, landing usable
+  with the default role - no admin step in between.
+
+Run it:
+    pip install "agno[roles]"
+    python managed_users.py
+(no OpenAI key needed - we are only checking who is allowed, not chatting)
+"""
+
+import os
+from datetime import UTC, datetime, timedelta
+
+import jwt
+from agno.agent import Agent
+from agno.db.sqlite import SqliteDb
+from agno.models.openai import OpenAIResponses
+from agno.os import AgentOS
+from agno.os.authz.role_store import ManagedRoleStore
+from agno.os.authz.user_store import ManagedUserStore
+from agno.os.config import AuthorizationConfig, UserDirectoryConfig
+
+JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")
+OS_ID = "managed-users-os"
+
+os.makedirs("tmp", exist_ok=True)
+
+# Roles: what each role can do (same as managed_roles.py).
+roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_users_roles.db")
+# Flag "viewer" as the DEFAULT role: a user who is auto-provisioned on first login (see
+# auto_provision below) is granted it automatically, so they land usable instead of with no
+# permissions. Single-role model, so exactly one role is the default - flagging another one
+# moves the flag.
+roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
+roles.set_role_scopes("admin", ["agent_os:admin"])
+
+# Users: the directory. Just people, no passwords. We give each one a role too.
+users = ManagedUserStore(db_url="sqlite:///tmp/managed_users.db")
+users.upsert("alice", email="alice@co", name="Alice")
+roles.assign("alice", "admin")
+users.upsert("bob", email="bob@co", name="Bob")
+roles.assign("bob", "viewer")
+
+db = SqliteDb(db_file="tmp/managed_users_agentos.db")
+research_agent = Agent(
+    id="research-agent",
+    name="Research Agent",
+    model=OpenAIResponses(id="gpt-5.5"),
+    db=db,
+)
+
+# Authorization (what users may do) and the user directory (who they are + the disabled
+# off-switch) are configured as PEERS: authorization_config for the former,
+# user_directory for the latter.
+agent_os = AgentOS(
+    id=OS_ID,
+    description="Managed-users AgentOS",
+    agents=[research_agent],
+    authorization=True,
+    authorization_config=AuthorizationConfig(
+        verification_keys=[JWT_SECRET],
+        algorithm="HS256",
+        verify_audience=True,
+        audience=OS_ID,
+        # Pass the STORE (not roles.provider): enforcement is identical (AgentOS builds the
+        # provider from it), and the OS also keeps the store, which is what lets it grant the
+        # default role on auto-provision and auto-mount the /users + /authz admin API.
+        role_store=roles,
+    ),
+    # The directory + the disabled kill-switch. auto_provision=True means a user we have
+    # never seen is created from their token claims on their first authenticated request,
+    # and granted the default role (the is_default one above) so they land usable, not inert.
+    # To pin the default in code instead of flagging a role, pass default_role="viewer" here
+    # (it overrides is_default).
+    user_directory=UserDirectoryConfig(store=users, auto_provision=True),
+)
+app = agent_os.get_app()
+# We manage the directory through the store directly here (upsert / set_disabled), which is
+# all the enforcement needs for this transcript. Because we passed role_store=, AgentOS also
+# auto-mounts the admin HTTP API (/users, /authz/roles) -- see manage_users_and_roles.py for
+# a frontend that drives it.
+
+
+if __name__ == "__main__":
+    import logging
+
+    from fastapi.testclient import TestClient
+
+    logging.disable(logging.CRITICAL)  # quiet framework logs for a clean transcript
+    client = TestClient(app)
+
+    def token(sub: str) -> str:
+        return jwt.encode(
+            {
+                "sub": sub,
+                "aud": OS_ID,
+                "scopes": [],
+                "exp": datetime.now(UTC) + timedelta(hours=24),
+            },
+            JWT_SECRET,
+            algorithm="HS256",
+        )
+
+    def auth(sub: str) -> dict:
+        return {"Authorization": f"Bearer {token(sub)}"}
+
+    def show(label: str, r, note: str = "") -> None:
+        verdict = "BLOCKED" if r.status_code in (401, 403) else "ALLOWED"
+        print(f"  {label:48s} -> {verdict:7s} ({r.status_code})  {note}")
+
+    print("\n" + "=" * 80)
+    print("A USER DIRECTORY - no identity provider, just AgentOS")
+    print("=" * 80)
+
+    # Everyone in the directory, with the role each one was assigned.
+    print("\n  the directory:")
+    for u in users.list():
+        role = (roles.roles_of(u["id"]) or [None])[0]
+        print(
+            f"    - {u['id']:8s} {str(u['email'] or ''):12s} role={role}  disabled={u['disabled']}"
+        )
+
+    print("\n  bob is a viewer, so he can look at the agent:")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "viewers can look",
+    )
+
+    print("\n  >> now an admin DISABLES bob (e.g. he left the company)...\n")
+    users.set_disabled("bob", True, actor="alice")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "same valid token, but he's blocked now",
+    )
+
+    print("\n  >> ...bob is back, re-enable him...\n")
+    users.set_disabled("bob", False, actor="alice")
+    show(
+        "bob asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("bob")),
+        "allowed again, instantly",
+    )
+
+    print(
+        "\n  >> a brand-new user (dave) we've NEVER seen makes his first request...\n"
+    )
+    print(f"    dave in the directory beforehand?  {users.get('dave') is not None}")
+    show(
+        "dave (unknown) asks to LOOK at the agent",
+        client.get("/agents/research-agent", headers=auth("dave")),
+        "auto-provisioned + granted the default role, so he's allowed on the same request",
+    )
+    dave_role = (roles.roles_of("dave") or [None])[0]
+    print(
+        f"    dave in the directory now?         {users.get('dave') is not None}  role={dave_role}"
+    )
+
+    print("=" * 80)
+    print(
+        "the point: you keep the list of users and an off-switch per person. disabling"
+    )
+    print("someone blocks their NEXT request even though their token is still valid -")
+    print(
+        "something you can't do with tokens alone. no passwords are ever stored here."
+    )
+    print("=" * 80)

@@ -850,6 +850,13 @@ def attach_routes(
                 db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
             )
 
+            # Falls back to the unscoped JWT sub so admin-created components still carry an owner.
+            creator_user_id = scoped_user_id or getattr(request.state, "user_id", None)
+
+            _validate_referenced_component_ownership(
+                db, config, links=links, scoped_user_id=scoped_user_id, own_component_id=component_id
+            )
+
             component, _config = db.create_component_with_config(
                 component_id=component_id,
                 component_type=DbComponentType(body.component_type.value),

@@ -1,8 +1,12 @@
 """Schemas related to the AgentOS configuration"""
 
-from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar
+from typing import Any, Callable, Dict, Generic, List, Literal, Optional, Set, TypeVar, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from agno.os.authz.audit import AuditSink
+from agno.os.authz.provider import AuthorizationProvider
+from agno.os.authz.role_store import ManagedRoleStore
 
 # Tags carried by the built-in MCP tools, exposed here so callers (and the IDE) can see
 # the valid values for ``MCPConfig.include_tags`` / ``exclude_tags`` without reading
@@ -280,12 +284,37 @@ MCPServerConfig = MCPConfig
 class AuthorizationConfig(BaseModel):
     """Configuration for the JWT middleware"""
 
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
     verification_keys: Optional[List[str]] = None
     jwks_file: Optional[str] = None
     algorithm: Optional[str] = None
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
+    # Expected token issuer (the ``iss`` claim). When set, a token minted by anyone
+    # else is rejected even if its signature verifies -- pin this whenever more than
+    # one IdP can produce tokens your verification keys accept.
+    issuer: Optional[str] = None
     admin_scope: Optional[str] = None
+    # Pluggable authorization strategy. When None, AgentOS uses scope-based RBAC
+    # (JWT/PAT scopes, no external dependency). Supply an AuthorizationProvider to
+    # swap in a richer model (managed roles, ReBAC/ABAC, OpenFGA, ...) enforced at
+    # the same points as scopes — the REST route gate, per-resource gate, WS gates,
+    # and MCP tool gate all resolve through it. Pass a LIST of them to run several
+    # authz planes at once (e.g. token scopes for operators + a managed role store
+    # for end users) — a request is allowed if any of them allows it.
+    authorization_provider: Optional[Union[AuthorizationProvider, List[AuthorizationProvider]]] = None
+    # Managed-roles shortcut: pass a ManagedRoleStore and AgentOS uses its provider
+    # (mutually exclusive with authorization_provider). If the store has no DB, AgentOS
+    # binds the OS database to it so roles persist alongside agent data.
+    role_store: Optional[ManagedRoleStore] = None
+    # Optional AuditSink. When set, AgentOS records each authorization decision
+    # (allow/deny) alongside the change trail, so you get an access audit, not just a
+    # change audit. Pass the same sink you give ManagedRoleStore to unify both.
+    audit: Optional[AuditSink] = None
+    # NOTE: the credential-less user DIRECTORY (who the users are + the disabled
+    # kill-switch) is a peer concern, not authorization -- configure it via
+    # AgentOS(user_directory=UserDirectoryConfig(...)), see UserDirectoryConfig below.
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
@@ -296,6 +325,54 @@ class AuthorizationConfig(BaseModel):
     # When False (default) JWT/RBAC still apply, but routes operate on the
     # unscoped DB and don't add per-user ownership gates on top of RBAC.
     user_isolation: bool = False
+
+    @model_validator(mode="after")
+    def _provider_xor_role_store(self) -> "AuthorizationConfig":
+        if self.role_store is not None and self.authorization_provider is not None:
+            raise ValueError(
+                "Pass either authorization_provider or role_store on AuthorizationConfig, not both — "
+                "role_store is the shortcut that wires the store's provider for you."
+            )
+        return self
+
+
+class UserDirectoryConfig(BaseModel):
+    """The credential-less user directory — WHO the users are and whether they're active.
+
+    A PEER of authorization, not a part of it: it stores no policy, only a list of people
+    with a ``disabled`` kill-switch (a revocation that outlives a valid token) and optional
+    just-in-time provisioning from token claims. Identity is still asserted by the JWT; this
+    never stores credentials. Configure via ``AgentOS(user_directory=...)`` -- separate from
+    ``authorization_config`` because "who the users are" and "what they may do" are different
+    concerns and can be adopted independently.
+
+    Requires ``AgentOS(authorization=True)``: the disabled check is enforced in the auth
+    middleware, so without it the kill-switch would never run.
+    """
+
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    # A ManagedUserStore (typed Any to avoid importing the concrete store here). Needs a SQL
+    # database -- AgentOS adopts the OS db if the store was created without one.
+    store: Any
+    # Just-in-time provisioning: when True, the first valid token from a subject not yet in
+    # the directory creates a row from the token claims below.
+    auto_provision: bool = False
+    email_claim: str = "email"
+    name_claim: str = "name"
+    # How to treat a directory read that errors (e.g. the directory DB is unreachable) while
+    # checking the disabled flag. Default False = fail OPEN (let the request through;
+    # availability over the kill-switch). True = fail CLOSED (reject 503) so a directory
+    # outage cannot silently re-enable every disabled/compromised account.
+    fail_closed: bool = False
+
+    # The role granted to a user the first time they are auto-provisioned (JIT). Single-role
+    # model (a subject holds one role): this is the code-first override -- it wins over the
+    # role flagged ``is_default`` in the role store. When None, provisioning falls back to
+    # that ``is_default`` role. If neither resolves, a new user is left with no role (denied
+    # until an admin assigns one) and a warning is logged -- never a silent grant. Only
+    # meaningful under managed roles; the scope plane has no roles to grant.
+    default_role: Optional[str] = None
 
 
 class EvalsDomainConfig(BaseModel):

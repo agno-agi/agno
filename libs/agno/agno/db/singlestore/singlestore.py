@@ -243,6 +243,16 @@ class SingleStoreDb(BaseDb):
         Returns:
             Table: SQLAlchemy Table object
         """
+        # Ensure sessions Table is registered on metadata so the runs FK can resolve.
+        # (SingleStore parses but does not enforce FKs.)
+        if table_type == "runs":
+            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
+            if fq_sessions not in self.metadata.tables:
+                self._get_or_create_table(
+                    table_name=self.session_table_name,
+                    table_type="sessions",
+                    create_table_if_not_found=True,
+                )
         table_ref = f"{self.db_schema}.{table_name}" if self.db_schema else table_name
         try:
             # Pass traces_table_name and db_schema for spans table foreign key resolution

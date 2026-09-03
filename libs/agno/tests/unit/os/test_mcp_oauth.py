@@ -537,6 +537,34 @@ async def test_invalid_jwt_rejected_with_mcp_auth():
     assert response.status_code == 401
 
 
+async def test_issuer_pin_is_enforced_on_mcp(monkeypatch):
+    """Issuer-drift regression (TOK-1). When AuthorizationConfig pins an issuer, the /mcp
+    JWT verifier must enforce it too -- not just REST. Before the fix the issuer kwarg was
+    dropped when building the MCP verifier (audience was threaded, issuer was not), so a
+    token from an untrusted issuer that REST rejects still verified on /mcp."""
+    from agno.os.config import AuthorizationConfig
+
+    os = AgentOS(
+        agents=[_agent()],
+        mcp_auth=_oauth_provider(),
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=["test-jwt-secret"], algorithm="HS256", issuer="https://trusted.example"
+        ),
+        mcp_server=MCPServerConfig(tools=[_ok_tool], enable_builtin_tools=False),
+    )
+    async with _http_client(os) as client:
+        # right issuer -> accepted
+        good = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_bearer(_mint_jwt(iss="https://trusted.example")))
+        assert good.status_code == 200
+        # wrong issuer -> rejected on /mcp, as it is on REST
+        bad = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_bearer(_mint_jwt(iss="https://evil.example")))
+        assert bad.status_code == 401
+        # no issuer claim at all -> also rejected when a pin is configured
+        none = await client.post("/mcp", json=_MCP_INIT_BODY, headers=_bearer(_mint_jwt()))
+        assert none.status_code == 401
+
+
 async def test_jwt_cannot_smuggle_trust_markers():
     """A signature-valid deployment JWT that carries agno's internal trust markers
     (agno_service_account / agno_mcp_internal_issuer / agno_authorization_enabled) must not

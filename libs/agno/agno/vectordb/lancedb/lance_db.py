@@ -163,6 +163,9 @@ class LanceDb(VectorDb):
         # Whether the live table has the ``user_id`` column; pre-v3 tables lack it.
         self._owner_column_exists: Optional[bool] = None
 
+        # Whether the live table has the ``user_id`` column; pre-v3 tables lack it.
+        self._owner_column_exists: Optional[bool] = None
+
         log_debug(f"Initialized LanceDb with table: '{self.table_name}'")
 
     def _is_cloud(self) -> bool:

@@ -117,6 +117,11 @@ class BaseRunOutputEvent(_EventIndexCarrier):
         if self.event_index is not None:
             _dict["event_index"] = self.event_index
 
+        # Not a dataclass field (3.9-compatible class attribute - see its
+        # declaration), so asdict() misses it: carry it explicitly
+        if self.event_index is not None:
+            _dict["event_index"] = self.event_index
+
         if hasattr(self, "metadata") and self.metadata is not None:
             _dict["metadata"] = self.metadata
 

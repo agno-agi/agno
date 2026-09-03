@@ -1,0 +1,538 @@
+"""Integration tests for ManagedRoleStore — the agno-native managed-roles tier.
+
+Verifies the governance product surface end to end: roles defined in agno scope
+terms, runtime assign/revoke, persistence to a DB, and enforcement through the
+AgentOS request pipeline via the store's provider. No engine types appear in the
+test body — the same as user code.
+"""
+
+from datetime import UTC, datetime, timedelta
+
+import jwt
+import pytest
+from fastapi.testclient import TestClient
+
+pytest.importorskip("sqlalchemy")  # managed roles persist/enforce via the native engine + SQLAlchemy
+
+from agno.agent import Agent  # noqa: E402
+from agno.db.in_memory import InMemoryDb  # noqa: E402
+from agno.os import AgentOS  # noqa: E402
+from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.config import AuthorizationConfig  # noqa: E402
+
+SECRET = "managed-roles-test-secret-at-least-256-bits-long-xxxxx"
+OS_ID = "managed-roles-test-os"
+
+
+def _db_url() -> str:
+    """A throwaway file-backed SQLite URL. Managed roles require a DB (no in-memory
+    mode); file-backed so the same DB is visible across the threads TestClient uses."""
+    import os
+    import tempfile
+
+    fd, path = tempfile.mkstemp(suffix=".authz.db")
+    os.close(fd)
+    return f"sqlite:///{path}"
+
+
+def _token(sub: str) -> str:
+    return jwt.encode(
+        {"sub": sub, "aud": OS_ID, "scopes": [], "exp": datetime.now(UTC) + timedelta(hours=1)},
+        SECRET,
+        algorithm="HS256",
+    )
+
+
+def _build(store: ManagedRoleStore) -> TestClient:
+    agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
+    other = Agent(id="other-agent", name="Other Agent", db=InMemoryDb())
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent, other],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=store.provider,
+        ),
+    )
+    return TestClient(agent_os.get_app())
+
+
+def _auth(sub: str) -> dict:
+    return {"Authorization": f"Bearer {_token(sub)}"}
+
+
+def test_role_scopes_enforced_through_pipeline():
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("viewer", ["agents:*:read"])
+    store.set_role_scopes("admin", ["agent_os:admin"])
+    store.assign("bob", "viewer")
+    store.assign("alice", "admin")
+    client = _build(store)
+
+    # viewer can read
+    assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
+    # viewer cannot run
+    r = client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"})
+    assert r.status_code == 403
+    # admin can run
+    r = client.post("/agents/research-agent/runs", headers=_auth("alice"), data={"message": "hi"})
+    assert r.status_code != 403
+
+
+def test_unassigned_subject_is_denied():
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("viewer", ["agents:*:read"])
+    client = _build(store)
+    assert client.get("/agents/research-agent", headers=_auth("nobody")).status_code == 403
+
+
+def test_runtime_grant_takes_effect_same_token():
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("member", ["agents:*:read", "agents:research-agent:run"])
+    client = _build(store)
+
+    # bob has no role yet -> denied to run, with a stable token
+    headers = _auth("bob")
+    assert client.post("/agents/research-agent/runs", headers=headers, data={"message": "hi"}).status_code == 403
+
+    # grant at runtime; SAME token
+    store.assign("bob", "member")
+    assert client.post("/agents/research-agent/runs", headers=headers, data={"message": "hi"}).status_code != 403
+
+    # revoke at runtime; SAME token
+    store.unassign("bob", "member")
+    assert client.post("/agents/research-agent/runs", headers=headers, data={"message": "hi"}).status_code == 403
+
+
+def test_per_resource_scope_is_granular():
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("member", ["agents:*:read", "agents:research-agent:run"])
+    store.assign("bob", "member")
+    client = _build(store)
+
+    # may run the specific agent
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code != 403
+    # but not a different one
+    assert client.post("/agents/other-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
+
+
+def test_roles_from_external_idp_claim():
+    """Roles carried on the token (external IdP) authorize against the same store."""
+    store = ManagedRoleStore(roles_claim="roles", db_url=_db_url())
+    store.set_role_scopes("editor", ["agents:*:read", "agents:research-agent:run"])
+    client = _build(store)
+
+    # token carries roles=["editor"]; sub is unknown to the store
+    tok = jwt.encode(
+        {
+            "sub": "idp-user-999",
+            "aud": OS_ID,
+            "scopes": [],
+            "roles": ["editor"],
+            "exp": datetime.now(UTC) + timedelta(hours=1),
+        },
+        SECRET,
+        algorithm="HS256",
+    )
+    headers = {"Authorization": f"Bearer {tok}"}
+    assert client.post("/agents/research-agent/runs", headers=headers, data={"message": "hi"}).status_code != 403
+
+
+def test_non_resource_routes_are_gated_sessions():
+    """Sessions endpoints (which the middleware can't tag with a resource_type)
+    are governed by the same role policy — read/write/delete enforced, not open.
+    """
+    from agno.session import AgentSession
+
+    db = InMemoryDb()
+    db.upsert_session(AgentSession(session_id="s1", agent_id="research-agent", user_id="u"))
+
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("support", ["sessions:read"])  # read only
+    store.set_role_scopes("operator", ["sessions:read", "sessions:delete"])
+    store.set_role_scopes("admin", ["agent_os:admin"])
+    store.assign("bob", "support")
+    store.assign("val", "operator")
+    store.assign("alice", "admin")
+
+    agent = Agent(id="research-agent", name="Research Agent", db=db)
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=store.provider,
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+
+    # support can view but NOT delete (the gap this closes: previously open)
+    assert client.get("/sessions?type=agent", headers=_auth("bob")).status_code == 200
+    assert client.delete("/sessions/s1", headers=_auth("bob")).status_code == 403
+    # operator can delete
+    assert client.delete("/sessions/s1", headers=_auth("val")).status_code != 403
+    # admin can view
+    assert client.get("/sessions?type=agent", headers=_auth("alice")).status_code == 200
+    # a subject with no role is denied even on a non-resource route
+    assert client.get("/sessions?type=agent", headers=_auth("nobody")).status_code == 403
+
+
+def test_management_helpers():
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("a", ["agents:*:read"])
+    store.set_role_scopes("b", ["teams:*:read"])
+    store.assign("bob", "a")
+    assert store.roles_of("bob") == ["a"]
+    # One role per subject: assigning another REPLACES, never stacks.
+    store.assign("bob", "b")
+    assert set(store.list_roles()) == {"a", "b"}
+    assert store.roles_of("bob") == ["b"]
+    # Re-assigning the same role is a no-op.
+    store.assign("bob", "b")
+    assert store.roles_of("bob") == ["b"]
+    store.unassign("bob", "b")
+    assert store.roles_of("bob") == []
+
+
+def test_role_store_shortcut_wires_provider_and_defaults_os_db(tmp_path):
+    """#4: AuthorizationConfig(role_store=...) wires the store's provider (no manual
+    .provider). #3: a store with no DB of its own adopts the OS DB when AgentOS wires
+    it (a DB is required — there is no in-memory mode), and roles persist there."""
+    from agno.db.sqlite import SqliteDb
+
+    store = ManagedRoleStore()  # no DB yet -> AgentOS will adopt the OS DB
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    agent = Agent(id="research-agent", name="R", db=db)
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            role_store=store,  # <- the shortcut; AgentOS adopts the OS db + uses store.provider
+        ),
+    )
+    client = TestClient(agent_os.get_app())  # adopts the OS DB -> store is now bound
+
+    # configure after wiring (the store is bound to the OS DB now)
+    store.set_role_scopes("viewer", ["agents:*:read"])
+    store.assign("bob", "viewer")
+    assert store.is_bound is True
+    assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
+    assert client.get("/agents/research-agent", headers=_auth("nobody")).status_code == 403
+
+    # roles persisted to the OS DB -> a fresh store on the same DB sees them
+    fresh = ManagedRoleStore(db=db)
+    assert fresh.roles_of("bob") == ["viewer"]
+    assert fresh.get_role_scopes("viewer") == ["agents:read"]
+
+
+def test_managed_roles_enforce_on_rest_gate_via_shortcut(tmp_path):
+    """The payoff, end to end on the v2.7 REST route gate: an AgentOS wired with the
+    ``role_store=`` shortcut (no manual .provider) enforces a managed role for a caller
+    whose JWT carries NO scopes at all — the ``viewer`` role (agents:*:read) is resolved
+    from the store, not the token. Same viewer, same token: GET /agents/{id} is 200 but
+    POST /agents/{id}/runs is 403, proving action granularity flows through the same gate
+    that v2.7 gates scopes on. With no provider configured this gate is byte-identical
+    scope RBAC; here it is managed roles, at the very same choke point."""
+    from agno.db.sqlite import SqliteDb
+
+    store = ManagedRoleStore()  # no DB of its own -> AgentOS adopts the OS DB
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    agent = Agent(id="research-agent", name="R", db=db)
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            role_store=store,  # the shortcut: AgentOS binds the OS db + uses store.provider
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+
+    # viewer = read-only on agents; assigned to bob via the store (not via any token scope)
+    store.set_role_scopes("viewer", ["agents:*:read"])
+    store.assign("bob", "viewer")
+
+    # The token carries scopes: [] — authorization comes entirely from the managed role.
+    assert jwt.decode(_token("bob"), SECRET, algorithms=["HS256"], audience=OS_ID)["scopes"] == []
+
+    # read allowed, run denied — same subject, same (empty-scope) token
+    assert client.get("/agents/research-agent", headers=_auth("bob")).status_code == 200
+    assert client.post("/agents/research-agent/runs", headers=_auth("bob"), data={"message": "hi"}).status_code == 403
+
+
+def test_role_store_and_provider_are_mutually_exclusive():
+    from agno.os.authz.scope_provider import ScopeAuthorizationProvider
+
+    with pytest.raises(ValueError, match="not both"):
+        AuthorizationConfig(role_store=ManagedRoleStore(), authorization_provider=ScopeAuthorizationProvider())
+
+
+def test_role_store_without_any_db_fails_loud_at_wiring():
+    """A managed store with no DB, wired into an AgentOS that also has no SQL DB,
+    must fail loudly rather than silently run an in-memory store that can't stay
+    consistent across replicas."""
+    store = ManagedRoleStore()  # no DB
+    agent = Agent(id="research-agent", name="R", db=InMemoryDb())  # not SQL-capable
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            role_store=store,
+        ),
+    )
+    with pytest.raises(ValueError, match="needs a SQL database"):
+        agent_os.get_app()
+
+
+def test_deny_override_is_not_leaked_by_the_list_endpoint():
+    """Regression: a per-resource deny must be carved out of GET /agents, not just
+    the per-resource gate.
+
+    The deny-aware ``filter_accessible`` was previously dead on the request path:
+    the route gate cached an allow-only ``accessible_resource_ids`` of ``{"*"}`` on
+    ``request.state`` and the listing short-circuited on it, so ``GET /agents/{id}``
+    correctly 403'd while ``GET /agents`` still returned the denied agent's full
+    response body. This drives real HTTP so the whole pipeline is covered.
+    """
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:other-agent:read", "deny")])
+    store.assign("bob", "analyst")
+    client = _build(store)
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    # the per-resource gate denies the excluded agent...
+    assert client.get("/agents/other-agent", headers=headers).status_code == 403
+    assert client.get("/agents/research-agent", headers=headers).status_code == 200
+
+    # ...and the listing must agree, rather than disclosing it
+    listing = client.get("/agents", headers=headers)
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent"}
+
+
+def test_wildcard_allow_without_denies_still_lists_everything():
+    """The narrowing added for deny-overrides must not over-filter the common case."""
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("reader", ["agents:*:read"])
+    store.assign("ana", "reader")
+    client = _build(store)
+
+    listing = client.get("/agents", headers={"Authorization": f"Bearer {_token('ana')}"})
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent", "other-agent"}
+
+
+def test_per_resource_grant_lists_only_that_resource():
+    """A caller holding only a concrete per-resource scope (the path that populates
+    the request-state id cache) still sees exactly their one agent."""
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("narrow", ["agents:research-agent:read"])
+    store.assign("nick", "narrow")
+    client = _build(store)
+
+    listing = client.get("/agents", headers={"Authorization": f"Bearer {_token('nick')}"})
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent"}
+
+
+def test_concurrent_assign_keeps_exactly_one_role():
+    """Regression: assign() must be atomic.
+
+    It was read-then-unassign-then-assign across three transactions. Two concurrent
+    assigns each cleared only the role their stale read had seen, so the subject ended
+    up durably holding BOTH -- a demote racing any other change silently left the user
+    with the privileged role they were supposed to lose. The same gap also left a window
+    with zero roles, denying requests in flight during any ordinary role change.
+    """
+    import threading
+
+    store = ManagedRoleStore(db_url=_db_url())
+    for role in ("base", "admin", "member"):
+        store.set_role_scopes(role, ["agents:*:read"])
+
+    for _ in range(25):
+        store.assign("bob", "base")  # neither contender equals the current role
+        barrier = threading.Barrier(2)
+
+        def assign_role(role):
+            barrier.wait()
+            store.assign("bob", role)
+
+        threads = [threading.Thread(target=assign_role, args=(r,)) for r in ("admin", "member")]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+
+        roles = store.roles_of("bob")
+        assert len(roles) == 1, f"one role per subject violated: {roles}"
+        assert roles[0] in ("admin", "member")
+
+
+def test_request_scoped_cache_does_not_outlive_the_request(tmp_path):
+    """The per-request memo must never behave like an in-process cache.
+
+    NativePolicyEngine deliberately keeps no cache so a revocation on one replica is
+    enforced everywhere on the next request. Deduplicating the repeated lookups within
+    ONE request preserves that exactly -- these assertions are what says so.
+    """
+    url = f"sqlite:///{tmp_path / 'roles.db'}"
+    store = ManagedRoleStore(db_url=url)
+    store.set_role_scopes("member", ["agents:*:read"])
+    store.assign("bob", "member")
+    client = _build(store)
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    assert client.get("/agents/research-agent", headers=headers).status_code == 200
+
+    # revoked between requests -> enforced on the very next one
+    store.unassign("bob", "member")
+    assert client.get("/agents/research-agent", headers=headers).status_code == 403
+
+    # revoked by a DIFFERENT store on the same db (another worker/replica)
+    store.assign("bob", "member")
+    assert client.get("/agents/research-agent", headers=headers).status_code == 200
+    ManagedRoleStore(db_url=url).unassign("bob", "member")
+    assert client.get("/agents/research-agent", headers=headers).status_code == 403
+
+
+def test_request_scoped_cache_still_honours_deny_overrides(tmp_path):
+    """Deduplication must not collapse the allow and deny lookups into a wrong answer."""
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("analyst", [("agents:*:read", "allow"), ("agents:other-agent:read", "deny")])
+    store.assign("bob", "analyst")
+    client = _build(store)
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    assert client.get("/agents/other-agent", headers=headers).status_code == 403
+    listing = client.get("/agents", headers=headers)
+    assert listing.status_code == 200
+    assert {a["id"] for a in listing.json()} == {"research-agent"}
+
+
+def test_a_write_is_visible_to_the_rest_of_its_own_request():
+    """A mutation clears the request memo, so a request that changes policy and then
+    asks a question sees its own write rather than the answer it cached beforehand."""
+    from agno.os.authz._request_scope import request_scope
+
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("member", ["agents:*:read"])
+
+    with request_scope():
+        assert store.provider.check(_ctx_for("bob")) is False  # cached: no roles
+        store.assign("bob", "member")  # ... then granted, inside the same scope
+        assert store.provider.check(_ctx_for("bob")) is True
+
+
+def _ctx_for(subject: str):
+    from agno.os.authz.provider import AuthorizationContext
+
+    return AuthorizationContext(
+        principal_id=subject, resource_type="agents", resource_id="research-agent", action="read"
+    )
+
+
+def test_every_mutation_makes_itself_visible_to_its_own_request():
+    """Regression: REVOKES must invalidate the request memo, not just grants.
+
+    The memo was cleared by four of the six mutators. The two that were missed --
+    ``_delete_policy`` and ``_delete_grouping_role`` -- are exactly the revoke paths,
+    so a request that removed a scope or a role kept answering from the pre-revoke
+    answer: the admin API read back the removed scope, and the audit trail recorded
+    the change with after == before, permanently, in an append-only log.
+    """
+    from agno.os.authz._request_scope import request_scope
+    from agno.os.authz.provider import AuthorizationContext
+
+    ctx = AuthorizationContext(principal_id="bob", resource_type="agents", resource_id="a1", action="read")
+
+    # revoking a scope (reaches _delete_policy)
+    store = ManagedRoleStore(db_url=_db_url())
+    store.set_role_scopes("r", ["agents:*:read"])
+    store.assign("bob", "r")
+    with request_scope():
+        assert store.provider.check(ctx) is True
+        store.patch_role_scopes("r", remove=["agents:*:read"])
+        assert store.provider.check(ctx) is False, "revoked scope still allowed inside the same request"
+
+    # revoking the whole role (reaches _delete_grouping_role)
+    store2 = ManagedRoleStore(db_url=_db_url())
+    store2.set_role_scopes("r", ["agents:*:read"])
+    store2.assign("bob", "r")
+    with request_scope():
+        assert store2.provider.check(ctx) is True
+        store2.remove_role("r")
+        assert store2.provider.check(ctx) is False, "removed role still allowed inside the same request"
+
+
+def test_db_registered_teams_are_filtered_like_configured_ones(tmp_path):
+    """Regression: teams and workflows loaded FROM THE DATABASE must be RBAC-filtered.
+
+    The agents router filtered its db-loaded agents; teams and workflows appended theirs
+    to the response unfiltered, so a team registered in the database was listed to every
+    caller -- including one the per-resource gate 403s. A wildcard allow plus a
+    per-resource deny leaked the denied team's identity on every list request.
+    """
+    from agno.agent import Agent
+    from agno.db.base import ComponentType
+    from agno.db.sqlite import SqliteDb
+    from agno.os import AgentOS
+
+    db = SqliteDb(db_file=str(tmp_path / "os.db"))
+    for team_id, team_name in (("db-secret-team", "Secret"), ("db-public-team", "Public")):
+        db.upsert_component(component_id=team_id, component_type=ComponentType.TEAM, name=team_name)
+        db.upsert_config(component_id=team_id, config={"config": {"id": team_id, "name": team_name, "members": []}})
+
+    store = ManagedRoleStore(db_url=f"sqlite:///{tmp_path / 'roles.db'}")
+    store.set_role_scopes("analyst", [("teams:*:read", "allow"), ("teams:db-secret-team:read", "deny")])
+    store.assign("bob", "analyst")
+
+    agent_os = AgentOS(
+        id=OS_ID,
+        agents=[Agent(id="a1", name="A", db=db)],
+        db=db,
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            verify_audience=True,
+            audience=OS_ID,
+            authorization_provider=store.provider,
+        ),
+    )
+    client = TestClient(agent_os.get_app())
+    headers = {"Authorization": f"Bearer {_token('bob')}"}
+
+    listing = client.get("/teams", headers=headers)
+    assert listing.status_code == 200, listing.text
+    listed = {t["id"] for t in listing.json()}
+    assert "db-secret-team" not in listed, f"denied db team leaked into the listing: {listed}"
+    assert "db-public-team" in listed  # and the allowed one is still there
+
+    # the listing agrees with the per-resource gate
+    assert client.get("/teams/db-secret-team", headers=headers).status_code == 403
