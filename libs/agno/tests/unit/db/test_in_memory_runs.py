@@ -164,7 +164,7 @@ class TestUpsertRun:
 
     def test_update_preserves_original_run_index(self, db_with_two_sessions):
         # Simulate an existing run with a specific run_index
-        db_with_two_sessions._sessions[0]["runs"][0]["run_index"] = 42
+        db_with_two_sessions._sessions["s1"]["runs"][0]["run_index"] = 42
         updated = _make_run("r1", "s1", "updated")
         db_with_two_sessions.upsert_run(run=updated, session_id="s1", user_id="alice", run_index=99)
         rows, _ = db_with_two_sessions.get_runs(session_id="s1", deserialize=False)
@@ -202,7 +202,7 @@ class TestDeleteRun:
         assert db_with_two_sessions.delete_run("does-not-exist") is False
 
     def test_delete_updates_session_updated_at(self, db_with_two_sessions):
-        stored = next(s for s in db_with_two_sessions._sessions if s["session_id"] == "s1")
+        stored = db_with_two_sessions._sessions["s1"]
         # Set updated_at to a sentinel low value so we can detect the bump without sleeping.
         stored["updated_at"] = 1
         db_with_two_sessions.delete_run("r1")

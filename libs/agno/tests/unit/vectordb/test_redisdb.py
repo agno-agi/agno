@@ -101,12 +101,12 @@ def stub_redisvl(monkeypatch):
 
 @pytest.fixture()
 def import_redisdb(stub_redisvl):
-    """Import RedisVectorDb after stubbing dependencies and return (RedisVectorDb, search_idx_mock)."""
+    """Import RedisDb after stubbing dependencies and return (RedisDb, search_idx_mock)."""
     # Delayed import to ensure patches are in place
-    from agno.vectordb.redis import RedisVectorDb  # type: ignore
+    from agno.vectordb.redis import RedisDb  # type: ignore
 
     search_idx_mock, async_idx_mock = stub_redisvl
-    return RedisVectorDb, search_idx_mock, async_idx_mock
+    return RedisDb, search_idx_mock, async_idx_mock
 
 
 @pytest.fixture()
@@ -120,9 +120,9 @@ def sample_documents() -> List[Document]:
 
 @pytest.fixture()
 def redis_db(import_redisdb, mock_embedder):
-    RedisVectorDb, _search_idx_mock, _ = import_redisdb
+    RedisDb, _search_idx_mock, _ = import_redisdb
 
-    db = RedisVectorDb(
+    db = RedisDb(
         index_name="test_index",
         redis_url="redis://localhost:6379/0",
         embedder=mock_embedder,

@@ -107,6 +107,34 @@ def test_mongo_get_schedules_returns_paginated_items_and_total(monkeypatch: pyte
     collection.count_documents.assert_called_once_with({"enabled": True})
 
 
+def test_mongo_get_schedules_default_swallows_error(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.count_documents.side_effect = RuntimeError("forced failure")
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    assert db.get_schedules() == ([], 0)
+
+
+def test_mongo_get_schedules_raise_on_error_reraises(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.count_documents.side_effect = RuntimeError("forced failure")
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        db.get_schedules(raise_on_error=True)
+
+
+def test_mongo_get_schedules_collection_none_raises_under_flag(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: None)
+
+    assert db.get_schedules() == ([], 0)
+    with pytest.raises(RuntimeError, match="schedules table unavailable"):
+        db.get_schedules(raise_on_error=True)
+
+
 def test_mongo_create_schedule_inserts_and_returns_data(monkeypatch: pytest.MonkeyPatch):
     db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
     collection = Mock()
@@ -402,6 +430,37 @@ async def test_async_mongo_get_schedules_returns_paginated_items_and_total(monke
 
 
 @pytest.mark.asyncio
+async def test_async_mongo_get_schedules_default_swallows_error(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = MagicMock()
+    collection.count_documents = AsyncMock(side_effect=RuntimeError("forced failure"))
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    assert await db.get_schedules() == ([], 0)
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_get_schedules_raise_on_error_reraises(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = MagicMock()
+    collection.count_documents = AsyncMock(side_effect=RuntimeError("forced failure"))
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        await db.get_schedules(raise_on_error=True)
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_get_schedules_collection_none_raises_under_flag(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=None))
+
+    assert await db.get_schedules() == ([], 0)
+    with pytest.raises(RuntimeError, match="schedules table unavailable"):
+        await db.get_schedules(raise_on_error=True)
+
+
+@pytest.mark.asyncio
 async def test_async_mongo_create_schedule_inserts_and_returns_data(monkeypatch: pytest.MonkeyPatch):
     db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
     collection = AsyncMock()
@@ -549,3 +608,103 @@ async def test_async_mongo_get_schedule_runs_returns_paginated_items_and_total(m
         {"id": "run-1", "schedule_id": "sched-1"},
         {"id": "run-2", "schedule_id": "sched-1"},
     ]
+
+
+# =============================================================================
+# Studio 3.0 schedule governance on Mongo
+#
+# Both primitives used to fall through to BaseDb's NotImplementedError, which
+# StudioTools swallows: a Studio schedule on Mongo persisted enabled but without
+# managed-target provenance, so archiving its component reported success without
+# disabling it and the executor skipped its managed-target validation.
+# =============================================================================
+
+
+def test_mongo_stamp_schedule_provenance_writes_control_plane_columns(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.update_one.return_value = Mock(matched_count=1)
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    assert db.stamp_schedule_provenance("sched-1", managed_by="studio", target_type="agent", target_id="analyst")
+    query, update = collection.update_one.call_args[0]
+    assert query == {"id": "sched-1"}
+    assert update["$set"]["managed_by"] == "studio"
+    assert update["$set"]["target_type"] == "agent"
+    assert update["$set"]["target_id"] == "analyst"
+
+
+def test_mongo_stamp_schedule_provenance_refuses_everything_else(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: Mock())
+
+    with pytest.raises(ValueError, match="cannot write"):
+        db.stamp_schedule_provenance("sched-1", user_id="mallory")
+
+
+def test_mongo_stamp_schedule_provenance_missing_row_returns_false(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.update_one.return_value = Mock(matched_count=0)
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    assert db.stamp_schedule_provenance("missing", managed_by="studio") is False
+
+
+def test_mongo_disable_schedules_for_target_matches_tagged_and_generic_rows(monkeypatch: pytest.MonkeyPatch):
+    db = MongoDb(db_client=MagicMock(), db_name="test_db")  # type: ignore[arg-type]
+    collection = Mock()
+    collection.update_many.return_value = Mock(modified_count=3)
+    monkeypatch.setattr(db, "_get_collection", lambda table_type: collection)
+
+    count = db.disable_schedules_for_target("agent", "analyst", reason="target_archived:agent:analyst")
+
+    assert count == 3
+    query, update = collection.update_many.call_args[0]
+    assert query["enabled"] is True
+    # Provenance-tagged rows, plus generic rows by endpoint in both spellings
+    # RUN_ENDPOINT_RE accepts.
+    assert {"target_type": "agent", "target_id": "analyst"} in query["$or"]
+    assert {"endpoint": {"$in": ["/agents/analyst/runs", "/agents/analyst/runs/"]}} in query["$or"]
+    assert update["$set"]["enabled"] is False
+    assert update["$set"]["disabled_reason"] == "target_archived:agent:analyst"
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_stamp_schedule_provenance_writes_control_plane_columns(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = MagicMock()
+    collection.update_one = AsyncMock(return_value=Mock(matched_count=1))
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    assert await db.stamp_schedule_provenance("sched-1", managed_by="studio", target_id="analyst")
+    _, update = collection.update_one.call_args[0]
+    assert update["$set"]["managed_by"] == "studio"
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_stamp_schedule_provenance_refuses_everything_else(monkeypatch: pytest.MonkeyPatch):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=MagicMock()))
+
+    with pytest.raises(ValueError, match="cannot write"):
+        await db.stamp_schedule_provenance("sched-1", enabled=False)
+
+
+@pytest.mark.asyncio
+async def test_async_mongo_disable_schedules_for_target_matches_both_endpoint_spellings(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    db = AsyncMongoDb(db_url="mongodb://localhost:27017", db_name="test_db")
+    collection = MagicMock()
+    collection.update_many = AsyncMock(return_value=Mock(modified_count=2))
+    monkeypatch.setattr(db, "_get_collection", AsyncMock(return_value=collection))
+
+    count = await db.disable_schedules_for_target("workflow", "w1", reason="target_archived:workflow:w1")
+
+    assert count == 2
+    query, update = collection.update_many.call_args[0]
+    assert {"endpoint": {"$in": ["/workflows/w1/runs", "/workflows/w1/runs/"]}} in query["$or"]
+    assert update["$set"]["disabled_reason"] == "target_archived:workflow:w1"

@@ -221,14 +221,14 @@ class TestTypedOutcomeFinality:
     async def test_fallback_allowed_decision_table(self):
         assert fallback_allowed(RunPersistOutcome.MISSING) is True
         assert fallback_allowed(RunPersistOutcome.UNAVAILABLE) is True
-        assert fallback_allowed(RunPersistOutcome.UNAVAILABLE, 3) is True, (
+        assert fallback_allowed(RunPersistOutcome.UNAVAILABLE) is True, (
             "no primitive: the fallback is the only write path, fenced callers included"
         )
         assert fallback_allowed(RunPersistOutcome.UPDATED) is False
         assert fallback_allowed(RunPersistOutcome.STALE_ATTEMPT) is False
-        assert fallback_allowed(RunPersistOutcome.STALE_ATTEMPT, 1) is False
+        assert fallback_allowed(RunPersistOutcome.STALE_ATTEMPT) is False
         assert fallback_allowed(RunPersistOutcome.TERMINAL_REFUSED) is False
-        assert fallback_allowed(RunPersistOutcome.TERMINAL_REFUSED, 1) is False
+        assert fallback_allowed(RunPersistOutcome.TERMINAL_REFUSED) is False
 
 
 class TestFenceFinality:
@@ -287,7 +287,7 @@ class TestFenceFinality:
 
         result = await apersist_run_status(FakeAgent(), "agent", "s1", "r1", {"status": "error"})
         assert result is RunPersistOutcome.UNAVAILABLE
-        assert fallback_allowed(result, 1) is True, "no atomic primitive: fallback is the only option"
+        assert fallback_allowed(result) is True, "no atomic primitive: fallback is the only option"
 
 
 class TestGenerationStamping:
@@ -323,7 +323,7 @@ class TestGenerationStamping:
             FakeAgent(), "agent", "s1", "r1", {"status": RunStatus.error.value}, expected_attempt=1
         )
         assert r is RunPersistOutcome.STALE_ATTEMPT, "zombie must be fenced by the stamped generation"
-        assert fallback_allowed(r, 1) is False
+        assert fallback_allowed(r) is False
         assert stored["status"] == "running", "zombie write must not land"
 
 

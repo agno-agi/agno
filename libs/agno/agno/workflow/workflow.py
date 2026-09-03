@@ -14,6 +14,7 @@ from typing import (
     List,
     Literal,
     Optional,
+    Set,
     Tuple,
     Type,
     Union,
@@ -22,19 +23,27 @@ from typing import (
 )
 from uuid import uuid4
 
-from fastapi import WebSocket
 from pydantic import BaseModel
 
 if TYPE_CHECKING:
+    from fastapi import WebSocket
+
     from agno.os.managers import WebSocketHandler
+else:
+    # fastapi only ships with the "os" extra. Binding WebSocket loosely keeps
+    # the websocket annotations resolvable by get_type_hints() -- and with
+    # them Function.from_callable() on run methods -- without importing it.
+    WebSocket = Any
 
 from agno.agent.agent import Agent
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, SessionType
+from agno.db.schemas.scheduler import strip_reserved_run_metadata
 from agno.db.utils import resolve_db_from_config
 from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, File, Image, Video
+from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+from agno.metrics import RunMetrics, SessionMetrics
 from agno.models.message import Message
-from agno.models.metrics import RunMetrics, SessionMetrics
 from agno.registry import Registry
 from agno.run import RunContext, RunStatus
 from agno.run.agent import (
@@ -339,6 +348,147 @@ class WorkflowLinkCollisionError(ValueError):
     """Raised when a save produces two different pins for one link key."""
 
 
+# Container step types, as serialized by each container's ``to_dict``. A
+# config walked from the db has dicts where an in-process workflow has step
+# objects, and both must produce the same links.
+_CONTAINER_STEP_TYPES = {"parallel", "loop", "steps", "condition"}
+
+
+def _step_link_children(step: Any) -> Optional[Tuple[List[Any], List[Any]]]:
+    """The nested steps of a container step, as (steps, else_steps).
+
+    Returns None for a leaf step, which is what carries the links. Accepts
+    either a step object or its serialized dict.
+    """
+    if isinstance(step, dict):
+        step_type = str(step.get("type") or "Step").strip().lower()
+        if step_type == "router":
+            return list(step.get("choices") or []), []
+        if step_type in _CONTAINER_STEP_TYPES:
+            return list(step.get("steps") or []), list(step.get("else_steps") or [])
+        return None
+    if isinstance(step, Router):
+        return list(getattr(step, "choices", None) or []), []
+    if isinstance(step, (Parallel, Loop, Steps, Condition)):
+        return list(getattr(step, "steps", None) or []), list(getattr(step, "else_steps", None) or [])
+    return None
+
+
+def _step_link_specs(step: Any, position: int) -> List[Dict[str, Any]]:
+    """Unpinned links for one leaf step, from a step object or its dict.
+
+    The dict branch mirrors ``Step.get_links`` exactly - same order, same
+    ``step_id or name`` key - so a workflow written from a config produces the
+    same rows as one written from live objects.
+    """
+    if isinstance(step, Step):
+        return step.get_links(position=position)
+    if not isinstance(step, dict):
+        return []
+    link_key = step.get("step_id") or step.get("name")
+    links: List[Dict[str, Any]] = []
+    for config_key, link_kind in (
+        ("agent_id", "step_agent"),
+        ("team_id", "step_team"),
+        ("workflow_id", "step_workflow"),
+    ):
+        child_component_id = step.get(config_key)
+        if not child_component_id:
+            continue
+        links.append(
+            {
+                "link_kind": link_kind,
+                "link_key": link_key,
+                "child_component_id": child_component_id,
+                "child_version": None,
+                "position": position,
+            }
+        )
+    return links
+
+
+def derive_step_links(
+    steps: Any,
+    *,
+    pin_child: Callable[[Dict[str, Any]], Optional[Dict[str, Any]]],
+    on_step: Optional[Callable[[Any], None]] = None,
+    workflow_id: Optional[str] = None,
+) -> List[Dict[str, Any]]:
+    """Build a workflow version's ``component_links`` rows from its steps.
+
+    Every surface that persists a workflow config - the SDK save, the studio
+    tools and the REST config routes - must derive the same rows, or the same
+    workflow pins different children depending on how it was written and the
+    archive/publish guards that read those rows disagree with each other. The
+    traversal, the link keys, the positions and the collision rule live here so
+    there is one answer; each caller supplies only how a child is pinned.
+
+    Args:
+        steps: The workflow's steps, as step objects or serialized dicts.
+        pin_child: Called with each unpinned link; returns the link to keep
+            (usually with ``child_version`` filled in) or None to drop it.
+        on_step: Called with each leaf step before its links are pinned, for
+            callers that persist a step's children first.
+        workflow_id: The parent workflow id, named in the collision error.
+
+    Returns:
+        The links to persist, deduplicated on (link_kind, link_key).
+
+    Raises:
+        WorkflowLinkCollisionError: If one link key would pin two different
+            children or versions.
+    """
+    collected: List[Dict[str, Any]] = []
+
+    def walk(step: Any, position: int, key_suffix: str) -> None:
+        children = _step_link_children(step)
+        if children is None:
+            if on_step is not None:
+                on_step(step)
+            for link in _step_link_specs(step, position):
+                if key_suffix:
+                    link["link_key"] = f"{link.get('link_key')}{key_suffix}"
+                pinned = pin_child(link)
+                if pinned is not None:
+                    collected.append(pinned)
+            return
+        nested_steps, else_steps = children
+        for nested_position, nested_step in enumerate(nested_steps):
+            walk(nested_step, nested_position, key_suffix)
+        # The links table keys on (link_kind, link_key); an else-step that
+        # shares a name with an if-step must not collide with it.
+        for nested_position, nested_step in enumerate(else_steps):
+            walk(nested_step, nested_position, f"{key_suffix}#else")
+
+    for position, step in enumerate(steps if isinstance(steps, list) else []):
+        walk(step, position, "")
+
+    # A remaining duplicate (steps sharing a name across containers) would fail
+    # the whole write, and silently dropping one of two different pins would
+    # float that child to its latest version forever.
+    seen_links: Dict[tuple, Dict[str, Any]] = {}
+    deduped_links: List[Dict[str, Any]] = []
+    for link in collected:
+        dedupe_key = (link.get("link_kind"), link.get("link_key"))
+        existing = seen_links.get(dedupe_key)
+        if existing is not None:
+            if (existing.get("child_component_id"), existing.get("child_version")) == (
+                link.get("child_component_id"),
+                link.get("child_version"),
+            ):
+                continue
+            raise WorkflowLinkCollisionError(
+                f"Workflow '{workflow_id}' produces two different links for key "
+                f"'{link.get('link_key')}' ('{existing.get('child_component_id')}' "
+                f"v{existing.get('child_version')} and "
+                f"'{link.get('child_component_id')}' v{link.get('child_version')}); "
+                "give steps distinct names so every pin is kept."
+            )
+        seen_links[dedupe_key] = link
+        deduped_links.append(link)
+    return deduped_links
+
+
 def _step_from_dict(
     data: Dict[str, Any],
     registry: Optional["Registry"] = None,
@@ -404,6 +554,27 @@ WorkflowSteps = Union[
 ]
 
 
+def _record_input_media(
+    run_response: "WorkflowRunOutput",
+    images: List[Image],
+    videos: List[Video],
+    audio: List[Audio],
+    files: List[File],
+) -> None:
+    """Put the caller's input media on the run so a pause persists it.
+
+    The lists are the same objects the executor extends, so the run tracks them.
+    """
+    if images:
+        run_response.images = images
+    if videos:
+        run_response.videos = videos
+    if audio:
+        run_response.audio = audio
+    if files:
+        run_response.files = files
+
+
 @dataclass
 class Workflow:
     """Pipeline-based workflow execution"""
@@ -446,6 +617,11 @@ class Workflow:
 
     # Persist the events on the run response
     store_events: bool = False
+    # If True, store media in run output
+    store_media: bool = True
+    # If set, media is uploaded here before DB persistence when store_media is True, and only
+    # references are stored. With store_media False, media is not offloaded.
+    media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None
     # Events to skip when persisting the events on the run response
     events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None
 
@@ -498,6 +674,8 @@ class Workflow:
         stream_events: bool = False,
         stream_executor_events: bool = True,
         store_events: bool = False,
+        store_media: bool = True,
+        media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         events_to_skip: Optional[List[Union[WorkflowRunEvent, RunEvent, TeamRunEvent]]] = None,
         store_executor_outputs: bool = True,
         input_schema: Optional[Type[BaseModel]] = None,
@@ -522,6 +700,8 @@ class Workflow:
         self.debug_mode = debug_mode
         self.debug_level = debug_level
         self.store_events = store_events
+        self.store_media = store_media
+        self.media_storage = media_storage
         self.events_to_skip = events_to_skip or []
         self.stream = stream
         self.stream_executor_events = stream_executor_events
@@ -542,6 +722,8 @@ class Workflow:
         self.add_workflow_history_to_steps = add_workflow_history_to_steps
         self.num_history_runs = num_history_runs
         self._workflow_session: Optional[WorkflowSession] = None
+        # The db the cached session was loaded from; the cache is only valid for that db
+        self._cached_session_db: Optional[Union[BaseDb, AsyncBaseDb]] = None
         self.stream_events = stream_events
 
         # Warn if workflow history is enabled without a database
@@ -563,13 +745,20 @@ class Workflow:
         *,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        session_metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Resolve run-level params: call-site > self.<field> > None.
 
+        ``session_metadata`` is the session-stored metadata read by the dispatch
+        function; it sits between workflow defaults and call-site values in the
+        metadata merge (self < session < call-site).
+
         Returns a dict of resolved values ready to pass to RunContext().
         """
+        from copy import deepcopy
+
         from agno.utils.merge_dict import merge_dictionaries
 
         # dependencies: merge run level with self.dependencies (run level wins on conflicts)
@@ -582,15 +771,18 @@ class Workflow:
         elif self.dependencies is not None:
             resolved_dependencies = self.dependencies.copy()
 
-        # metadata: merge call-site with self.metadata (self wins on conflicts)
+        # metadata: layered merge, call-site wins (self < session < call-site),
+        # matching how Agent resolves. Each layer is deep-copied before it is
+        # merged, so no nested dict in the result aliases a source dict — in
+        # particular self.metadata, whose nested dicts must never be mutated by
+        # an in-run write to run_context.metadata (merge_dictionaries recurses
+        # in place).
         resolved_metadata: Optional[Dict[str, Any]] = None
-        if metadata is not None and self.metadata is not None:
-            resolved_metadata = metadata.copy()
-            merge_dictionaries(resolved_metadata, self.metadata)
-        elif metadata is not None:
-            resolved_metadata = metadata.copy()
-        elif self.metadata is not None:
-            resolved_metadata = self.metadata.copy()
+        for layer in (self.metadata, session_metadata, metadata):
+            if layer is not None:
+                if resolved_metadata is None:
+                    resolved_metadata = {}
+                merge_dictionaries(resolved_metadata, deepcopy(layer))
 
         return {
             "dependencies": resolved_dependencies,
@@ -861,25 +1053,86 @@ class Workflow:
 
         return session.session_data["session_state"]  # type: ignore
 
-    async def adelete_session(self, session_id: str, user_id: Optional[str] = None):
-        """Delete the current session and save to storage"""
+    async def adelete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        """Async variant of :meth:`delete_session`."""
         if self.db is None:
             return
+
+        keys: List[str] = []
+        storage = self.media_storage
+        if delete_media:
+            from agno.utils.media_offload import session_media_keys
+
+            if storage is None:
+                log_warning("delete_media=True but no media_storage is configured; no objects were deleted.")
+            else:
+                try:
+                    if self._has_async_db():
+                        session = await self.db.get_session(session_id=session_id, user_id=user_id)  # type: ignore
+                    else:
+                        session = self.db.get_session(session_id=session_id, user_id=user_id)
+                except Exception as e:
+                    log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                    session = None
+                if session is not None:
+                    keys = session_media_keys(session, [session_id], storage)
+        elif storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
         # -*- Delete session
         if self._has_async_db():
             await self.db.delete_session(session_id=session_id, user_id=user_id)  # type: ignore
         else:
             self.db.delete_session(session_id=session_id, user_id=user_id)
 
-    def delete_session(self, session_id: str, user_id: Optional[str] = None):
-        """Delete the current session and save to storage"""
+        if keys and storage is not None:
+            from agno.utils.media_offload import adelete_media_keys
+
+            await adelete_media_keys(keys, storage)
+
+    def delete_session(self, session_id: str, user_id: Optional[str] = None, delete_media: bool = False):
+        """Delete the current session and save to storage.
+
+        ``delete_media`` deletes the session's offloaded objects along with it.
+        """
         if self._has_async_db():
             raise ValueError("Cannot use sync delete_session() with an async database. Use adelete_session() instead.")
 
         if self.db is None:
             return
+
+        keys: List[str] = []
+        storage = self.media_storage
+        if delete_media:
+            from agno.media.storage.base import AsyncMediaStorage
+            from agno.utils.media_offload import session_media_keys
+
+            if storage is None:
+                log_warning("delete_media=True but no media_storage is configured; no objects were deleted.")
+            else:
+                # Refused before the row is deleted: raising afterwards would leave the object
+                # with nothing pointing at it, which is what reading the keys first exists to avoid.
+                if isinstance(storage, AsyncMediaStorage):
+                    raise ValueError(
+                        "Cannot use sync delete_session() with an AsyncMediaStorage. Use adelete_session() instead."
+                    )
+                try:
+                    session = self.db.get_session(session_id=session_id, user_id=user_id)
+                except Exception as e:
+                    log_warning(f"Could not read session {session_id} for media deletion: {e}")
+                    session = None
+                if session is not None:
+                    keys = session_media_keys(session, [session_id], storage)
+        elif storage is not None:
+            log_debug("delete_media=False, keeping any offloaded media, pass delete_media=True to delete it too")
+
         # -*- Delete session
         self.db.delete_session(session_id=session_id, user_id=user_id)
+
+        if keys and storage is not None:
+            from agno.utils.media_offload import delete_media_keys
+
+            delete_media_keys(keys, storage)  # type: ignore[arg-type]
 
     # -*- Serialization Functions
     def to_dict(self) -> Dict[str, Any]:
@@ -924,6 +1177,7 @@ class Workflow:
         config["stream_events"] = self.stream_events
         config["stream_executor_events"] = self.stream_executor_events
         config["store_events"] = self.store_events
+        config["store_media"] = self.store_media
         config["store_executor_outputs"] = self.store_executor_outputs
 
         # --- Schema settings ---
@@ -1045,11 +1299,12 @@ class Workflow:
             stream_events=config.get("stream_events", False),
             stream_executor_events=config.get("stream_executor_events", True),
             store_events=config.get("store_events", False),
+            store_media=config.get("store_media", True),
             store_executor_outputs=config.get("store_executor_outputs", True),
             # --- Schema settings ---
             input_schema=config.get("input_schema"),
             # --- Metadata and run-level params ---
-            metadata=config.get("metadata"),
+            metadata=strip_reserved_run_metadata(config.get("metadata")),
             dependencies=config.get("dependencies"),
             add_dependencies_to_context=config.get("add_dependencies_to_context"),
             add_session_state_to_context=config.get("add_session_state_to_context"),
@@ -1091,95 +1346,49 @@ class Workflow:
         # Track saved entity versions for pinning links
         saved_versions: Dict[str, int] = {}
 
-        # Collect all links
-        all_links: List[Dict[str, Any]] = []
+        def _save_step_children(step: Any) -> None:
+            """Save a step's agent/team/workflow so its link can pin a version."""
+            if not isinstance(step, Step):
+                return
 
-        def _save_step_agents(
-            step: Any,
-            position: int,
-            saved_versions: Dict[str, int],
-            all_links: List[Dict[str, Any]],
-        ) -> None:
-            """Recursively save agents/teams in steps, including nested containers."""
-            if isinstance(step, Step):
-                # Save agent if present
-                if step.agent and isinstance(step.agent, Agent):
-                    agent_version = step.agent.save(
-                        db=db_,
-                        stage=stage,
-                        label=label,
-                        notes=notes,
-                    )
-                    if step.agent.id is not None and agent_version is not None:
-                        saved_versions[step.agent.id] = agent_version
+            # Save agent if present
+            if step.agent and isinstance(step.agent, Agent):
+                agent_version = step.agent.save(
+                    db=db_,
+                    stage=stage,
+                    label=label,
+                    notes=notes,
+                )
+                if step.agent.id is not None and agent_version is not None:
+                    saved_versions[step.agent.id] = agent_version
 
-                # Save team if present
-                if step.team and isinstance(step.team, Team):
-                    team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
-                    if step.team.id is not None and team_version is not None:
-                        saved_versions[step.team.id] = team_version
+            # Save team if present
+            if step.team and isinstance(step.team, Team):
+                team_version = step.team.save(db=db_, stage=stage, label=label, notes=notes)
+                if step.team.id is not None and team_version is not None:
+                    saved_versions[step.team.id] = team_version
 
-                # Save nested workflow if present; without a saved version its
-                # step_workflow link cannot be written and the save would fail.
-                if step.workflow is not None and isinstance(step.workflow, Workflow):
-                    workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
-                    if step.workflow.id is not None and workflow_version is not None:
-                        saved_versions[step.workflow.id] = workflow_version
+            # Save nested workflow if present; without a saved version its
+            # step_workflow link cannot be written and the save would fail.
+            if step.workflow is not None and isinstance(step.workflow, Workflow):
+                workflow_version = step.workflow.save(db=db_, stage=stage, label=label, notes=notes)
+                if step.workflow.id is not None and workflow_version is not None:
+                    saved_versions[step.workflow.id] = workflow_version
 
-                # Add links with position and pinned version
-                for link in step.get_links(position=position):
-                    if link["child_component_id"] in saved_versions:
-                        link["child_version"] = saved_versions[link["child_component_id"]]
-                    all_links.append(link)
-
-            elif isinstance(step, (Parallel, Loop, Steps, Condition)):
-                # Recursively process nested steps, including a Condition's else branch
-                for nested_position, nested_step in enumerate(step.steps):
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
-                for nested_position, nested_step in enumerate(getattr(step, "else_steps", None) or []):
-                    else_link_start = len(all_links)
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
-                    # The links table keys on (link_kind, link_key); an else-step
-                    # that shares a name with an if-step must not collide with it.
-                    for link in all_links[else_link_start:]:
-                        link["link_key"] = f"{link.get('link_key')}#else"
-
-            elif isinstance(step, Router):
-                # Router uses 'choices' instead of 'steps'
-                for nested_position, nested_step in enumerate(step.choices):
-                    _save_step_agents(nested_step, nested_position, saved_versions, all_links)
+        def _pin_saved_version(link: Dict[str, Any]) -> Dict[str, Any]:
+            """Pin a link at the version this save just wrote for that child."""
+            child_component_id = link.get("child_component_id")
+            if child_component_id in saved_versions:
+                link["child_version"] = saved_versions[child_component_id]
+            return link
 
         try:
-            steps_to_save = self.steps if isinstance(self.steps, list) else []
-            for position, step in enumerate(steps_to_save):
-                _save_step_agents(step, position, saved_versions, all_links)
-
-            # The links table keys on (link_kind, link_key): a remaining
-            # duplicate (steps sharing a name across containers) would fail
-            # the whole save, so keep the first and say what was dropped.
-            seen_links: Dict[tuple, Dict[str, Any]] = {}
-            deduped_links: List[Dict[str, Any]] = []
-            for link in all_links:
-                dedupe_key = (link.get("link_kind"), link.get("link_key"))
-                existing = seen_links.get(dedupe_key)
-                if existing is not None:
-                    if (existing.get("child_component_id"), existing.get("child_version")) == (
-                        link.get("child_component_id"),
-                        link.get("child_version"),
-                    ):
-                        continue
-                    # A save that silently drops one of two different pins
-                    # would float that child to its latest version forever.
-                    raise WorkflowLinkCollisionError(
-                        f"Workflow '{self.id}' produces two different links for key "
-                        f"'{link.get('link_key')}' ('{existing.get('child_component_id')}' "
-                        f"v{existing.get('child_version')} and "
-                        f"'{link.get('child_component_id')}' v{link.get('child_version')}); "
-                        "give steps distinct names so every pin is kept."
-                    )
-                seen_links[dedupe_key] = link
-                deduped_links.append(link)
-            all_links = deduped_links
+            all_links = derive_step_links(
+                self.steps,
+                pin_child=_pin_saved_version,
+                on_step=_save_step_children,
+                workflow_id=self.id,
+            )
 
             db_.upsert_component(
                 component_id=self.id,
@@ -1217,6 +1426,7 @@ class Workflow:
         label: Optional[str] = None,
         version: Optional[int] = None,
         strict: bool = False,
+        published_only: bool = False,
     ) -> Optional["Workflow"]:
         """
         Load a workflow by id.
@@ -1231,6 +1441,15 @@ class Workflow:
         Returns:
             The workflow loaded from the database or None if not found.
         """
+        if published_only and version is None and label is None:
+            # Dispatch semantics on demand: resolve strictly through the live
+            # pointer instead of the current-or-latest-draft read fallback.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            version = current_version
+
         # TODO: Use db.load_component_graph instead of get_config
         data: Optional[Dict[str, Any]] = db.get_config(component_id=id, label=label, version=version)
         if data is None:
@@ -1269,6 +1488,7 @@ class Workflow:
         *,
         db: Optional["BaseDb"] = None,
         hard_delete: bool = False,
+        require_no_dependents: bool = True,
     ) -> bool:
         """
         Delete the workflow component.
@@ -1288,7 +1508,9 @@ class Workflow:
         if self.id is None:
             raise ValueError("Cannot delete workflow without an id")
 
-        return db_.delete_component(component_id=self.id, hard_delete=hard_delete)
+        return db_.delete_component(
+            component_id=self.id, hard_delete=hard_delete, require_no_dependents=require_no_dependents
+        )
 
     async def aget_run_output(
         self, run_id: str, session_id: Optional[str] = None, user_id: Optional[str] = None
@@ -1372,6 +1594,27 @@ class Workflow:
                 log_warning(f"No run responses found in WorkflowSession {session_id}")
                 return None
 
+    def _get_cached_session(self, session_id: str, user_id: Optional[str] = None) -> Optional[WorkflowSession]:
+        """Return the cached session if it matches session_id/user_id and the current db."""
+        cached = getattr(self, "_workflow_session", None)
+        if cached is None:
+            return None
+        if getattr(self, "_cached_session_db", None) is not self.db:
+            # The cached session was loaded from a previously assigned db; serving it
+            # would leak that db's runs into the current one, so drop it.
+            self._workflow_session = None
+            self._cached_session_db = None
+            return None
+        if cached.session_id != session_id:
+            return None
+        if user_id is not None and cached.user_id != user_id:
+            return None
+        return cached
+
+    def _set_cached_session(self, session: WorkflowSession) -> None:
+        self._workflow_session = session
+        self._cached_session_db = self.db
+
     def read_or_create_session(
         self,
         session_id: str,
@@ -1380,12 +1623,9 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if (
-            self._workflow_session is not None
-            and self._workflow_session.session_id == session_id
-            and (user_id is None or self._workflow_session.user_id == user_id)
-        ):
-            return self._workflow_session
+        cached_session = self._get_cached_session(session_id, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
         if self._has_async_db():
             raise ValueError(
@@ -1402,10 +1642,10 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            from copy import deepcopy
+
             session_data = {}
             if self.session_state is not None:
-                from copy import deepcopy
-
                 session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
@@ -1413,13 +1653,14 @@ class Workflow:
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                # Copy so the session record never aliases the shared Workflow's dict
+                metadata=deepcopy(self.metadata),
                 created_at=int(time()),
             )
 
         # Cache the session if relevant
         if workflow_session is not None and self.cache_session:
-            self._workflow_session = workflow_session
+            self._set_cached_session(workflow_session)
 
         return workflow_session
 
@@ -1431,12 +1672,9 @@ class Workflow:
         from time import time
 
         # Returning cached session if we have one
-        if (
-            self._workflow_session is not None
-            and self._workflow_session.session_id == session_id
-            and (user_id is None or self._workflow_session.user_id == user_id)
-        ):
-            return self._workflow_session
+        cached_session = self._get_cached_session(session_id, user_id=user_id)
+        if cached_session is not None:
+            return cached_session
 
         # Try to load from database
         workflow_session = None
@@ -1448,10 +1686,10 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            from copy import deepcopy
+
             session_data = {}
             if self.session_state is not None:
-                from copy import deepcopy
-
                 session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
@@ -1459,13 +1697,14 @@ class Workflow:
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                # Copy so the session record never aliases the shared Workflow's dict
+                metadata=deepcopy(self.metadata),
                 created_at=int(time()),
             )
 
         # Cache the session if relevant
         if workflow_session is not None and self.cache_session:
-            self._workflow_session = workflow_session
+            self._set_cached_session(workflow_session)
 
         return workflow_session
 
@@ -1533,6 +1772,11 @@ class Workflow:
         Returns:
             Optional[WorkflowSession]: The saved WorkflowSession or None if not saved.
         """
+        if not self.store_media:
+            self._scrub_workflow_session_media(session)
+        elif self.media_storage is not None and not self._db_persists_runs_separately():
+            await self._aoffload_workflow_session_media(session)
+
         if self.db is not None and session.session_data is not None:
             if session.session_data.get("session_state") is not None:
                 session.session_data["session_state"].pop("current_session_id", None)
@@ -1561,6 +1805,11 @@ class Workflow:
         """
         if self._has_async_db():
             raise ValueError("Cannot use sync save_session() with an async database. Use asave_session() instead.")
+
+        if not self.store_media:
+            self._scrub_workflow_session_media(session)
+        elif self.media_storage is not None and not self._db_persists_runs_separately():
+            self._offload_workflow_session_media(session)
 
         if self.db is not None and session.session_data is not None:
             if session.session_data.get("session_state") is not None:
@@ -1601,10 +1850,7 @@ class Workflow:
             try:
                 self._update_session_metrics(session=session, workflow_run_response=workflow_run_response)
                 session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self._apersist_session_and_run(session=session, run=workflow_run_response)
-                else:
-                    self._persist_session_and_run(session=session, run=workflow_run_response)
+                await self._apersist_session_and_run(session=session, run=workflow_run_response)
                 if workflow_run_response.run_id:
                     await acleanup_run(workflow_run_response.run_id)
                     await acleanup_member_runs(workflow_run_response.run_id)
@@ -1614,6 +1860,122 @@ class Workflow:
         task = asyncio.create_task(_persist())
         _workflow_background_tasks.add(task)
         task.add_done_callback(_workflow_background_tasks.discard)
+
+    def _db_persists_runs_separately(self) -> bool:
+        """True when the db adapter has its own runs storage, so the session row carries no runs.
+
+        Adapters ported to the runs table override ``upsert_run``; the rest write every run onto
+        the session row, so their media has to be offloaded on the session pass. ``InMemoryDb``
+        overrides it yet still writes runs onto the session row, but nothing durable holds those bytes.
+        """
+        if self.db is None:
+            return False
+        # Read off the type, not the instance, so an adapter without upsert_run answers False.
+        upsert_run = getattr(type(self.db), "upsert_run", None)
+        return upsert_run is not None and upsert_run not in (BaseDb.upsert_run, AsyncBaseDb.upsert_run)
+
+    def _scrub_workflow_session_media(self, session: WorkflowSession) -> None:
+        """Drop media from the session's runs before persisting, for store_media=False.
+
+        The persisted copies lose their media while the run the caller holds keeps it.
+        """
+        if not session.runs:
+            return
+
+        import copy
+
+        from agno.utils.agent import scrub_workflow_media
+
+        new_runs = []
+        for run in session.runs:
+            try:
+                # Copy inside the guard: an uncopyable payload must not take the session save down.
+                run_copy = copy.deepcopy(run)
+            except Exception as e:
+                log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
+                run_copy = run
+            scrub_workflow_media(run_copy)
+            new_runs.append(run_copy)
+        session.runs = new_runs
+
+    def _offload_workflow_session_media(self, session: WorkflowSession) -> None:
+        """Offload media in the session's runs to external storage before persisting.
+
+        Only for adapters that still write runs onto the session row; everywhere else ``save_run``
+        offloads the single run being written. The offload runs on deep copies, so the run output
+        the caller holds keeps its inline media, and already-offloaded media is skipped.
+        """
+        if not session.runs:
+            return
+
+        import copy
+
+        from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+
+        media_storage = self.media_storage
+        if not isinstance(media_storage, (MediaStorage, AsyncMediaStorage)):
+            log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
+            return
+        # Raised outside the per-run guard: an async backend on a sync run is a configuration error.
+        if isinstance(media_storage, AsyncMediaStorage):
+            raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+        from agno.utils.media_offload import offload_cache_for, offload_workflow_media
+
+        new_runs = []
+        for run in session.runs:
+            try:
+                # Copy inside the guard so an uncopyable payload falls back to inline storage.
+                run_copy = copy.deepcopy(run)
+                offload_workflow_media(run_copy, media_storage, session.session_id, cache=offload_cache_for(run))
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
+                run_copy = run
+            new_runs.append(run_copy)
+        session.runs = new_runs
+
+    async def _aoffload_workflow_session_media(self, session: WorkflowSession) -> None:
+        """Async variant of ``_offload_workflow_session_media``."""
+        if not session.runs:
+            return
+
+        import copy
+
+        from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+
+        media_storage = self.media_storage
+        # Resolve the backend up front: with nothing to offload to, skip deep-copying the run history.
+        if not isinstance(media_storage, (MediaStorage, AsyncMediaStorage)):
+            log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
+            return
+
+        new_runs = []
+        for run in session.runs:
+            try:
+                # Copy inside the guard so an uncopyable payload falls back to inline storage.
+                run_copy = copy.deepcopy(run)
+                if isinstance(media_storage, AsyncMediaStorage):
+                    from agno.utils.media_offload import aoffload_workflow_media, offload_cache_for
+
+                    await aoffload_workflow_media(
+                        run_copy, media_storage, session.session_id, cache=offload_cache_for(run)
+                    )
+                else:
+                    # Sync storage in an async run — offload in a worker thread, not on the event loop.
+                    from agno.utils.media_offload import offload_cache_for, offload_workflow_media
+
+                    await asyncio.to_thread(
+                        offload_workflow_media,
+                        run_copy,
+                        media_storage,
+                        session.session_id,
+                        offload_cache_for(run),
+                    )
+            except Exception as e:
+                log_warning(f"Media offload failed, falling back to inline storage: {e}")
+                run_copy = run
+            new_runs.append(run_copy)
+        session.runs = new_runs
 
     def get_chat_history(
         self, session_id: Optional[str] = None, last_n_runs: Optional[int] = None
@@ -1734,6 +2096,11 @@ class Workflow:
         """
         if not self.db:
             return
+        if not self.store_media:
+            run = self._scrub_run_media_copy(run)
+        elif self._db_persists_runs_separately():
+            # On un-ported adapters the upsert below is a no-op, so save_session offloads instead.
+            run = self._offload_run_media_copy(run, session_id)
         try:
             from agno.run.status_persist import persist_worker_owned_run
 
@@ -1757,6 +2124,10 @@ class Workflow:
         """Async variant of ``save_run``."""
         if not self.db:
             return
+        if not self.store_media:
+            run = self._scrub_run_media_copy(run)
+        elif self._db_persists_runs_separately():
+            run = await self._aoffload_run_media_copy(run, session_id)
         try:
             from agno.run.status_persist import apersist_worker_owned_run
 
@@ -1772,6 +2143,101 @@ class Workflow:
             log_debug(f"{type(self.db).__name__} does not implement upsert_run; skipping per-run write")
         except Exception as e:
             log_warning(f"Error upserting run into db: {str(e)}")
+
+    def _scrub_run_media_copy(self, run: "WorkflowRunOutput") -> "WorkflowRunOutput":
+        """Drop media from a deep copy of ``run`` before it is written to the runs table.
+
+        Mirrors _scrub_workflow_session_media for the per-run write path: the persisted
+        copy loses its media while the run the caller holds keeps it.
+        """
+        import copy
+
+        from agno.utils.agent import scrub_workflow_media
+
+        try:
+            # Copy inside the guard: an uncopyable payload must not take the run save down.
+            run_copy = copy.deepcopy(run)
+        except Exception as e:
+            log_warning(f"Could not copy run for the media scrub, scrubbing in place: {e}")
+            run_copy = run
+        scrub_workflow_media(run_copy)
+        return run_copy
+
+    def _offload_run_media_copy(self, run: "WorkflowRunOutput", session_id: str) -> "WorkflowRunOutput":
+        """Offload media on a deep copy of ``run`` before it is written to the runs table.
+
+        The copy keeps the caller's run output inline; already-offloaded media is skipped, and the
+        original run is returned when offload is not configured or fails.
+        """
+        if self.media_storage is None or not self.store_media:
+            return run
+
+        import copy
+
+        from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+
+        if not isinstance(self.media_storage, (MediaStorage, AsyncMediaStorage)):
+            log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
+            return run
+        # Raised outside the guard below: an async backend on a sync run is a configuration error.
+        if isinstance(self.media_storage, AsyncMediaStorage):
+            raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
+
+        from agno.utils.media_offload import offload_cache_for, offload_workflow_media
+
+        try:
+            # Copy inside the guard so an uncopyable payload falls back to inline storage.
+            run_copy = copy.deepcopy(run)
+            offload_workflow_media(run_copy, self.media_storage, session_id, cache=offload_cache_for(run))
+        except Exception as e:
+            log_warning(f"Media offload failed, falling back to inline storage: {e}")
+            return run
+        return run_copy
+
+    async def _afull_run_media_copy(self, run: "WorkflowRunOutput", session_id: str) -> "WorkflowRunOutput":
+        """The copy of ``run`` that may be written whole, honouring ``store_media``.
+
+        ``full_run`` writes the fields it is handed verbatim, so this makes the same choice
+        ``asave_run`` makes: offload when ``store_media`` is on, scrub when it is off.
+        """
+        if not self.store_media:
+            return self._scrub_run_media_copy(run)
+        return await self._aoffload_run_media_copy(run, session_id)
+
+    async def _aoffload_run_media_copy(self, run: "WorkflowRunOutput", session_id: str) -> "WorkflowRunOutput":
+        """Async variant of ``_offload_run_media_copy``."""
+        if self.media_storage is None or not self.store_media:
+            return run
+
+        import copy
+
+        from agno.media.storage.base import AsyncMediaStorage, MediaStorage
+
+        try:
+            # Copy inside the guard so an uncopyable payload falls back to inline storage.
+            run_copy = copy.deepcopy(run)
+            if isinstance(self.media_storage, AsyncMediaStorage):
+                from agno.utils.media_offload import aoffload_workflow_media, offload_cache_for
+
+                await aoffload_workflow_media(run_copy, self.media_storage, session_id, cache=offload_cache_for(run))
+            elif isinstance(self.media_storage, MediaStorage):
+                # Sync storage in an async run — offload in a worker thread, not on the event loop.
+                from agno.utils.media_offload import offload_cache_for, offload_workflow_media
+
+                await asyncio.to_thread(
+                    offload_workflow_media,
+                    run_copy,
+                    self.media_storage,
+                    session_id,
+                    offload_cache_for(run),
+                )
+            else:
+                log_warning("media_storage is not a MediaStorage or AsyncMediaStorage. Skipping media offload.")
+                return run
+        except Exception as e:
+            log_warning(f"Media offload failed, falling back to inline storage: {e}")
+            return run
+        return run_copy
 
     def _persist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Persist the session row + this single run (both O(1) writes).
@@ -1790,6 +2256,37 @@ class Workflow:
             user_id=session.user_id,
             run_index=run_index,
         )
+
+    def _refresh_executor_run_media(self, executor: Any, run_response: Any) -> None:
+        """Read the paused executor's offloaded media back before it rebuilds its messages.
+
+        An executor refreshes against its own backend, and inside a workflow the backend is the
+        workflow's, so without this the resumed model sees empty media where it saw an image.
+        """
+        if not self.store_media or self.media_storage is None:
+            return
+        # Its own backend means its own continue_run already refreshes.
+        if getattr(executor, "media_storage", None) is not None:
+            return
+        messages = getattr(run_response, "messages", None)
+        if not messages:
+            return
+        from agno.utils.media_offload import refresh_messages_media
+
+        refresh_messages_media(messages, self.media_storage)
+
+    async def _arefresh_executor_run_media(self, executor: Any, run_response: Any) -> None:
+        """Async variant of :meth:`_refresh_executor_run_media`."""
+        if not self.store_media or self.media_storage is None:
+            return
+        if getattr(executor, "media_storage", None) is not None:
+            return
+        messages = getattr(run_response, "messages", None)
+        if not messages:
+            return
+        from agno.utils.media_offload import arefresh_messages_media
+
+        await arefresh_messages_media(messages, self.media_storage)
 
     async def _apersist_session_and_run(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Async variant of ``_persist_session_and_run``."""
@@ -1837,10 +2334,8 @@ class Workflow:
         try:
             self._update_session_metrics(session=session, workflow_run_response=run)
             session.upsert_run(run=run)
-            if self._has_async_db():
-                await self._apersist_session_and_run(session=session, run=run)
-            else:
-                self._persist_session_and_run(session=session, run=run)
+            # asave_* absorbs a sync DB; branching would take the sync media path, which raises on an async backend.
+            await self._apersist_session_and_run(session=session, run=run)
         except Exception as store_err:
             log_warning(f"Failed to persist errored run: {store_err}")
         await acleanup_run(run.run_id)  # type: ignore
@@ -1853,17 +2348,23 @@ class Workflow:
             log_debug(f"Failed to mark run as completed in buffer: {buffer_err}")
 
     def _update_metadata(self, session: WorkflowSession):
-        """Update the extra_data in the session"""
-        from agno.utils.merge_dict import merge_dictionaries
+        """Merge the workflow's metadata into the session's metadata.
 
-        # Read metadata from the database
-        if session.metadata is not None:
-            # If metadata is set in the workflow, update the database metadata with the workflow's metadata
-            if self.metadata is not None:
-                # Updates workflow's session metadata in place
-                merge_dictionaries(session.metadata, self.metadata)
-            # Update the current metadata with the metadata from the database which is updated in place
-            self.metadata = session.metadata
+        Workflow metadata provides defaults; the session's own stored values win
+        on conflict, matching _resolve_run_params (self < session), so a value
+        set on the session is not overwritten by a workflow default and persists
+        across runs. Only the session is updated; the shared Workflow instance
+        is never mutated.
+        """
+        if session.metadata is not None and self.metadata is not None:
+            from copy import deepcopy
+
+            from agno.utils.merge_dict import merge_dictionaries
+
+            merged = deepcopy(self.metadata)
+            merge_dictionaries(merged, session.metadata)
+            session.metadata.clear()
+            session.metadata.update(merged)
 
     def _load_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
         """Load and return the stored session_state from the database, optionally merging it with the given one"""
@@ -2355,6 +2856,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 # Track current step so the cancel handler can record a placeholder
                 # for the in-flight step (mirrors _execute_stream's behaviour).
@@ -2402,6 +2904,7 @@ class Workflow:
                             workflow_run_response=workflow_run_response,
                             run_context=run_context,
                             store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
                             workflow_session=session,
                             add_workflow_history_to_steps=self.add_workflow_history_to_steps
                             if self.add_workflow_history_to_steps
@@ -2753,6 +3256,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 early_termination = False
 
@@ -2823,6 +3327,7 @@ class Workflow:
                             run_context=run_context,
                             step_index=i,
                             store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
                             workflow_session=session,
                             add_workflow_history_to_steps=self.add_workflow_history_to_steps
                             if self.add_workflow_history_to_steps
@@ -3290,24 +3795,31 @@ class Workflow:
 
     async def _aload_or_create_session(
         self, session_id: str, user_id: Optional[str], session_state: Optional[Dict[str, Any]]
-    ) -> Tuple[WorkflowSession, Dict[str, Any]]:
+    ) -> Tuple[WorkflowSession, Dict[str, Any], Optional[Dict[str, Any]]]:
         """Load or create session from database, update metadata, and prepare session state.
 
         Returns:
-            Tuple of (workflow_session, prepared_session_state)
+            Tuple of (workflow_session, prepared_session_state, session_metadata),
+            where session_metadata is a snapshot of the session-stored metadata
+            taken before _update_metadata merges self.metadata into the session.
         """
+        from copy import deepcopy
+
         # Read existing session from database
         if self._has_async_db():
             workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
         else:
             workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
+        # so the session layer keeps the session's own values (self < session < call-site).
+        session_metadata = deepcopy(workflow_session.metadata)
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
         _session_state = session_state if session_state is not None else {}
         _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
 
-        return workflow_session, _session_state
+        return workflow_session, _session_state, session_metadata
 
     async def _aexecute(
         self,
@@ -3325,8 +3837,10 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         await aregister_run(run_context.run_id)
-        # Read existing session from database
-        workflow_session, run_context.session_state = await self._aload_or_create_session(
+        # Read existing session from database. run_context is already resolved at this
+        # point, so the session-metadata snapshot cannot reach this run's metadata here;
+        # arun() pre-reads the session for that when the DB is sync.
+        workflow_session, run_context.session_state, _ = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
@@ -3388,6 +3902,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 # Track current step so the cancel handler can record a placeholder
                 # for the in-flight step (mirrors _aexecute_stream's behaviour).
@@ -3435,6 +3950,7 @@ class Workflow:
                             workflow_run_response=workflow_run_response,
                             run_context=run_context,
                             store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
                             workflow_session=workflow_session,
                             add_workflow_history_to_steps=self.add_workflow_history_to_steps
                             if self.add_workflow_history_to_steps
@@ -3474,12 +3990,7 @@ class Workflow:
                                 session=workflow_session, workflow_run_response=workflow_run_response
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
-                            if self._has_async_db():
-                                await self._apersist_session_and_run(
-                                    session=workflow_session, run=workflow_run_response
-                                )
-                            else:
-                                self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+                            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
 
                             return workflow_run_response
                         elif step_on_error == "skip":
@@ -3658,10 +4169,7 @@ class Workflow:
 
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
-        else:
-            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
         # Always clean up the run tracking
         await acleanup_run(workflow_run_response.run_id)  # type: ignore
         await acleanup_member_runs(workflow_run_response.run_id)  # type: ignore
@@ -3690,8 +4198,10 @@ class Workflow:
 
         await aregister_run(run_context.run_id)
 
-        # Read existing session from database
-        workflow_session, run_context.session_state = await self._aload_or_create_session(
+        # Read existing session from database. run_context is already resolved at this
+        # point, so the session-metadata snapshot cannot reach this run's metadata here;
+        # arun() pre-reads the session for that when the DB is sync.
+        workflow_session, run_context.session_state, _ = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
@@ -3746,10 +4256,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                     workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
-                    else:
-                        self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+                    await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 await acleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -3817,6 +4324,7 @@ class Workflow:
                 output_audio: List[Audio] = (execution_input.audio or []).copy()  # Start with input audio
                 shared_files: List[File] = execution_input.files or []
                 output_files: List[File] = (execution_input.files or []).copy()  # Start with input files
+                _record_input_media(workflow_run_response, output_images, output_videos, output_audio, output_files)
 
                 early_termination = False
 
@@ -3888,6 +4396,7 @@ class Workflow:
                             run_context=run_context,
                             step_index=i,
                             store_executor_outputs=self.store_executor_outputs,
+                            workflow_media_storage=self.media_storage,
                             workflow_session=workflow_session,
                             add_workflow_history_to_steps=self.add_workflow_history_to_steps
                             if self.add_workflow_history_to_steps
@@ -4048,12 +4557,7 @@ class Workflow:
                                 session=workflow_session, workflow_run_response=workflow_run_response
                             )
                             workflow_session.upsert_run(run=workflow_run_response)
-                            if self._has_async_db():
-                                await self._apersist_session_and_run(
-                                    session=workflow_session, run=workflow_run_response
-                                )
-                            else:
-                                self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+                            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
 
                             return
                         elif step_on_error == "skip":
@@ -4242,10 +4746,7 @@ class Workflow:
                 try:
                     self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
                     workflow_session.upsert_run(run=workflow_run_response)
-                    if self._has_async_db():
-                        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
-                    else:
-                        self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+                    await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
                 except Exception as store_err:
                     log_warning(f"Failed to persist cancelled run: {store_err}")
                 await acleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -4328,10 +4829,7 @@ class Workflow:
         # Store the completed workflow response
         self._update_session_metrics(session=workflow_session, workflow_run_response=workflow_run_response)
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
-        else:
-            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
 
         # Log Workflow Telemetry
         if self.telemetry:
@@ -4367,7 +4865,7 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
+        workflow_session, session_state, session_metadata = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -4375,6 +4873,7 @@ class Workflow:
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -4405,6 +4904,10 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            # Caller metadata persists on the run, as agents and teams already
+            # do: the run routes read it back, e.g. the pinned component
+            # version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -4423,10 +4926,7 @@ class Workflow:
         # The old "0 of N steps" duplicate belonged to the era when the tool
         # minted a fresh id; id-reuse retired it.
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
-        else:
-            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
 
         # Prepare execution input
         inputs = WorkflowExecutionInput(
@@ -4517,11 +5017,12 @@ class Workflow:
                 logger.exception("Background workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background execution failed: {str(e)}"
+                error_run = await self._afull_run_media_copy(workflow_run_response, session_id)
                 await apersist_run_transition(
                     self,
                     "workflow",
                     session_id,
-                    workflow_run_response,
+                    error_run,
                     user_id=user_id,
                     full_run=True,
                 )
@@ -4566,7 +5067,7 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
+        workflow_session, session_state, session_metadata = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -4574,6 +5075,7 @@ class Workflow:
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -4604,6 +5106,10 @@ class Workflow:
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
             status=RunStatus.pending,
+            # Caller metadata persists on the run, as agents and teams already
+            # do: the run routes read it back, e.g. the pinned component
+            # version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -4625,10 +5131,7 @@ class Workflow:
         # Persist the PENDING run so it is visible (e.g. to polling) while it
         # waits for a concurrency slot.
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self.asave_session(session=workflow_session)
-        else:
-            self.save_session(session=workflow_session)
+        await self.asave_session(session=workflow_session)
 
         async def execute_workflow_background_stream():
             """Background execution with streaming and WebSocket broadcasting.
@@ -4770,11 +5273,12 @@ class Workflow:
                 logger.exception("Background streaming workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background streaming execution failed: {str(e)}"
+                error_run = await self._afull_run_media_copy(workflow_run_response, session_id)
                 await apersist_run_transition(
                     self,
                     "workflow",
                     session_id,
-                    workflow_run_response,
+                    error_run,
                     user_id=user_id,
                     full_run=True,
                 )
@@ -4842,7 +5346,7 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
+        workflow_session, session_state, _ = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -4878,10 +5382,7 @@ class Workflow:
 
         # Persist PENDING status so the run is visible in the DB immediately
         workflow_session.upsert_run(run=workflow_run_response)
-        if self._has_async_db():
-            await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
-        else:
-            self._persist_session_and_run(session=workflow_session, run=workflow_run_response)
+        await self._apersist_session_and_run(session=workflow_session, run=workflow_run_response)
 
         # Pre-register with the event stream so reconnecting clients can attach
         # and wait while the run is still queued (no events buffered yet).
@@ -5019,8 +5520,9 @@ class Workflow:
                 # Persist ERROR status
                 try:
                     workflow_run_response.status = RunStatus.error
+                    error_run = await self._afull_run_media_copy(workflow_run_response, session_id)
                     await apersist_run_transition(
-                        self, "workflow", session_id, workflow_run_response, user_id=user_id, full_run=True
+                        self, "workflow", session_id, error_run, user_id=user_id, full_run=True
                     )
                 except Exception:
                     log_error(
@@ -5218,9 +5720,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from typing import get_args
-
-        from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
 
         # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
@@ -5251,6 +5751,10 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            # Caller metadata persists on the run, as the non-agent workflow
+            # paths already do: the run routes read it back, e.g. the pinned
+            # component version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
@@ -5271,7 +5775,7 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
-            if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
+            if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
                 # Track if workflow was executed by checking for WorkflowCompletedEvent
@@ -5440,6 +5944,10 @@ class Workflow:
                 content=agent_response.content,
                 status=RunStatus.completed,
                 workflow_agent_run=agent_response,
+                # Caller metadata persists on the run, as the non-agent workflow
+                # paths already do: the run routes read it back, e.g. the pinned
+                # component version a draft preview must continue on.
+                metadata=run_context.metadata,
             )
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -5490,6 +5998,7 @@ class Workflow:
                     created_at=int(datetime.now().timestamp()),
                     content="Error: Workflow execution failed",
                     status=RunStatus.error,
+                    metadata=run_context.metadata,
                 )
 
     def _async_initialize_workflow_agent(
@@ -5525,7 +6034,10 @@ class Workflow:
         session_state: Optional[Dict[str, Any]],
     ) -> Tuple[WorkflowSession, Dict[str, Any]]:
         """Helper to load or create session for workflow agent execution"""
-        return await self._aload_or_create_session(session_id=session_id, user_id=user_id, session_state=session_state)
+        workflow_session, _session_state, _ = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
+        return workflow_session, _session_state
 
     def _aexecute_workflow_agent(
         self,
@@ -5609,9 +6121,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from typing import get_args
-
-        from agno.run.workflow import WorkflowCompletedEvent, WorkflowRunOutputEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
 
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
@@ -5648,6 +6158,10 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            # Caller metadata persists on the run, as the non-agent workflow
+            # paths already do: the run routes read it back, e.g. the pinned
+            # component version a draft preview must continue on.
+            metadata=run_context.metadata,
         )
 
         # Yield WorkflowAgentStartedEvent at the beginning (stored in direct_reply_run_response)
@@ -5669,7 +6183,7 @@ class Workflow:
             dependencies=run_context.dependencies,  # Pass context dynamically per-run
             session_state=run_context.session_state,  # Pass session state dynamically per-run
         ):  # type: ignore
-            if isinstance(event, tuple(get_args(WorkflowRunOutputEvent))):
+            if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
                 if isinstance(event, WorkflowCompletedEvent):
@@ -5739,10 +6253,7 @@ class Workflow:
             # Update the run in session
             session.upsert_run(run=workflow_run_response)
             # Persist session row + the changed run (O(1))
-            if self._has_async_db():
-                await self._apersist_session_and_run(session=session, run=workflow_run_response)
-            else:
-                self._persist_session_and_run(session=session, run=workflow_run_response)
+            await self._apersist_session_and_run(session=session, run=workflow_run_response)
 
         else:
             # Workflow was executed by the tool
@@ -5779,10 +6290,7 @@ class Workflow:
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                if self._has_async_db():
-                    await self._apersist_session_and_run(session=reloaded_session, run=last_run)
-                else:
-                    self._persist_session_and_run(session=reloaded_session, run=last_run)
+                await self._apersist_session_and_run(session=reloaded_session, run=last_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -5854,6 +6362,10 @@ class Workflow:
                 content=agent_response.content,
                 status=RunStatus.completed,
                 workflow_agent_run=agent_response,
+                # Caller metadata persists on the run, as the non-agent workflow
+                # paths already do: the run routes read it back, e.g. the pinned
+                # component version a draft preview must continue on.
+                metadata=run_context.metadata,
             )
 
             # Store the full agent RunOutput and establish parent-child relationship
@@ -5863,10 +6375,7 @@ class Workflow:
 
             # Update the run in session, persist session row + the changed run (O(1))
             session.upsert_run(run=workflow_run_response)
-            if self._has_async_db():
-                await self._apersist_session_and_run(session=session, run=workflow_run_response)
-            else:
-                self._persist_session_and_run(session=session, run=workflow_run_response)
+            await self._apersist_session_and_run(session=session, run=workflow_run_response)
 
             log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -5901,10 +6410,7 @@ class Workflow:
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                if self._has_async_db():
-                    await self._apersist_session_and_run(session=reloaded_session, run=last_run)
-                else:
-                    self._persist_session_and_run(session=reloaded_session, run=last_run)
+                await self._apersist_session_and_run(session=reloaded_session, run=last_run)
 
                 log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
@@ -5923,6 +6429,7 @@ class Workflow:
                     created_at=int(datetime.now().timestamp()),
                     content="Error: Workflow execution failed",
                     status=RunStatus.error,
+                    metadata=run_context.metadata,
                 )
 
     def cancel_run(self, run_id: str) -> bool:
@@ -6058,6 +6565,10 @@ class Workflow:
         """
         if self._has_async_db():
             raise Exception("`continue_run()` is not supported with an async DB. Please use `acontinue_run()`.")
+        # Same reason as in run(): the resume's persist is guarded and would downgrade a raise
+        # from the offload to a warning.
+        if self.store_media and isinstance(self.media_storage, AsyncMediaStorage):
+            raise ValueError("Cannot use sync continue_run() with an AsyncMediaStorage. Use acontinue_run() instead.")
 
         # Get run_response from storage if not provided
         if run_response is None:
@@ -6289,9 +6800,13 @@ class Workflow:
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
         )
 
-        # Create execution input from the original input
+        # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
         execution_input = WorkflowExecutionInput(
             input=run_response.input,
+            images=run_response.images,
+            videos=run_response.videos,
+            audio=run_response.audio,
+            files=run_response.files,
         )
 
         # Store user input in kwargs to pass to continue_execute
@@ -6557,6 +7072,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         run_context=run_context,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -6631,6 +7147,7 @@ class Workflow:
                                 workflow_run_response=workflow_run_response,
                                 run_context=run_context,
                                 store_executor_outputs=self.store_executor_outputs,
+                                workflow_media_storage=self.media_storage,
                                 workflow_session=session,
                                 add_workflow_history_to_steps=self.add_workflow_history_to_steps
                                 if self.add_workflow_history_to_steps
@@ -6744,6 +7261,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         run_context=run_context,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -6952,6 +7470,7 @@ class Workflow:
 
         # Apply resolved requirements to the paused run_response (update tool states)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response
         continued_response = executor.continue_run(
@@ -7011,6 +7530,7 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        self._refresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's continue_run with the stored run_response (streaming).
         response_stream = executor.continue_run(
@@ -7099,6 +7619,7 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        await self._arefresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's acontinue_run with the stored run_response (streaming).
         # stream_events=True ensures RunCompleted/RunError lifecycle events are emitted.
@@ -7183,6 +7704,7 @@ class Workflow:
         # Find the paused executor run and apply resolved requirements
         paused_run_response = _find_paused_executor_run(workflow_run_response, step_req.executor_run_id)
         _apply_requirements_to_run_response(paused_run_response, requirements)
+        await self._arefresh_executor_run_media(executor, paused_run_response)
 
         # Call executor's acontinue_run with the stored run_response
         continued_response = await executor.acontinue_run(
@@ -7424,6 +7946,7 @@ class Workflow:
                         run_context=run_context,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -7528,6 +8051,7 @@ class Workflow:
                                 run_context=run_context,
                                 step_index=i,
                                 store_executor_outputs=self.store_executor_outputs,
+                                workflow_media_storage=self.media_storage,
                                 workflow_session=session,
                                 add_workflow_history_to_steps=self.add_workflow_history_to_steps
                                 if self.add_workflow_history_to_steps
@@ -7690,6 +8214,7 @@ class Workflow:
                         run_context=run_context,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -8282,10 +8807,7 @@ class Workflow:
         run_response.status = RunStatus.pending if background else RunStatus.running
         run_response.error_requirements = None
         session.upsert_run(run=run_response)
-        if self._has_async_db():
-            await self._apersist_session_and_run(session=session, run=run_response)
-        else:
-            self._persist_session_and_run(session=session, run=run_response)
+        await self._apersist_session_and_run(session=session, run=run_response)
 
         # Create run context
         run_context = RunContext(
@@ -8295,9 +8817,13 @@ class Workflow:
             session_state=session.session_data.get("session_state", {}) if session.session_data else {},
         )
 
-        # Create execution input from the original input
+        # Media comes off the paused run; WorkflowRunOutput.input carries none of its own.
         execution_input = WorkflowExecutionInput(
             input=run_response.input,
+            images=run_response.images,
+            videos=run_response.videos,
+            audio=run_response.audio,
+            files=run_response.files,
         )
 
         # Store user input in kwargs to pass to continue_execute
@@ -8588,6 +9114,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         run_context=run_context,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -8660,6 +9187,7 @@ class Workflow:
                                 workflow_run_response=workflow_run_response,
                                 run_context=run_context,
                                 store_executor_outputs=self.store_executor_outputs,
+                                workflow_media_storage=self.media_storage,
                                 workflow_session=session,
                                 add_workflow_history_to_steps=self.add_workflow_history_to_steps
                                 if self.add_workflow_history_to_steps
@@ -8765,6 +9293,7 @@ class Workflow:
                         workflow_run_response=workflow_run_response,
                         run_context=run_context,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -9157,6 +9686,7 @@ class Workflow:
                         run_context=run_context,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -9262,6 +9792,7 @@ class Workflow:
                                 run_context=run_context,
                                 step_index=i,
                                 store_executor_outputs=self.store_executor_outputs,
+                                workflow_media_storage=self.media_storage,
                                 workflow_session=session,
                                 add_workflow_history_to_steps=self.add_workflow_history_to_steps
                                 if self.add_workflow_history_to_steps
@@ -9424,6 +9955,7 @@ class Workflow:
                         run_context=run_context,
                         step_index=i,
                         store_executor_outputs=self.store_executor_outputs,
+                        workflow_media_storage=self.media_storage,
                         workflow_session=session,
                         add_workflow_history_to_steps=self.add_workflow_history_to_steps
                         if self.add_workflow_history_to_steps
@@ -9755,10 +10287,7 @@ class Workflow:
                 # Transition to RUNNING now that a slot is held (PENDING while queued)
                 workflow_run_response.status = RunStatus.running
                 session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=session)
-                else:
-                    self.save_session(session=session)
+                await self.asave_session(session=session)
                 with contextlib.suppress(Exception):
                     # Fail-open: coordination writes must not kill the run
                     await _continue_event_stream.set_run_status(_continue_run_id, RunStatus.running)
@@ -9823,10 +10352,7 @@ class Workflow:
                         # re-parks the stream sentinel as PAUSED)
                         workflow_run_response.status = RunStatus.cancelled
                         session.upsert_run(run=workflow_run_response)
-                        if self._has_async_db():
-                            await self.asave_session(session=session)
-                        else:
-                            self.save_session(session=session)
+                        await self.asave_session(session=session)
                 raise
             except RunCancelledException:
                 # Cancelled while waiting for a slot — execution never started, so
@@ -9836,10 +10362,7 @@ class Workflow:
                 )
                 workflow_run_response.status = RunStatus.cancelled
                 session.upsert_run(run=workflow_run_response)
-                if self._has_async_db():
-                    await self.asave_session(session=session)
-                else:
-                    self.save_session(session=session)
+                await self.asave_session(session=session)
                 if workflow_run_response.run_id:
                     await acleanup_run(workflow_run_response.run_id)
             except Exception as e:
@@ -9847,18 +10370,11 @@ class Workflow:
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Background continue streaming execution failed: {str(e)}"
                 # Only the run changed — persist just the run row (O(1))
-                if self._has_async_db():
-                    await self.asave_run(
-                        run=workflow_run_response,
-                        session_id=session.session_id,
-                        user_id=session.user_id,
-                    )
-                else:
-                    self.save_run(
-                        run=workflow_run_response,
-                        session_id=session.session_id,
-                        user_id=session.user_id,
-                    )
+                await self.asave_run(
+                    run=workflow_run_response,
+                    session_id=session.session_id,
+                    user_id=session.user_id,
+                )
             finally:
                 if slot_held:
                     await slot_cm.__aexit__(None, None, None)
@@ -9957,6 +10473,10 @@ class Workflow:
         """Execute the workflow synchronously with optional streaming"""
         if self._has_async_db():
             raise Exception("`run()` is not supported with an async DB. Please use `arun()`.")
+        # Reported here rather than at the offload: the persist is guarded and would downgrade
+        # a raise from there to a warning.
+        if self.store_media and isinstance(self.media_storage, AsyncMediaStorage):
+            raise ValueError("Cannot use sync run() with an AsyncMediaStorage. Use arun() instead.")
 
         # Set the id for the run and register it immediately for cancellation tracking
         run_id = run_id or str(uuid4())
@@ -9975,7 +10495,12 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
+        from copy import deepcopy
+
         workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
+        # so the session layer keeps the session's own values (self < session < call-site).
+        session_metadata = deepcopy(workflow_session.metadata)
         self._update_metadata(session=workflow_session)
 
         # Initialize session state. Get it from DB if relevant.
@@ -10027,6 +10552,7 @@ class Workflow:
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -10064,6 +10590,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -10260,10 +10787,25 @@ class Workflow:
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
+        # Pre-read the session so session-stored metadata is visible in the resolved
+        # run params. Only possible with a sync DB: arun() is not async, and with an
+        # async DB the session is read inside _aexecute/_aexecute_stream AFTER params
+        # are resolved, so session metadata cannot reach this run's resolved params.
+        session_metadata: Optional[Dict[str, Any]] = None
+        if self.db is not None and not self._has_async_db():
+            from copy import deepcopy
+
+            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+            # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
+            # so the session layer keeps the session's own values (self < session < call-site).
+            session_metadata = deepcopy(workflow_session.metadata)
+            self._update_metadata(session=workflow_session)
+
         # Resolve run-level params using shared helper (deep merge, call-site > self.<field> > None)
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -10328,6 +10870,7 @@ class Workflow:
             workflow_id=self.id,
             workflow_name=self.name,
             created_at=int(datetime.now().timestamp()),
+            metadata=run_context.metadata,
         )
 
         # Start the run metrics timer
@@ -10829,9 +11372,11 @@ class Workflow:
         if not self.telemetry:
             return
 
-        from agno.api.workflow import WorkflowRunCreate, create_workflow_run
-
+        # Everything telemetry needs, the import included, stays inside the try:
+        # a telemetry failure must never change the outcome of the run.
         try:
+            from agno.api.workflow import WorkflowRunCreate, create_workflow_run
+
             create_workflow_run(
                 workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data()),
             )
@@ -10845,9 +11390,9 @@ class Workflow:
         if not self.telemetry:
             return
 
-        from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
-
         try:
+            from agno.api.workflow import WorkflowRunCreate, acreate_workflow_run
+
             await acreate_workflow_run(
                 workflow=WorkflowRunCreate(session_id=session_id, run_id=run_id, data=self._get_telemetry_data())
             )
@@ -11233,6 +11778,7 @@ def get_workflow_by_id(
     registry: Optional["Registry"] = None,
     user_id: Optional[str] = None,
     strict: bool = False,
+    published_only: bool = True,
 ) -> Optional["Workflow"]:
     """
     Get a Workflow by id from the database (new entities/configs schema).
@@ -11248,7 +11794,7 @@ def get_workflow_by_id(
         version: Optional integer config version.
         label: Optional version_label.
         registry: Optional Registry for reconstructing unserializable components.
-        user_id: If set, only resolve the workflow when owned by this user or shared.
+        user_id: If set, only resolve the workflow when owned by this user, unowned (shared), or published.
         strict: If True, unresolvable registry references raise
             ComponentRehydrationError; None strictly means the workflow was not found.
 
@@ -11263,11 +11809,22 @@ def get_workflow_by_id(
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        # Only resolve the workflow if owned by this user or shared.
+        # Only resolve the workflow if owned by this user, unowned (shared), or published.
         if user_id is not None and db.get_component(component_id=id, user_id=user_id) is None:
             return None
 
-        row = db.get_config(component_id=id, version=version, label=label)
+        if published_only and version is None and label is None:
+            # Dispatch surfaces resolve only a published version; a draft-only
+            # component is not runnable. Uses the
+            # component row rather than get_current_config so third-party
+            # adapters with only the old surface keep working.
+            component_row = db.get_component(component_id=id)
+            current_version = component_row.get("current_version") if isinstance(component_row, dict) else None
+            if current_version is None:
+                return None
+            row = db.get_config(component_id=id, version=current_version)
+        else:
+            row = db.get_config(component_id=id, version=version, label=label)
         if row is None:
             return None
 
@@ -11308,9 +11865,20 @@ def get_workflow_by_id(
         return None
 
 
+# Rows fetched per list_components call while collecting the full catalog.
+_COMPONENT_LIST_PAGE = 100
+
+# Ceiling on rows collected per listing. Every listed row costs a get_config
+# read plus a full rehydration, and other users' published components share
+# the catalog, so an unbounded scan could turn one listing into thousands of
+# DB reads.
+_COMPONENT_LIST_CAP = 1000
+
+
 def get_workflows(
     db: "BaseDb",
     registry: Optional["Registry"] = None,
+    exclude_component_ids: Optional[Set[str]] = None,
     user_id: Optional[str] = None,
 ) -> List["Workflow"]:
     """
@@ -11321,13 +11889,49 @@ def get_workflows(
     Args:
         db: Database to load workflows from
         registry: Optional registry for rehydrating tools
-        user_id: If set, only load workflows owned by this user or shared.
+        exclude_component_ids: Component IDs to exclude from results.
+        user_id: If set, only load workflows owned by this user, unowned (shared), or published.
     """
     workflows: List[Workflow] = []
     try:
         from agno.utils.component_scope import component_owner_scope
 
-        components, _ = db.list_components(component_type=ComponentType.WORKFLOW, user_id=user_id)
+        # The DB default page is one small page and the catalog can exceed it
+        # (other users' published components compete for the same slots), so
+        # page until the filtered total is exhausted or the cap is hit.
+        components: List[Dict[str, Any]] = []
+        seen_component_ids: Set[str] = set()
+        scanned = 0
+        while True:
+            page, total = db.list_components(
+                component_type=ComponentType.WORKFLOW,
+                exclude_component_ids=exclude_component_ids,
+                user_id=user_id,
+                limit=_COMPONENT_LIST_PAGE,
+                offset=scanned,
+            )
+            scanned += len(page)
+            for row in page:
+                # Each page is its own read, so a row created between two of
+                # them shifts the window and hands back something an earlier
+                # page already carried.
+                row_id = row.get("component_id")
+                if row_id is None or row_id in seen_component_ids:
+                    continue
+                seen_component_ids.add(row_id)
+                components.append(row)
+            # A total that is not a count says nothing about what is left, so
+            # this page is all there is to read. BaseDb documents an int, but
+            # the baseline discarded the total entirely and an adapter that
+            # returns None was fine; comparing against it would raise here and
+            # the caller would get an empty listing instead of a short one.
+            if not page or not isinstance(total, int) or scanned >= total:
+                break
+            if scanned >= _COMPONENT_LIST_CAP:
+                log_warning(
+                    f"Workflow listing truncated by safety cap: returning {len(components)} of {total} components"
+                )
+                break
         for component in components:
             try:
                 config = db.get_config(component_id=component["component_id"])

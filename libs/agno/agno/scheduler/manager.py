@@ -23,6 +23,7 @@ SchedulerDbMethod = Literal[
     "update_schedule_run",
     "get_schedule_run",
     "get_schedule_runs",
+    "stamp_schedule_provenance",
 ]
 
 
@@ -41,8 +42,9 @@ class ScheduleManager:
 
     def close(self) -> None:
         """Shut down the internal thread pool (if created)."""
-        if self._pool is not None:
-            self._pool.shutdown(wait=False)
+        pool = getattr(self, "_pool", None)
+        if pool is not None:
+            pool.shutdown(wait=False)
             self._pool = None
 
     def __del__(self) -> None:
@@ -64,6 +66,19 @@ class ScheduleManager:
                 # No running loop — safe to use asyncio.run directly
                 return asyncio.run(fn(*args, **kwargs))
         return fn(*args, **kwargs)
+
+    def stamp_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Stamp provenance columns on a schedule, over the sync/async bridge.
+
+        Callers reached the adapter directly and caught NotImplementedError,
+        which is invisible to an async adapter: the coroutine is built, never
+        awaited, and the write silently does not happen while the caller is
+        told it did.
+        """
+        try:
+            return bool(self._call("stamp_schedule_provenance", schedule_id, **provenance))
+        except NotImplementedError:
+            return False
 
     async def _acall(self, method_name: SchedulerDbMethod, *args: Any, **kwargs: Any) -> Any:
         """Async call a DB method."""
@@ -115,6 +130,7 @@ class ScheduleManager:
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
         user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, str]] = None,
     ) -> Schedule:
         """Create a new schedule.
 
@@ -131,6 +147,12 @@ class ScheduleManager:
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # Control-plane provenance rides the insert itself, so a managed
+        # schedule is never observable as an unmanaged row between two writes.
+        allowed_provenance = {"managed_by", "target_type", "target_id", "created_by_run_id", "created_by_session_id"}
+        if provenance is not None and not set(provenance) <= allowed_provenance:
+            raise ValueError(f"provenance may only carry {sorted(allowed_provenance)}, got {sorted(provenance)}")
 
         # A blank or sentinel owner would be rejected by the route on every fire
         if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
@@ -191,6 +213,7 @@ class ScheduleManager:
             locked_at=None,
             created_at=now,
             updated_at=None,
+            **(provenance or {}),
         )
 
         result = self._to_schedule(self._call("create_schedule", schedule.to_dict()))
@@ -202,11 +225,58 @@ class ScheduleManager:
     def list(
         self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
     ) -> List[Schedule]:
-        """List schedules. ``user_id`` scopes the listing to one owner."""
+        """List a single page of schedules (DB errors yield an empty list).
+
+        Use list_all() to enumerate every schedule and surface DB errors.
+        ``user_id`` scopes the listing to one owner.
+        """
         result = self._call("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
+
+    def list_all(
+        self, enabled: Optional[bool] = None, user_id: Optional[str] = None, *, raise_on_error: bool = True
+    ) -> List[Schedule]:
+        """List every schedule, paging through the full catalog.
+
+        With raise_on_error=True (the default) the DB re-raises failures and
+        raises when the schedules table is unavailable (database error or table
+        never created), instead of masquerading as an empty catalog.
+
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            user_id: Scopes the listing to one owner.
+            raise_on_error: Forwarded to the DB. When False, DB errors yield
+                an empty or partial result, matching list().
+        """
+        schedules: List[Schedule] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = self._call(
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
+            )
+            if not isinstance(result, tuple):
+                # Legacy third-party Dbs may return a bare list: treat it as complete
+                return self._to_schedule_list(result)
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
+            schedules.extend(self._to_schedule_list(rows))
+            # Stop on a short page; totals can shift mid-sweep, so total_count is
+            # not reconciled against the row count
+            if len(rows) < page_size:
+                return schedules
+            page += 1
 
     def get(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Get a schedule by ID."""
@@ -274,6 +344,7 @@ class ScheduleManager:
         retry_delay_seconds: int = 60,
         if_exists: str = "raise",
         user_id: Optional[str] = None,
+        provenance: Optional[Dict[str, str]] = None,
     ) -> Schedule:
         """Async create a new schedule.
 
@@ -290,6 +361,12 @@ class ScheduleManager:
 
         if if_exists not in ("raise", "skip", "update"):
             raise ValueError(f"if_exists must be 'raise', 'skip', or 'update', got '{if_exists}'")
+
+        # Control-plane provenance rides the insert itself, so a managed
+        # schedule is never observable as an unmanaged row between two writes.
+        allowed_provenance = {"managed_by", "target_type", "target_id", "created_by_run_id", "created_by_session_id"}
+        if provenance is not None and not set(provenance) <= allowed_provenance:
+            raise ValueError(f"provenance may only carry {sorted(allowed_provenance)}, got {sorted(provenance)}")
 
         # A blank or sentinel owner would be rejected by the route on every fire
         if user_id is not None and (not user_id.strip() or user_id == INTERNAL_SCHEDULER_USER_ID):
@@ -350,6 +427,7 @@ class ScheduleManager:
             locked_at=None,
             created_at=now,
             updated_at=None,
+            **(provenance or {}),
         )
 
         result = self._to_schedule(await self._acall("create_schedule", schedule.to_dict()))
@@ -361,11 +439,58 @@ class ScheduleManager:
     async def alist(
         self, enabled: Optional[bool] = None, limit: int = 100, page: int = 1, user_id: Optional[str] = None
     ) -> List[Schedule]:
-        """Async list schedules. ``user_id`` scopes the listing to one owner."""
+        """Async list a single page of schedules (DB errors yield an empty list).
+
+        Use alist_all() to enumerate every schedule and surface DB errors.
+        ``user_id`` scopes the listing to one owner.
+        """
         result = await self._acall("get_schedules", enabled=enabled, limit=limit, page=page, user_id=user_id)
         # get_schedules returns (schedules_list, total_count) tuple
         schedules_data = result[0] if isinstance(result, tuple) else result
         return self._to_schedule_list(schedules_data)
+
+    async def alist_all(
+        self, enabled: Optional[bool] = None, user_id: Optional[str] = None, *, raise_on_error: bool = True
+    ) -> List[Schedule]:
+        """Async list every schedule, paging through the full catalog.
+
+        With raise_on_error=True (the default) the DB re-raises failures and
+        raises when the schedules table is unavailable (database error or table
+        never created), instead of masquerading as an empty catalog.
+
+        Db subclasses whose get_schedules does not accept raise_on_error will
+        raise TypeError here; that is expected for this strict API.
+
+        Args:
+            enabled: Optional filter on the enabled flag.
+            user_id: Scopes the listing to one owner.
+            raise_on_error: Forwarded to the DB. When False, DB errors yield
+                an empty or partial result, matching alist().
+        """
+        schedules: List[Schedule] = []
+        page = 1
+        page_size = 100
+        while True:
+            result = await self._acall(
+                "get_schedules",
+                enabled=enabled,
+                limit=page_size,
+                page=page,
+                user_id=user_id,
+                raise_on_error=raise_on_error,
+            )
+            if not isinstance(result, tuple):
+                # Legacy third-party Dbs may return a bare list: treat it as complete
+                return self._to_schedule_list(result)
+            # A (None, total) result means no rows; normalize so the short-page
+            # check below matches list()'s tolerance instead of raising on len(None).
+            rows = result[0] or []
+            schedules.extend(self._to_schedule_list(rows))
+            # Stop on a short page; totals can shift mid-sweep, so total_count is
+            # not reconciled against the row count
+            if len(rows) < page_size:
+                return schedules
+            page += 1
 
     async def aget(self, schedule_id: str, user_id: Optional[str] = None) -> Optional[Schedule]:
         """Async get a schedule by ID."""

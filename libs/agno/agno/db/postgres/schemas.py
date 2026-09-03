@@ -146,19 +146,6 @@ METRICS_TABLE_SCHEMA = {
     ],
 }
 
-CULTURAL_KNOWLEDGE_TABLE_SCHEMA = {
-    "id": {"type": String, "primary_key": True, "nullable": False},
-    "name": {"type": String, "nullable": False, "index": True},
-    "summary": {"type": Text, "nullable": True},
-    "content": {"type": JSONB, "nullable": True},
-    "metadata": {"type": JSONB, "nullable": True},
-    "input": {"type": Text, "nullable": True},
-    "created_at": {"type": BigInteger, "nullable": True},
-    "updated_at": {"type": BigInteger, "nullable": True},
-    "agent_id": {"type": String, "nullable": True},
-    "team_id": {"type": String, "nullable": True},
-}
-
 VERSIONS_TABLE_SCHEMA = {
     "table_name": {"type": String, "nullable": False, "primary_key": True},
     "version": {"type": String, "nullable": False},
@@ -294,6 +281,17 @@ SCHEDULE_TABLE_SCHEMA = {
     "locked_by": {"type": String, "nullable": True},
     "locked_at": {"type": BigInteger, "nullable": True},
     "user_id": {"type": String, "nullable": True, "index": True},
+    # Which control plane manages this row ("studio" for builder-created ones)
+    # plus the exact component target and writing-run provenance. Nullable so
+    # legacy rows need only the ALTERs in the v3 migration.
+    "managed_by": {"type": String, "nullable": True, "index": True},
+    "target_type": {"type": String, "nullable": True},
+    "target_id": {"type": String, "nullable": True, "index": True},
+    "created_by_run_id": {"type": String, "nullable": True},
+    "created_by_session_id": {"type": String, "nullable": True},
+    "updated_by_run_id": {"type": String, "nullable": True},
+    "updated_by_session_id": {"type": String, "nullable": True},
+    "disabled_reason": {"type": String, "nullable": True},
     "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": True},
     "__composite_indexes__": [
@@ -338,6 +336,33 @@ def _get_schedule_runs_table_schema(
         "user_id": {"type": String, "nullable": True, "index": True},
         "created_at": {"type": BigInteger, "nullable": False, "index": True},
     }
+
+
+TOOL_RESULTS_TABLE_SCHEMA = {
+    "result_id": {"type": String, "primary_key": True, "nullable": False},
+    "namespace": {"type": String, "nullable": False},
+    "path": {"type": String, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    "run_id": {"type": String, "nullable": False},
+    "tool_call_id": {"type": String, "nullable": False},
+    "tool_name": {"type": String, "nullable": False},
+    "args_hash": {"type": String, "nullable": False},
+    "content_type": {"type": String, "nullable": False},
+    "size_bytes": {"type": BigInteger, "nullable": False},
+    "line_count": {"type": BigInteger, "nullable": False},
+    "preview": {"type": Text, "nullable": False},
+    "user_id": {"type": String, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "expires_at": {"type": BigInteger, "nullable": True, "index": True},
+    "_unique_constraints": [
+        # Two result ids must never point at one payload.
+        {"name": "uq_tool_results_namespace_path", "columns": ["namespace", "path"]},
+    ],
+    "__composite_indexes__": [
+        # Session cleanup and the newest-first listing.
+        {"name": "session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
 
 
 JOBS_TABLE_SCHEMA = {
@@ -492,7 +517,6 @@ def get_table_schema_definition(
         "metrics": METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
-        "culture": CULTURAL_KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
         "traces": TRACE_TABLE_SCHEMA,
         "components": COMPONENT_TABLE_SCHEMA,
@@ -501,6 +525,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "jobs": JOBS_TABLE_SCHEMA,
+        "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

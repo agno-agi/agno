@@ -1158,17 +1158,6 @@ def test_prefix_match_default_is_false(mock_engine, mock_embedder):
     assert _ts_query_name(expr) == "websearch_to_tsquery"
 
 
-def test_enable_prefix_matching_still_works(mock_engine, mock_embedder):
-    """The legacy public helper still returns the `tok*` string it always has —
-    kept for backwards compatibility even though `_build_ts_query` is the correct path now.
-    """
-    db = _make_db(mock_engine, mock_embedder, prefix_match=True)
-
-    assert db.enable_prefix_matching("ani") == "ani*"
-    assert db.enable_prefix_matching("wildlife san") == "wildlife* san*"
-    assert db.enable_prefix_matching("") == ""
-
-
 def test_keyword_search_returns_empty_on_no_usable_tokens(mock_engine, mock_embedder):
     """keyword_search short-circuits to [] when prefix_match strips all tokens."""
     with (

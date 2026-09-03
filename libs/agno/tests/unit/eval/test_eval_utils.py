@@ -1,10 +1,12 @@
 """Unit tests for eval utils (agno.eval.utils)."""
 
 import asyncio
+import json
 import threading
 
 from agno.db.schemas.evals import EvalType
-from agno.eval.utils import async_log_eval, spinner_live
+from agno.eval.accuracy import AccuracyResult
+from agno.eval.utils import async_log_eval, spinner_live, store_result_in_file
 
 
 class RecordingSyncDb:
@@ -130,3 +132,23 @@ def test_spinner_live_disabled_emits_nothing(capsys):
         # And no auto-refresh: nothing renders, so no render thread either
         assert live.auto_refresh is False
     assert capsys.readouterr().out == ""
+
+
+def test_store_result_in_file_formats_run_id_template(tmp_path):
+    result = AccuracyResult(run_id="run-1")
+
+    store_result_in_file(str(tmp_path / "{run_id}.json"), result=result, run_id="run-1")
+
+    saved = json.loads((tmp_path / "run-1.json").read_text())
+    assert saved["run_id"] == "run-1"
+
+
+def test_store_result_in_file_rejects_the_removed_eval_id_template(tmp_path):
+    """{eval_id} went with the field it named. A pre-3.0 template now raises KeyError inside
+    store_result_in_file, which logs "Failed to save result to file: \'eval_id\'" and writes
+    nothing -- a named warning and a one-word fix, not a silent stop."""
+    result = AccuracyResult(run_id="run-1")
+
+    store_result_in_file(str(tmp_path / "{eval_id}.json"), result=result, run_id="run-1")
+
+    assert list(tmp_path.iterdir()) == []

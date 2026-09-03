@@ -42,7 +42,7 @@ def _escape_tag_value(value: Any) -> str:
     return _TAG_SPECIAL_CHARS.sub(lambda m: f"\\{m.group(0)}", str(value))
 
 
-class RedisDB(VectorDb):
+class RedisDb(VectorDb):
     """
     Redis class for managing vector operations with Redis and RedisVL.
 

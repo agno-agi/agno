@@ -7,7 +7,6 @@ from uuid import uuid4
 
 from sqlalchemy import Engine
 
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.singlestore.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -89,17 +88,12 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
                 "SELECT 1 FROM information_schema.tables WHERE table_schema = :schema AND table_name = :table"
             )
             exists = session.execute(exists_query, {"schema": db_schema, "table": table_name}).scalar() is not None
-            table_ref = f"{db_schema}.{table_name}"
         else:
             # Check in current database/schema
             exists_query = text(
                 "SELECT 1 FROM information_schema.tables WHERE table_name = :table AND table_schema = DATABASE()"
             )
             exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
-            table_ref = table_name
-
-        if not exists:
-            log_debug(f"Table {table_ref} {'exists' if exists else 'does not exist'}")
 
         return exists
 
@@ -117,7 +111,10 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         schema (str): Database schema name
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -150,7 +147,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
     except Exception as e:
         table_ref = f"{db_schema}.{table_name}" if db_schema else table_name
         log_error(f"Error validating table schema for {table_ref}: {str(e)}")
-        return False
+        raise
 
 
 # -- Metrics util methods --
@@ -411,60 +408,3 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
-
-
-# -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> Dict[str, Any]:
-    """Serialize a CulturalKnowledge object for database storage.
-
-    Converts the model's separate content, categories, and notes fields
-    into a single JSON dict for the database content column.
-
-    Args:
-        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
-
-    Returns:
-        Dict[str, Any]: A dictionary with the content field as JSON containing content, categories, and notes.
-    """
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
-
-    return content_dict if content_dict else {}
-
-
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
-    """Deserialize a database row to a CulturalKnowledge object.
-
-    The database stores content as a JSON dict containing content, categories, and notes.
-    This method extracts those fields and converts them back to the model format.
-
-    Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
-
-    Returns:
-        CulturalKnowledge: The cultural knowledge object.
-    """
-    # Extract content, categories, and notes from the JSON content field
-    content_json = db_row.get("content", {}) or {}
-
-    return CulturalKnowledge.from_dict(
-        {
-            "id": db_row.get("id"),
-            "name": db_row.get("name"),
-            "summary": db_row.get("summary"),
-            "content": content_json.get("content"),
-            "categories": content_json.get("categories"),
-            "notes": content_json.get("notes"),
-            "metadata": db_row.get("metadata"),
-            "input": db_row.get("input"),
-            "created_at": db_row.get("created_at"),
-            "updated_at": db_row.get("updated_at"),
-            "agent_id": db_row.get("agent_id"),
-            "team_id": db_row.get("team_id"),
-        }
-    )

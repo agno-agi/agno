@@ -1,6 +1,5 @@
 """Integration tests for the Metrics related methods of the PostgresDb class"""
 
-import time
 from datetime import date, datetime, timedelta, timezone
 from typing import List
 
@@ -31,6 +30,18 @@ def cleanup_metrics_and_sessions(postgres_db_real: PostgresDb):
             session.rollback()
 
 
+def _noon_utc(days_ago: int) -> int:
+    """Midday UTC, ``days_ago`` days back.
+
+    The suites below lay sessions an hour apart from this point and assert which
+    UTC day each one lands in. Counting back from the current clock keeps the
+    current time of day, so a run started late in the UTC day pushes the later
+    sessions past midnight into the next day and the per-day counts split.
+    """
+    day = datetime.now(timezone.utc).date() - timedelta(days=days_ago)
+    return int(datetime(day.year, day.month, day.day, 12, tzinfo=timezone.utc).timestamp())
+
+
 def _persist(db: PostgresDb, session) -> None:
     """Store a session the way v3 does: the row, then each run in the runs table.
 
@@ -45,7 +56,7 @@ def _persist(db: PostgresDb, session) -> None:
 @pytest.fixture
 def sample_agent_sessions_for_metrics() -> List[AgentSession]:
     """Fixture returning sample AgentSessions for metrics testing"""
-    base_time = int(time.time()) - 86400  # 1 day ago
+    base_time = _noon_utc(1)
     sessions = []
 
     for i in range(3):
@@ -258,7 +269,7 @@ def test_metrics_flow(postgres_db_real: PostgresDb, sample_agent_sessions_for_me
 def sample_multi_day_sessions() -> List[AgentSession]:
     """Fixture returning sessions spread across multiple days"""
     sessions = []
-    base_time = int(time.time()) - (3 * 86400)  # 3 days ago
+    base_time = _noon_utc(3)
 
     # Day 1: 2 sessions
     for i in range(2):
@@ -374,7 +385,7 @@ def test_calculate_metrics_multiple_days(postgres_db_real: PostgresDb, sample_mu
 
 def test_calculate_metrics_mixed_session_types_multiple_days(postgres_db_real: PostgresDb):
     """Test metrics calculation with different session types across multiple days"""
-    base_time = int(time.time()) - (2 * 86400)  # 2 days ago
+    base_time = _noon_utc(2)
     sessions = []
 
     # Day 1: Agent and Team sessions
@@ -505,7 +516,7 @@ def test_get_metrics_date_range_multiple_days(postgres_db_real: PostgresDb, samp
 
 def test_metrics_calculation_multiple_days(postgres_db_real: PostgresDb):
     """Ensure that metrics calculation can handle calculating metrics for multiple days at once"""
-    base_time = int(time.time()) - (2 * 86400)  # 2 days ago
+    base_time = _noon_utc(2)
 
     # Add sessions for Day 1
     day1_sessions = []

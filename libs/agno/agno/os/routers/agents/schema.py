@@ -100,10 +100,6 @@ class AgentResponse(BaseModel):
             # Memory defaults
             "enable_agentic_memory": False,
             "update_memory_on_run": False,
-            # Reasoning defaults
-            "reasoning": False,
-            "reasoning_min_steps": 1,
-            "reasoning_max_steps": 10,
             # Default tools defaults
             "read_chat_history": False,
             "search_knowledge": True,
@@ -219,10 +215,8 @@ class AgentResponse(BaseModel):
                 ).model_dump()
 
         reasoning_info: Dict[str, Any] = {
-            "reasoning": agent.reasoning,
+            "reasoning": agent.reasoning_model is not None,
             "reasoning_agent_id": agent.reasoning_agent.id if agent.reasoning_agent else None,
-            "reasoning_min_steps": agent.reasoning_min_steps,
-            "reasoning_max_steps": agent.reasoning_max_steps,
         }
 
         if agent.reasoning_model:

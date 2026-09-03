@@ -1060,27 +1060,6 @@ class PgVector(VectorDb):
             log_error(f"Error during vector search: {str(e)}")
             return []
 
-    def enable_prefix_matching(self, query: str) -> str:
-        """
-        Preprocess the query for prefix matching.
-
-        Note: this helper is kept for backwards compatibility. The output
-        (``ani*``) is only meaningful when fed to ``to_tsquery``; with
-        ``websearch_to_tsquery`` (the default code path) the ``*`` is
-        silently dropped. New code should use ``_build_ts_query`` below,
-        which routes through ``to_tsquery`` when prefix matching is on.
-
-        Args:
-            query (str): The original query.
-
-        Returns:
-            str: The processed query with prefix matching enabled.
-        """
-        # Append '*' to each word for prefix matching
-        words = query.strip().split()
-        processed_words = [word + "*" for word in words]
-        return " ".join(processed_words)
-
     def _build_ts_query(self, query: str):
         """
         Build the tsquery expression for keyword / hybrid search.

@@ -16,7 +16,7 @@ from agno.tools.calculator import CalculatorTools
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[CalculatorTools()],
     instructions="Use the calculator tools to solve math problems. Explain your reasoning and show calculation steps clearly.",
 )

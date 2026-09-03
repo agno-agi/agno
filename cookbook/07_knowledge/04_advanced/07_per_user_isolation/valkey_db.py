@@ -29,7 +29,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
 from agno.vectordb.search import SearchType
-from agno.vectordb.valkey import ValkeyDB
+from agno.vectordb.valkey import ValkeyDb
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -56,7 +56,7 @@ def show(label: str, results: List[Document]) -> None:
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 
-vector_db = ValkeyDB(
+vector_db = ValkeyDb(
     index_name=INDEX_NAME,
     host=VALKEY_HOST,
     port=VALKEY_PORT,
