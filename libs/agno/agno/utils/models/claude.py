@@ -128,7 +128,7 @@ def drop_unsupported_sampling_params(request_params: Dict[str, Any], model_id: s
 
     Mutates and returns the dict it is given, like ``route_sampling_params_to_extra_body``.
     """
-    thinking = request_params.get("thinking")
+    thinking = request_params.get("thinking") or {}
     thinking_on = bool(thinking) and thinking.get("type") != "disabled"
     locked = not supports_sampling_params(model_id)
     if not thinking_on and not locked:
