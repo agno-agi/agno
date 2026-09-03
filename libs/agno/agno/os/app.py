@@ -1746,7 +1746,7 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
-        excluded_routes = self.authorization_config.excluded_route_paths or [] if self.authorization_config else []
+        excluded_routes = (self.authorization_config.excluded_route_paths or []) if self.authorization_config else []
         if excluded_routes or interface_prefixes or mcp_auth_paths:
             excluded_route_paths = (
                 [

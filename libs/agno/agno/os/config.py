@@ -14,17 +14,6 @@ MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "lifecycle"})
 # string values while keeping the API stringly-typed (callers still pass ``{"core"}``).
 MCPBuiltinTag = Literal["core", "session", "lifecycle"]
 
-# Routes excluded from JWT/RBAC checks by default (health checks, docs, etc.)
-DEFAULT_PUBLIC_ROUTES: List[str] = [
-    "/",
-    "/health",
-    "/info",
-    "/docs",
-    "/redoc",
-    "/openapi.json",
-    "/docs/oauth2-redirect",
-]
-
 
 def _apply_legacy_enable_builtin_tools(data: Dict[str, Any]) -> Dict[str, Any]:
     """Map the deprecated ``enable_builtin_tools`` key onto ``default_tools`` in a dict

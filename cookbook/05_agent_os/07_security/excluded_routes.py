@@ -41,7 +41,7 @@ async def public_status():
 agent = Agent(
     id="demo-agent",
     name="Demo Agent",
-    model=OpenAIResponses(id="gpt-5.5"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 agent_os = AgentOS(
@@ -92,4 +92,4 @@ def run_smoke():
 if __name__ == "__main__":
     run_smoke()
     print("Smoke passed.")
-    agent_os.serve(app=app, port=7778)
+    agent_os.serve(app=app, port=7777)

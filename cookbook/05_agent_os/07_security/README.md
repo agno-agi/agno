@@ -117,10 +117,11 @@ AgentOS(
 )
 ```
 
-Patterns use `fnmatch` syntax - `*` matches any characters including `/`. The
-default exclusions (`/`, `/health`, `/info`, `/docs`, `/redoc`, `/openapi.json`)
-are always preserved; custom paths are additive. Use this for webhooks, login
-flows, or any route that handles authentication differently.
+Patterns use `fnmatch` syntax - `*` matches any characters including `/`. Note
+that `/public/*` does not match the bare `/public` path; list both if needed.
+The default exclusions (`/`, `/health`, `/info`, `/docs`, `/redoc`,
+`/openapi.json`) are always preserved; custom paths are additive. Use this for
+webhooks, login flows, or any route that handles authentication differently.
 
 ## Cookies and Trusted Claims
 

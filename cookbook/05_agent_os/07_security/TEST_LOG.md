@@ -71,15 +71,14 @@ wildcard token exposed both agents plus the registered team and workflow.
 
 **Status:** PASS
 
-**Test mode:** LIVE
+**Test mode:** SMOKE
 
 **Description:** Configured `AuthorizationConfig.excluded_route_paths` with
-`/public/*` and `/webhooks/*` patterns, then verified both custom and default
-exclusions work while protected routes still require JWT.
+`/public/*` pattern, then verified custom and default exclusions work while
+protected routes still require JWT.
 
-**Result:** Custom exclusions (`/public/status`, `/webhooks/stripe`,
-`/webhooks/github`) returned 200 without auth. Default exclusions (`/health`,
-`/info`) still worked. Protected routes (`/api/private/data`, `/agents`)
+**Result:** Custom exclusion (`/public/status`) returned 200 without auth.
+Default exclusion (`/health`) still worked. Protected route (`/agents`)
 returned 401 without auth and 200 with a valid token.
 
 ---
