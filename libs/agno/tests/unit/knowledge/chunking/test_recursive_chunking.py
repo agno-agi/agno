@@ -11,7 +11,6 @@ def test_long_document_still_chunks_with_overlap_and_no_duplication():
 
     chunks = strategy.chunk(doc)
 
-    assert len(chunks) == 7
     assert [len(c.content) for c in chunks] == [20, 20, 20, 20, 20, 20, 10]
 
 
