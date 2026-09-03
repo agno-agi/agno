@@ -27,7 +27,7 @@ from datetime import UTC, datetime, timedelta
 import jwt
 from agno.agent import Agent
 from agno.db.postgres import PostgresDb
-from agno.models.openai import OpenAIChat
+from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.config import AuthorizationConfig
@@ -45,7 +45,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.5"),
     db=db,
 )
 

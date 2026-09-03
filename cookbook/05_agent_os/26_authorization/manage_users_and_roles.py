@@ -296,4 +296,8 @@ if __name__ == "__main__":
         print(f"  on the token OR be seeded here (ADMIN_SUBJECT={ADMIN_SUBJECT!r}).")
     print("=" * 78 + "\n")
 
-    agent_os.serve(app, host="0.0.0.0", port=7777)
+    # Bind to localhost by default. In dev mode this demo mints a bootstrap admin from the
+    # source-visible DEV_SECRET, so serving on 0.0.0.0 would let anyone on the network forge
+    # an admin token and drive the /authz API. Set HOST=0.0.0.0 explicitly ONLY once you are
+    # verifying against a real control-plane key / JWKS (not the dev secret).
+    agent_os.serve(app, host=os.getenv("HOST", "127.0.0.1"), port=7777)
