@@ -16,15 +16,21 @@ This example lowers them so a short demo actually triggers a compaction.
 
 from agno.agent import Agent
 from agno.compaction import Compaction
-from agno.db.sqlite import SqliteDb
+from agno.db.postgres import PostgresDb
 from agno.models.openai import OpenAIResponses
+
+# ---------------------------------------------------------------------------
+# Create Database
+# ---------------------------------------------------------------------------
+db_url = "postgresql+psycopg://ai:ai@localhost:5532/ai"
+db = PostgresDb(db_url=db_url)
 
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
-    db=SqliteDb(db_file="tmp/compaction.db"),
+    db=db,
     session_id="compaction_demo",
     add_history_to_context=True,
     # Without a window, history is capped at 3 runs and compaction never sees
