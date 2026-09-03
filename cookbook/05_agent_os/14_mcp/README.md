@@ -1,18 +1,21 @@
 # MCP
 
 AgentOS can expose its agents, teams, and workflows as an MCP server at
-`/mcp`. These examples cover the server side of that boundary: the built-in
-operator surface, custom tools, PAT authentication, tool scoping, and two OAuth
-deployment choices. Examples where an Agno agent consumes another MCP server
-belong in `cookbook/91_tools/mcp`.
+`/mcp`. These examples cover the server side of that boundary: the default
+operator surface, agents served directly as tools, custom tools, toolkits, PAT
+authentication, tool scoping, and two OAuth deployment choices. Examples where
+an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 
 ## Files
 
 | File | What it teaches |
 |---|---|
-| `basic.py` | Serve the eight built-in AgentOS MCP tools. |
+| `basic.py` | Serve the eight default AgentOS MCP tools. |
+| `agents_as_tools.py` | Turn the default tools off and expose agents directly as named MCP tools. |
 | `mcp_client.py` | Discover, pause, continue, cancel, and inspect runs with a protocol-level client. |
-| `custom_tools.py` | Disable the built-ins and expose one purpose-built tool. |
+| `custom_tools.py` | Disable the default tools and expose one purpose-built tool. |
+| `server_identity.py` | Set the name, version and instructions the server reports to connecting clients. |
+| `toolkit_tools.py` | Serve a whole toolkit, flattened into one MCP tool per method. |
 | `secure_mcp.py` | Mint a PAT, authorize its principal, restrict hosts and tool tags, and return full results. |
 | `oauth_builtin.py` | Run AgentOS's database-backed OAuth authorization server. |
 | `oauth_authkit.py` | Use WorkOS AuthKit as an external authorization server. |
@@ -26,17 +29,19 @@ Install the MCP extras through the demo environment and set the model key:
 export OPENAI_API_KEY=...
 ```
 
-The examples use the current `mcp_server=` API and omit the legacy MCP
-constructor aliases.
+The examples use the current `mcp=` / `MCPConfig` API. The deprecated
+spellings (`mcp_server=`, `MCPServerConfig`, `enable_builtin_tools`) are still
+accepted as silent aliases.
 
-## Built-in MCP tools
+## Default MCP tools
 
-Plain `mcp_server=True` exposes eight tools:
+Plain `mcp=True` exposes eight tools:
 
 | Tag | Tools |
 |---|---|
 | `core` | `get_agentos_config`, `run_agent`, `run_team`, `run_workflow`, `continue_run`, `cancel_run` |
 | `session` | `get_sessions`, `get_session_runs` |
+| `lifecycle` | `continue_run`, `cancel_run` (also tagged `core`) -- the pair rides along whenever components are exposed; include the tag explicitly to serve just the pair |
 
 Run the server and client in separate terminals:
 
@@ -50,11 +55,138 @@ run, cancels a second paused run, and reads the continued session from SQLite.
 Run tools return a trimmed result by default: answer content plus
 `run_id`, `session_id`, `status`, and unresolved requirements when paused.
 
+## Server name, version and instructions
+
+`server_identity.py` sets what a client learns in the initialize response:
+
+```python
+agent_os = AgentOS(
+    name="Support AgentOS",
+    version="1.4.0",
+    agents=[support_agent],
+    mcp=MCPConfig(
+        name="Acme Support",
+        version="1.4.0",
+        instructions="This server answers questions about Acme products. Start with run_agent ...",
+    ),
+)
+```
+
+`name` defaults to the AgentOS name and `version` to `AgentOS(version=...)`.
+`instructions` tells the calling model what the tools are for and how to use them;
+Claude, Cursor and ChatGPT read it when they connect.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/14_mcp/server_identity.py
+```
+
+## Agents as tools
+
+`agents_as_tools.py` serves the deployment's agents as the whole MCP surface:
+
+```python
+agent_os = AgentOS(
+    agents=[chief, researcher],
+    mcp=MCPConfig(
+        default_tools=False,
+        tools=[
+            chief,
+            researcher.as_tool(
+                name="deep_research",
+                description="Thorough, sourced research. Send one clear question.",
+            ),
+        ],
+    ),
+)
+```
+
+`tools/list` then shows `chief` and `deep_research`, plus the riding
+`continue_run`/`cancel_run` pair (see the HITL section). A bare component is named
+after its id and described by its own description; `as_tool(name=...,
+description=...)` publishes it under a model-facing name and pitch instead --
+a tool description is a prompt for the calling model, so it often wants to be
+different from the component's human-facing description. Either way the call
+runs through the same machinery as `run_agent` (fresh session minting, RBAC
+scopes such as `agents:run` -- keyed on the component id, not the tool name --
+per-step progress), and the result's structuredContent carries the component
+id for `continue_run`/`get_sessions`. Teams and workflows expose the same way.
+Exposed components must be part of the AgentOS roster, and tool-name
+collisions fail at startup.
+
+Tool names (a bare component's id, or the `as_tool` override) must start with
+a letter or underscore and contain only letters, digits, hyphens, and
+underscores (at most 128 characters) -- the shape OpenAI, Anthropic, and
+Gemini all accept. A name outside that shape fails at startup with a suggested
+clean one; auto-derived ids from names like "Research & Writing Team" are the
+usual trip.
+Pick MCP-safe ids before a deployment accumulates sessions: sessions and
+memories are keyed by the id, so changing it later is a migration. The exposed
+tool list is fixed at startup: components added to a live deployment (resync)
+are immediately runnable through the generic run tools where those are served,
+but appear as named tools only after a restart -- and with
+`default_tools=False` a component added after boot is unreachable over MCP
+until the restart (the riding `continue_run`/`cancel_run` are bounded to the
+components published at build time).
+
+HITL works out of the box: whenever components are exposed, `continue_run` and
+`cancel_run` ride along -- even with `default_tools=False` -- so a run that
+pauses on a confirmation-required tool is resumable over MCP (the paused
+result's structuredContent carries the component id, run_id, session_id, and
+requirements that `continue_run` needs). The riding pair only acts on runs of
+the published components: on an exposure-only server, runs of roster
+components you left off `tools=` cannot be resumed or cancelled over MCP. Set
+`lifecycle_tools=False` for a tools/list that shows exactly the configured
+tools; paused runs then say to resume over the REST API.
+
 ## Custom and scoped surfaces
 
 `custom_tools.py` passes an Agno `@tool` through
-`MCPServerConfig(tools=[...])` and sets `enable_builtin_tools=False`, leaving a
+`MCPConfig(tools=[...])` and sets `default_tools=False`, leaving a
 single client-visible tool.
+
+`toolkit_tools.py` passes a whole `Toolkit` instead of a single tool. AgentOS
+flattens it into one MCP tool per method -- `MemoryTools(enable_think=False,
+enable_analyze=False)` becomes `get_memories`, `add_memory`, `update_memory`,
+and `delete_memory` -- the way an agent takes a toolkit apart. Each flattened name goes through the same
+collision check as a hand-written custom tool, so a toolkit method named like a
+default tool (`WorkflowTools` really does register `run_workflow`) fails at
+startup instead of silently replacing it. Narrow the published set with the
+toolkit's own `include_tools` / `exclude_tools`.
+
+Toolkit methods take framework arguments: every `MemoryTools` method declares
+`run_context: RunContext`. Those are kept out of the client-facing schema and
+filled server-side at call time, so `add_memory` publishes just `memory` and
+`topics` while its body still receives a context carrying the authenticated
+caller. This is not only about tidiness -- pydantic cannot build a schema for a
+`RunContext`, so a visible one would stop the server from starting. The same
+rule hides `Agent`- and `Team`-typed arguments, which arrive as `None` because
+an MCP call runs outside any component. Media arguments stay visible: nothing on
+this surface has run media to inject, so hiding one would leave it fillable by
+nobody. So does a toolkit method's own `user_id` -- agno fills identity from the
+RunContext, never by that name, so a `user_id` argument on a toolkit method is a
+domain value (`ZoomTools` asks which account to read) and stays the caller's to
+send. `user_id` on a tool you wrote for this surface is still filled from the
+JWT subject, as before.
+
+The identity in that RunContext is only as good as the deployment's
+authorization: without `AgentOS(authorization=True, ...)` there is no JWT
+subject, the resolved caller is `None`, and every client shares one identity.
+Configure authorization before serving a toolkit whose data is per-user.
+
+This server runs each tool call directly, so a toolkit's `connect()` and
+`close()` never fire and every call is handed a fresh `RunContext`. The shipped
+connection-managing toolkits (`PostgresTools`, `RedshiftTools`) connect
+themselves on use and are unaffected. A toolkit whose state is keyed on the run
+is not: `CodeMode` keys its kernel by `session_id`, so over MCP it would start a
+kernel per call and accumulate nothing. Serve that one over REST, where a run
+owns the session.
+
+A tool whose approval gate this surface cannot honour is refused at startup
+rather than published without it. `requires_confirmation`, `requires_user_input`
+and `external_execution` all live in the call path an MCP request bypasses, so
+`Workspace(root=".")` -- whose `delete_file` and `run_command` are
+confirmation-gated -- fails fast and names the knob that frees it. Serve the
+read-only surface (`allowed=["read", "list", "search"]`) instead.
 
 `secure_mcp.py` demonstrates the full security configuration:
 

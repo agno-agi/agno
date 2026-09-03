@@ -147,9 +147,10 @@ class GCSLoader(BaseLoader):
                 content, content_name, virtual_path, merged_metadata, "gcs"
             )
 
+            prior_status = await self._aprior_status(content_entry.id, user_id=content_entry.user_id)
             await self._ainsert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id):
+            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id, prior_status=prior_status):
                 content_entry.status = ContentStatus.COMPLETED
                 await self._aupdate_content(content_entry)
                 continue
@@ -166,7 +167,7 @@ class GCSLoader(BaseLoader):
 
             # Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content_entry.id)
-            await self._ahandle_vector_db_insert(content_entry, read_documents, upsert)
+            await self._ahandle_vector_db_insert(content_entry, read_documents, upsert, prior_status=prior_status)
 
     def _load_from_gcs(
         self,
@@ -231,9 +232,10 @@ class GCSLoader(BaseLoader):
                 content, content_name, virtual_path, merged_metadata, "gcs"
             )
 
+            prior_status = self._prior_status(content_entry.id, user_id=content_entry.user_id)
             self._insert_contents_db(content_entry)
 
-            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id):
+            if self._should_skip(content_entry.content_hash, skip_if_exists, user_id=content_entry.user_id, prior_status=prior_status):
                 content_entry.status = ContentStatus.COMPLETED
                 self._update_content(content_entry)
                 continue
@@ -250,4 +252,4 @@ class GCSLoader(BaseLoader):
 
             # Prepare and insert the content in the vector database
             self._prepare_documents_for_insert(read_documents, content_entry.id)
-            self._handle_vector_db_insert(content_entry, read_documents, upsert)
+            self._handle_vector_db_insert(content_entry, read_documents, upsert, prior_status=prior_status)
