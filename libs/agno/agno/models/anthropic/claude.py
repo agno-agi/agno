@@ -579,8 +579,8 @@ class Claude(Model):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        drop_unsupported_sampling_params(_request_params, self.id)
-        return route_sampling_params_to_extra_body(_request_params)
+        route_sampling_params_to_extra_body(_request_params)
+        return drop_unsupported_sampling_params(_request_params, self.id)
 
     @staticmethod
     def _extract_container_id_from_messages(messages: List["Message"]) -> Optional[str]:

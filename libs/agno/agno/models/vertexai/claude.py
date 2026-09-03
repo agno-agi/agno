@@ -142,8 +142,8 @@ class Claude(AnthropicClaude):
         if self.request_params:
             _request_params.update(self.request_params)
 
-        drop_unsupported_sampling_params(_request_params, self.id)
         route_sampling_params_to_extra_body(_request_params)
+        drop_unsupported_sampling_params(_request_params, self.id)
 
         if _request_params:
             log_debug(f"Calling {self.provider} with request parameters: {_request_params}", log_level=2)

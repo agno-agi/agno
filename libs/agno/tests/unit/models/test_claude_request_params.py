@@ -289,12 +289,16 @@ def test_anthropic_positive_temperature_included():
 
 
 def test_anthropic_all_sampling_params_zero():
-    """All three sampling params at zero must all survive into extra_body."""
-    model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.0, top_p=0.0, top_k=0)
-    params = model.get_request_params()
-    assert params["extra_body"]["temperature"] == 0.0
-    assert params["extra_body"]["top_p"] == 0.0
-    assert params["extra_body"]["top_k"] == 0
+    """Zero sampling params must survive together into extra_body.
+
+    temperature and top_p are checked in separate pairs: Anthropic rejects those two
+    together on every current model, so that pair never reaches the request.
+    """
+    params = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.0, top_k=0).get_request_params()
+    assert params["extra_body"] == {"temperature": 0.0, "top_k": 0}
+
+    params = AnthropicClaude(id="claude-haiku-4-5-20251001", top_p=0.0, top_k=0).get_request_params()
+    assert params["extra_body"] == {"top_p": 0.0, "top_k": 0}
 
 
 def test_aws_temperature_zero_included():
@@ -389,11 +393,27 @@ def test_anthropic_thinking_drops_temperature():
     assert "extra_body" not in params
 
 
-def test_anthropic_thinking_keeps_allowed_sampling_values():
-    """temperature=1 and top_p>=0.95 are accepted alongside thinking and stay in extra_body."""
-    model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=1.0, top_p=0.95, thinking=THINKING)
+def test_anthropic_thinking_keeps_temperature_one():
+    """temperature=1 is the one value accepted alongside thinking, so it stays in extra_body."""
+    model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=1.0, thinking=THINKING)
     params = model.get_request_params()
-    assert params["extra_body"] == {"temperature": 1.0, "top_p": 0.95}
+    assert params["extra_body"] == {"temperature": 1.0}
+
+
+def test_anthropic_temperature_and_top_p_are_never_sent_together():
+    """Anthropic rejects the pair on every current model; without thinking, temperature is the one kept."""
+    model = AnthropicClaude(id="claude-haiku-4-5-20251001", temperature=0.5, top_p=0.9)
+    params = model.get_request_params()
+    assert params["extra_body"] == {"temperature": 0.5}
+
+
+def test_anthropic_explicit_extra_body_is_filtered_too():
+    """A sampling value passed straight through request_params["extra_body"] gets the same treatment."""
+    supplied = {"extra_body": {"temperature": 0.0}}
+    model = AnthropicClaude(id="claude-haiku-4-5-20251001", thinking=THINKING, request_params=supplied)
+    params = model.get_request_params()
+    assert "extra_body" not in params
+    assert supplied == {"extra_body": {"temperature": 0.0}}, "the caller's request_params was mutated"
 
 
 def test_anthropic_thinking_from_request_params_is_seen():
