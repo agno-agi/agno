@@ -7,11 +7,11 @@ from agno.utils.log import log_debug, log_error, log_exception
 
 try:
     from mcp import ClientSession
-    from mcp.shared.exceptions import McpError
+    from mcp.shared.exceptions import MCPError
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
-except (ImportError, ModuleNotFoundError):
-    raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+except ModuleNotFoundError:
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
 from agno.media import Image
@@ -126,7 +126,7 @@ def get_entrypoint_for_tool(
             result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
 
             # Return an error if the tool call failed
-            if result.isError:
+            if result.is_error:
                 return ToolResult(
                     content=f"Error from MCP tool '{tool_name}': {result.content}",
                     metadata=_build_mcp_metadata(result),
@@ -197,13 +197,13 @@ def get_entrypoint_for_tool(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
                         content=image_data,
-                        mime_type=getattr(content_item, "mimeType", "image/png"),
+                        mime_type=getattr(content_item, "mime_type", "image/png"),
                     )
                     images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
-                    response_str += f"[Embedded resource: {content_item.resource.model_dump_json()}]\n"
+                    response_str += f"[Embedded resource: {content_item.resource.model_dump_json(by_alias=True)}]\n"
                 else:
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
@@ -243,7 +243,7 @@ def get_entrypoint_for_tool(
             return await _call_with_session(session)
         except asyncio.CancelledError:
             raise
-        except McpError as e:
+        except MCPError as e:
             msg = f"MCP tool '{tool_name}' failed: {e}. The MCP server may be unreachable or the request timed out."
             log_error(msg)
             return ToolResult(content=msg)
@@ -266,7 +266,7 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
     metadata: Dict[str, Any] = {}
     if getattr(result, "meta", None) is not None:
         metadata["meta"] = result.meta
-    structured_content = getattr(result, "structuredContent", None)
+    structured_content = getattr(result, "structured_content", None)
     if structured_content is not None:
         metadata["structured_content"] = structured_content
     return metadata or None
@@ -274,7 +274,7 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
 
 def _serialize_structured_content(result: "CallToolResult") -> Optional[str]:
     """Serialize structuredContent so structured-only MCP responses reach the model loop."""
-    structured_content = getattr(result, "structuredContent", None)
+    structured_content = getattr(result, "structured_content", None)
     if structured_content is None:
         return None
 

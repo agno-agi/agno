@@ -4,7 +4,6 @@ import time
 import weakref
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
@@ -22,9 +21,57 @@ try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
     from mcp.client.stdio import get_default_environment, stdio_client
-    from mcp.client.streamable_http import streamablehttp_client
-except (ImportError, ModuleNotFoundError):
-    raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+    from mcp.client.streamable_http import streamable_http_client
+except ModuleNotFoundError:
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
+
+
+def _streamable_http_connection(streamable_http_params: dict) -> Tuple[Any, float]:
+    """Build the v2 ``streamable_http_client`` context and the session read timeout.
+
+    The MCP SDK v2 ``streamable_http_client`` accepts only ``url``, ``http_client``
+    and ``terminate_on_close`` -- it no longer takes ``timeout``/``sse_read_timeout``.
+    Those are popped from ``streamable_http_params`` and mapped onto an
+    ``httpx2.Timeout`` on the ``http_client`` built here (following the SDK's own
+    ``create_mcp_http_client``, which enables ``follow_redirects``). Returns the
+    connection context manager plus the read timeout (seconds) to hand to
+    ``ClientSession``.
+    """
+    import httpx2
+    from mcp.shared._httpx_utils import create_mcp_http_client
+
+    params = dict(streamable_http_params)
+    url = params.pop("url")
+    headers = params.pop("headers", None)
+    timeout = params.pop("timeout", None)
+    sse_read_timeout = params.pop("sse_read_timeout", None)
+    terminate_on_close = params.pop("terminate_on_close", True)
+
+    # Guard against a caller-supplied timedelta from an older config: normalize to seconds.
+    if hasattr(timeout, "total_seconds"):
+        timeout = timeout.total_seconds()
+    if hasattr(sse_read_timeout, "total_seconds"):
+        sse_read_timeout = sse_read_timeout.total_seconds()
+
+    http_client = None
+    if headers is not None or timeout is not None or sse_read_timeout is not None:
+        httpx_timeout = None
+        if timeout is not None or sse_read_timeout is not None:
+            # Map the two v1 knobs onto one Timeout; the first value covers connect/write/pool.
+            # A knob left unset keeps the SDK default (30s ops / 300s stream read) rather than
+            # going unbounded -- httpx2.Timeout(read=None) means "no read limit" at all.
+            op_timeout = timeout if timeout is not None else 30.0
+            read_timeout = sse_read_timeout if sse_read_timeout is not None else 300.0
+            httpx_timeout = httpx2.Timeout(op_timeout, read=read_timeout)
+        http_client = create_mcp_http_client(headers=headers, timeout=httpx_timeout)
+
+    # The ClientSession read timeout mirrors the HTTP operation timeout so tool calls
+    # don't hang past the configured limit; it is unrelated to the stream read timeout.
+    session_read_timeout = float(timeout) if timeout is not None else 30.0
+
+    return streamable_http_client(
+        url, http_client=http_client, terminate_on_close=terminate_on_close
+    ), session_read_timeout
 
 
 class MCPTools(Toolkit):
@@ -54,6 +101,7 @@ class MCPTools(Toolkit):
         exclude_tools: Optional[list[str]] = None,
         refresh_connection: bool = False,
         tool_name_prefix: Optional[str] = None,
+        headers: Optional[dict[str, Any]] = None,
         header_provider: Optional[Callable[..., dict[str, Any]]] = None,
         **kwargs,
     ):
@@ -77,9 +125,14 @@ class MCPTools(Toolkit):
             transport: The transport protocol to use, either "stdio" or "sse" or "streamable-http".
                        Defaults to "streamable-http" when url is provided, otherwise defaults to "stdio".
             refresh_connection: If True, the connection and tools will be refreshed on each run
+            headers: Optional static HTTP headers applied when establishing the MCP session
+                (connect/handshake) and merged into per-run sessions. Only relevant with
+                HTTP transports (Streamable HTTP or SSE). Prefer this for connect-time auth
+                tokens; use header_provider for per-run dynamic values.
             header_provider: Optional function to generate dynamic HTTP headers.
                 Only relevant with HTTP transports (Streamable HTTP or SSE).
-                Creates a new session per agent run with dynamic headers merged into connection config.
+                Invoked during connect() so secured servers receive auth on the handshake,
+                and again per agent run when run context is available.
         """
         # Extract these before super().__init__() to bypass early validation
         # (tools aren't available until build_tools() is called)
@@ -150,6 +203,17 @@ class MCPTools(Toolkit):
                     )
 
         self.transport = transport
+
+        # Stored separately from any subclass attribute named `headers`
+        # (e.g. MCPToolbox uses `self.headers` for toolbox-core credentials).
+        self._mcp_headers: Optional[dict[str, Any]] = None
+        if headers is not None:
+            if self.transport not in ["sse", "streamable-http"]:
+                raise ValueError(
+                    f"headers is not supported with '{self.transport}' transport. "
+                    "Use 'sse' or 'streamable-http' transport instead."
+                )
+            self._mcp_headers = headers
 
         self.header_provider = None
         if header_provider is not None:
@@ -277,6 +341,23 @@ class MCPTools(Toolkit):
             log_warning(f"Error calling header_provider: {str(e)}")
             return {}
 
+    def _merge_http_headers(
+        self,
+        base_headers: Optional[dict[str, Any]] = None,
+        run_context: Optional["RunContext"] = None,
+        agent: Optional["Agent"] = None,
+        team: Optional["Team"] = None,
+    ) -> dict[str, Any]:
+        """Merge server_params headers, static MCP headers, and header_provider output."""
+        merged: dict[str, Any] = {}
+        if base_headers:
+            merged.update(base_headers)
+        if self._mcp_headers:
+            merged.update(self._mcp_headers)
+        if self.header_provider is not None:
+            merged.update(self._call_header_provider(run_context=run_context, agent=agent, team=team))
+        return merged
+
     async def _cleanup_stale_sessions(self) -> None:
         """Clean up sessions older than TTL to prevent memory leaks."""
         if not self._run_sessions:
@@ -324,7 +405,7 @@ class MCPTools(Toolkit):
             yield self.session
             return
 
-        dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+        dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
 
         if self.transport == "sse":
             sse_params = asdict(self.server_params) if self.server_params is not None else {}  # type: ignore
@@ -340,10 +421,7 @@ class MCPTools(Toolkit):
                 streamable_http_params["url"] = self.url
             existing_headers = streamable_http_params.get("headers") or {}
             streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
-            context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
+            context, params_timeout = _streamable_http_connection(streamable_http_params)
             client_timeout = min(self.timeout_seconds, params_timeout)
         else:
             if self.session is None:
@@ -356,7 +434,7 @@ class MCPTools(Toolkit):
             session_params = await context.__aenter__()  # type: ignore
             read, write = session_params[0:2]
 
-            session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+            session_context = ClientSession(read, write, read_timeout_seconds=float(client_timeout))  # type: ignore
             session = await session_context.__aenter__()  # type: ignore
             await session.initialize()
 
@@ -427,8 +505,8 @@ class MCPTools(Toolkit):
             # Create a new session with dynamic headers for this run
             log_debug(f"Creating new session for run_id={run_id} with dynamic headers")
 
-            # Generate dynamic headers from the provider
-            dynamic_headers = self._call_header_provider(run_context=run_context, agent=agent, team=team)
+            # Generate dynamic headers from the provider (merged with static headers)
+            dynamic_headers = self._merge_http_headers(run_context=run_context, agent=agent, team=team)
 
             # Create new session with merged headers based on transport type
             if self.transport == "sse":
@@ -452,10 +530,7 @@ class MCPTools(Toolkit):
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
 
-                context = streamablehttp_client(**streamable_http_params)  # type: ignore
-                params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-                if isinstance(params_timeout, timedelta):
-                    params_timeout = int(params_timeout.total_seconds())
+                context, params_timeout = _streamable_http_connection(streamable_http_params)
                 client_timeout = min(self.timeout_seconds, params_timeout)
             else:
                 # stdio doesn't support headers, fall back to default session
@@ -470,7 +545,7 @@ class MCPTools(Toolkit):
                 session_params = await context.__aenter__()  # type: ignore
                 read, write = session_params[0:2]
 
-                session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+                session_context = ClientSession(read, write, read_timeout_seconds=float(client_timeout))  # type: ignore
                 session = await session_context.__aenter__()  # type: ignore
 
                 # Initialize the session
@@ -595,12 +670,10 @@ class MCPTools(Toolkit):
             await self.initialize()
             return
 
-        # If header_provider is set, generate initial headers for the connection.
-        # This ensures MCP servers that require auth headers for tool discovery
-        # receive them during initialization, not just during per-run sessions.
-        init_headers: dict[str, Any] = {}
-        if self.header_provider:
-            init_headers = self._call_header_provider()
+        # Merge static headers and header_provider output for the handshake.
+        # Secured MCP servers require auth headers during session initialization,
+        # not only on subsequent tool calls.
+        init_headers = self._merge_http_headers()
 
         # Create a new studio session
         if self.transport == "sse":
@@ -621,10 +694,7 @@ class MCPTools(Toolkit):
             if init_headers:
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **init_headers}
-            self._context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
+            self._context, params_timeout = _streamable_http_connection(streamable_http_params)
             client_timeout = min(self.timeout_seconds, params_timeout)
 
         else:
@@ -650,7 +720,7 @@ class MCPTools(Toolkit):
         self._active_contexts.append(self._context)
         read, write = session_params[0:2]
 
-        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+        self._session_context = ClientSession(read, write, read_timeout_seconds=float(client_timeout))  # type: ignore
         try:
             self.session = await self._session_context.__aenter__()  # type: ignore
         except BaseException:
@@ -773,7 +843,7 @@ class MCPTools(Toolkit):
                     f = Function(
                         name=tool_name_prefix + tool_name,
                         description=tool.description,
-                        parameters=tool.inputSchema,
+                        parameters=tool.input_schema,
                         entrypoint=entrypoint,
                         # Set skip_entrypoint_processing to True to avoid processing the entrypoint
                         skip_entrypoint_processing=True,
