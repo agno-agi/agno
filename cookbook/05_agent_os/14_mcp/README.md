@@ -14,6 +14,7 @@ an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 | `agents_as_tools.py` | Turn the default tools off and expose agents directly as named MCP tools. |
 | `mcp_client.py` | Discover, pause, continue, cancel, and inspect runs with a protocol-level client. |
 | `custom_tools.py` | Disable the default tools and expose one purpose-built tool. |
+| `server_identity.py` | Set the name, version and instructions the server reports to connecting clients. |
 | `toolkit_tools.py` | Serve a whole toolkit, flattened into one MCP tool per method. |
 | `secure_mcp.py` | Mint a PAT, authorize its principal, restrict hosts and tool tags, and return full results. |
 | `oauth_builtin.py` | Run AgentOS's database-backed OAuth authorization server. |
@@ -53,6 +54,31 @@ The client calls the tools directly. It continues one confirmation-required
 run, cancels a second paused run, and reads the continued session from SQLite.
 Run tools return a trimmed result by default: answer content plus
 `run_id`, `session_id`, `status`, and unresolved requirements when paused.
+
+## Server name, version and instructions
+
+`server_identity.py` sets what a client learns in the initialize response:
+
+```python
+agent_os = AgentOS(
+    name="Support AgentOS",
+    version="1.4.0",
+    agents=[support_agent],
+    mcp=MCPConfig(
+        name="Acme Support",
+        version="1.4.0",
+        instructions="This server answers questions about Acme products. Start with run_agent ...",
+    ),
+)
+```
+
+`name` defaults to the AgentOS name and `version` to `AgentOS(version=...)`.
+`instructions` tells the calling model what the tools are for and how to use them;
+Claude, Cursor and ChatGPT read it when they connect.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/14_mcp/server_identity.py
+```
 
 ## Agents as tools
 

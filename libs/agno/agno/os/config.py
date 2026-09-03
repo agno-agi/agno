@@ -55,6 +55,13 @@ class MCPConfig(BaseModel):
     # not silently serve a different tool surface.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
 
+    # Sent in the initialize response. ``name`` defaults to the AgentOS name and
+    # ``version`` to ``AgentOS(version=...)``. ``instructions`` tells the calling
+    # model what the tools are for and how to use them.
+    name: Optional[str] = None
+    version: Optional[str] = None
+    instructions: Optional[str] = None
+
     # The tool surface of this MCP server. Each entry may be:
     #
     #   - a plain callable or an Agno ``@tool``/``Function`` -- a custom tool
