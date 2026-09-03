@@ -728,21 +728,18 @@ class SingleStoreDb(BaseDb):
             )
 
             with self.Session() as sess, sess.begin():
-                # Backfill a monotonic run_index when the run arrives without one
-                # (e.g. a background/continue save that couldn't resolve its position).
-                # A NULL index has no position and breaks ORDER BY run_index. ON DUPLICATE KEY
-                # preserves the existing index, so this only sets it on a genuine insert.
-                if row.get("run_index") is None:
-                    # Single-statement backfill: SingleStore has no user-level
-                    # locks (no GET_LOCK), so the MAX is computed inside the
-                    # INSERT via a materialized derived table (the MySQL
-                    # dialect rejects a direct same-table subquery). This
-                    # closes the two-statement read-then-insert window; truly
-                    # simultaneous same-session first-saves can still read the
-                    # same MAX under snapshot isolation - best effort without
-                    # engine support.
-                    prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
-                    row["run_index"] = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
+                # A new run always lands after the session's existing rows. Callers
+                # pass the run's position in the in-memory ``session.runs`` list, and
+                # after runs were deleted from the front of that list the position
+                # collides with, or sorts before, rows that still exist. ON CONFLICT
+                # preserves the existing index, so this only affects a genuine insert.
+                # Single-statement: SingleStore has no user-level locks (no GET_LOCK),
+                # so the MAX is computed inside the INSERT via a materialized derived
+                # table (the MySQL dialect rejects a direct same-table subquery).
+                prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
+                next_index = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
+                provided_index = row.get("run_index")
+                row["run_index"] = next_index if provided_index is None else func.greatest(provided_index, next_index)
 
                 stmt = mysql.insert(runs_table).values(**row)  # type: ignore
                 stmt = stmt.on_duplicate_key_update(
