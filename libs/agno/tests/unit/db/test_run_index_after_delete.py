@@ -11,7 +11,10 @@ from __future__ import annotations
 
 import sqlite3
 
+import pytest
+
 from agno.db.sqlite import SqliteDb
+from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 from agno.run.agent import RunOutput
 from agno.session.agent import AgentSession
 
@@ -41,6 +44,21 @@ def test_new_run_lands_after_survivors_when_leading_runs_were_deleted(tmp_path):
 
     assert _rows(db_file) == [("r2", 2), ("r3", 3)]
     assert [run.run_id for run in db.get_session("s1").runs] == ["r2", "r3"]
+
+
+@pytest.mark.asyncio
+async def test_async_new_run_lands_after_survivors_when_leading_runs_were_deleted(tmp_path):
+    db_file = str(tmp_path / "t.db")
+    db = AsyncSqliteDb(db_file=db_file)
+    await db.upsert_session(AgentSession(session_id="s1", agent_id="a1", created_at=1000, updated_at=1000))
+    for index, run_id in enumerate(["r0", "r1", "r2"]):
+        await db.upsert_run(_run(run_id), session_id="s1", run_index=index)
+
+    await db.delete_runs(["r0", "r1"])
+    await db.upsert_run(_run("r3"), session_id="s1", run_index=1)
+
+    assert _rows(db_file) == [("r2", 2), ("r3", 3)]
+    assert [run.run_id for run in (await db.get_session("s1")).runs] == ["r2", "r3"]
 
 
 def test_existing_rows_keep_their_index_on_update(tmp_path):
