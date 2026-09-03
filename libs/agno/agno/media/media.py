@@ -782,6 +782,10 @@ class File(BaseModel):
         filename: Optional[str] = None,
         name: Optional[str] = None,
         format: Optional[str] = None,
+        file_type: Optional[str] = None,
+        size: Optional[int] = None,
+        external: Optional[Any] = None,
+        metadata: Optional[Dict[str, Any]] = None,
     ) -> "File":
         """Create File from base64 encoded content or plain text.
 
@@ -811,6 +815,10 @@ class File(BaseModel):
             filename=filename,
             name=name,
             format=format,
+            file_type=file_type,
+            size=size,
+            external=external,
+            metadata=metadata,
         )
 
     @property
