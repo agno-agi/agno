@@ -1179,6 +1179,31 @@ def isolated_runtime_value(value: Any) -> Any:
     return value
 
 
+def _release_validator_frame_namespace(wrapped: Callable) -> None:
+    """Drop the caller-frame namespace pydantic keeps on a ``validate_call`` wrapper.
+
+    ``validate_call`` records the locals of the frame that called it so forward
+    references can be resolved, and builds its validators eagerly, so the
+    namespace is dead weight once the wrapper exists. On Python 3.13
+    ``frame.f_locals`` is a proxy that keeps the frame, and through ``f_back``
+    the whole call chain, alive. The wrappers built here are cached for the
+    life of the process (or of the tool's owner), so every cached tool pinned
+    the Agent, session and run state that happened to be on the stack when it
+    was first wrapped. The async-generator shim closes over a second wrapper,
+    hence the recursion.
+    """
+    for cell in getattr(wrapped, "__closure__", None) or ():
+        try:
+            contents = cell.cell_contents
+        except ValueError:  # empty cell
+            continue
+        holder = getattr(contents, "__self__", contents)
+        if hasattr(holder, "ns_resolver") and hasattr(holder, "__pydantic_validator__"):
+            holder.ns_resolver = None
+        elif callable(contents) and hasattr(contents, "__closure__"):
+            _release_validator_frame_namespace(contents)
+
+
 class Function(BaseModel):
     """Model for storing functions that can be called by an agent."""
 
@@ -1703,6 +1728,13 @@ class Function(BaseModel):
 
     @staticmethod
     def _wrap_callable_uncached(func: Callable) -> Callable:
+        wrapped = Function._validate_callable(func)
+        if wrapped is not func:
+            _release_validator_frame_namespace(wrapped)
+        return wrapped
+
+    @staticmethod
+    def _validate_callable(func: Callable) -> Callable:
         from inspect import isasyncgenfunction, iscoroutinefunction, signature
 
         pydantic_version = _get_pydantic_version()
