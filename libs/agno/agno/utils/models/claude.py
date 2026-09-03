@@ -144,8 +144,12 @@ def serialize_content_blocks(blocks: Any) -> List[Dict[str, Any]]:
     serialized: List[Dict[str, Any]] = []
     for block in blocks or []:
         block_dict = _anthropic_coerce_content_block(block)
-        if block_dict is not None:
-            serialized.append(block_dict)
+        if block_dict is None:
+            continue
+        if block_dict.get("type") == "redacted_reasoning_content":
+            # Legacy spelling accepted from rehydrated events; the API only knows redacted_thinking.
+            block_dict = {**block_dict, "type": "redacted_thinking"}
+        serialized.append(block_dict)
     return serialized
 
 
@@ -165,10 +169,7 @@ def _anthropic_stored_assistant_blocks(message: Message) -> Optional[List[Dict[s
         return None
     tool_call_ids = {tc.get("id") for tc in (message.tool_calls or []) if isinstance(tc, dict)}
     replay: List[Dict[str, Any]] = []
-    for item in stored:
-        block = _anthropic_coerce_content_block(item)
-        if block is None:
-            continue
+    for block in serialize_content_blocks(stored):
         if block.get("type") == "tool_use" and block.get("id") not in tool_call_ids:
             continue
         # Copy so request-time edits to the payload can never reach the stored session message.

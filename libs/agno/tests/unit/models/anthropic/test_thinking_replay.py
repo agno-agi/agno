@@ -315,3 +315,45 @@ def test_replayed_blocks_do_not_alias_stored_blocks():
     api_messages[1]["content"][0]["cache_control"] = {"type": "ephemeral"}
 
     assert "cache_control" not in assistant.provider_data["content_blocks"][0]
+
+
+def test_legacy_redacted_block_type_is_normalized_when_stored():
+    # The parser accepts the legacy redacted_reasoning_content spelling from rehydrated events.
+    # The API only accepts redacted_thinking, so the stored list must carry the canonical type.
+    from agno.utils.models.claude import serialize_content_blocks
+
+    stored = serialize_content_blocks(
+        [
+            {"type": "redacted_reasoning_content", "data": "ENC-LEGACY"},
+            RedactedThinkingBlock(type="redacted_thinking", data="ENC-SDK"),
+            {"type": "text", "text": "answer"},
+        ]
+    )
+
+    assert stored == [
+        {"type": "redacted_thinking", "data": "ENC-LEGACY"},
+        {"type": "redacted_thinking", "data": "ENC-SDK"},
+        {"type": "text", "text": "answer"},
+    ]
+
+
+def test_legacy_redacted_block_type_in_stored_blocks_replays_as_redacted_thinking():
+    # Sessions that stored the legacy spelling before normalization must still replay a valid type.
+    assistant = Message(
+        role="assistant",
+        content="answer",
+        provider_data={
+            "content_blocks": [
+                {"type": "redacted_reasoning_content", "data": "ENC-LEGACY"},
+                {"type": "text", "text": "answer"},
+            ]
+        },
+    )
+
+    api_messages, _ = format_messages([Message(role="user", content="hi"), assistant])
+
+    blocks = api_messages[1]["content"]
+    assert _block_types(blocks) == ["redacted_thinking", "text"]
+    assert blocks[0]["data"] == "ENC-LEGACY"
+    # The stored session data is left as it was written.
+    assert assistant.provider_data["content_blocks"][0]["type"] == "redacted_reasoning_content"

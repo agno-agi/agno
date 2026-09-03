@@ -369,3 +369,36 @@ class TestAutoDetectionLiteLLM:
         from agno.models.litellm.chat import LiteLLM
 
         assert LiteLLM(id="openai/gpt-4o").append_trailing_user_message is False
+
+
+class TestAutoDetectionAzureClaude:
+    """Azure Claude must run the shared auto-detection, not just its own overrides."""
+
+    def test_azure_sonnet_45_auto_disabled(self):
+        from agno.models.azure.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-5-20250929").append_trailing_user_message is False
+
+    def test_azure_sonnet_46_auto_enabled(self):
+        from agno.models.azure.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-6").append_trailing_user_message is True
+
+    def test_azure_thinking_auto_enabled_on_prefill_model(self):
+        from agno.models.azure.claude import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "enabled", "budget_tokens": 1024})
+        assert model.append_trailing_user_message is True
+
+    def test_azure_user_override_respected(self):
+        from agno.models.azure.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-6", append_trailing_user_message=False).append_trailing_user_message is False
+
+    def test_azure_still_disables_structured_outputs(self):
+        # The parent post-init enables native structured outputs for supported ids; Azure overrides it.
+        from agno.models.azure.claude import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929")
+        assert model.supports_native_structured_outputs is False
+        assert model.supports_json_schema_outputs is False
