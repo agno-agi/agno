@@ -312,6 +312,27 @@ class TestAutoDetection:
         )
         assert model.append_trailing_user_message is False
 
+    def test_thinking_via_request_params_auto_enabled(self):
+        # request_params are applied last and override the thinking field, so thinking supplied
+        # there must also turn on the trailing user turn.
+        from agno.models.anthropic import Claude
+
+        model = Claude(
+            id="claude-sonnet-4-5-20250929",
+            request_params={"thinking": {"type": "enabled", "budget_tokens": 1024}},
+        )
+        assert model.append_trailing_user_message is True
+
+    def test_request_params_disabling_thinking_keeps_prefill_default(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(
+            id="claude-sonnet-4-5-20250929",
+            thinking={"type": "enabled", "budget_tokens": 1024},
+            request_params={"thinking": {"type": "disabled"}},
+        )
+        assert model.append_trailing_user_message is False
+
 
 class TestAutoDetectionVertexAI:
     """Tests for VertexAI Claude auto-detection."""

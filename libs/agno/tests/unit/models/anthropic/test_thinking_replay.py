@@ -357,3 +357,42 @@ def test_legacy_redacted_block_type_in_stored_blocks_replays_as_redacted_thinkin
     assert blocks[0]["data"] == "ENC-LEGACY"
     # The stored session data is left as it was written.
     assert assistant.provider_data["content_blocks"][0]["type"] == "redacted_reasoning_content"
+
+
+def test_merged_assistant_messages_keep_earlier_text_and_later_thinking():
+    # A response truncated after thinking and partial text, followed by the continuation response.
+    # Only the later response's thinking survives; the earlier text is kept for context. The API
+    # verifies the thinking sequence, not its position relative to text: this exact shape, followed
+    # by a user turn, was accepted live by claude-sonnet-4-5.
+    truncated = Message(
+        role="assistant",
+        content="The bicycle began",
+        reasoning_content="brief plan",
+        provider_data={
+            "signature": "SIG-1",
+            "content_blocks": [
+                {"type": "thinking", "thinking": "brief plan", "signature": "SIG-1"},
+                {"type": "text", "text": "The bicycle began"},
+            ],
+        },
+    )
+    continuation = Message(
+        role="assistant",
+        content="in the 1810s.",
+        reasoning_content="continue the essay",
+        provider_data={
+            "signature": "SIG-2",
+            "content_blocks": [
+                {"type": "thinking", "thinking": "continue the essay", "signature": "SIG-2"},
+                {"type": "text", "text": "in the 1810s."},
+            ],
+        },
+    )
+
+    api_messages, _ = format_messages(
+        [Message(role="user", content="hi"), truncated, continuation, Message(role="user", content="ok?")]
+    )
+
+    blocks = api_messages[1]["content"]
+    assert _block_types(blocks) == ["text", "thinking", "text"]
+    assert _signatures(blocks) == [None, "SIG-2", None]

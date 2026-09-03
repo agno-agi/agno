@@ -269,8 +269,13 @@ class Claude(Model):
         return False
 
     def _thinking_enabled(self) -> bool:
-        """Return True when the request will run with thinking on."""
-        return bool(self.thinking) and self.thinking.get("type") != "disabled"  # type: ignore[union-attr]
+        """Return True when the request will run with thinking on.
+
+        ``request_params`` are applied last in ``get_request_params`` and override the ``thinking``
+        field, so a thinking config supplied there decides.
+        """
+        thinking = (self.request_params or {}).get("thinking", self.thinking)
+        return isinstance(thinking, dict) and thinking.get("type") != "disabled"
 
     def _validate_thinking_support(self) -> None:
         """
