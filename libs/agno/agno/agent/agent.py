@@ -327,6 +327,8 @@ class Agent:
     num_followups: int = 3
     # Optional model to use for generating followups (defaults to agent's model)
     followup_model: Optional[Model] = None
+    # Force JSON mode for followup generation (issue #9870)
+    followup_use_json_mode: bool = False
 
     # --- Agent Streaming ---
     # Stream the response from the Agent
@@ -482,6 +484,7 @@ class Agent:
         followups: bool = False,
         num_followups: int = 3,
         followup_model: Optional[Union[Model, str]] = None,
+        followup_use_json_mode: bool = False,
         stream: Optional[bool] = None,
         stream_events: Optional[bool] = None,
         store_events: bool = False,
@@ -657,6 +660,7 @@ class Agent:
             raise ValueError("num_followups must be at least 1")
         self.num_followups = num_followups
         self.followup_model = followup_model  # type: ignore[assignment]
+        self.followup_use_json_mode = followup_use_json_mode
 
         self.stream = stream
         self.stream_events = stream_events
