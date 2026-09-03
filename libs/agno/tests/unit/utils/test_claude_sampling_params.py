@@ -111,6 +111,23 @@ def test_model_without_sampling_support_drops_everything_but_temperature_one():
     assert kept["extra_body"] == {"temperature": 1}
 
 
+def test_thinking_inside_extra_body_is_honoured():
+    params = _request({"thinking": ENABLED, "temperature": 0.0})
+
+    drop_unsupported_sampling_params(params, "claude-haiku-4-5-20251001")
+
+    assert params["extra_body"] == {"thinking": ENABLED}
+
+
+def test_thinking_inside_extra_body_outranks_the_field():
+    # The SDK merges extra_body over the request, so a disabled there is what the API sees.
+    params = _request({"thinking": DISABLED, "temperature": 0.0}, thinking=ENABLED)
+
+    drop_unsupported_sampling_params(params, "claude-haiku-4-5-20251001")
+
+    assert params["extra_body"] == {"thinking": DISABLED, "temperature": 0.0}
+
+
 def test_other_extra_body_keys_survive():
     params = _request({"temperature": 0.0, "service_tier": "auto"}, thinking=ENABLED)
 

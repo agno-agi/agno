@@ -423,6 +423,17 @@ def test_anthropic_thinking_from_request_params_is_seen():
     assert "extra_body" not in params
 
 
+def test_anthropic_thinking_inside_extra_body_is_seen():
+    """thinking passed raw through extra_body reaches the API too, so it counts for the filter."""
+    supplied = {"extra_body": {"thinking": THINKING, "temperature": 0.0}}
+    model = AnthropicClaude(id="claude-haiku-4-5-20251001", request_params=supplied)
+    params = model.get_request_params()
+    assert params["extra_body"] == {"thinking": THINKING}
+    assert supplied == {"extra_body": {"thinking": THINKING, "temperature": 0.0}}, (
+        "the caller's request_params was mutated"
+    )
+
+
 def test_anthropic_model_without_sampling_support_drops_them_without_thinking():
     """Claude Sonnet 5 rejects a non-default temperature, top_p or top_k on every request."""
     model = AnthropicClaude(id="claude-sonnet-5", temperature=0.0, top_p=1.0, top_k=1)

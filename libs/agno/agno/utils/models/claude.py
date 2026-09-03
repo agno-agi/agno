@@ -99,7 +99,8 @@ def drop_unsupported_sampling_params(request_params: Dict[str, Any], model_id: s
     """Remove the sampling parameters Anthropic would reject for this request.
 
     Runs on the ``extra_body`` that ``route_sampling_params_to_extra_body`` built, so it
-    sees the model's own fields and an explicit ``extra_body`` alike. ``temperature`` and
+    sees the model's own fields and an explicit ``extra_body`` alike, ``thinking`` included
+    (the SDK merges ``extra_body`` over the request, so it wins there). ``temperature`` and
     ``top_p`` are never accepted together. With thinking on (``enabled`` or ``adaptive``)
     ``temperature`` may only be 1, ``top_p`` must be at least 0.95 and ``top_k`` must be
     unset; models without sampling support apply that on every request and reject any
@@ -109,7 +110,7 @@ def drop_unsupported_sampling_params(request_params: Dict[str, Any], model_id: s
     """
     sampling = request_params.get("extra_body") or {}
     temperature, top_p, top_k = sampling.get("temperature"), sampling.get("top_p"), sampling.get("top_k")
-    thinking = request_params.get("thinking") or {}
+    thinking = sampling.get("thinking", request_params.get("thinking")) or {}
     thinking_on = bool(thinking) and thinking.get("type") != "disabled"
     locked = not supports_sampling_params(model_id)
 
