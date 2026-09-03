@@ -9,6 +9,7 @@ on:
       - "release/*" # Run on release/1.2.3 branch format
       - "feat/v3.0"
       - "perf/tool-schema-cache"
+      - "mcp-stateless"
   workflow_dispatch: # Allows manual triggering
     inputs:
       branch:

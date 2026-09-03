@@ -84,6 +84,23 @@ def _strip_url_for_name(url: str) -> str:
     return authority + slash + path
 
 
+async def ping_session(session: Any) -> None:
+    """Send an MCP ping, or do nothing when the negotiated protocol has none.
+
+    The sessionless 2026-07-28 era removed ping, so a client that negotiated it would
+    raise "Method not found" on every probe. There is no connection to keep alive
+    there, so skipping is the correct behaviour rather than a swallowed failure.
+    """
+    protocol_version = getattr(session, "protocol_version", None)
+    # Compare only a real version string: a mock attribute must not look like an era.
+    if isinstance(protocol_version, str) and protocol_version >= "2026-07-28":
+        return
+
+    # A ClientSession exposes send_ping(); fastmcp's Client exposes ping().
+    ping = getattr(session, "send_ping", None) or session.ping
+    await ping()
+
+
 def get_entrypoint_for_tool(
     tool: MCPTool,
     session: ClientSession,
@@ -118,7 +135,7 @@ def get_entrypoint_for_tool(
 
         async def _call_with_session(active_session: ClientSession) -> ToolResult:
             try:
-                await active_session.send_ping()
+                await ping_session(active_session)
             except Exception as e:
                 log_exception(e)
 
