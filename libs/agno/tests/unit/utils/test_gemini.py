@@ -628,6 +628,29 @@ def test_convert_schema_enum_with_integer_values_and_default():
     assert result.default == "2"
 
 
+def test_convert_schema_enum_default_is_stringified_from_the_matched_member():
+    """The default carries the matched member's spelling, not its own.
+
+    ``False == 0`` and ``1.0 == 1``, so both name an enum member while their
+    own ``str()`` names nothing in the stringified enum.
+    """
+    assert convert_schema({"type": "integer", "enum": [0, 1], "default": False}).default == "0"
+    assert convert_schema({"type": "integer", "enum": [1, 2, 3], "default": 1.0}).default == "1"
+
+
+def test_convert_schema_enum_default_matches_by_value_not_by_string():
+    """Members are matched by equality, so a shared ``str()`` is not a match.
+
+    ``1`` names nothing in ``["1", 2]``, and is left as it was rather than
+    being pulled onto the string member that happens to print the same.
+    """
+    result = convert_schema({"type": "string", "enum": ["1", 2], "default": 1})
+
+    assert result is not None
+    assert result.default == 1
+    assert not isinstance(result.default, str)
+
+
 def test_convert_schema_enum_default_outside_the_enum_is_left_alone():
     schema_dict = {
         "type": "integer",
