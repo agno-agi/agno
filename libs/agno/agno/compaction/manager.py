@@ -202,7 +202,13 @@ class Compaction:
         # A user message opens a run.
         user_indexes = [i for i, m in enumerate(messages) if m.role == "user"]
         if len(user_indexes) <= keep_runs:
-            return 0
+            # The tail already covers everything, so there is no history in front of it to
+            # fold. Returning 0 here would name a boundary at the start of the list, which
+            # reads downstream as "fold nothing but measure anyway" - and on a run whose
+            # answers keep growing that produces a tail that grows without bound and a ratio
+            # that collapses toward zero, reported as if min_fold_ratio had declined a real
+            # fold. None says plainly that this pass has nothing to do.
+            return None
         return user_indexes[-keep_runs]
 
     def boundary_for(self, messages: List[Message], min_index: int = 0) -> Optional[int]:
@@ -213,7 +219,10 @@ class Compaction:
         the cut moves into the tail whole) and *durable* - it never anchors on a message that
         will not survive in storage, since the anchor has to resolve again on the next run.
         """
-        return choose_boundary(messages, keep_from_index=self._keep_from_index(messages), min_index=min_index)
+        keep_from = self._keep_from_index(messages)
+        if keep_from is None:
+            return None
+        return choose_boundary(messages, keep_from_index=keep_from, min_index=min_index)
 
     # -- summarizing ----------------------------------------------------
 

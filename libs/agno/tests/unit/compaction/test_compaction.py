@@ -565,6 +565,152 @@ def test_regex_patterns_skip_the_sql_prefilter():
     assert _is_plain_text(r"INC-\d+") is False
 
 
+# --- token measurement ------------------------------------------------------
+
+
+def test_provider_reported_tokens_win_over_counting():
+    """The provider's own number is free; count_tokens can be a network call."""
+
+    class ExplodingModel:
+        id = "x"
+
+        def count_tokens(self, *args, **kwargs):
+            raise AssertionError("count_tokens must not be called when a report exists")
+
+    c = Compaction(compact_at_runs=2)
+
+    assert c._measured_tokens(_transcript(), 1234, ExplodingModel()) == 1234
+
+
+def test_token_counting_failure_is_not_fatal():
+    """A provider that refuses to count must not take the run down with it."""
+
+    class FailingModel:
+        id = "x"
+
+        def count_tokens(self, *args, **kwargs):
+            raise RuntimeError("provider said no")
+
+    c = Compaction(compact_at_runs=2)
+
+    assert c._measured_tokens(_transcript(), None, FailingModel()) is None
+
+
+def test_no_model_and_no_report_measures_nothing():
+    c = Compaction(compact_at_runs=2)
+
+    assert c._measured_tokens(_transcript(), None, None) is None
+
+
+# --- tail selection ---------------------------------------------------------
+
+
+def test_keep_last_runs_names_an_exact_position():
+    """Turn-based settings resolve to an index, not to a token budget."""
+    messages = _transcript(runs=4)
+    user_indexes = [i for i, m in enumerate(messages) if m.role == "user"]
+
+    assert Compaction(compact_at_runs=2, keep_last_runs=1)._keep_from_index(messages) == user_indexes[-1]
+    assert Compaction(compact_at_runs=2, keep_last_runs=3)._keep_from_index(messages) == user_indexes[-3]
+
+
+def test_tail_covering_everything_means_nothing_to_fold():
+    """Returning 0 here would name a boundary at the start of the list, which reads
+    downstream as a real fold and produces a ratio that collapses toward zero."""
+    messages = _transcript(runs=2)
+
+    c = Compaction(compact_at_runs=2, keep_last_runs=5)
+
+    assert c._keep_from_index(messages) is None
+    assert c.boundary_for(messages) is None
+
+
+# --- summarizer input -------------------------------------------------------
+
+
+def test_oversized_transcripts_are_trimmed_oldest_first():
+    """One summarization call cannot swallow an unbounded transcript."""
+    from agno.compaction.manager import DEFAULT_SUMMARIZE_CHAR_BUDGET
+
+    messages = [Message(role="user", content="x" * 40_000) for _ in range(6)]
+
+    trimmed = Compaction(compact_at_runs=2)._trim_for_summary(messages)
+
+    assert len(trimmed) < len(messages)
+    # The newest survive; the oldest are dropped.
+    assert trimmed[-1] is messages[-1]
+    assert sum(len(m.get_content_string()) for m in trimmed) <= DEFAULT_SUMMARIZE_CHAR_BUDGET + 40_000
+
+
+def test_a_single_oversized_message_still_gets_summarized():
+    """Never return an empty transcript: one message over budget is still the input."""
+    messages = [Message(role="user", content="x" * 500_000)]
+
+    assert Compaction(compact_at_runs=2)._trim_for_summary(messages) == messages
+
+
+# --- previous-record resolution ---------------------------------------------
+
+
+def test_previous_boundary_resolves_by_anchor():
+    messages = _transcript(runs=3)
+    previous = CompactionRecord(messages_compacted=2, summary="s", first_kept_message_id=messages[3].id)
+
+    assert Compaction._resolved_boundary(messages, previous) == 3
+
+
+def test_unresolvable_previous_boundary_falls_open_to_zero():
+    """Same fail-open the view takes: an anchor that does not resolve does not apply."""
+    messages = _transcript(runs=3)
+    stale = CompactionRecord(messages_compacted=2, summary="s", first_kept_message_id="gone")
+
+    assert Compaction._resolved_boundary(messages, stale) == 0
+    assert Compaction._resolved_boundary(messages, None) == 0
+
+
+# --- archive instruction ----------------------------------------------------
+
+
+def test_lookup_is_promised_only_when_the_agent_can_act_on_it():
+    """Telling a model to search a store it has no tool for invites an invented answer."""
+    archived = CompactionRecord(messages_compacted=2, summary="s", archived=True)
+    unarchived = CompactionRecord(messages_compacted=2, summary="s", archived=False)
+
+    assert Compaction(compact_at_runs=2, searchable=True)._archive_instruction(archived)
+    assert Compaction(compact_at_runs=2, searchable=True)._archive_instruction(unarchived) is None
+    assert Compaction(compact_at_runs=2)._archive_instruction(archived) is None
+
+
+# --- async parity -----------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_acompact_matches_compact():
+    """The async path must fold the same span and anchor in the same place."""
+
+    class _AsyncStub(_StubModel):
+        async def aresponse(self, messages, **kwargs):
+            return self.response(messages, **kwargs)
+
+    messages = _transcript(runs=4)
+    kwargs = dict(compact_at_runs=2, keep_last_runs=1, min_fold_ratio=0)
+
+    sync = Compaction(**kwargs, model=_AsyncStub()).compact(messages, session_id="s", db=None)
+    asyn = await Compaction(**kwargs, model=_AsyncStub()).acompact(messages, session_id="s", db=None)
+
+    assert sync is not None and asyn is not None
+    assert sync.first_kept_message_id == asyn.first_kept_message_id
+    assert sync.messages_compacted == asyn.messages_compacted
+
+
+@pytest.mark.asyncio
+async def test_acompact_declines_where_compact_declines():
+    tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
+    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
+
+    assert await c.acompact(tiny, session_id="s", db=None) is None
+
+
 # --- events --------------------------------------------------------------
 
 
