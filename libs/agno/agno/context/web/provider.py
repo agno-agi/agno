@@ -11,7 +11,6 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
-from agno.agent import Agent
 from agno.context._utils import answer_from_run
 from agno.context.backend import ContextBackend
 from agno.context.mode import ContextMode
@@ -19,6 +18,7 @@ from agno.context.provider import Answer, ContextProvider, Status
 from agno.run import RunContext
 
 if TYPE_CHECKING:
+    from agno.agent import Agent
     from agno.models.base import Model
 
 
@@ -110,6 +110,10 @@ class WebContextProvider(ContextProvider):
         return self._agent
 
     def _build_agent(self) -> Agent:
+        # Imported here, not at module scope: this module rides along with the page-fetch
+        # backends, and importing a fetch backend must not load the agent package.
+        from agno.agent import Agent
+
         return Agent(
             id=self.id,
             name=self.name,
