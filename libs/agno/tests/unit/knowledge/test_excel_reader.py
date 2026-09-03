@@ -2062,3 +2062,245 @@ def test_default_chunking_strategy_is_not_shared_between_instances():
     reader_a.chunking_strategy.skip_header = True
 
     assert reader_b.chunking_strategy.skip_header is False
+
+
+def test_excel_reader_row_chunking_streams_without_sheet_document(tmp_path: Path):
+    """Default RowChunking must emit row Documents while iterating rows.
+
+    Regression for #9458: previously excel_rows_to_documents built a full
+    sheet string before RowChunking, which OOM'd large workbooks.
+    """
+    openpyxl = pytest.importorskip("openpyxl")
+    from agno.knowledge.chunking.row import RowChunking
+    from agno.knowledge.reader import utils as reader_utils
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "age"])
+    sheet.append(["alice", 30])
+    sheet.append(["bob", 25])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "stream_rows.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=True)
+    assert isinstance(reader.chunking_strategy, RowChunking)
+
+    with (
+        patch.object(
+            reader_utils,
+            "excel_rows_to_documents",
+            wraps=reader_utils.excel_rows_to_documents,
+        ) as full_sheet_path,
+        patch.object(
+            reader_utils,
+            "excel_rows_to_row_documents",
+            wraps=reader_utils.excel_rows_to_row_documents,
+        ) as stream_path,
+    ):
+        # Patch where ExcelReader resolves the helpers
+        with (
+            patch(
+                "agno.knowledge.reader.excel_reader.excel_rows_to_documents",
+                full_sheet_path,
+            ),
+            patch(
+                "agno.knowledge.reader.excel_reader.excel_rows_to_row_documents",
+                stream_path,
+            ),
+        ):
+            documents = reader.read(file_path)
+
+    stream_path.assert_called_once()
+    full_sheet_path.assert_not_called()
+
+    assert len(documents) == 3
+    assert [doc.meta_data["row_number"] for doc in documents] == [1, 2, 3]
+    assert all(doc.meta_data["sheet_name"] == "Data" for doc in documents)
+    assert documents[0].content == "name, age"
+    assert documents[1].content == "alice, 30"
+    assert documents[2].content == "bob, 25"
+    assert all(doc.id and "_row_" in doc.id for doc in documents)
+
+
+def test_excel_reader_row_chunking_skip_header_streams(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+    from agno.knowledge.chunking.row import RowChunking
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "age"])
+    sheet.append(["alice", 30])
+    sheet.append(["bob", 25])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "skip_header.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=True, chunking_strategy=RowChunking(skip_header=True))
+    documents = reader.read(file_path)
+
+    assert len(documents) == 2
+    assert [doc.meta_data["row_number"] for doc in documents] == [2, 3]
+    assert documents[0].content == "alice, 30"
+    assert documents[1].content == "bob, 25"
+
+
+def test_excel_reader_non_row_chunking_still_uses_full_sheet_path(tmp_path: Path):
+    """Non-RowChunking strategies still materialize sheet Documents first."""
+    openpyxl = pytest.importorskip("openpyxl")
+    from agno.knowledge.chunking.fixed import FixedSizeChunking
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "age"])
+    sheet.append(["alice", 30])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "fixed_size.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=True, chunking_strategy=FixedSizeChunking(chunk_size=5000))
+
+    with (
+        patch(
+            "agno.knowledge.reader.excel_reader.excel_rows_to_documents",
+            wraps=__import__(
+                "agno.knowledge.reader.utils.spreadsheet", fromlist=["excel_rows_to_documents"]
+            ).excel_rows_to_documents,
+        ) as full_sheet_path,
+        patch(
+            "agno.knowledge.reader.excel_reader.excel_rows_to_row_documents",
+            wraps=__import__(
+                "agno.knowledge.reader.utils.spreadsheet", fromlist=["excel_rows_to_row_documents"]
+            ).excel_rows_to_row_documents,
+        ) as stream_path,
+    ):
+        documents = reader.read(file_path)
+
+    full_sheet_path.assert_called_once()
+    stream_path.assert_not_called()
+    assert len(documents) >= 1
+    # Fixed-size path should still preserve sheet metadata from the sheet Document
+    assert all("sheet_name" in doc.meta_data for doc in documents)
+
+
+def test_excel_reader_chunk_false_uses_full_sheet_path(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["name", "age"])
+    sheet.append(["alice", 30])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "no_chunk.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=False)
+
+    with (
+        patch(
+            "agno.knowledge.reader.excel_reader.excel_rows_to_documents",
+            wraps=__import__(
+                "agno.knowledge.reader.utils.spreadsheet", fromlist=["excel_rows_to_documents"]
+            ).excel_rows_to_documents,
+        ) as full_sheet_path,
+        patch(
+            "agno.knowledge.reader.excel_reader.excel_rows_to_row_documents",
+            wraps=__import__(
+                "agno.knowledge.reader.utils.spreadsheet", fromlist=["excel_rows_to_row_documents"]
+            ).excel_rows_to_row_documents,
+        ) as stream_path,
+    ):
+        documents = reader.read(file_path)
+
+    full_sheet_path.assert_called_once()
+    stream_path.assert_not_called()
+    assert len(documents) == 1
+    assert documents[0].content.splitlines() == ["name, age", "alice, 30"]
+
+
+@pytest.mark.asyncio
+async def test_excel_reader_async_row_chunking_streams(tmp_path: Path):
+    openpyxl = pytest.importorskip("openpyxl")
+
+    workbook = openpyxl.Workbook()
+    sheet = workbook.active
+    sheet.title = "Data"
+    sheet.append(["id", "value"])
+    sheet.append(["1", "first"])
+    sheet.append(["2", "second"])
+
+    buffer = io.BytesIO()
+    workbook.save(buffer)
+    workbook.close()
+
+    file_path = tmp_path / "async_stream.xlsx"
+    file_path.write_bytes(buffer.getvalue())
+
+    reader = ExcelReader(chunk=True)
+    with (
+        patch(
+            "agno.knowledge.reader.excel_reader.excel_rows_to_row_documents",
+            wraps=__import__(
+                "agno.knowledge.reader.utils.spreadsheet", fromlist=["excel_rows_to_row_documents"]
+            ).excel_rows_to_row_documents,
+        ) as stream_path,
+        patch(
+            "agno.knowledge.reader.excel_reader.excel_rows_to_documents",
+            wraps=__import__(
+                "agno.knowledge.reader.utils.spreadsheet", fromlist=["excel_rows_to_documents"]
+            ).excel_rows_to_documents,
+        ) as full_sheet_path,
+    ):
+        documents = await reader.async_read(file_path)
+
+    stream_path.assert_called_once()
+    full_sheet_path.assert_not_called()
+    assert len(documents) == 3
+    assert [doc.meta_data["row_number"] for doc in documents] == [1, 2, 3]
+
+
+def test_excel_rows_to_row_documents_matches_row_chunking_semantics():
+    """Direct unit test for the streaming helper vs RowChunking on joined content."""
+    from agno.knowledge.chunking.row import RowChunking
+    from agno.knowledge.reader.utils.spreadsheet import (
+        excel_rows_to_documents,
+        excel_rows_to_row_documents,
+    )
+
+    rows = [
+        ["name", "age"],
+        ["alice", 30],
+        ["  bob  ", 25],
+        [],  # empty row skipped by both paths
+        ["carol", 40],
+    ]
+    sheets = [("Sheet1", 1, rows)]
+
+    streamed = excel_rows_to_row_documents(workbook_name="wb", sheets=sheets)
+    # Re-build sheet document path and chunk for comparison
+    sheet_docs = excel_rows_to_documents(workbook_name="wb", sheets=[("Sheet1", 1, rows)])
+    chunked = RowChunking().chunk(sheet_docs[0])
+
+    assert [d.content for d in streamed] == [d.content for d in chunked]
+    assert [d.meta_data["row_number"] for d in streamed] == [d.meta_data["row_number"] for d in chunked]
+    assert [d.meta_data["sheet_name"] for d in streamed] == [d.meta_data["sheet_name"] for d in chunked]
