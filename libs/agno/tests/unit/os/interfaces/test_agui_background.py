@@ -217,7 +217,8 @@ def _entity_with_session_runs(runs):
 @pytest.mark.asyncio
 async def test_find_active_run_id_picks_newest_live_run(monkeypatch):
     stream = _ProbeStream({"r1": RunStatus.running, "r2": RunStatus.running})
-    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    # The probe now lives in the shared event_streams helper, so patch its registry rather than the reattach module
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
     entity = _entity_with_session_runs(
         [_run_stub("r0", RunStatus.completed), _run_stub("r1", RunStatus.running), _run_stub("r2", RunStatus.pending)]
     )
@@ -231,7 +232,7 @@ async def test_find_active_run_id_picks_newest_live_run(monkeypatch):
 async def test_find_active_run_id_skips_runs_the_buffer_no_longer_knows(monkeypatch):
     # Server restarted: r2's row still says RUNNING but its buffer is gone
     stream = _ProbeStream({"r1": RunStatus.running})
-    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
     entity = _entity_with_session_runs([_run_stub("r1", RunStatus.running), _run_stub("r2", RunStatus.running)])
 
     from agno.os.interfaces.agui.reattach import find_active_run_id
@@ -242,7 +243,7 @@ async def test_find_active_run_id_skips_runs_the_buffer_no_longer_knows(monkeypa
 @pytest.mark.asyncio
 async def test_find_active_run_id_returns_none_when_nothing_is_live(monkeypatch):
     stream = _ProbeStream({})
-    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
     entity = _entity_with_session_runs([_run_stub("r1", RunStatus.running)])
 
     from agno.os.interfaces.agui.reattach import find_active_run_id
@@ -254,7 +255,7 @@ async def test_find_active_run_id_returns_none_when_nothing_is_live(monkeypatch)
 async def test_find_active_run_id_ignores_paused_runs(monkeypatch):
     # PAUSED runs wait on HITL input and follow the resume flow, not reattach
     stream = _ProbeStream({"r1": RunStatus.paused})
-    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
     entity = _entity_with_session_runs([_run_stub("r1", RunStatus.paused)])
 
     from agno.os.interfaces.agui.reattach import find_active_run_id
@@ -555,6 +556,8 @@ def test_route_reattach_empty_run_id_resolves_active_run(monkeypatch):
         status=RunStatus.completed,
         replay=[(0, _content_event("done")), (1, _completed_event())],
     )
+    # Probe (event_streams registry) and replay/tail (reattach module) read the stream from different module globals — patch both with the same double
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
     monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
     entity = _make_reattach_route_entity([_run_stub("r-active", RunStatus.running)])
     client = _make_client(entity)
@@ -602,6 +605,109 @@ def test_route_reattach_explicit_unknown_run_id_never_auto_resolves(monkeypatch)
     response = client.post("/agui", json=_agui_payload(run_id="r-typo", forwarded_props={"reattach": True}))
     assert response.status_code == 404
     assert "r-typo" in response.json()["detail"]
+
+
+# ----------------------------------------------------------------------
+# POST /agui/reattach (dedicated route)
+# ----------------------------------------------------------------------
+
+
+def test_reattach_route_named_run_streams(monkeypatch):
+    stream = FakeEventStream(
+        status=RunStatus.completed,
+        replay=[(0, _content_event("done")), (1, _completed_event())],
+    )
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _make_reattach_route_entity([_run_stub("r1", RunStatus.completed)])
+    client = _make_client(entity)
+
+    response = client.post("/agui/reattach", json={"thread_id": "t", "run_id": "r1"})
+
+    assert response.status_code == 200
+    assert "RUN_STARTED" in response.text
+    assert "RUN_FINISHED" in response.text
+
+
+def test_reattach_route_omitted_run_id_resolves_active_run(monkeypatch):
+    stream = FakeEventStream(
+        status=RunStatus.completed,
+        replay=[(0, _content_event("done")), (1, _completed_event())],
+    )
+    # Probe (event_streams registry) and replay/tail (reattach module) read the
+    # stream from different module globals — patch both with the same double
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _make_reattach_route_entity([_run_stub("r-active", RunStatus.running)])
+    client = _make_client(entity)
+
+    # run_id omitted entirely — the dedicated route makes it truly optional
+    response = client.post("/agui/reattach", json={"thread_id": "t"})
+
+    assert response.status_code == 200
+    first_frame = response.text.split("\n\n")[0]
+    assert "RUN_STARTED" in first_frame
+    assert "r-active" in first_frame
+
+
+def test_reattach_route_omitted_run_id_without_active_run_is_404(monkeypatch):
+    stream = _ProbeStream({})
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+    entity = _make_reattach_route_entity([_run_stub("r0", RunStatus.completed)])
+    client = _make_client(entity)
+
+    response = client.post("/agui/reattach", json={"thread_id": "t"})
+    assert response.status_code == 404
+    assert "No active run" in response.json()["detail"]
+
+
+def test_reattach_route_named_unknown_run_id_never_auto_resolves(monkeypatch):
+    stream = _ProbeStream({"r-active": RunStatus.running})
+    monkeypatch.setattr("agno.os.event_streams.get_event_stream", lambda: stream)
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = _make_reattach_route_entity([_run_stub("r-active", RunStatus.running)])
+    entity.aget_run_output = MagicMock(return_value=_coro(None))
+    client = _make_client(entity)
+
+    response = client.post("/agui/reattach", json={"thread_id": "t", "run_id": "r-typo"})
+    assert response.status_code == 404
+    assert "r-typo" in response.json()["detail"]
+
+
+def test_reattach_route_on_remote_entity_is_400():
+    from agno.agent.remote import RemoteAgent
+
+    entity = MagicMock(spec=RemoteAgent)
+    entity.db = None
+    client = _make_client(entity)
+
+    response = client.post("/agui/reattach", json={"thread_id": "t", "run_id": "r1"})
+    assert response.status_code == 400
+
+
+def test_reattach_route_db_less_entity_with_named_run_uses_buffer(monkeypatch):
+    # No database: auto-resolution is impossible, but an explicit run_id can
+    # still reattach to the live buffer
+    stream = FakeEventStream(
+        status=RunStatus.completed,
+        replay=[(0, _content_event("done")), (1, _completed_event())],
+    )
+    monkeypatch.setattr("agno.os.interfaces.agui.reattach.get_event_stream", lambda: stream)
+    entity = MagicMock()
+    entity.db = None
+    client = _make_client(entity)
+
+    response = client.post("/agui/reattach", json={"thread_id": "t", "run_id": "r1"})
+    assert response.status_code == 200
+
+
+def test_reattach_route_db_less_entity_without_run_id_is_400():
+    entity = MagicMock()
+    entity.db = None
+    client = _make_client(entity)
+
+    response = client.post("/agui/reattach", json={"thread_id": "t"})
+    assert response.status_code == 400
+    assert "database" in response.json()["detail"]
 
 
 # ----------------------------------------------------------------------

@@ -34,7 +34,7 @@ from ag_ui.core.types import Message as AGUIMessage
 
 from agno.agent import Agent
 from agno.agent.remote import RemoteAgent
-from agno.os.event_streams import get_event_stream
+from agno.os.event_streams import find_active_run, get_event_stream
 from agno.os.interfaces.agui.handlers import is_completion_event, process_completion, process_event
 from agno.os.interfaces.agui.state import StreamState
 from agno.run.agent import run_output_event_from_dict
@@ -173,29 +173,19 @@ async def find_active_run_id(
 
     A client that never held the original run_id (fresh window, new device,
     incognito) can reattach with an empty run_id; the server finds the run
-    itself. Only PENDING/RUNNING runs qualify — PAUSED runs wait on HITL
-    input and follow the resume flow instead.
-
-    Candidates come from the stored session (already scoped to session_id +
-    user_id, so the lookup doubles as the run-thread binding check), then
-    each is probed against the event stream: a PENDING/RUNNING row the buffer
-    no longer knows (e.g. the server restarted, or the run died without a
-    terminal write) is skipped, so callers get None and the client falls back
-    to loading history. Runs are stored oldest-first, so scan in reverse.
+    itself. The stored session is already scoped to session_id + user_id, so
+    this lookup doubles as the run-thread binding check, and the event-stream
+    liveness probe inside ``find_active_run`` filters rows that outlived
+    their producer (server restart, crashed run). A None answer means "no
+    recoverable run" — the client falls back to loading history.
     """
     if getattr(entity, "db", None) is None:
         return None
     session = await entity.aget_session(session_id=thread_id, user_id=user_id)
     if session is None or not session.runs:
         return None
-    event_stream = get_event_stream()
-    for run in reversed(session.runs):
-        if getattr(run, "status", None) not in (RunStatus.pending, RunStatus.running):
-            continue
-        run_id = getattr(run, "run_id", None)
-        if run_id and await event_stream.get_run_status(run_id) is not None:
-            return run_id
-    return None
+    run = await find_active_run(session.runs)
+    return run.run_id if run is not None else None
 
 
 async def find_reattach_target(

@@ -6,11 +6,12 @@ via ``set_event_stream()`` so multi-container deployments can resume streams
 from any replica.
 """
 
-from typing import Optional
+from typing import Any, Optional, Sequence
 
 from agno.os.event_streams.base import BaseEventStream
 from agno.os.event_streams.in_memory import InMemoryEventStream
 from agno.os.event_streams.redis import RedisEventStream
+from agno.run.base import RunStatus
 
 _event_stream: Optional[BaseEventStream] = None
 # True once set_event_stream() has been called. The lazily-created in-memory
@@ -54,10 +55,31 @@ def event_stream_explicitly_set() -> bool:
     return _event_stream_explicitly_set
 
 
+async def find_active_run(runs: Sequence[Any]) -> Optional[Any]:
+    """Return the newest PENDING/RUNNING run whose event stream is still live, or None.
+
+    Candidates come from ``runs`` (stored oldest-first, so scanned newest-first); PAUSED
+    runs wait on human input, not execution, and never qualify. A stored PENDING/RUNNING
+    row is not proof of life: after a server restart or a producer that died without a
+    terminal write, the DB row still says RUNNING while the stream no longer knows the
+    run, so each candidate is probed against the event stream. Callers can therefore
+    treat a None answer as "no recoverable run" and fall back to settled history.
+    """
+    event_stream = get_event_stream()
+    for run in reversed(runs):
+        if getattr(run, "status", None) not in (RunStatus.pending, RunStatus.running):
+            continue
+        run_id = getattr(run, "run_id", None)
+        if run_id and await event_stream.get_run_status(run_id) is not None:
+            return run
+    return None
+
+
 __all__ = [
     "BaseEventStream",
     "InMemoryEventStream",
     "event_stream_explicitly_set",
+    "find_active_run",
     "get_event_stream",
     "set_event_stream",
 ]
