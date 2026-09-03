@@ -731,11 +731,13 @@ class SingleStoreDb(BaseDb):
                 # A new run always lands after the session's existing rows. Callers
                 # pass the run's position in the in-memory ``session.runs`` list, and
                 # after runs were deleted from the front of that list the position
-                # collides with, or sorts before, rows that still exist. ON CONFLICT
+                # collides with, or sorts before, rows that still exist. ON DUPLICATE KEY
                 # preserves the existing index, so this only affects a genuine insert.
                 # Single-statement: SingleStore has no user-level locks (no GET_LOCK),
                 # so the MAX is computed inside the INSERT via a materialized derived
-                # table (the MySQL dialect rejects a direct same-table subquery).
+                # table (the MySQL dialect rejects a direct same-table subquery). Truly
+                # simultaneous same-session inserts can still read the same MAX under
+                # snapshot isolation; best effort without engine support, as before.
                 prior_runs = select(runs_table.c.run_index).where(runs_table.c.session_id == session_id).subquery()
                 next_index = select(func.coalesce(func.max(prior_runs.c.run_index) + 1, 0)).scalar_subquery()
                 provided_index = row.get("run_index")
