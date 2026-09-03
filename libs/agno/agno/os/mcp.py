@@ -1985,12 +1985,10 @@ def build_mcp_server(
     """
     mcp_config: "Optional[MCPConfig]" = getattr(os, "mcp_config", None)
 
-    # Create an MCP server. Its name, version and instructions travel in the initialize
-    # response: MCPConfig overrides win, then the AgentOS name and version. With
-    # AgentOS(mcp_auth=...) set, the resolved fastmcp provider owns authentication for
-    # the HTTP transport: http_app() serves its discovery/OAuth routes inside this app
-    # and wraps the MCP path in the SDK's challenge middleware. The in-memory client
-    # path used in tests ignores it.
+    # Create an MCP server. With AgentOS(mcp_auth=...) set, the resolved fastmcp provider
+    # owns authentication for the HTTP transport: http_app() serves its discovery/OAuth
+    # routes inside this app and wraps the MCP path in the SDK's challenge middleware.
+    # The in-memory client path used in tests ignores it.
     server_name = (mcp_config.name if mcp_config is not None else None) or os.name or "AgentOS"
     server_version = (mcp_config.version if mcp_config is not None else None) or getattr(os, "version", None)
     server_instructions = mcp_config.instructions if mcp_config is not None else None

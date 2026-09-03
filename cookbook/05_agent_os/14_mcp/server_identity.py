@@ -2,17 +2,12 @@
 Name, version and instructions for the MCP server
 =================================================
 
-An MCP client learns three things about a server when it connects: the name,
-the version and the instructions. The instructions tell the calling model what
-the tools are for and how to use them. Claude, Cursor and ChatGPT read them.
-
-By default the server takes the AgentOS name and the version passed to
-``AgentOS(version=...)``. ``MCPConfig`` overrides both and sets the instructions.
+Set what a client learns about the server when it connects. The instructions
+tell the calling model what the tools are for and how to use them.
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/server_identity.py
-Try: connect an MCP client to http://localhost:7777/mcp and read the name,
-     version and instructions from the initialize response
+Try: connect an MCP client to http://localhost:7777/mcp and read the initialize response
 """
 
 from agno.agent import Agent
@@ -38,7 +33,7 @@ support_agent = Agent(
 )
 
 # ---------------------------------------------------------------------------
-# Describe the server to the clients that connect to it
+# Create AgentOS
 # ---------------------------------------------------------------------------
 
 agent_os = AgentOS(
@@ -49,11 +44,9 @@ agent_os = AgentOS(
     db=db,
     agents=[support_agent],
     mcp=MCPConfig(
-        # Shown in the client's server list. Defaults to the AgentOS name.
+        # Defaults: the AgentOS name and AgentOS(version=...).
         name="Acme Support",
-        # Reported as serverInfo.version. Defaults to AgentOS(version=...).
         version="1.4.0",
-        # Read by the calling model at connect time.
         instructions=(
             "This server answers questions about Acme products. Start with run_agent "
             "and the support-agent. Answer from the agent's reply and say when it "

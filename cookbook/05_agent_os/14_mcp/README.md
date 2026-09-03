@@ -72,12 +72,9 @@ agent_os = AgentOS(
 )
 ```
 
-`name` defaults to the AgentOS name and `version` to `AgentOS(version=...)`; with
-neither set, the server reports fastmcp's own version. `instructions` is guidance for
-the calling model: what the tools are for, which one to start with, and any conventions
-to follow. Claude, Cursor and ChatGPT read it when they connect. Write it for the model,
-the way a tool description is written; `AgentOS(description=...)` is for humans and is
-not used here.
+`name` defaults to the AgentOS name and `version` to `AgentOS(version=...)`.
+`instructions` tells the calling model what the tools are for and how to use them;
+Claude, Cursor and ChatGPT read it when they connect.
 
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/server_identity.py
