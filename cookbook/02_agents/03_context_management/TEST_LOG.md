@@ -5,6 +5,35 @@
 
 ---
 
+### compaction/compaction_with_tools.py
+
+**Status:** PASS
+**Description:** Folding a transcript containing tool calls. Four calculator calls across five
+turns, then a question that spans them.
+**Result:** 12 messages folded, 1014 -> 471 tokens. All 4 assistant tool-call turns and 4 tool
+results still stored (23 messages total).
+
+---
+
+### compaction/compaction_anthropic.py
+
+**Status:** PASS
+**Description:** The same folding on `claude-sonnet-4-5`. Anthropic carries history in the
+request rather than by id, so there is no server-side chain for compaction to sever.
+**Result:** 6 messages folded, 24602 -> 7732 tokens (69% smaller).
+
+---
+
+### compaction/compaction_anthropic_thinking.py
+
+**Status:** PASS
+**Description:** Extended thinking (`budget_tokens=1024`) plus calculator tools - an assistant
+turn is then a thinking block, a tool call, and its result, all of which must stay together.
+**Result:** 18 messages folded, 7858 -> 1621 tokens (79% smaller). 15 thinking blocks preserved
+in storage; no signature or pairing errors.
+
+---
+
 ### compaction.py
 
 **Status:** PASS

@@ -56,12 +56,11 @@ if __name__ == "__main__":
     ]
 
     for question in questions:
-        print(f"\n--- {question}")
-        run = agent.run(question)
-        print(run.content)
+        agent.print_response(question)
+        run = agent.get_last_run_output(session_id="compaction_demo")
 
         # `run.compaction` reports what compaction did on this run, if anything.
-        if run.compaction is not None:
+        if run is not None and run.compaction is not None:
             r = run.compaction
             print(
                 f"\n[compacted {r.messages_compacted} messages: "

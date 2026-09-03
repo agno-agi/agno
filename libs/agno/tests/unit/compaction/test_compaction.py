@@ -711,6 +711,38 @@ async def test_acompact_declines_where_compact_declines():
     assert await c.acompact(tiny, session_id="s", db=None) is None
 
 
+# --- reasoning-model tool calls ---------------------------------------------
+
+
+def test_reasoning_item_travels_with_its_function_call():
+    """A reasoning model's function_call is only valid beside its reasoning item.
+
+    The server holds that item when a request chains on previous_response_id.
+    Compaction severs that chain deliberately, so the item has to travel in the
+    request or the API rejects the pair with a 400.
+    """
+    from agno.models.openai import OpenAIResponses
+
+    model = OpenAIResponses(id="gpt-5.6-luna")
+    messages = [
+        Message(role="user", content="calc"),
+        Message(
+            role="assistant",
+            content=None,
+            tool_calls=[{"id": "fc_1", "call_id": "call_1", "function": {"name": "add", "arguments": "{}"}}],
+            provider_data={"reasoning_output": {"id": "rs_1", "type": "reasoning", "summary": []}},
+        ),
+        Message(role="tool", tool_call_id="call_1", content="4"),
+    ]
+
+    kinds = [
+        item.get("type") if isinstance(item, dict) else type(item).__name__ for item in model._format_messages(messages)
+    ]
+
+    assert "ResponseReasoningItem" in kinds
+    assert kinds.index("ResponseReasoningItem") < kinds.index("function_call")
+
+
 # --- events --------------------------------------------------------------
 
 
