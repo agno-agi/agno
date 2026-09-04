@@ -720,19 +720,20 @@ class Claude(Model):
         Raises the appropriate ModelProviderError or ModelRateLimitError.
         Always raises — never returns normally.
         """
-        # The retryable cases are logged at WARNING: the base model retries them and logs
-        # each attempt, and only a final failure deserves an ERROR line.
+        # A retryable error is a WARNING while the base model will retry it and log the final
+        # failure itself; with retries=0 this attempt is the last one, so it is an ERROR here.
+        log_retryable = log_warning if self.retries > 0 else log_error
         if isinstance(e, APIConnectionError):
-            log_warning("Connection error while calling Claude API")
+            log_retryable("Connection error while calling Claude API")
             raise ModelProviderError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, RateLimitError):
-            log_warning("Rate limit exceeded")
+            log_retryable("Rate limit exceeded")
             raise ModelRateLimitError(message=e.message, model_name=self.name, model_id=self.id) from e
         if isinstance(e, APIStatusError):
             if e.status_code == 529 or "overloaded_error" in str(e):
                 # An overload signalled inside a stream carries the stream's own HTTP
                 # status, 200, so name the condition rather than that status.
-                log_warning("Claude API overloaded")
+                log_retryable("Claude API overloaded")
                 raise ModelRateLimitError(
                     message=e.message, status_code=e.status_code, model_name=self.name, model_id=self.id
                 ) from e
