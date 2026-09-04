@@ -5,7 +5,8 @@ Workspace Context Provider
 WorkspaceContextProvider wraps a project directory and gives the agent
 a single `query_<id>` tool. The tool routes through a read-only sub-agent
 that has the `Workspace` toolkit scoped to the root: list files, search
-content, and read files with line numbers.
+content (substring), grep content (regex with line numbers), and read
+files with line numbers.
 
 Use this for repository roots and active project workspaces. It skips
 common dependency directories, build outputs, caches, virtualenvs, and
