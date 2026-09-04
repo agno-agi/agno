@@ -659,7 +659,7 @@ class QueueWorker:
                 self.worker_id,
                 self.config.lock_grace_seconds,
                 self.config.deployment_id,
-                serialize_sessions=self.config.serialize_sessions,
+                queue_per_session=self.config.queue_per_session,
             )
             if job is None:
                 break

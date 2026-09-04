@@ -2604,7 +2604,7 @@ class RedisDb(BaseDb):
         worker_id: str,
         lock_grace_seconds: int = 60,
         deployment_id: Optional[str] = None,
-        serialize_sessions: bool = False,
+        queue_per_session: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job (queued, or stale-running
         within the attempt budget). WATCH/MULTI CAS; a raced claim moves on.
@@ -2618,7 +2618,7 @@ class RedisDb(BaseDb):
         page is pre-filtered with one pipelined MGET; the CAS inside
         _q_try_claim remains the only authority.
 
-        serialize_sessions restricts claims to each session's HEAD - the
+        queue_per_session restricts claims to each session's HEAD - the
         oldest non-terminal (queued/running/paused) job by (created_at, id) -
         with no OTHER line member running. Eligibility is checked twice: an
         advisory pre-filter in the scan (cheap, per candidate, against the
@@ -2638,7 +2638,7 @@ class RedisDb(BaseDb):
             now,
             expect_status="queued",
             deployment_id=deployment_id,
-            serialize_sessions=serialize_sessions,
+            queue_per_session=queue_per_session,
         )
         if job is not None:
             return job
@@ -2650,7 +2650,7 @@ class RedisDb(BaseDb):
             expect_status="running",
             stale_before=stale,
             deployment_id=deployment_id,
-            serialize_sessions=serialize_sessions,
+            queue_per_session=queue_per_session,
         )
 
     def _q_line_key(self, session_id: str) -> str:
@@ -2701,7 +2701,7 @@ class RedisDb(BaseDb):
         candidate when it is the line's head and no OTHER member is running.
         Jobs enqueued before the line zset existed self-heal in here on
         their first claim attempt; older pre-upgrade siblings converge on
-        their own attempts, so serialization is best-effort until the
+        their own attempts, so per-session queueing is best-effort until the
         pre-upgrade backlog drains (noted on the flag). The claim CAS
         re-validates under WATCH - this filter only saves CAS round-trips."""
         session_id = candidate.get("session_id")
@@ -2724,7 +2724,7 @@ class RedisDb(BaseDb):
         expect_status: str,
         stale_before: Optional[int] = None,
         deployment_id: Optional[str] = None,
-        serialize_sessions: bool = False,
+        queue_per_session: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Page through ready jobs oldest-first, cheaply pre-filter each page
         by deployment affinity (MGET, advisory only), and CAS-claim the first
@@ -2753,7 +2753,7 @@ class RedisDb(BaseDb):
                     continue
                 if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
                     continue
-                if serialize_sessions and not self._q_line_admits(candidate):
+                if queue_per_session and not self._q_line_admits(candidate):
                     continue
                 job = self._q_try_claim(
                     job_id,
@@ -2761,7 +2761,7 @@ class RedisDb(BaseDb):
                     now,
                     expect_status=expect_status,
                     stale_before=stale_before,
-                    serialize_sessions=serialize_sessions,
+                    queue_per_session=queue_per_session,
                     deployment_id=deployment_id,
                 )
                 if job is not None:
@@ -2776,7 +2776,7 @@ class RedisDb(BaseDb):
         expect_status: str,
         stale_before: Optional[int] = None,
         deployment_id: Optional[str] = None,
-        serialize_sessions: bool = False,
+        queue_per_session: bool = False,
     ) -> Optional[Dict[str, Any]]:
         from redis.exceptions import WatchError
 
@@ -2806,7 +2806,7 @@ class RedisDb(BaseDb):
                 if not claimable:
                     pipe.unwatch()
                     return None
-                if serialize_sessions and job.get("session_id"):
+                if queue_per_session and job.get("session_id"):
                     # Authoritative head re-check with the LINE KEY under
                     # WATCH: the reads below happen after the watch, so a
                     # concurrent enqueue into this session (a new member,

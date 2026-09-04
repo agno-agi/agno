@@ -465,24 +465,24 @@ class TestSyncPostgresContinueJobStamps:
             engine.dispose()
 
 
-class TestSessionSerializationParity:
-    """serialize_sessions: at most one live job per session, claimed in
+class TestQueuePerSessionParity:
+    """queue_per_session: at most one live job per session, claimed in
     submission order. A job is claimable only while it is the HEAD of its
     session's line - the oldest non-terminal (queued/running/paused) job by
     (created_at, id). Store-layer default is off; the worker passes
-    QueueConfig.serialize_sessions (default on)."""
+    QueueConfig.queue_per_session (default on)."""
 
     @pytest.mark.asyncio
     async def test_second_submission_waits_for_running_head(self, store):
         await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
         await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
-        head = await store.claim_job("w1", serialize_sessions=True)
+        head = await store.claim_job("w1", queue_per_session=True)
         assert head["id"] == "r1"
-        assert await store.claim_job("w2", serialize_sessions=True) is None, (
+        assert await store.claim_job("w2", queue_per_session=True) is None, (
             "r2 must wait while its session's head is running"
         )
         assert await store.complete_job("r1", "w1", head["attempt"], "completed")
-        nxt = await store.claim_job("w2", serialize_sessions=True)
+        nxt = await store.claim_job("w2", queue_per_session=True)
         assert nxt is not None and nxt["id"] == "r2"
 
     @pytest.mark.asyncio
@@ -492,7 +492,7 @@ class TestSessionSerializationParity:
         await store.enqueue_job(make_job("r_mid", session_id="s1", created_at=1001))
         order = []
         for worker in ("w1", "w2", "w3"):
-            job = await store.claim_job(worker, serialize_sessions=True)
+            job = await store.claim_job(worker, queue_per_session=True)
             order.append(job["id"])
             assert await store.complete_job(job["id"], worker, job["attempt"], "completed")
         assert order == ["r_early", "r_mid", "r_late"]
@@ -500,31 +500,31 @@ class TestSessionSerializationParity:
     @pytest.mark.asyncio
     async def test_paused_head_blocks_line_until_released(self, store):
         await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
-        head = await store.claim_job("w1", serialize_sessions=True)
+        head = await store.claim_job("w1", queue_per_session=True)
         assert await store.complete_job("r1", "w1", head["attempt"], "paused")
         await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
-        assert await store.claim_job("w2", serialize_sessions=True) is None, "a HITL pause holds the session's line"
+        assert await store.claim_job("w2", queue_per_session=True) is None, "a HITL pause holds the session's line"
         assert await store.cancel_job("r1")
-        nxt = await store.claim_job("w2", serialize_sessions=True)
+        nxt = await store.claim_job("w2", queue_per_session=True)
         assert nxt is not None and nxt["id"] == "r2"
 
     @pytest.mark.asyncio
     async def test_different_sessions_claim_concurrently(self, store):
         await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
         await store.enqueue_job(make_job("r2", session_id="s2", created_at=1001))
-        first = await store.claim_job("w1", serialize_sessions=True)
-        second = await store.claim_job("w2", serialize_sessions=True)
+        first = await store.claim_job("w1", queue_per_session=True)
+        second = await store.claim_job("w2", queue_per_session=True)
         assert first is not None and second is not None
         assert {first["id"], second["id"]} == {"r1", "r2"}
 
     @pytest.mark.asyncio
     async def test_stale_running_head_is_reclaimed_not_bypassed(self, store):
         await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000, max_attempts=2))
-        await store.claim_job("w1", serialize_sessions=True)
+        await store.claim_job("w1", queue_per_session=True)
         await store.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
         # grace=0 makes the fresh claim immediately stale; FIFO must reclaim
         # the head, never skip past it to its successor
-        reclaimed = await store.claim_job("w2", 0, serialize_sessions=True)
+        reclaimed = await store.claim_job("w2", 0, queue_per_session=True)
         assert reclaimed is not None and reclaimed["id"] == "r1"
 
     @pytest.mark.asyncio
@@ -535,18 +535,18 @@ class TestSessionSerializationParity:
         the tie). The running-sibling check must block the claim regardless
         of head order."""
         await store.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
-        head = await store.claim_job("w1", serialize_sessions=True)
+        head = await store.claim_job("w1", queue_per_session=True)
         assert head["id"] == "r_z"
         await store.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
-        assert await store.claim_job("w2", serialize_sessions=True) is None, (
+        assert await store.claim_job("w2", queue_per_session=True) is None, (
             "a smaller-id same-second sibling must not run beside its running sibling"
         )
         assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
-        nxt = await store.claim_job("w2", serialize_sessions=True)
+        nxt = await store.claim_job("w2", queue_per_session=True)
         assert nxt is not None and nxt["id"] == "r_a"
 
     @pytest.mark.asyncio
-    async def test_serialize_off_claims_session_siblings_concurrently(self, store):
+    async def test_queue_per_session_off_claims_siblings_concurrently(self, store):
         """The opt-out restores today's behavior - and doubles as the pin
         that the store-layer default stays off (direct callers unaffected)."""
         await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
@@ -558,7 +558,7 @@ class TestSessionSerializationParity:
 
 
 @pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
-class TestSyncPostgresSessionSerialization:
+class TestSyncPostgresQueuePerSession:
     """The sync Postgres claim twin (the parity fixture runs the ASYNC
     adapter, so the sync adapter's head-of-line gate needs its own pin)."""
 
@@ -572,13 +572,13 @@ class TestSyncPostgresSessionSerialization:
             db.enqueue_job(make_job("r1", session_id="s1", created_at=1000))
             db.enqueue_job(make_job("r2", session_id="s1", created_at=1001))
             db.enqueue_job(make_job("r3", session_id="s2", created_at=1002))
-            head = db.claim_job("w1", serialize_sessions=True)
+            head = db.claim_job("w1", queue_per_session=True)
             assert head["id"] == "r1"
-            other = db.claim_job("w2", serialize_sessions=True)
+            other = db.claim_job("w2", queue_per_session=True)
             assert other is not None and other["id"] == "r3", "s2 must not be blocked by s1's line"
-            assert db.claim_job("w3", serialize_sessions=True) is None
+            assert db.claim_job("w3", queue_per_session=True) is None
             assert db.complete_job("r1", "w1", head["attempt"], "completed")
-            released = db.claim_job("w3", serialize_sessions=True)
+            released = db.claim_job("w3", queue_per_session=True)
             assert released is not None and released["id"] == "r2"
         finally:
             engine = sqlalchemy.create_engine(PG_URL)

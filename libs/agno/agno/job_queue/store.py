@@ -56,12 +56,12 @@ class InMemoryQueueStore:
         worker_id: str,
         lock_grace_seconds: int = 60,
         deployment_id: Optional[str] = None,
-        serialize_sessions: bool = False,
+        queue_per_session: bool = False,
     ) -> Optional[Dict[str, Any]]:
         # Affinity filters BOTH branches - fresh claims and stale reclaims -
         # because a reclaim executes too. deployment_id=None degenerates to
         # claiming only unstamped jobs (mixed fleets safe by construction).
-        # serialize_sessions restricts claims to each session's HEAD: the
+        # queue_per_session restricts claims to each session's HEAD: the
         # oldest non-terminal (queued/running/paused) job, ordered by
         # (created_at, id). The additional running-sibling check is what makes
         # the exclusion hard under same-second submissions: created_at ties
@@ -72,7 +72,7 @@ class InMemoryQueueStore:
             stale = now - lock_grace_seconds
             session_heads: Dict[str, str] = {}
             session_running: Dict[str, str] = {}
-            if serialize_sessions:
+            if queue_per_session:
                 for j in self._jobs.values():
                     session_id = j.get("session_id")
                     if session_id is None or j["status"] not in ("queued", "running", "paused"):
@@ -88,7 +88,7 @@ class InMemoryQueueStore:
                 if j["available_at"] <= now
                 and (j.get("deployment_id") is None or j.get("deployment_id") == deployment_id)
                 and (
-                    not serialize_sessions
+                    not queue_per_session
                     or j.get("session_id") is None
                     or (
                         session_heads.get(j["session_id"]) == j["id"]

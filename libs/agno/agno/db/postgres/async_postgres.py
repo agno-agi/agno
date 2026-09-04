@@ -4797,7 +4797,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         worker_id: str,
         lock_grace_seconds: int = 60,
         deployment_id: Optional[str] = None,
-        serialize_sessions: bool = False,
+        queue_per_session: bool = False,
     ) -> Optional[Dict[str, Any]]:
         """Atomically claim the oldest executable job for this worker.
 
@@ -4808,7 +4808,7 @@ class AsyncPostgresDb(AsyncBaseDb):
         jobs only on matching workers; deployment_id=None degenerates to
         claiming only unstamped jobs.
 
-        serialize_sessions restricts claims to each session's HEAD - the
+        queue_per_session restricts claims to each session's HEAD - the
         oldest non-terminal (queued/running/paused) job by (created_at, id) -
         with NO running sibling. The explicit running check is what makes the
         exclusion hard under same-second submissions (created_at ties resolve
@@ -4841,7 +4841,7 @@ class AsyncPostgresDb(AsyncBaseDb):
                     ),
                 ),
             ]
-            if serialize_sessions:
+            if queue_per_session:
                 sibling = table.alias("session_sibling")
                 conditions.append(
                     ~(

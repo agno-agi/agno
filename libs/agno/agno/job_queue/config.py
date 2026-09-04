@@ -170,7 +170,7 @@ class QueueConfig:
     # racing a claim can momentarily double-run a session (operator action,
     # same window on every store). False restores fully concurrent claiming.
     # (Appended last: positional-argument compatibility, see above.)
-    serialize_sessions: bool = True
+    queue_per_session: bool = True
 
     def __post_init__(self) -> None:
         if self.db is not None and not self.durable:
