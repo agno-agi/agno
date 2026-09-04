@@ -194,6 +194,7 @@ class AgentSummaryResponse(BaseModel):
     name: Optional[str] = Field(None, description="Name of the agent")
     description: Optional[str] = Field(None, description="Description of the agent")
     db_id: Optional[str] = Field(None, description="Database identifier")
+    filesystem: bool = Field(False, description="Whether the agent has a durable filesystem")
     model: Optional[Model] = Field(None, description="Model used by the agent")
     metadata: Optional[Dict[str, Any]] = Field(None, description="Additional metadata")
 
@@ -215,6 +216,7 @@ class AgentSummaryResponse(BaseModel):
             name=agent.name,
             description=getattr(agent, "description", None),
             db_id=agent_db.id if agent_db else None,
+            filesystem=bool(getattr(agent, "filesystem", False)),
             model=_extract_model(agent),
             metadata=metadata,
         )

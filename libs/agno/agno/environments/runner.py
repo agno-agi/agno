@@ -494,6 +494,7 @@ _ISOLATE_FIELD_ACTIONS: Dict[str, str] = {
     "knowledge": "shared",  # reads survive: retrieval goes through knowledge.vector_db
     "skills": "shared",  # loader-backed skill definitions: read-only, no db binding
     "learning": "writes-severed-copy",  # global reads keep the caller's db; every write engine cut
+    "filesystem": "disabled",  # rollout attempts must not write into the caller's durable workspace
     "memory_manager": "fresh-db-rebind",  # per-user state: reads come from the attempt's empty db
     "session_summary_manager": "isolated-copy",  # resolution binds the attempt model on the copy
     "compression_manager": "isolated-copy",
@@ -840,6 +841,12 @@ def _isolate_attempt(agent: Any, model_override: Optional[Model] = None, _seen: 
     fresh_db = InMemoryDb()
     agent.db = fresh_db
     agent.user_id = f"rollout-user-{uuid4().hex}"
+
+    # A supplied FileSystem shares a durable backend by design. Disable it for
+    # hermetic rollout attempts rather than letting evaluation mutate production state.
+    if isinstance(agent, Agent) and agent.filesystem:
+        agent.filesystem = False
+        agent._filesystem = None
 
     memory_manager = getattr(agent, "memory_manager", None)
     if memory_manager is not None:

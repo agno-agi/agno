@@ -2859,6 +2859,13 @@ async def resolve_agent(
 
     if agent is None:
         raise HTTPException(status_code=404, detail="Agent not found")
+    if isinstance(agent, Agent) and request is not None:
+        from agno.agent import _init as agent_init
+
+        agent_init.set_filesystem_user_isolation(
+            agent,
+            bool(getattr(request.state, "user_isolation_enabled", False)),
+        )
     return agent
 
 
