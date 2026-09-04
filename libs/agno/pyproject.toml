@@ -174,6 +174,7 @@ telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
 todoist = ["todoist-api-python"]
 trafilatura = ["trafilatura"]
 twelvelabs = ["twelvelabs>=1.2.8"]
+usdctofiat = ["usdctofiat>=0.1.0"]
 valyu = ["valyu"]
 wavespeed = ["wavespeed"]
 webex = ["webexpythonsdk"]
@@ -339,6 +340,7 @@ tools = [
   "agno[todoist]",
   "agno[trafilatura]",
   "agno[twelvelabs]",
+  "agno[usdctofiat]",
   "agno[valyu]",
   "agno[wavespeed]",
   "agno[webex]",
@@ -674,6 +676,7 @@ module = [
   "tzlocal.*",
   "upstash_vector.*",
   "urllib3.*",
+  "usdctofiat.*",
   "uvicorn.*",
   "valyu.*",
   "vertexai.*",
