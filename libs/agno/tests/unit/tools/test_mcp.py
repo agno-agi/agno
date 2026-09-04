@@ -625,7 +625,8 @@ async def test_stale_sessions_cleaned_up_on_new_run():
         assert session == mock_new_session
 
 
-# =============================================================================# HITL (Human-in-the-Loop) and control flow tests
+# =============================================================================
+# HITL (Human-in-the-Loop) and control flow tests
 # =============================================================================
 
 
@@ -2038,3 +2039,60 @@ def test_mcp_session_protocol_excludes_the_ping_methods():
 
     assert not hasattr(MCPSession, "ping")
     assert not hasattr(MCPSession, "send_ping")
+
+
+@pytest.mark.asyncio
+async def test_failed_tool_call_returns_is_error_rather_than_raising():
+    """A failing MCP tool is ordinary model-loop traffic, not an exception.
+
+    fastmcp's Client defaults to raise_on_error=True, which would route failures through
+    the generic handler: the result's meta/structured_content would be dropped and a
+    stack trace logged for every failed call. Asking for is_error keeps the old path.
+    """
+    from fastmcp import Client
+    from mcp.types import CallToolResult, TextContent
+
+    from agno.utils.mcp import get_entrypoint_for_tool
+
+    failure = CallToolResult(content=[TextContent(type="text", text="boom")], isError=True)
+    session = MagicMock(spec=Client)
+    session.call_tool = AsyncMock(return_value=failure)
+    session.protocol_version = "2025-11-25"
+
+    entrypoint = get_entrypoint_for_tool(_make_mcp_tool_mock("boom"), session)
+    result = await entrypoint()
+
+    assert session.call_tool.await_args.kwargs["raise_on_error"] is False
+    assert "Error from MCP tool 'boom'" in result.content
+
+
+@pytest.mark.asyncio
+async def test_client_session_call_tool_is_not_given_raise_on_error():
+    """A caller-supplied ClientSession has no such kwarg and would reject it."""
+    from agno.utils.mcp import get_entrypoint_for_tool
+
+    from mcp.types import CallToolResult, TextContent
+
+    ok = CallToolResult(content=[TextContent(type="text", text="fine")], isError=False)
+    session = AsyncMock()
+    session.call_tool = AsyncMock(return_value=ok)
+    session.protocol_version = "2025-11-25"
+
+    entrypoint = get_entrypoint_for_tool(_make_mcp_tool_mock("ok"), session)
+    await entrypoint()
+
+    assert "raise_on_error" not in (session.call_tool.await_args.kwargs or {})
+
+
+def test_build_fastmcp_client_maps_both_sse_timeouts():
+    """SSE keeps connect/write and stream-read on separate axes, as streamable-http does."""
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    client = _build_fastmcp_client(
+        "sse", {"url": "http://localhost:8080/sse", "timeout": 5, "sse_read_timeout": 600}, None, 10, "legacy"
+    )
+
+    http_client = client.transport.httpx_client_factory(headers=None, auth=None)
+
+    assert http_client.timeout.connect == 5.0
+    assert http_client.timeout.read == 600.0

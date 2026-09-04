@@ -39,6 +39,7 @@ class MCPSession(Protocol):
 
     async def initialize(self, *args: Any, **kwargs: Any) -> Any: ...
 
+
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.run import RunContext
@@ -106,6 +107,15 @@ def _strip_url_for_name(url: str) -> str:
     return authority + slash + path
 
 
+def _is_fastmcp_client(session: Any) -> bool:
+    """True when the session is a fastmcp Client rather than a raw ClientSession."""
+    try:
+        from fastmcp import Client
+    except ModuleNotFoundError:
+        return False
+    return isinstance(session, Client)
+
+
 async def ping_session(session: MCPSession) -> None:
     """Send an MCP ping, or do nothing when the negotiated protocol has none.
 
@@ -163,7 +173,15 @@ def get_entrypoint_for_tool(
                 log_exception(e)
 
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)
+            # fastmcp's Client raises ToolError on a failed call, where a ClientSession
+            # returns is_error=True. Ask it not to, so both types land on the is_error
+            # branch below: a failing tool is ordinary model-loop traffic, and routing it
+            # through the generic handler drops the result's meta/structured_content and
+            # logs a stack trace for it. Only fastmcp's Client takes the kwarg.
+            if _is_fastmcp_client(active_session):
+                result: CallToolResult = await active_session.call_tool(tool_name, kwargs, raise_on_error=False)
+            else:
+                result = await active_session.call_tool(tool_name, kwargs)
 
             # Return an error if the tool call failed
             if result.is_error:

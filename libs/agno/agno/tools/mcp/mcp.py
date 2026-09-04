@@ -163,10 +163,14 @@ def _build_fastmcp_client(
         fastmcp_transport: Any = transport_cls(params["url"], **transport_kwargs)
         timeout = params.get("timeout")
     elif transport == "sse":
+        # Same split as streamable-http: without the factory, fastmcp derives the whole
+        # httpx timeout from the session read timeout and the caller's connect/write
+        # timeout is lost. SSETransport keeps its own sse_read_timeout for the stream.
         fastmcp_transport = SSETransport(
             params["url"],
             headers=params.get("headers") or None,
             sse_read_timeout=params.get("sse_read_timeout"),
+            httpx_client_factory=_http_client_factory(params.get("timeout"), params.get("sse_read_timeout")),
         )
         timeout = params.get("timeout")
     else:
@@ -382,7 +386,7 @@ class MCPTools(Toolkit):
         # Session management for per-agent-run sessions with dynamic headers
         # Maps run_id to (session, timestamp) for TTL-based cleanup
         self._run_sessions: dict[str, Tuple[MCPSession, float]] = {}
-        self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to session context managers
+        self._run_session_contexts: dict[str, Any] = {}  # Maps run_id to its connection context
         self._session_ttl_seconds: float = 300.0  # 5 minutes TTL for MCP sessions
         self._session_lock: Optional[asyncio.Lock] = None  # Lazily created lock for session creation
 
@@ -623,15 +627,12 @@ class MCPTools(Toolkit):
                 self.timeout_seconds,
                 self.protocol_mode,
             )
-            # One Client is transport and session both: park it in the session slot and
-            # leave the transport slot empty so cleanup exits it exactly once.
-            session_context = context
-            context = None
-            session = await session_context.__aenter__()
+            session = await context.__aenter__()
 
-            # Store the session with timestamp and context for cleanup
+            # One Client is transport and session both, so a single context is stored and
+            # cleanup exits it exactly once.
             self._run_sessions[run_id] = (session, time.time())
-            self._run_session_contexts[run_id] = (context, session_context)
+            self._run_session_contexts[run_id] = context
 
             return session
 
@@ -648,20 +649,13 @@ class MCPTools(Toolkit):
 
         try:
             # Get the context managers
-            context, session_context = self._run_session_contexts.get(run_id, (None, None))
+            session_context = self._run_session_contexts.get(run_id)
 
             # Try to clean up session context
             # Silently ignore cleanup errors - these are harmless
             if session_context is not None:
                 try:
                     await session_context.__aexit__(None, None, None)
-                except BaseException:
-                    pass  # Silently ignore (includes CancelledError)
-
-            # Try to clean up transport context
-            if context is not None:
-                try:
-                    await context.__aexit__(None, None, None)
                 except BaseException:
                     pass  # Silently ignore (includes CancelledError)
 
