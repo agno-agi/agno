@@ -81,6 +81,21 @@ def _retain_session_transport_class() -> Any:
             self.headers = headers or {}
             self.httpx_client_factory = httpx_client_factory
             self._terminate_on_close = bool(terminate_on_close)
+            self._session_id: Optional[str] = None
+
+        async def _capture_session_id(self, response: Any) -> None:
+            """httpx response hook: record the server's ``mcp-session-id``.
+
+            The SDK's client no longer surfaces the id, so it is read off the response
+            headers the way fastmcp's own transport does. Without this
+            ``get_session_id()`` stays None here and the tool-call trace spans lose it.
+            """
+            sid = response.headers.get("mcp-session-id")
+            if sid:
+                self._session_id = sid
+
+        def get_session_id(self) -> Optional[str]:
+            return self._session_id
 
         @contextlib.asynccontextmanager
         async def connect_session(self, *, transport_options: Any = None, **session_kwargs: Any) -> Any:
@@ -88,6 +103,8 @@ def _retain_session_transport_class() -> Any:
 
             factory = self.httpx_client_factory or create_mcp_http_client
             http_client = factory(headers=dict(self.headers), auth=None)
+            self._session_id = None
+            http_client.event_hooks.setdefault("response", []).append(self._capture_session_id)
 
             session_class = getattr(transport_options, "session_class", None) or ClientSession
             async with (
@@ -695,6 +712,13 @@ class MCPTools(Toolkit):
             pass  # Silently ignore all cleanup errors
 
     async def is_alive(self) -> bool:
+        """Whether the connection is still usable.
+
+        Only meaningful on the session-based era. The 2026-07-28 era removed ping and
+        holds no session to probe, so with ``protocol_mode="auto"`` against a modern
+        server this reports True without sending anything: a dead server surfaces on the
+        next real request instead.
+        """
         if self.session is None:
             return False
         try:

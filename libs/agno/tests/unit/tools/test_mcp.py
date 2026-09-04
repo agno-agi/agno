@@ -262,7 +262,6 @@ async def test_connect_merges_init_headers_when_sse_headers_default_to_none():
             "agno.tools.mcp.mcp._build_fastmcp_client",
             return_value=_AsyncContextManager(MagicMock()),
         ) as sse_client_mock,
-        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
@@ -362,7 +361,6 @@ async def test_connect_applies_header_provider_when_using_url_only_sse():
             "agno.tools.mcp.mcp._build_fastmcp_client",
             return_value=_AsyncContextManager(MagicMock()),
         ) as sse_client_mock,
-        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
@@ -2132,3 +2130,31 @@ def test_stdio_transport_does_not_keep_the_subprocess_alive():
     client = _build_fastmcp_client("stdio", {}, params, 10, "legacy")
 
     assert client.transport.keep_alive is False
+
+
+@pytest.mark.asyncio
+async def test_retain_session_transport_captures_the_session_id():
+    """The custom transport must record mcp-session-id like fastmcp's own does.
+
+    The SDK's client no longer surfaces the id, so both transports read it off the
+    response headers. Without it the tool-call trace spans lose the identifier on every
+    server_params connection, which is the default path.
+    """
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    client = _build_fastmcp_client(
+        "streamable-http",
+        {"url": "http://localhost:8080/mcp", "terminate_on_close": False},
+        None,
+        10,
+        "legacy",
+    )
+    transport = client.transport
+
+    assert transport.get_session_id() is None
+
+    response = MagicMock()
+    response.headers = {"mcp-session-id": "abc123"}
+    await transport._capture_session_id(response)
+
+    assert transport.get_session_id() == "abc123"
