@@ -91,6 +91,11 @@ def mock_embedder():
         openai_embedder = Mock(spec=OpenAIEmbedder)
         openai_embedder.get_embedding_and_usage.return_value = ([0.1, 0.2, 0.3], None)
         openai_embedder.get_embedding.return_value = [0.1, 0.2, 0.3]
+        # The async variants must be awaitable: a spec'd Mock returns a plain Mock, which
+        # fails to unpack, and the embedding paths now surface that instead of swallowing it.
+        openai_embedder.enable_batch = False
+        openai_embedder.async_get_embedding = AsyncMock(return_value=[0.1, 0.2, 0.3])
+        openai_embedder.async_get_embedding_and_usage = AsyncMock(return_value=([0.1, 0.2, 0.3], None))
         mock_embedder.return_value = openai_embedder
         return mock_embedder.return_value
 

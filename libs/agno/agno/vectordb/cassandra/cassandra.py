@@ -6,7 +6,7 @@ from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures
 from agno.vectordb.cassandra.index import AgnoMetadataVectorCassandraTable
 
 # The owner lives in a reserved metadata key. cassio filters metadata by equality only, so
@@ -261,12 +261,8 @@ class Cassandra(VectorDb):
                         log_error(f"Error assigning batch embedding to document '{doc.name}': {str(e)}")
 
             except Exception as e:
-                # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -274,20 +270,14 @@ class Cassandra(VectorDb):
                 else:
                     log_error(f"Async batch embedding failed, falling back to individual embeddings: {str(e)}")
                     # Fall back to individual embedding
-                    for doc in documents:
-                        try:
-                            embed_tasks = [doc.async_embed(embedder=self.embedder)]
-                            await asyncio.gather(*embed_tasks, return_exceptions=True)
-                        except Exception as e:
-                            log_error(f"Error processing document '{doc.name}': {str(e)}")
+                    embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+                    results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding (original behavior)
-            for doc in documents:
-                try:
-                    embed_tasks = [doc.async_embed(embedder=self.embedder)]
-                    await asyncio.gather(*embed_tasks, return_exceptions=True)
-                except Exception as e:
-                    log_error(f"Error processing document '{doc.name}': {str(e)}")
+            embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in documents]
+            results = await asyncio.gather(*embed_tasks, return_exceptions=True)
+            raise_embedding_failures(results)
 
         futures = []
         for doc in documents:
@@ -320,6 +310,9 @@ class Cassandra(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert or update documents based on primary key."""
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self.delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash, documents, filters, user_id=user_id)
@@ -332,6 +325,9 @@ class Cassandra(VectorDb):
         user_id: Optional[str] = None,
     ) -> None:
         """Upsert documents asynchronously by running in a thread."""
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        await aembed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self.delete_by_content_hash(content_hash, user_id=user_id)
         await self.async_insert(content_hash, documents, filters, user_id=user_id)
