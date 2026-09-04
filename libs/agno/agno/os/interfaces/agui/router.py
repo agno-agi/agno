@@ -1,6 +1,8 @@
+import asyncio
+import contextlib
 import copy
 import uuid
-from typing import AsyncIterator, Optional, Union
+from typing import Any, AsyncIterator, Dict, Optional, Union
 
 from agno.utils.log import log_error, log_warning
 
@@ -17,8 +19,9 @@ try:
 except ImportError as e:
     raise ImportError("`ag_ui` not installed. Please install it with `pip install -U ag-ui-protocol`") from e
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel
 
 from agno.agent import Agent, RemoteAgent
 from agno.os.interfaces.agui.input import (
@@ -29,24 +32,175 @@ from agno.os.interfaces.agui.input import (
     parse_client_tools,
     validate_state,
 )
+from agno.os.interfaces.agui.reattach import find_active_run_id, find_reattach_target, reattach_run_events
 from agno.os.interfaces.agui.resume import resume_paused_run
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
 from agno.os.middleware.user_scope import assert_session_writable, caller_is_admin, resolve_run_user_id
 from agno.run.base import RunContext
+from agno.run.concurrency import SSE_KEEPALIVE_INTERVAL_SECONDS
 from agno.team.remote import RemoteTeam
 from agno.team.team import Team
+
+_SSE_HEADERS = {
+    "Cache-Control": "no-cache",
+    "Connection": "keep-alive",
+    "Access-Control-Allow-Origin": "*",
+    "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+    "Access-Control-Allow-Headers": "*",
+}
+
+
+def _extract_forwarded_flags(run_input: RunAgentInput) -> Dict[str, Any]:
+    """Read Agno extension flags from forwarded_props (the AG-UI extension point)."""
+    props = run_input.forwarded_props
+    return props if isinstance(props, dict) else {}
+
+
+async def _encode_with_keepalive(events: AsyncIterator[BaseEvent], encoder: EventEncoder) -> AsyncIterator[str]:
+    """Encode AG-UI events as SSE, emitting keepalive comments on idle.
+
+    Background runs can sit silent while queued for a concurrency slot or
+    during long model stretches; without keepalives, proxies kill the
+    connection. Events are pumped through a queue so the idle timeout never
+    cancels an in-flight __anext__ (cancelling it would kill the source
+    generator).
+    """
+    queue: asyncio.Queue = asyncio.Queue()
+
+    async def _pump() -> None:
+        try:
+            async for event in events:
+                await queue.put(event)
+        except Exception as e:
+            await queue.put(e)
+        finally:
+            await queue.put(None)
+
+    pump_task = asyncio.create_task(_pump())
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=SSE_KEEPALIVE_INTERVAL_SECONDS)
+            except asyncio.TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if item is None:
+                break
+            if isinstance(item, Exception):
+                yield encoder.encode(RunErrorEvent(type=EventType.RUN_ERROR, message=str(item)))
+                continue  # the None sentinel follows right after
+            yield encoder.encode(item)
+    finally:
+        pump_task.cancel()
+        with contextlib.suppress(BaseException):
+            await pump_task
+
+
+class ReattachRequest(BaseModel):
+    """Body for POST /agui/reattach: subscribe to an existing run's event stream without starting a new run."""
+
+    thread_id: str
+    # Omitted = resolve the thread's in-progress run (a client that never held the run_id)
+    run_id: Optional[str] = None
+    # Anonymous attribution only; authenticated callers are pinned to their server-resolved identity
+    user_id: Optional[str] = None
+
+
+async def _build_reattach_response(
+    entity: Union[Agent, Team],
+    thread_id: str,
+    run_id: Optional[str],
+    user_id: Optional[str],
+    encoder: EventEncoder,
+) -> StreamingResponse:
+    """Shared reattach pipeline for POST /agui (flag form) and POST /agui/reattach.
+
+    An explicit run_id stays strict: unknown ids 404 and are never swapped for
+    the thread's active run. A falsy run_id ("" from the AG-UI flag form, where
+    the protocol requires the field; omitted on the dedicated route) resolves
+    the thread's in-progress run instead — and since the resolving session read
+    is already scoped to thread and caller, the binding re-check is redundant.
+    """
+    resolved = False
+    if not run_id:
+        if getattr(entity, "db", None) is None:
+            raise HTTPException(
+                status_code=400,
+                detail="reattach without a run_id requires a database to resolve the active run; "
+                "pass an explicit run_id",
+            )
+        resolved_run_id = await find_active_run_id(entity, thread_id=thread_id, user_id=user_id)
+        if resolved_run_id is None:
+            raise HTTPException(status_code=404, detail=f"No active run for thread {thread_id}")
+        run_id = resolved_run_id
+        resolved = True
+
+    if not resolved:
+        await _verify_reattach_binding(entity, run_id, thread_id, user_id)
+
+    buffer_status, stored_run = await find_reattach_target(
+        entity,
+        run_id=run_id,
+        session_id=thread_id,
+        user_id=user_id,
+    )
+    if buffer_status is None and stored_run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
+
+    return StreamingResponse(
+        _encode_with_keepalive(
+            reattach_run_events(
+                entity,
+                thread_id=thread_id,
+                run_id=run_id,
+                user_id=user_id,
+                buffer_status=buffer_status,
+                stored_run=stored_run,
+            ),
+            encoder,
+        ),
+        media_type="text/event-stream",
+        headers=_SSE_HEADERS,
+    )
+
+
+async def _verify_reattach_binding(
+    entity: Union[Agent, Team],
+    run_id: str,
+    thread_id: str,
+    user_id: Optional[str],
+) -> None:
+    """Verify the run belongs to this thread before replaying its events.
+
+    The event buffer is keyed on run_id alone, so a scoped caller could
+    otherwise attach to another user's run by naming a thread of their own.
+    Background runs persist a PENDING row before execution starts, so the DB
+    binding check holds for queued, active, and terminal runs alike. Unscoped
+    deployments (and db-less entities, where reattach serves only the live
+    buffer) skip this, mirroring the REST /resume ownership posture.
+    """
+    if user_id is None or getattr(entity, "db", None) is None:
+        return
+    bound_run = await entity.aget_run_output(run_id=run_id, session_id=thread_id, user_id=user_id)
+    if bound_run is None:
+        raise HTTPException(status_code=404, detail=f"Run {run_id} not found")
 
 
 async def run_entity(
     entity: Union[Agent, RemoteAgent, Team, RemoteTeam],
     run_input: RunAgentInput,
     user_id: Optional[str] = None,
+    background: bool = False,
 ) -> AsyncIterator[BaseEvent]:
     """Shared handler for running an Agent or Team with AG-UI input/output mapping.
 
     ``user_id`` is the server-resolved identity (see the route handler). It is
     deliberately NOT read from ``run_input.forwarded_props`` here: an authenticated
     caller must not attribute runs, sessions, or memory writes to an arbitrary user.
+
+    With ``background=True`` the run executes in a detached task that survives
+    client disconnection (events are buffered for later reattach); the live
+    stream to the connected client is unchanged.
     """
     run_id = run_input.run_id or str(uuid.uuid4())
 
@@ -86,13 +240,15 @@ async def run_entity(
 
         # 4. Determine if this is a resume (trailing ToolMessages) or fresh run
         if tool_messages:
-            # Resume: frontend executed external tools and sent results back
+            # Resume: frontend executed external tools and sent results back.
+            # background carries over so the resumed leg also survives disconnect.
             response_stream = await resume_paused_run(
                 entity=entity,  # type: ignore[arg-type]
                 session_id=run_input.thread_id,
                 tool_messages=tool_messages,
                 run_context=run_context,
                 run_kwargs=run_kwargs,
+                background=background,
             )
         else:
             # Fresh run: new user input
@@ -118,6 +274,11 @@ async def run_entity(
                 audio=audio or None,
                 videos=videos or None,
                 files=files or None,
+                # background/raw_events only ever reach local entities (remotes
+                # are rejected in the route's validation). raw_events: the
+                # background stream hands raw RunOutputEvent objects to the
+                # converter instead of pre-formatted SSE strings
+                **({"background": True, "raw_events": True} if background else {}),
                 **run_kwargs,
             )
 
@@ -159,20 +320,80 @@ def attach_routes(
             is_admin=caller_is_admin(request),
         )
 
-        async def event_generator():
-            async for event in run_entity(entity, run_input, user_id=user_id):  # type: ignore
-                yield encoder.encode(event)
+        # Agno extension flags ride forwarded_props (the AG-UI extension point)
+        flags = _extract_forwarded_flags(run_input)
+        background = bool(flags.get("background"))
+        reattach = bool(flags.get("reattach"))
+
+        # Validate BEFORE streaming starts: a misconfiguration must answer an
+        # honest HTTP error, not a 200 whose SSE stream opens with an error frame
+        if background and reattach:
+            raise HTTPException(
+                status_code=400, detail="background and reattach are mutually exclusive forwarded_props"
+            )
+        if background or reattach:
+            if isinstance(entity, (RemoteAgent, RemoteTeam)):
+                raise HTTPException(
+                    status_code=400, detail="Background execution is not supported for remote agents or teams"
+                )
+        if background and getattr(entity, "db", None) is None:
+            raise HTTPException(
+                status_code=400, detail="Background execution requires a database to be configured on the entity"
+            )
+
+        if reattach:
+            if run_input.messages:
+                raise HTTPException(
+                    status_code=400, detail="reattach requires an empty messages array; input cannot be appended"
+                )
+            if run_input.resume:
+                raise HTTPException(status_code=400, detail="reattach cannot be combined with HITL resume entries")
+            # Empty run_id is the auto-resolve sentinel: the protocol requires the
+            # field, so a client that never held one sends "". The dedicated
+            # POST /agui/reattach route makes run_id truly optional instead.
+            return await _build_reattach_response(
+                entity,  # type: ignore[arg-type]
+                thread_id=run_input.thread_id,
+                run_id=run_input.run_id,
+                user_id=user_id,
+                encoder=encoder,
+            )
 
         return StreamingResponse(
-            event_generator(),
+            _encode_with_keepalive(
+                run_entity(entity, run_input, user_id=user_id, background=background),  # type: ignore
+                encoder,
+            ),
             media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Access-Control-Allow-Origin": "*",
-                "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
-                "Access-Control-Allow-Headers": "*",
-            },
+            headers=_SSE_HEADERS,
+        )
+
+    @router.post("/agui/reattach", name="reattach_run")
+    async def reattach_run_agui(request: Request, body: ReattachRequest):
+        """Subscribe to an existing run's event stream without starting a new run.
+
+        Dedicated sibling of the REST ``/runs/{run_id}/resume`` route, with the
+        same ownership posture — but speaking AG-UI events: the missed prefix is
+        collapsed into an idempotent MESSAGES_SNAPSHOT (AG-UI events carry no
+        sequence numbers for a cursor), then live events follow. Omitting
+        ``run_id`` resolves the thread's in-progress run.
+        """
+        if isinstance(entity, (RemoteAgent, RemoteTeam)):
+            raise HTTPException(status_code=400, detail="Reattach is not supported for remote agents or teams")
+
+        user_id = resolve_run_user_id(request, body.user_id)
+        await assert_session_writable(
+            getattr(entity, "db", None),
+            body.thread_id,
+            user_id or getattr(entity, "user_id", None),
+            is_admin=caller_is_admin(request),
+        )
+        return await _build_reattach_response(
+            entity,  # type: ignore[arg-type]
+            thread_id=body.thread_id,
+            run_id=body.run_id,
+            user_id=user_id,
+            encoder=encoder,
         )
 
     @router.get("/status")

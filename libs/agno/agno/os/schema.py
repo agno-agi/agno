@@ -470,6 +470,11 @@ class AgentSessionDetailSchema(BaseModel):
     metrics: Optional[dict] = Field(None, description="Session metrics")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
     chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
+    active_run: Optional[dict] = Field(
+        None,
+        description="In-progress run (run_id, status) whose event stream is still live — reattach to keep watching; "
+        "absent when nothing is running",
+    )
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
 
@@ -509,6 +514,11 @@ class TeamSessionDetailSchema(BaseModel):
     team_data: Optional[dict] = Field(None, description="Team-specific data")
     metadata: Optional[dict] = Field(None, description="Additional metadata")
     chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
+    active_run: Optional[dict] = Field(
+        None,
+        description="In-progress run (run_id, status) whose event stream is still live — reattach to keep watching; "
+        "absent when nothing is running",
+    )
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
     total_tokens: Optional[int] = Field(None, description="Total tokens used in this session")

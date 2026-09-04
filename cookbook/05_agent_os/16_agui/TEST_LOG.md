@@ -206,3 +206,13 @@ TypeScript compilation, and the Vite production build passed.
 - Repository-wide Ruff, agnoctl mypy, and cookbook pattern checks passed. The
   core Agno mypy step reported 27 existing errors in six files outside this
   integration's diff.
+
+### background_runs.py
+
+**Status:** PASS
+
+**Description:** Starts a detached run with `forwarded_props: {"background": true}` and reattaches after reconnect with `{"reattach": true}` (same thread_id/run_id, empty messages). Verified server boot, `GET /status`, and the validation contract without a provider key: `reattach` to an unknown run returned 404, `reattach` with a non-empty messages array returned 400, and `background` + `reattach` together returned 400. A background run submitted without `OPENAI_API_KEY` streamed RUN_STARTED/STATE_SNAPSHOT over AG-UI, ended ERROR, and was persisted (visible via `GET /agents/{id}/runs/{run_id}`); reattaching to it returned RUN_STARTED followed by an honest RUN_ERROR. Unit tests cover the snapshot-replay and live-reattach paths.
+
+**Result:** Server booted cleanly; all four request shapes behaved as specified.
+
+---
