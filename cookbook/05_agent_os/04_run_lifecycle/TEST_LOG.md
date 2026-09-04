@@ -93,6 +93,26 @@ persisted its eval run.
 
 ---
 
+### unpack_archives.py
+
+**Status:** PASS
+
+**Test mode:** LIVE
+
+**Description:** Started the checked-in unpacking AgentOS server and uploaded
+`.zip` archives over HTTP to `/agents/unpack-agent/runs` using OpenAI Responses
+`gpt-5.5`. Covered a DEFLATE archive holding `invoice.txt` and `notes.md`, and a
+macOS Finder archive holding a single PDF alongside its `__MACOSX` entry.
+
+**Result:** Both runs returned `COMPLETED`. The pre-hook replaced each archive
+with its contents before the model call, and the agent quoted values that exist
+only inside the archives (`AGNO-9193`, `4242.00 EUR`, `Acme Corp`, `ZEBRA-7`).
+The Finder archive resolved its PDF and skipped the `__MACOSX` sidecar entry.
+Without the pre-hook the same upload fails at the provider with an unsupported
+MIME type, since no provider unpacks an archive.
+
+---
+
 ## Validation
 
 - `pytest cookbook/scripts/tests/test_check_cookbook_pattern.py -q`:
