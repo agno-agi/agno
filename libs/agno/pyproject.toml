@@ -116,6 +116,7 @@ cel = ["cel-python"]
 
 # Dependencies for Tools
 agentql = ["agentql"]
+anyapi = ["getanyapi>=0.35.3"]
 apify = ["apify-client"]
 arxiv = ["arxiv"]
 brave = ["brave-search"]
@@ -290,6 +291,7 @@ models = [
 # All tools
 tools = [
   "agno[agentql]",
+  "agno[anyapi]",
   "agno[apify]",
   "agno[arxiv]",
   # "agno[brave]",  # Excluded: brave-search 0.2.0 ships invalid metadata (bad httpx specifier) that uv cannot parse; test_setup.sh installs it with --no-deps
@@ -583,6 +585,7 @@ module = [
   "fastmcp.*",
   "filetype.*",
   "firecrawl.*",
+  "getanyapi.*",
   "github.*",
   "gitlab.*",
   "google.*",
