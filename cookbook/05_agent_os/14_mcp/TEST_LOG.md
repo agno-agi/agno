@@ -169,6 +169,28 @@ PAT principal `sa:secure-mcp-client-b0ebb699ad` authenticated, exactly the six
 
 ---
 
+### stateless.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (MCP transport), MOCK (model)
+
+**Description:** Served the cookbook and checked the transport-level effect of
+`MCPConfig(stateless=True)`. A raw `initialize` POST to `/mcp` was compared
+against a default-config server started from the same process, since the flag's
+whole observable difference is whether the server hands back a session.
+
+**Result:** The stateless server answered `initialize` with 200 and **no**
+`mcp-session-id` response header; the default server returned 200 **with** one.
+Verified on fastmcp 4.0.2 / mcp 2.1.1. The four `test_mcp_server.py` stateless
+unit tests pass, covering the flag being absent by default, forwarded as
+`stateless_http=True` when set, absent for plain `mcp=True`, and the field
+default. The agent run itself was not exercised end to end -- no
+`OPENAI_API_KEY` was set in the test environment -- so the model path is
+unverified here.
+
+---
+
 ### server_identity.py
 
 **Status:** PASS

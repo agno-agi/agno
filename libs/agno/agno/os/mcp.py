@@ -2879,8 +2879,13 @@ def get_mcp_server(
     # below), which protects open servers by default and lets deployed hosts opt in via
     # MCPConfig.allowed_hosts.
     http_app_kwargs: Dict[str, Any] = {"path": "/mcp"}
-    if "host_origin_protection" in inspect.signature(mcp.http_app).parameters:
+    http_app_params = inspect.signature(mcp.http_app).parameters
+    if "host_origin_protection" in http_app_params:
         http_app_kwargs["host_origin_protection"] = False
+    # Opt-in stateless transport: no session is retained between requests, so any replica
+    # can answer any request. Only passed when requested, so the fastmcp default stands.
+    if mcp_config is not None and mcp_config.stateless and "stateless_http" in http_app_params:
+        http_app_kwargs["stateless_http"] = True
     if mcp_auth is not None:
         # Constructor middleware runs INSIDE fastmcp's authentication middleware (the
         # app's middleware list is auth first, then these) -- the only placement where

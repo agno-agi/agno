@@ -17,6 +17,7 @@ an Agno agent consumes another MCP server belong in `cookbook/91_tools/mcp`.
 | `server_identity.py` | Set the name, version and instructions the server reports to connecting clients. |
 | `toolkit_tools.py` | Serve a whole toolkit, flattened into one MCP tool per method. |
 | `secure_mcp.py` | Mint a PAT, authorize its principal, restrict hosts and tool tags, and return full results. |
+| `stateless.py` | Serve `/mcp` with no session between requests, so any replica can answer any request. |
 | `oauth_builtin.py` | Run AgentOS's database-backed OAuth authorization server. |
 | `oauth_authkit.py` | Use WorkOS AuthKit as an external authorization server. |
 
@@ -239,6 +240,25 @@ the `authorize` callback sees. This uses a synchronous OS-level `SqliteDb`
 because service accounts live on `AgentOS(db=...)`, not merely on an
 agent-attached database. See `../07_security/service_accounts.py` for mint,
 scope, and revocation details.
+
+## Stateless transport
+
+`stateless.py` sets `MCPConfig(stateless=True)`. Every request builds its own
+transport and nothing survives between requests, so no replica owns a caller's
+session and a horizontally scaled deployment needs no session affinity -- an
+ordinary load balancer is enough. Responses carry no `mcp-session-id` header.
+
+What that costs is anything requiring a retained session: server-initiated
+notifications and SSE resumability. Tool calls do not need one, so a pure tool
+server loses nothing. Leave the flag off (the default) whenever the server has
+to push to a client or resume an interrupted stream.
+
+The flag is only passed to the transport when set, so an unset config keeps
+whatever `fastmcp.settings.stateless_http` already establishes.
+
+```bash
+.venvs/demo/bin/python cookbook/05_agent_os/14_mcp/stateless.py
+```
 
 ### Claude Desktop and stdio-only clients
 
