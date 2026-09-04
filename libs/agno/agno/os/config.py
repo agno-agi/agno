@@ -357,6 +357,9 @@ class AuthorizationConfig(BaseModel):
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
     admin_scope: Optional[str] = None
+    # Additional fnmatch path patterns that bypass all AgentOS authentication,
+    # merged with the default public-route exclusions.
+    excluded_route_paths: Optional[List[str]] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers
