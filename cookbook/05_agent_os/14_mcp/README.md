@@ -76,6 +76,28 @@ agent_os = AgentOS(
 `instructions` tells the calling model what the tools are for and how to use them;
 Claude, Cursor and ChatGPT read it when they connect.
 
+Open `/mcp` in a browser and you are sent to `/mcp/server-card`, a JSON Server Card
+with the name, description and endpoint URL in the shape of the MCP Server Card
+extension. The `version` is the one the server reports at connect time, so set it on
+`MCPConfig` or `AgentOS` to publish your deployment's version rather than the default.
+`MCPConfig(server_card=False)` turns it off.
+
+The card also lists the served tools in the same shape `tools/list` returns — name,
+title, description and `inputSchema` — built from each tool's own MCP representation,
+so it cannot drift from the live surface. That makes the endpoint readable by people
+and crawlers who never speak the protocol, while `tools/list` stays the authority a
+connected client calls.
+
+Behind a proxy or load balancer, set the public endpoint explicitly:
+
+```python
+mcp=MCPConfig(name="Acme Support", server_card_url="https://docs.agno.com/mcp")
+```
+
+Without it the URL is derived from the request, and `X-Forwarded-Host` is honoured only
+when that hostname is itself listed in `allowed_hosts` — the card is publicly cacheable,
+so an unvalidated forwarded host is never echoed into it.
+
 ```bash
 .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/server_identity.py
 ```
