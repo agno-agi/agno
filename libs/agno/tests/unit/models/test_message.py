@@ -48,6 +48,26 @@ class TestGetContentString:
         )
         assert message.get_content_string() == "First"
 
+    def test_list_with_text_content_like_object(self):
+        """Test that text content objects return their text."""
+
+        class TextContentLike:
+            type = "text"
+            text = "Hello from MCP"
+
+        message = Message(role="assistant", content=[TextContentLike()])
+        assert message.get_content_string() == "Hello from MCP"
+
+    def test_list_with_model_dump_object_returns_json(self):
+        """Test that non-native content objects are serialized safely."""
+
+        class DumpableContent:
+            def model_dump(self, mode=None):
+                return {"type": "custom", "text": "Trace-safe", "mode": mode}
+
+        message = Message(role="assistant", content=[DumpableContent()])
+        assert json.loads(message.get_content_string()) == [{"type": "custom", "text": "Trace-safe", "mode": "json"}]
+
     def test_none_content(self):
         """Test that None content returns empty string."""
         message = Message(role="assistant", content=None)
