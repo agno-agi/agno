@@ -975,35 +975,28 @@ class AsyncPostgresDb(AsyncBaseDb):
             log_error(f"Exception reading from runs table: {str(e)}")
             return [] if deserialize else ([], 0)
 
-    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str]) -> None:
-        """Async variant of the legacy-blob scrub. See postgres.py for rationale."""
-        if not run_ids:
+    async def _ascrub_run_ids_from_legacy_blob(self, run_ids: List[str], sess: Any, sessions_table: Any) -> None:
+        """Async variant of the legacy-blob scrub. Runs inside the caller's transaction."""
+        if not run_ids or sessions_table is None or "runs" not in sessions_table.c:
             return
-        try:
-            sessions_table = await self._get_table(table_type="sessions")
-            if sessions_table is None or "runs" not in sessions_table.c:
-                return
-            stmt = text(
-                f"""
-                UPDATE {sessions_table.name}
-                SET runs = COALESCE(
-                    (SELECT jsonb_agg(elem)
-                     FROM jsonb_array_elements(runs) elem
-                     WHERE elem->>'run_id' <> ALL(:ids)),
-                    '[]'::jsonb
-                )
-                WHERE runs IS NOT NULL
-                  AND jsonb_typeof(runs) = 'array'
-                  AND EXISTS (
-                      SELECT 1 FROM jsonb_array_elements(runs) elem
-                      WHERE elem->>'run_id' = ANY(:ids)
-                  )
-                """
+        stmt = text(
+            f"""
+            UPDATE {sessions_table.fullname}
+            SET runs = COALESCE(
+                (SELECT jsonb_agg(elem)
+                 FROM jsonb_array_elements(runs) elem
+                 WHERE elem->>'run_id' <> ALL(:ids)),
+                '[]'::jsonb
             )
-            async with self.async_session_factory() as sess, sess.begin():
-                await sess.execute(stmt, {"ids": list(run_ids)})
-        except Exception:
-            log_debug("legacy-runs scrub failed; the primary delete still succeeded", exc_info=True)
+            WHERE runs IS NOT NULL
+              AND jsonb_typeof(runs) = 'array'
+              AND EXISTS (
+                  SELECT 1 FROM jsonb_array_elements(runs) elem
+                  WHERE elem->>'run_id' = ANY(:ids)
+              )
+            """
+        )
+        await sess.execute(stmt, {"ids": list(run_ids)})
 
     async def delete_run(self, run_id: str) -> bool:
         """Delete a single run from the runs table.
@@ -1016,14 +1009,13 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return False
-
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id == run_id))
-                deleted = result.rowcount > 0  # type: ignore
-
-            await self._ascrub_run_ids_from_legacy_blob([run_id])
+                deleted = False
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id == run_id))
+                    deleted = result.rowcount > 0  # type: ignore
+                await self._ascrub_run_ids_from_legacy_blob([run_id], sess, sessions_table)
             return deleted
 
         except Exception as e:
@@ -1038,14 +1030,12 @@ class AsyncPostgresDb(AsyncBaseDb):
         """
         try:
             table = await self._get_table(table_type="runs")
-            if table is None:
-                return
-
+            sessions_table = await self._get_table(table_type="sessions")
             async with self.async_session_factory() as sess, sess.begin():
-                result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
-
-            await self._ascrub_run_ids_from_legacy_blob(list(run_ids))
-            log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                if table is not None:
+                    result = await sess.execute(table.delete().where(table.c.run_id.in_(run_ids)))
+                    log_debug(f"Successfully deleted {result.rowcount} runs")  # type: ignore
+                await self._ascrub_run_ids_from_legacy_blob(list(run_ids), sess, sessions_table)
 
         except Exception as e:
             log_error(f"Error deleting runs: {str(e)}")
