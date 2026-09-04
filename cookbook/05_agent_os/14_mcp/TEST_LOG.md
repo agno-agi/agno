@@ -189,6 +189,15 @@ exercised. The four unit tests in `test_mcp_server.py` cover the AgentOS
 defaults, the fastmcp fallback when nothing is set, the `MCPConfig` overrides,
 and the initialize response.
 
+Re-run with the Server Card: a browser-style `GET /mcp` (Accept `text/html`)
+answered 302 to `/mcp/server-card`. The card came back as
+`application/mcp-server-card+json` with the extension's CORS and cache headers,
+name `localhost/acme-support`, title `Acme Support`, version `1.4.0`, the
+AgentOS description and the endpoint URL. With `X-Forwarded-Proto: https` and
+`X-Forwarded-Host: docs.agno.com` the name became `com.agno.docs/acme-support`
+and the URL `https://docs.agno.com/mcp`. A GET with `Accept: text/event-stream`
+was not redirected; fastmcp answered it with its own 400 for a missing session.
+
 ---
 
 ### oauth_builtin.py
