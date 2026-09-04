@@ -66,14 +66,15 @@ class LlamaOpenAI(OpenAILike):
                 )
         return super()._get_client_params()
 
-    def _format_message(self, message: Message) -> Dict[str, Any]:
+    def _format_message(self, message: Message, compress_tool_results: bool = False) -> Dict[str, Any]:
         """
         Format a message into the format expected by Llama API.
 
         Args:
             message (Message): The message to format.
+            compress_tool_results (bool): Whether to compress tool results.
 
         Returns:
             Dict[str, Any]: The formatted message.
         """
-        return format_message(message, openai_like=True)
+        return format_message(message, openai_like=True, compress_tool_results=compress_tool_results)
