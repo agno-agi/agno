@@ -57,5 +57,5 @@ them via `agno.models.aimlapi.AIMLAPI_HEADERS`, and override any of them per-mod
 ```python
 from agno.models.aimlapi import AIMLAPI
 
-model = AIMLAPI(id="gpt-5.6-terra", default_headers={"X-Title": "My App"})
+model = AIMLAPI(id="gpt-5.6-luna", default_headers={"X-Title": "My App"})
 ```

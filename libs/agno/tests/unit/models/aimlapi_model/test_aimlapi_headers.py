@@ -2,20 +2,28 @@
 
 Every request to AI/ML API carries a fixed set of analytics headers (referer,
 title, partner id, source) so the platform can attribute traffic to Agno. They
-must reach the OpenAI client's ``default_headers`` without clobbering headers
-the caller supplied.
+are merged into the model's ``default_headers`` at construction, so they reach
+any client built from the model without clobbering headers the caller supplied.
 """
 
 import re
 
+import httpx
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
 from agno.models.aimlapi import AIMLAPI, AIMLAPI_HEADERS
 
 
-def test_attribution_headers_are_sent_by_default():
-    """A model built with nothing but an API key still sends every attribution header."""
+def test_attribution_headers_are_set_on_the_model():
+    """A model built with nothing but an API key carries every attribution header."""
+    model = AIMLAPI(api_key="test-key")
+
+    assert model.default_headers == AIMLAPI_HEADERS
+
+
+def test_attribution_headers_reach_the_client_params():
+    """The merged headers flow through to the OpenAI client parameters."""
     client_params = AIMLAPI(api_key="test-key")._get_client_params()
 
     assert client_params["default_headers"] == AIMLAPI_HEADERS
@@ -40,23 +48,40 @@ def test_caller_headers_are_merged_and_win_on_conflict():
     """Caller-supplied headers are preserved, and override attribution keys they collide with."""
     model = AIMLAPI(api_key="test-key", default_headers={"X-Custom": "yes", "X-Title": "Custom Title"})
 
-    default_headers = model._get_client_params()["default_headers"]
-
-    assert default_headers["X-Custom"] == "yes"
-    assert default_headers["X-Title"] == "Custom Title"
+    assert model.default_headers["X-Custom"] == "yes"
+    assert model.default_headers["X-Title"] == "Custom Title"
     # Untouched attribution headers survive the merge
-    assert default_headers["X-AIMLAPI-Partner-ID"] == AIMLAPI_HEADERS["X-AIMLAPI-Partner-ID"]
+    assert model.default_headers["X-AIMLAPI-Partner-ID"] == AIMLAPI_HEADERS["X-AIMLAPI-Partner-ID"]
+
+
+def test_caller_headers_as_a_list_of_pairs_are_merged():
+    """The OpenAI SDK accepts an iterable of (name, value) pairs, so the merge must too."""
+    model = AIMLAPI(api_key="test-key", default_headers=[("X-Trace", "1")])
+
+    assert model.default_headers["X-Trace"] == "1"
+    assert model.default_headers["X-Title"] == "Agno"
+
+
+def test_caller_httpx_headers_override_case_insensitively():
+    """httpx.Headers lowercases keys; the caller must still win over a differently-cased attribution key."""
+    model = AIMLAPI(api_key="test-key", default_headers=httpx.Headers({"X-Title": "Custom Title"}))
+
+    assert model.default_headers is not None
+    headers = {key.lower(): value for key, value in dict(model.default_headers).items()}
+    assert headers["x-title"] == "Custom Title"
+    assert "X-Title" not in dict(model.default_headers)
 
 
 def test_headers_constant_is_not_mutated_by_a_merge():
     """Merging caller headers must not leak into the shared module-level constant."""
-    AIMLAPI(api_key="test-key", default_headers={"X-Title": "Custom Title"})._get_client_params()
+    AIMLAPI(api_key="test-key", default_headers={"X-Title": "Custom Title", "X-AIMLAPI-Partner-ID": "part_other"})
 
     assert AIMLAPI_HEADERS["X-Title"] == "Agno"
+    assert AIMLAPI_HEADERS["X-AIMLAPI-Partner-ID"] == "part_VhLgeTWXXG9RwBOTptNQtcq0"
 
 
 def test_missing_api_key_raises(monkeypatch):
-    """Without a key the model raises before any header work happens."""
+    """Without a key the model raises before any client is built."""
     monkeypatch.delenv("AIMLAPI_API_KEY", raising=False)
 
     with pytest.raises(ModelAuthenticationError):
