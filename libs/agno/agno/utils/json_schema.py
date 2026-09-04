@@ -1,5 +1,5 @@
 from enum import Enum
-from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin
+from typing import Any, Dict, Literal, Optional, Union, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel
 
@@ -153,8 +153,16 @@ def get_json_schema_for_arg(type_hint: Any) -> Optional[Dict[str, Any]]:
         properties = {}
         required = []
 
+        # `field.type` is a string when the dataclass module uses
+        # `from __future__ import annotations` (or quotes its annotations);
+        # resolve the real types so those fields are not silently dropped.
+        try:
+            resolved_types = get_type_hints(type_hint)
+        except Exception:
+            resolved_types = {}
+
         for field_name, field in type_hint.__dataclass_fields__.items():
-            field_type = field.type
+            field_type = resolved_types.get(field_name, field.type)
             field_schema = get_json_schema_for_arg(field_type)
 
             if (
