@@ -1,6 +1,7 @@
 from dataclasses import dataclass, field
 from os import getenv
 from typing import Any, Dict, Optional, Type, Union
+from warnings import warn
 
 from pydantic import BaseModel
 
@@ -29,16 +30,21 @@ class Perplexity(OpenAILike):
     """
     A class for using models hosted on Perplexity.
 
+    This class uses Perplexity's deprecated Sonar Chat Completions API, which is
+    supported until September 27, 2026. For new integrations, use
+    ``OpenAIResponses`` with Perplexity's Agent API.
+
     Attributes:
-        id (str): The model id. Defaults to "sonar".
+        id (str): The model id. Defaults to "not-provided"; callers must select
+            a Sonar model explicitly.
         name (str): The model name. Defaults to "Perplexity".
         provider (str): The provider name. Defaults to "Perplexity".
         api_key (Optional[str]): The API key.
-        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/chat/completions".
+        base_url (str): The base URL. Defaults to "https://api.perplexity.ai/".
         max_tokens (int): The maximum number of tokens. Defaults to 1024.
     """
 
-    id: str = "sonar"
+    id: str = "not-provided"
     name: str = "Perplexity"
     provider: str = "Perplexity"
     # Perplexity returns cumulative token counts in each streaming chunk, so only collect on final chunk
@@ -51,6 +57,16 @@ class Perplexity(OpenAILike):
 
     supports_native_structured_outputs: bool = False
     supports_json_schema_outputs: bool = True
+
+    def __post_init__(self) -> None:
+        super().__post_init__()
+        warn(
+            "agno.models.perplexity.Perplexity uses Sonar Chat Completions, which is deprecated and supported only "
+            "until September 27, 2026. Migrate to agno.models.openai.OpenAIResponses with Perplexity's Agent API: "
+            "https://docs.perplexity.ai/docs/getting-started/integrations/agno",
+            DeprecationWarning,
+            stacklevel=3,
+        )
 
     def _get_client_params(self) -> Dict[str, Any]:
         """

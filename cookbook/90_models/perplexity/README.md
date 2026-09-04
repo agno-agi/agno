@@ -1,5 +1,8 @@
 # Perplexity Cookbook
 
+These examples use the [Perplexity Agent API with Agno's `OpenAIResponses`](https://docs.perplexity.ai/docs/getting-started/integrations/agno).
+They do not use the legacy `agno.models.perplexity.Perplexity` integration, which calls the deprecated Sonar Chat Completions API.
+
 > Note: Fork and clone this repository if needed
 
 ### 1. Create and activate a virtual environment
@@ -18,7 +21,7 @@ export PERPLEXITY_API_KEY=***
 ### 3. Install libraries
 
 ```shell
-uv pip install -U ddgs duckdb agno
+uv pip install -U ddgs duckdb agno openai
 ```
 
 ### 4. Run basic Agent
@@ -40,4 +43,3 @@ python cookbook/90_models/perplexity/web_search.py
 ```shell
 python cookbook/90_models/perplexity/knowledge.py
 ```
-
