@@ -1175,6 +1175,21 @@ def get_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
+        from copy import deepcopy
+
+        # Find applicable compaction state from previous runs
+        compaction_state = session.get_compaction_state()
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state is not None:
+            log_debug(
+                f"[MESSAGES] Injecting compaction summary: total={compaction_state.total_compactions}, "
+                f"ids={len(compaction_state.compacted_message_ids)}"
+            )
+            run_messages.messages.append(compaction_state.get_summary_message())
+            # Seed run_response.compaction_state for mid-loop compaction to build on
+            run_response.compaction_state = deepcopy(compaction_state)
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1187,6 +1202,7 @@ def get_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
@@ -1196,7 +1212,7 @@ def get_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history")
 
             run_messages.messages += history_copy
 
@@ -1381,6 +1397,21 @@ async def aget_run_messages(
 
     # 3. Add history to run_messages
     if add_history_to_context:
+        from copy import deepcopy
+
+        # Find applicable compaction state from previous runs
+        compaction_state = session.get_compaction_state()
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state is not None:
+            log_debug(
+                f"[MESSAGES] Injecting compaction summary: total={compaction_state.total_compactions}, "
+                f"ids={len(compaction_state.compacted_message_ids)}"
+            )
+            run_messages.messages.append(compaction_state.get_summary_message())
+            # Seed run_response.compaction_state for mid-loop compaction to build on
+            run_response.compaction_state = deepcopy(compaction_state)
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1393,6 +1424,7 @@ async def aget_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
@@ -1402,7 +1434,7 @@ async def aget_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history")
 
             run_messages.messages += history_copy
 
@@ -1506,6 +1538,7 @@ def _build_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> RunMessages:
     """This function returns a RunMessages object with the following attributes:
         - system_message: The system message for this run
@@ -1553,6 +1586,27 @@ def _build_continue_run_messages(
 
     # 2. Add history messages if not already present in input
     if add_history_to_context and session is not None and not input_has_history:
+        from copy import deepcopy
+
+        # Get compaction state for point-in-time filtering (time-travel for continue_run)
+        compaction_state = None
+        if run_response is not None:
+            compaction_state = run_response.compaction_state
+            if compaction_state is None:
+                lookup_id = run_response.forked_from_run_id or run_response.run_id
+                compaction_state = session.get_compaction_state(run_id=lookup_id)
+                # Seed run_response so mid-loop compaction can merge with prior state
+                if compaction_state is not None:
+                    run_response.compaction_state = deepcopy(compaction_state)
+
+        # Inject compaction summary before history (replaces compacted messages)
+        if compaction_state is not None:
+            log_debug(
+                f"[MESSAGES] continue_run: injecting compaction summary: "
+                f"total={compaction_state.total_compactions}, ids={len(compaction_state.compacted_message_ids)}"
+            )
+            run_messages.messages.append(compaction_state.get_summary_message())
+
         # Only skip messages from history when system_message_role is NOT a standard conversation role.
         # Standard conversation roles ("user", "assistant", "tool") should never be filtered
         # to preserve conversation continuity.
@@ -1565,6 +1619,7 @@ def _build_continue_run_messages(
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
+            compacted_message_ids=compaction_state.compacted_message_ids if compaction_state else None,
         )
 
         if len(history) > 0:
@@ -1574,7 +1629,7 @@ def _build_continue_run_messages(
             if agent.max_tool_calls_from_history is not None:
                 filter_tool_calls(history_copy, agent.max_tool_calls_from_history)
 
-            log_debug(f"Adding {len(history_copy)} messages from history")
+            log_debug(f"[MESSAGES] Adding {len(history_copy)} messages from history")
             run_messages.messages += history_copy
 
     # 3. Add the remaining input messages (skip the system message to avoid duplication)
@@ -1595,12 +1650,15 @@ def get_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> RunMessages:
     """Build the messages that resume a paused run, reading offloaded media back first.
 
     The paused run's own messages come off the database carrying a reference and no bytes.
     """
-    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(
+        agent, input, session, add_history_to_context, run_context, run_response
+    )
     media_storage = _resolve_media_storage(agent)
     if media_storage is not None:
         from agno.utils.media_offload import refresh_messages_media
@@ -1615,9 +1673,12 @@ async def aget_continue_run_messages(
     session: Optional[AgentSession] = None,
     add_history_to_context: Optional[bool] = None,
     run_context: Optional[RunContext] = None,
+    run_response: Optional[RunOutput] = None,
 ) -> RunMessages:
     """Async variant of :func:`get_continue_run_messages`."""
-    run_messages = _build_continue_run_messages(agent, input, session, add_history_to_context, run_context)
+    run_messages = _build_continue_run_messages(
+        agent, input, session, add_history_to_context, run_context, run_response
+    )
     media_storage = _resolve_media_storage(agent)
     if media_storage is not None:
         from agno.utils.media_offload import arefresh_messages_media

@@ -19,6 +19,8 @@ class RunMessages:
     system_message: Optional[Message] = None
     user_message: Optional[Message] = None
     extra_messages: Optional[List[Message]] = None
+    # Compacted messages for model API calls; storage reads from messages
+    compacted_messages: Optional[List[Message]] = None
 
     def get_input_messages(self) -> List[Message]:
         """Get the input messages for the model."""

@@ -25,7 +25,7 @@ from typing import (
 )
 
 if TYPE_CHECKING:
-    from agno.compression.manager import CompressionManager
+    from agno.compression import CompactionManager
     from agno.offload.store import ResultStore
 from uuid import uuid4
 
@@ -652,9 +652,11 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        compacted_messages: Optional[List[Message]] = None,
+        compaction_callback: Optional[Callable[[], Optional[List[Message]]]] = None,
     ) -> ModelResponse:
         """
         Generate a response from the model.
@@ -694,17 +696,20 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
+        _compaction_manager = compaction_manager if _compress_tool_results else None
+        _compaction_stats: Dict[str, Any] = {}
 
         while True:
             # Compress tool results if compression is enabled and threshold is met
-            if _compression_manager is not None and _compression_manager.should_compress(
+            if _compaction_manager is not None and _compaction_manager.should_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
-                _compression_manager.compress(
+                stats = _compaction_manager.compact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
+                for key, value in stats.items():
+                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -874,6 +879,10 @@ class Model(ABC):
         if self.cache_response:
             self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
 
+        # Store compression stats on run_response (async-safe, per-run)
+        if run_response is not None and _compaction_stats:
+            run_response.compression_stats = _compaction_stats
+
         return model_response
 
     async def aresponse(
@@ -885,9 +894,11 @@ class Model(ABC):
         tool_call_limit: Optional[int] = None,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        compacted_messages: Optional[List[Message]] = None,
+        compaction_callback: Optional[Callable[[], Awaitable[Optional[List[Message]]]]] = None,
     ) -> ModelResponse:
         """
         Generate an asynchronous response from the model.
@@ -916,19 +927,22 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
+        _compaction_manager = compaction_manager if _compress_tool_results else None
+        _compaction_stats: Dict[str, Any] = {}
 
         function_call_count = 0
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
-            if _compression_manager is not None and await _compression_manager.ashould_compress(
+            if _compaction_manager is not None and await _compaction_manager.ashould_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
-                await _compression_manager.acompress(
+                stats = await _compaction_manager.acompact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
+                for key, value in stats.items():
+                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
 
             # Get response from model
             assistant_message = Message(role=self.assistant_message_role)
@@ -1096,6 +1110,10 @@ class Model(ABC):
         # Save to cache if enabled
         if self.cache_response:
             self._save_model_response_to_cache(cache_key, model_response, is_streaming=False)
+
+        # Store compression stats on run_response (async-safe, per-run)
+        if run_response is not None and _compaction_stats:
+            run_response.compression_stats = _compaction_stats
 
         return model_response
 
@@ -1369,9 +1387,11 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
+        compacted_messages: Optional[List[Message]] = None,
+        compaction_callback: Optional[Callable[[], Optional[List[Message]]]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate a streaming response from the model.
@@ -1407,25 +1427,28 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
+        _compaction_manager = compaction_manager if _compress_tool_results else None
+        _compaction_stats: Dict[str, Any] = {}
 
         function_call_count = 0
 
         while True:
             # Compress existing tool results BEFORE invoke
-            if _compression_manager is not None and _compression_manager.should_compress(
+            if _compaction_manager is not None and _compaction_manager.should_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
                 # Emit compression started event
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                _compression_manager.compress(
+                stats = _compaction_manager.compact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
+                for key, value in stats.items():
+                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
                 # Emit compression completed event with stats
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compression_manager.stats.copy(),
+                    compression_stats=_compaction_stats.copy(),
                 )
 
             assistant_message = Message(role=self.assistant_message_role)
@@ -1650,9 +1673,11 @@ class Model(ABC):
         stream_model_response: bool = True,
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
-        compression_manager: Optional["CompressionManager"] = None,
+        compaction_manager: Optional["CompactionManager"] = None,
         result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
+        compacted_messages: Optional[List[Message]] = None,
+        compaction_callback: Optional[Callable[[], Awaitable[Optional[List[Message]]]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
         Generate an asynchronous streaming response from the model.
@@ -1688,25 +1713,28 @@ class Model(ABC):
         _tool_dicts = self._format_tools(tools) if tools is not None else []
         _functions = {tool.name: tool for tool in tools if isinstance(tool, Function)} if tools is not None else {}
 
-        _compress_tool_results = compression_manager is not None and compression_manager.compress_tool_results
-        _compression_manager = compression_manager if _compress_tool_results else None
+        _compress_tool_results = bool(compaction_manager is not None and compaction_manager.compact_tools)
+        _compaction_manager = compaction_manager if _compress_tool_results else None
+        _compaction_stats: Dict[str, Any] = {}
 
         function_call_count = 0
 
         while True:
             # Compress existing tool results BEFORE making API call to avoid context overflow
-            if _compression_manager is not None and await _compression_manager.ashould_compress(
+            if _compaction_manager is not None and await _compaction_manager.ashould_compact_tools(
                 messages, tools, model=self, response_format=response_format
             ):
                 # Emit compression started event
                 yield ModelResponse(event=ModelResponseEvent.compression_started.value)
-                await _compression_manager.acompress(
+                stats = await _compaction_manager.acompact_tool_results(
                     messages, run_metrics=run_response.metrics if run_response is not None else None
                 )
+                for key, value in stats.items():
+                    _compaction_stats[key] = _compaction_stats.get(key, 0) + value
                 # Emit compression completed event with stats
                 yield ModelResponse(
                     event=ModelResponseEvent.compression_completed.value,
-                    compression_stats=_compression_manager.stats.copy(),
+                    compression_stats=_compaction_stats.copy(),
                 )
 
             # Create assistant message and stream data
