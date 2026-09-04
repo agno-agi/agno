@@ -30,10 +30,14 @@ runtime role change took effect on the next request with no new token.
 **Test mode:** LIVE
 
 **Description:** The credential-less user directory: auto-provisioning a row from
-token claims and the disabled-user kill switch.
+token claims, granting the default role (is_default) on first provision, and the
+disabled-user kill switch.
 
 **Result:** Exit 0, no traceback. A disabled user is denied at the enforcement
-point while still holding a valid, unexpired token.
+point while still holding a valid, unexpired token. A brand-new user (dave),
+never seen before, is auto-provisioned on his first request AND granted the
+default role (`viewer`, flagged `is_default`) in the same request, so he is
+ALLOWED (200) immediately with `role=viewer` rather than landing inert.
 
 ---
 

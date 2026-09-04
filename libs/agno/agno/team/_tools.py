@@ -33,7 +33,7 @@ from agno.run.team import (
 )
 from agno.session import TeamSession
 from agno.tools import Toolkit
-from agno.tools.function import Function
+from agno.tools.function import Function, entrypoint_accepts_media
 from agno.tools.toolkit import (
     ToolkitKey,
     _emits_toolkit_instructions,
@@ -50,6 +50,7 @@ from agno.utils.log import (
     log_debug,
     log_warning,
 )
+from agno.utils.message import copy_history_message
 from agno.utils.team import (
     get_member_id,
     get_team_member_interactions_str,
@@ -95,10 +96,8 @@ async def _check_and_refresh_mcp_tools(team: "Team") -> None:
     # Add provided tools - only if tools is a static list
     if team.tools is not None and isinstance(team.tools, list):
         for tool in team.tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 if tool.refresh_connection:  # type: ignore
                     try:
                         is_alive = await tool.is_alive()  # type: ignore
@@ -182,10 +181,8 @@ def _determine_tools_for_model(
     # Add provided tools
     if resolved_tools is not None:
         for tool in resolved_tools:
-            # Alternate method of using isinstance(tool, (MCPTools, MultiMCPTools)) to avoid imports
-            if hasattr(type(tool), "__mro__") and any(
-                c.__name__ in ["MCPTools", "MultiMCPTools"] for c in type(tool).__mro__
-            ):
+            # Alternate method of using isinstance(tool, MCPTools) to avoid imports
+            if hasattr(type(tool), "__mro__") and any(c.__name__ == "MCPTools" for c in type(tool).__mro__):
                 # Only add the tool if it successfully connected and built its tools
                 if check_mcp_tools and not tool.initialized:  # type: ignore
                     continue
@@ -212,6 +209,13 @@ def _determine_tools_for_model(
 
     if team.enable_agentic_state:
         _tools.append(Function(name="update_session_state", entrypoint=partial(_update_session_state_tool, team)))
+
+    # Read-back tools for offloaded results
+    if team._result_store is not None:
+        from agno.offload.tools import get_read_result_function, get_search_result_function
+
+        _tools.append(get_read_result_function(team, run_context=run_context, async_mode=async_mode))
+        _tools.append(get_search_result_function(team, run_context=run_context, async_mode=async_mode))
 
     if team.search_past_sessions:
         _tools.append(
@@ -380,6 +384,9 @@ def _determine_tools_for_model(
         strict = True
 
     for tool_index, tool in enumerate(_tools):
+        # ComponentTool markers are rejected at the API boundary (Team __init__ /
+        # set_tools / add_tool), so anything reaching here is already a real tool -- no
+        # per-run guard, which would tax every run to catch a case the entry points own.
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent
@@ -397,7 +404,7 @@ def _determine_tools_for_model(
                     )
                     continue
                 _function_names.append(name)
-                _func = _func.model_copy(deep=True)
+                _func = _func._per_run_copy()
 
                 _func._team = team
                 # Respect the function's explicit strict setting if set
@@ -430,7 +437,7 @@ def _determine_tools_for_model(
                     add_toolkit_instructions(source_toolkit)
                 continue
             _function_names.append(tool.name)
-            tool = tool.model_copy(deep=True)
+            tool = tool._per_run_copy()
             tool._team = team
             # Respect the function's explicit strict setting if set
             effective_strict = strict if tool.strict is None else tool.strict
@@ -458,8 +465,9 @@ def _determine_tools_for_model(
         elif callable(tool):
             # We add the tools, which are callable functions
             try:
+                # from_callable caches the derivation and returns an isolated
+                # per-run copy, so no further copy is needed before mutating it.
                 _func = Function.from_callable(tool, strict=strict)
-                _func = _func.model_copy(deep=True)
                 if _func.name in _function_names:
                     log_warning(
                         f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
@@ -478,11 +486,9 @@ def _determine_tools_for_model(
                 log_warning(f"Could not add tool {tool}: {str(e)}")
 
     if _functions:
-        from inspect import signature
-
         # Check if any functions need media before collecting
         needs_media = any(
-            any(param in signature(func.entrypoint).parameters for param in ["images", "videos", "audios", "files"])
+            entrypoint_accepts_media(func.entrypoint)
             for func in _functions
             if isinstance(func, Function) and func.entrypoint is not None
         )
@@ -536,14 +542,7 @@ def _get_history_for_member_agent(
     )
 
     if len(history) > 0:
-        # Create a deep copy of the history messages to avoid modifying the original messages
-        history_copy = [deepcopy(msg) for msg in history]
-
-        # Tag each message as coming from history
-        for _msg in history_copy:
-            _msg.from_history = True
-
-        return history_copy
+        return [copy_history_message(msg) for msg in history]
     return []
 
 

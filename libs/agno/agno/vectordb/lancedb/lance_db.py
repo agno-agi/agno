@@ -15,7 +15,7 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning, logger
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace, is_rate_limit_error
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -39,7 +39,6 @@ class LanceDb(VectorDb):
         distance: The distance metric to use when searching for documents.
         nprobes: The number of probes to use when searching for documents.
         reranker: The reranker to use when reranking documents.
-        use_tantivy: Deprecated. LanceDB now uses native FTS. This parameter is ignored.
         on_bad_vectors: What to do if the vector is bad. One of "error", "drop", "fill", "null".
         fill_value: The value to fill the vector with if on_bad_vectors is "fill".
     """
@@ -61,7 +60,6 @@ class LanceDb(VectorDb):
         distance: Distance = Distance.cosine,
         nprobes: Optional[int] = None,
         reranker: Optional[Reranker] = None,
-        use_tantivy: bool = False,
         on_bad_vectors: Optional[str] = None,  # One of "error", "drop", "fill", "null".
         fill_value: Optional[float] = None,  # Only used if on_bad_vectors is "fill"
     ):
@@ -162,8 +160,8 @@ class LanceDb(VectorDb):
         self.fill_value: Optional[float] = fill_value
         self.fts_index_exists = False
 
-        if use_tantivy:
-            log_warning("use_tantivy is deprecated. LanceDB now uses native FTS. This parameter is ignored.")
+        # Whether the live table has the ``user_id`` column; pre-v3 tables lack it.
+        self._owner_column_exists: Optional[bool] = None
 
         # Whether the live table has the ``user_id`` column; pre-v3 tables lack it.
         self._owner_column_exists: Optional[bool] = None
@@ -469,11 +467,8 @@ class LanceDb(VectorDb):
                         doc.embedding = embeddings[j]
                         doc.usage = usages[j] if j < len(usages) else None
             except Exception as e:
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                # A throttle must not fall back to per-item calls, which would throttle harder.
+                is_rate_limit = is_rate_limit_error(e)
                 if is_rate_limit:
                     logger.exception("Rate limit detected during batch embedding.")
                     raise e
@@ -521,6 +516,9 @@ class LanceDb(VectorDb):
         """
         # Before the dedup guard so a scoped upsert raises instead of answering False.
         self._require_owner_column(user_id)
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         if self.content_hash_exists(content_hash, user_id=user_id):
             self._delete_by_content_hash(content_hash, user_id=user_id)
         self.insert(content_hash=content_hash, documents=documents, filters=filters, user_id=user_id)
@@ -550,11 +548,8 @@ class LanceDb(VectorDb):
                             doc.embedding = embeddings[j]
                             doc.usage = usages[j] if j < len(usages) else None
                 except Exception as e:
-                    error_str = str(e).lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
                     if is_rate_limit:
                         raise e
                     else:

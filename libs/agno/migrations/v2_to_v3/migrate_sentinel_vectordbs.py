@@ -27,7 +27,7 @@ from agno.utils.log import log_error, log_info, log_warning
 # Provide EITHER redis_url OR an already-constructed client via redis_config["redis_client"].
 redis_config: Dict[str, Any] = {
     # "redis_url": "redis://localhost:6379",
-    # "index_names": ["my_index"],   # the RedisDB index_name(s) to migrate
+    # "index_names": ["my_index"],   # the RedisDb index_name(s) to migrate
 }
 # -----------------------------------------
 
@@ -92,10 +92,10 @@ def migrate_redis_index(index_name: str) -> None:
     """Stamp the shared sentinel onto every Redis vector lacking a ``user_id``.
 
     Args:
-        index_name: The RedisDB ``index_name`` whose vectors should be backfilled.
+        index_name: The RedisDb ``index_name`` whose vectors should be backfilled.
     """
     try:
-        from agno.vectordb.redis.redisdb import RedisDB
+        from agno.vectordb.redis.redisdb import RedisDb
 
         log_info(f"Starting shared-sentinel backfill for Redis index: {index_name}")
 
@@ -111,8 +111,8 @@ def migrate_redis_index(index_name: str) -> None:
             assert redis_url is not None  # narrows for the type checker
             client = Redis.from_url(redis_url)
 
-        field = RedisDB.USER_ID_FIELD
-        sentinel = RedisDB.SHARED_OWNER_TAG
+        field = RedisDb.USER_ID_FIELD
+        sentinel = RedisDb.SHARED_OWNER_TAG
 
         patched = 0
         scanned = 0
@@ -137,7 +137,7 @@ def migrate_redis_index(index_name: str) -> None:
     # to be dropped and rebuilt. The vectors are already stamped at this point, so a failure
     # here is reported rather than raised — it must not undo a backfill that succeeded.
     try:
-        db = RedisDB(index_name=index_name, redis_url=redis_url, redis_client=client)
+        db = RedisDb(index_name=index_name, redis_url=redis_url, redis_client=client)
         if db._index_has_user_id_field():
             log_info(f"Redis index '{index_name}': schema already has '{field}'. No rebuild needed.")
             return
@@ -150,7 +150,7 @@ def migrate_redis_index(index_name: str) -> None:
         if live_dimensions != db.dimensions:
             log_info(f"Redis index '{index_name}': preserving the live vector dimension {live_dimensions}.")
             db.dimensions = live_dimensions
-            # RedisDB snapshots its schema in __init__, so the new dimension only reaches
+            # RedisDb snapshots its schema in __init__, so the new dimension only reaches
             # FT.CREATE if the schema and the index built from it are regenerated here.
             db.schema = db._get_schema()
             db.index = db._create_index()
@@ -166,7 +166,7 @@ def migrate_redis_index(index_name: str) -> None:
         log_warning(
             f"Redis index '{index_name}': vectors are stamped, but the index schema could not be "
             f"rebuilt ({e}). Scoped search stays unavailable until the index carries the "
-            f"'{field}' field: recreate it from your own RedisDB instance (same embedder), which "
+            f"'{field}' field: recreate it from your own RedisDb instance (same embedder), which "
             "rebuilds the schema without touching the stored vectors."
         )
 

@@ -23,7 +23,7 @@ from agno.agent import Agent
 from agno.knowledge.document import Document
 from agno.knowledge.knowledge import Knowledge
 from agno.models.openai import OpenAIResponses
-from agno.vectordb.redis import RedisDB
+from agno.vectordb.redis import RedisDb
 from agno.vectordb.search import SearchType
 
 # ---------------------------------------------------------------------------
@@ -50,7 +50,7 @@ def show(label: str, results: List[Document]) -> None:
 # Create Knowledge Base
 # ---------------------------------------------------------------------------
 
-vector_db = RedisDB(
+vector_db = RedisDb(
     index_name=INDEX_NAME,
     redis_url=REDIS_URL,
     search_type=SearchType.vector,

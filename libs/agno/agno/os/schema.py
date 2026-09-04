@@ -2,7 +2,7 @@ from datetime import datetime, timezone
 from enum import Enum
 from typing import Any, Dict, Generic, List, Literal, Optional, TypeVar, Union
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from agno.agent import Agent
 from agno.agent.factory import AgentFactory
@@ -32,54 +32,85 @@ from agno.workflow.remote import RemoteWorkflow
 from agno.workflow.workflow import Workflow
 
 
-class BadRequestResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request", "error_code": "BAD_REQUEST"}})
+class ErrorResponse(BaseModel):
+    """Body of a non-validation error (4xx/5xx that carry a string ``detail``).
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+    Mirrors what ``agno.os.app._error_body`` actually emits: ``detail`` is always present;
+    ``error_id``/``error_type`` appear only when the error carries an identity
+    (``AgnoError``/``AgnoHTTPException`` subclasses), and a plain ``HTTPException`` (or the
+    auth middleware) yields ``detail`` alone. There is deliberately no ``error_code`` field:
+    no handler has ever emitted one, so documenting it advertised a key clients never receive.
+    """
 
-
-class NotFoundResponse(BaseModel):
-    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found", "error_code": "NOT_FOUND"}})
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class UnauthorizedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthorized access", "error_code": "UNAUTHORIZED"}}
+    detail: str = Field(..., description="Human-readable error message")
+    error_id: Optional[str] = Field(
+        None, description="Stable identifier for the specific error, present only when the error carries one"
+    )
+    error_type: Optional[str] = Field(
+        None, description="Category of the error, present only when the error carries one"
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class BadRequestResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Bad request"}})
 
 
-class UnauthenticatedResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Unauthenticated access", "error_code": "UNAUTHENTICATED"}}
-    )
+class NotFoundResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Not found"}})
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
+
+class UnauthorizedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthorized access"}})
+
+
+class UnauthenticatedResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Unauthenticated access"}})
+
+
+class InternalServerErrorResponse(ErrorResponse):
+    model_config = ConfigDict(json_schema_extra={"example": {"detail": "Internal server error"}})
+
+
+class ValidationErrorDetail(BaseModel):
+    """One field-level error inside a 422 body, matching FastAPI's default shape."""
+
+    loc: List[Union[str, int]] = Field(..., description="Path to the offending field, e.g. ['body', 'endpoint']")
+    msg: str = Field(..., description="Human-readable error message")
+    type: str = Field(..., description="Error type identifier, e.g. 'value_error' or 'missing'")
 
 
 class ValidationErrorResponse(BaseModel):
+    """422 body. Two runtime shapes share this status code, and the same endpoint can
+    return either, so ``detail`` is typed as their union:
+
+    - FastAPI's request-validation handler emits a **list** of field-level errors (built-in
+      coercion errors and custom-validator ``ValueError``s alike).
+    - A route that raises ``HTTPException(status_code=422, detail="...")`` for a semantic
+      check (e.g. an invalid cron expression) emits a **string** through the HTTPException
+      handler.
+    """
+
     model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Validation error", "error_code": "VALIDATION_ERROR"}}
+        json_schema_extra={
+            "example": {
+                "detail": [
+                    {
+                        "type": "value_error",
+                        "loc": ["body", "endpoint"],
+                        "msg": "Value error, Endpoint must be a path, not a full URL",
+                    }
+                ]
+            }
+        }
     )
 
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
-
-
-class InternalServerErrorResponse(BaseModel):
-    model_config = ConfigDict(
-        json_schema_extra={"example": {"detail": "Internal server error", "error_code": "INTERNAL_SERVER_ERROR"}}
+    detail: Union[str, List[ValidationErrorDetail]] = Field(
+        ...,
+        description=(
+            "A single message for an explicitly raised 422, or a list of field-level errors "
+            "for a request-validation failure"
+        ),
     )
-
-    detail: str = Field(..., description="Error detail message")
-    error_code: Optional[str] = Field(None, description="Error code for categorization")
 
 
 class ScopeItem(BaseModel):
@@ -810,6 +841,30 @@ class ComponentType(str, Enum):
     WORKFLOW = "workflow"
 
 
+class ComponentGuard(BaseModel):
+    """Optional compare-and-set guard for component writes.
+
+    When present, each non-None field is checked against the stored state and
+    the write is rejected with 409 on mismatch. None fields skip that half of
+    the check; omitting the guard keeps the write last-writer-wins.
+    """
+
+    latest_version: Optional[int] = Field(None, description="Expected latest config version")
+    current_version: Optional[int] = Field(
+        None, description="Expected current (published) version; 0 expects the component to have none yet"
+    )
+
+    @field_validator("latest_version", "current_version", mode="before")
+    @classmethod
+    def _reject_boolean_versions(cls, value: Any) -> Any:
+        # Lax coercion would read JSON false as 0, and 0 now means "no live
+        # version": a boolean is not a version number, so it is refused rather
+        # than silently satisfying (or failing) the guard.
+        if isinstance(value, bool):
+            raise ValueError("version guards must be integers, not booleans")
+        return value
+
+
 class ComponentCreate(BaseModel):
     name: str = Field(..., description="Display name")
     component_id: Optional[str] = Field(
@@ -836,6 +891,8 @@ class ComponentResponse(BaseModel):
     metadata: Optional[Dict[str, Any]] = None
     created_at: int
     updated_at: Optional[int] = None
+    # Set only on archived (soft-deleted) rows, so a mixed list can label them.
+    deleted_at: Optional[int] = None
 
 
 class ConfigCreate(BaseModel):
@@ -846,6 +903,7 @@ class ConfigCreate(BaseModel):
     notes: Optional[str] = Field(None, description="Optional notes")
     links: Optional[List[Dict[str, Any]]] = Field(None, description="Optional links to child components")
     set_current: bool = Field(True, description="Set as current version")
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class ComponentConfigResponse(BaseModel):
@@ -865,6 +923,7 @@ class ComponentUpdate(BaseModel):
     component_type: Optional[str] = None
     metadata: Optional[Dict[str, Any]] = None
     current_version: Optional[int] = None
+    guard: Optional[ComponentGuard] = None
 
 
 class ConfigUpdate(BaseModel):
@@ -873,6 +932,24 @@ class ConfigUpdate(BaseModel):
     stage: Optional[str] = None
     notes: Optional[str] = None
     links: Optional[List[Dict[str, Any]]] = None
+    guard: Optional[ComponentGuard] = None
+
+
+class SetCurrentRequest(BaseModel):
+    """Body for set-current. Optional: an empty POST keeps working."""
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
+
+
+class ComponentDeleteRequest(BaseModel):
+    """Body for delete. Optional: a bodyless DELETE keeps working.
+
+    Delete also accepts the guard as an ``expected_current_version`` query
+    param; this shape exists so the guard reads the same as on every other
+    guarded component route instead of being silently ignored here.
+    """
+
+    guard: Optional[ComponentGuard] = Field(None, description="Optional compare-and-set guard")
 
 
 class RegistryResourceType(str, Enum):
@@ -886,9 +963,11 @@ class RegistryResourceType(str, Enum):
     FUNCTION = "function"
     AGENT = "agent"
     TEAM = "team"
+    WORKFLOW = "workflow"
     KNOWLEDGE = "knowledge"
     MEMORY_MANAGER = "memory_manager"
     SESSION_SUMMARY_MANAGER = "session_summary_manager"
+    LEARNING = "learning"
 
 
 class CallableMetadata(BaseModel):

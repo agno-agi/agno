@@ -7,7 +7,7 @@ from mcp import StdioServerParameters
 from mcp.types import CallToolResult, TextContent
 
 from agno.tools.function import Function, FunctionCall, ToolResult
-from agno.tools.mcp import MCPTools, MultiMCPTools
+from agno.tools.mcp import MCPTools
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.mcp import get_entrypoint_for_tool
 
@@ -21,11 +21,6 @@ class _AsyncContextManager:
 
     async def __aexit__(self, exc_type, exc, tb):
         return False
-
-
-class _AsyncExitStackStub:
-    async def enter_async_context(self, context):
-        return await context.__aenter__()
 
 
 @pytest.mark.asyncio
@@ -60,22 +55,6 @@ def test_empty_command_string():
             MCPTools(command="")
 
 
-@pytest.mark.asyncio
-async def test_multimcp_without_endpoints():
-    """Test that ValueError is raised when no endpoints are provided."""
-    with pytest.raises(ValueError, match="Either server_params_list or commands or urls must be provided"):
-        async with MultiMCPTools():
-            pass
-
-
-def test_multimcp_empty_command_string():
-    """Test that ValueError is raised when a command string is empty."""
-    with pytest.raises(ValueError, match="MCP command can't be empty"):
-        # Mock shlex.split to return an empty list
-        with patch("shlex.split", return_value=[]):
-            MultiMCPTools(commands=[""])
-
-
 def test_url_defaults_to_streamable_http_transport():
     """Test that transport defaults to streamable-http when url is provided."""
     tools = MCPTools(url="http://localhost:8080/mcp")
@@ -86,13 +65,6 @@ def test_stdio_transport_with_url_overrides_to_streamable_http():
     """Test that stdio transport gets overridden to streamable-http when url is present."""
     tools = MCPTools(url="http://localhost:8080/mcp", transport="stdio")
     assert tools.transport == "streamable-http"
-
-
-def test_multimcp_urls_default_to_streamable_http():
-    """Test that MultiMCPTools defaults to streamable-http when urls are provided without urls_transports."""
-    tools = MultiMCPTools(urls=["http://localhost:8080/mcp", "http://localhost:8081/mcp"])
-    assert len(tools.server_params_list) == 2
-    assert all(isinstance(params, StreamableHTTPClientParams) for params in tools.server_params_list)
 
 
 def test_default_name_derived_from_url_is_distinct_and_stable():
@@ -147,13 +119,6 @@ def test_session_only_init_falls_back_to_default_name():
 def test_explicit_name_overrides_derived_default():
     tools = MCPTools(url="https://docs.example.com/mcp", name="agno_docs")
     assert tools.name == "agno_docs"
-
-
-def test_multimcp_accepts_explicit_name():
-    default_named = MultiMCPTools(urls=["http://localhost:8080/mcp"])
-    named = MultiMCPTools(urls=["http://localhost:8080/mcp"], name="my_servers")
-    assert default_named.name == "MultiMCPTools"
-    assert named.name == "my_servers"
 
 
 @pytest.mark.asyncio
@@ -274,15 +239,15 @@ async def test_connect_merges_init_headers_when_streamable_http_headers_default_
 
     with (
         patch(
-            "agno.tools.mcp.mcp.streamablehttp_client",
-            return_value=_AsyncContextManager(("read", "write")),
+            "agno.tools.mcp.mcp._streamable_http_connection",
+            return_value=(_AsyncContextManager(("read", "write")), 30.0),
         ) as streamable_http_mock,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
         patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
 
-    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+    assert streamable_http_mock.call_args.args[0]["headers"] == {"Authorization": "Bearer token"}
 
 
 @pytest.mark.asyncio
@@ -304,46 +269,160 @@ async def test_connect_merges_init_headers_when_sse_headers_default_to_none():
 
 
 @pytest.mark.asyncio
-async def test_multimcp_connect_merges_init_headers_when_streamable_http_headers_default_to_none():
-    tools = MultiMCPTools(
-        server_params_list=[StreamableHTTPClientParams(url="http://localhost:8080/mcp")],
-        header_provider=lambda: {"Authorization": "Bearer token"},
+async def test_connect_applies_header_provider_when_using_url_only_streamable_http():
+    """Regression for #9442: header_provider must authenticate the connect handshake.
+
+    Reproduces the common url= + header_provider(run_context) pattern without
+    StreamableHTTPClientParams.
+    """
+
+    def header_provider(run_context):
+        return {"Authorization": "Bearer connect-token"}
+
+    tools = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        header_provider=header_provider,
     )
-    tools._async_exit_stack = _AsyncExitStackStub()
 
     with (
         patch(
-            "agno.tools.mcp.multi_mcp.streamablehttp_client",
+            "agno.tools.mcp.mcp.streamable_http_client",
             return_value=_AsyncContextManager(("read", "write")),
         ) as streamable_http_mock,
-        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
-        patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
-        patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
 
-    assert streamable_http_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+    # MCP SDK v2: url is positional, headers ride on the http_client built by the factory.
+    assert streamable_http_mock.call_args.args == ("http://localhost:8000/mcp",)
+    assert http_client_factory.call_args.kwargs["headers"] == {"Authorization": "Bearer connect-token"}
 
 
 @pytest.mark.asyncio
-async def test_multimcp_connect_merges_init_headers_when_sse_headers_default_to_none():
-    tools = MultiMCPTools(
-        server_params_list=[SSEClientParams(url="http://localhost:8080/sse")],
-        header_provider=lambda: {"Authorization": "Bearer token"},
+async def test_connect_applies_static_headers_when_using_url_only_streamable_http():
+    tools = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        headers={"Authorization": "Bearer static-token"},
     )
-    tools._async_exit_stack = _AsyncExitStackStub()
 
     with (
         patch(
-            "agno.tools.mcp.multi_mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))
-        ) as sse_client_mock,
-        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
-        patch.object(MultiMCPTools, "initialize", new=AsyncMock()),
-        patch.object(MultiMCPTools, "build_tools", new=AsyncMock()),
+            "agno.tools.mcp.mcp.streamable_http_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ),
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
     ):
         await tools._connect()
 
-    assert sse_client_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+    assert http_client_factory.call_args.kwargs["headers"] == {"Authorization": "Bearer static-token"}
+
+
+@pytest.mark.asyncio
+async def test_connect_merges_static_headers_and_header_provider_on_streamable_http():
+    tools = MCPTools(
+        url="http://localhost:8000/mcp",
+        transport="streamable-http",
+        headers={"X-Static": "a", "Authorization": "Bearer static"},
+        header_provider=lambda: {"Authorization": "Bearer dynamic", "X-Dynamic": "b"},
+    )
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamable_http_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ),
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert http_client_factory.call_args.kwargs["headers"] == {
+        "X-Static": "a",
+        "Authorization": "Bearer dynamic",
+        "X-Dynamic": "b",
+    }
+
+
+@pytest.mark.asyncio
+async def test_connect_applies_header_provider_when_using_url_only_sse():
+    def header_provider(run_context):
+        return {"Authorization": "Bearer connect-token"}
+
+    tools = MCPTools(
+        url="http://localhost:8000/sse",
+        transport="sse",
+        header_provider=header_provider,
+    )
+
+    with (
+        patch("agno.tools.mcp.mcp.sse_client", return_value=_AsyncContextManager(("read", "write"))) as sse_client_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert sse_client_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer connect-token"}
+
+
+def test_headers_with_stdio_transport_raises_error():
+    with pytest.raises(ValueError, match="headers is not supported with 'stdio' transport"):
+        MCPTools(command="npx foo", transport="stdio", headers={"Authorization": "Bearer token"})
+
+
+@pytest.mark.asyncio
+async def test_mcp_toolbox_headers_not_sent_to_mcp_connect():
+    """MCPToolbox toolbox-core credentials in self.headers must not reach the MCP handshake.
+
+    Regression for the Greptile P1 on #9444: MCPTools merges MCP-intended headers for
+    connect/session, but MCPToolbox historically stores toolbox-core client_headers in
+    self.headers. Those must stay isolated from the MCP transport.
+    """
+    import sys
+    from types import ModuleType
+
+    toolbox_core = ModuleType("toolbox_core")
+    toolbox_core.ToolboxClient = MagicMock()
+    sys.modules["toolbox_core"] = toolbox_core
+    sys.modules.pop("agno.tools.mcp_toolbox", None)
+
+    from agno.tools.mcp_toolbox import MCPToolbox
+
+    toolbox_headers = {"Authorization": "Bearer toolbox-secret"}
+    tools = MCPToolbox(
+        url="http://localhost:8000",
+        headers=toolbox_headers,
+        append_mcp_to_url=True,
+    )
+    assert tools.headers == toolbox_headers
+    assert tools._merge_http_headers() == {}
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamable_http_client",
+            return_value=_AsyncContextManager(("read", "write")),
+        ) as streamable_http_mock,
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value=MagicMock()) as http_client_factory,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    # MCP SDK v2: headers travel via the http_client factory, not streamable_http_client.
+    # With toolbox headers excluded from MCP connect the factory is never invoked, and
+    # the secret must not reach either call.
+    sent_headers = (
+        http_client_factory.call_args.kwargs.get("headers") if http_client_factory.call_args else None
+    ) or {}
+    assert "Authorization" not in sent_headers
+    assert "toolbox-secret" not in str(streamable_http_mock.call_args)
+    assert "toolbox-secret" not in str(http_client_factory.call_args)
 
 
 @pytest.mark.asyncio
@@ -389,8 +468,8 @@ async def test_get_session_for_run_merges_headers_when_streamable_http_headers_d
 
     with (
         patch(
-            "agno.tools.mcp.mcp.streamablehttp_client",
-            return_value=_AsyncContextManager(("read", "write")),
+            "agno.tools.mcp.mcp._streamable_http_connection",
+            return_value=(_AsyncContextManager(("read", "write")), 30.0),
         ) as streamable_mock,
         patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls,
     ):
@@ -402,7 +481,7 @@ async def test_get_session_for_run_merges_headers_when_streamable_http_headers_d
 
         session = await tools.get_session_for_run(run_context=run_context)
 
-    assert streamable_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer token"}
+    assert streamable_mock.call_args.args[0]["headers"] == {"Authorization": "Bearer token"}
     assert session is mock_session
 
 
@@ -539,10 +618,10 @@ async def test_stale_sessions_cleaned_up_on_new_run():
 
     # Now simulate a new run requesting a session - this should trigger cleanup
     # We need to mock the session creation since we don't have a real MCP server
-    with patch("agno.tools.mcp.mcp.streamablehttp_client") as mock_client:
+    with patch("agno.tools.mcp.mcp._streamable_http_connection") as mock_client:
         mock_context = AsyncMock()
         mock_context.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
-        mock_client.return_value = mock_context
+        mock_client.return_value = (mock_context, 30.0)
 
         with patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls:
             mock_new_session = AsyncMock()
@@ -611,7 +690,7 @@ async def test_hitl_params_applied_to_functions():
         mock_tool = MagicMock()
         mock_tool.name = name
         mock_tool.description = description
-        mock_tool.inputSchema = {"type": "object", "properties": {}}
+        mock_tool.input_schema = {"type": "object", "properties": {}}
         return mock_tool
 
     mock_tools_result = MagicMock()
@@ -667,7 +746,7 @@ async def test_hitl_params_with_tool_name_prefix():
     mock_tool = MagicMock()
     mock_tool.name = "SearchTool"
     mock_tool.description = "Search"
-    mock_tool.inputSchema = {"type": "object", "properties": {}}
+    mock_tool.input_schema = {"type": "object", "properties": {}}
 
     mock_tools_result = MagicMock()
     mock_tools_result.tools = [mock_tool]
@@ -702,10 +781,10 @@ async def test_parallel_get_session_for_run_creates_single_session():
 
     tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {"X-Token": "t"})
 
-    with patch("agno.tools.mcp.mcp.streamablehttp_client") as mock_client:
+    with patch("agno.tools.mcp.mcp._streamable_http_connection") as mock_client:
         mock_context = AsyncMock()
         mock_context.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
-        mock_client.return_value = mock_context
+        mock_client.return_value = (mock_context, 30.0)
 
         with patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls:
             mock_session = AsyncMock()
@@ -748,14 +827,14 @@ async def test_parallel_get_session_different_run_ids():
 
     tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {"X-Token": "t"})
 
-    with patch("agno.tools.mcp.mcp.streamablehttp_client") as mock_client:
+    with patch("agno.tools.mcp.mcp._streamable_http_connection") as mock_client:
 
         def make_mock_context():
             ctx = AsyncMock()
             ctx.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
             return ctx
 
-        mock_client.side_effect = lambda **kw: make_mock_context()
+        mock_client.side_effect = lambda *args, **kw: (make_mock_context(), 30.0)
 
         with patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls:
             call_count = {"n": 0}
@@ -843,7 +922,7 @@ class _SucceedingAenterContext:
 
 @pytest.mark.asyncio
 async def test_connect_failure_cleans_up_transport_context_streamable_http():
-    """When streamablehttp_client.__aenter__ raises, the partially-entered
+    """When the streamable-http transport's __aenter__ raises, the partially-entered
     transport context must be explicitly closed otherwise it leaks."""
     tools = MCPTools(
         server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
@@ -852,7 +931,7 @@ async def test_connect_failure_cleans_up_transport_context_streamable_http():
 
     failing_context = _FailingAenterContext(ConnectionRefusedError("server unreachable"))
 
-    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=failing_context):
+    with patch("agno.tools.mcp.mcp._streamable_http_connection", return_value=(failing_context, 30.0)):
         with pytest.raises(ConnectionRefusedError):
             await tools._connect()
 
@@ -891,7 +970,7 @@ async def test_connect_failure_cleans_up_both_contexts_when_session_aenter_fails
     failing_session_context = _FailingAenterContext(RuntimeError("session init failed"))
 
     with (
-        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=transport_context),
+        patch("agno.tools.mcp.mcp._streamable_http_connection", return_value=(transport_context, 30.0)),
         patch("agno.tools.mcp.mcp.ClientSession", return_value=failing_session_context),
     ):
         with pytest.raises(RuntimeError, match="session init failed"):
@@ -924,7 +1003,9 @@ async def test_refresh_connection_tool_call_closes_dynamic_session_without_cachi
     run_context.token = "run-token"
 
     with (
-        patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=transport_context) as streamable_mock,
+        patch(
+            "agno.tools.mcp.mcp._streamable_http_connection", return_value=(transport_context, 30.0)
+        ) as streamable_mock,
         patch("agno.tools.mcp.mcp.ClientSession", return_value=session_context),
     ):
         entrypoint = get_entrypoint_for_tool(tool, fallback_session, mcp_tools_instance=tools)
@@ -933,7 +1014,7 @@ async def test_refresh_connection_tool_call_closes_dynamic_session_without_cachi
     assert result.content == "fresh"
     dynamic_session.call_tool.assert_awaited_once_with("search_docs", {"query": "anyio"})
     fallback_session.call_tool.assert_not_awaited()
-    assert streamable_mock.call_args.kwargs["headers"] == {"Authorization": "Bearer run-token"}
+    assert streamable_mock.call_args.args[0]["headers"] == {"Authorization": "Bearer run-token"}
     assert session_context.aexit_called
     assert transport_context.aexit_called
     assert tools._run_sessions == {}
@@ -951,7 +1032,7 @@ async def test_connect_public_does_not_raise_when_mcp_server_unreachable():
 
     failing_context = _FailingAenterContext(ConnectionRefusedError("server unreachable"))
 
-    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=failing_context):
+    with patch("agno.tools.mcp.mcp._streamable_http_connection", return_value=(failing_context, 30.0)):
         # Must not raise — connect() catches and logs.
         await tools.connect()
 
@@ -981,7 +1062,7 @@ async def test_agent_aget_tools_path_survives_dead_mcp_server():
     session_id = str(uuid4())
     run_id = str(uuid4())
 
-    with patch("agno.tools.mcp.mcp.streamablehttp_client", return_value=failing_context):
+    with patch("agno.tools.mcp.mcp._streamable_http_connection", return_value=(failing_context, 30.0)):
         agent_tools = await agent.aget_tools(
             session=AgentSession(session_id=session_id, session_data={}),
             run_response=RunOutput(run_id=run_id, session_id=session_id),
@@ -999,70 +1080,6 @@ async def test_agent_aget_tools_path_survives_dead_mcp_server():
 
 
 @pytest.mark.asyncio
-async def test_multimcp_connect_failure_closes_partially_entered_stack():
-    """If one MultiMCP server connects and the next fails, connect() must close
-    the first server's contexts before returning."""
-    tools = MultiMCPTools(
-        server_params_list=[
-            StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
-            StreamableHTTPClientParams(url="http://localhost:8081/mcp"),
-        ],
-    )
-
-    first_transport_context = _SucceedingAenterContext(("read-1", "write-1", None))
-    first_session = AsyncMock()
-    first_session.initialize = AsyncMock()
-    first_session_context = _SucceedingAenterContext(first_session)
-    second_transport_context = _FailingAenterContext(ConnectionRefusedError("server 2 unreachable"))
-
-    with (
-        patch(
-            "agno.tools.mcp.multi_mcp.streamablehttp_client",
-            side_effect=[first_transport_context, second_transport_context],
-        ),
-        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=first_session_context),
-    ):
-        await tools.connect()
-
-    assert first_session_context.aexit_called
-    assert first_transport_context.aexit_called
-    assert second_transport_context.aexit_called or second_transport_context.aclose_called
-    assert tools._sessions == []
-    assert tools._successful_connections == 0
-    assert tools._initialized is False
-
-
-@pytest.mark.asyncio
-async def test_multimcp_create_and_connect_failure_cleans_up_before_reraising():
-    """create_and_connect() raises to the caller, but it should still clean up
-    any server contexts entered before the failure."""
-    first_transport_context = _SucceedingAenterContext(("read-1", "write-1", None))
-    first_session = AsyncMock()
-    first_session.initialize = AsyncMock()
-    first_session_context = _SucceedingAenterContext(first_session)
-    second_transport_context = _FailingAenterContext(ConnectionRefusedError("server 2 unreachable"))
-
-    with (
-        patch(
-            "agno.tools.mcp.multi_mcp.streamablehttp_client",
-            side_effect=[first_transport_context, second_transport_context],
-        ),
-        patch("agno.tools.mcp.multi_mcp.ClientSession", return_value=first_session_context),
-        pytest.raises(ValueError, match="MCP connection failed"),
-    ):
-        await MultiMCPTools.create_and_connect(
-            server_params_list=[
-                StreamableHTTPClientParams(url="http://localhost:8080/mcp"),
-                StreamableHTTPClientParams(url="http://localhost:8081/mcp"),
-            ],
-        )
-
-    assert first_session_context.aexit_called
-    assert first_transport_context.aexit_called
-    assert second_transport_context.aexit_called or second_transport_context.aclose_called
-
-
-@pytest.mark.asyncio
 async def test_parallel_calls_no_deadlock_with_timeout():
     """Ensure parallel get_session_for_run completes within a reasonable time
     (regression test for the hang described in issue #6094)."""
@@ -1070,10 +1087,10 @@ async def test_parallel_calls_no_deadlock_with_timeout():
 
     tools = MCPTools(url="http://localhost:8080/mcp", header_provider=lambda: {"X-Token": "t"})
 
-    with patch("agno.tools.mcp.mcp.streamablehttp_client") as mock_client:
+    with patch("agno.tools.mcp.mcp._streamable_http_connection") as mock_client:
         mock_context = AsyncMock()
         mock_context.__aenter__.return_value = (AsyncMock(), AsyncMock(), None)
-        mock_client.return_value = mock_context
+        mock_client.return_value = (mock_context, 30.0)
 
         with patch("agno.tools.mcp.mcp.ClientSession") as mock_session_cls:
             mock_session = AsyncMock()
@@ -1109,8 +1126,8 @@ async def test_mcp_tool_result_preserves_structured_content():
     session.call_tool = AsyncMock(
         return_value=CallToolResult(
             content=[TextContent(type="text", text="hello")],
-            isError=False,
-            structuredContent={"id": "u1", "name": "Ada"},
+            is_error=False,
+            structured_content={"id": "u1", "name": "Ada"},
         )
     )
 
@@ -1132,8 +1149,8 @@ async def test_mcp_tool_result_uses_structured_content_when_content_is_empty():
     session.call_tool = AsyncMock(
         return_value=CallToolResult(
             content=[],
-            isError=False,
-            structuredContent=structured_content,
+            is_error=False,
+            structured_content=structured_content,
         )
     )
 
@@ -1154,8 +1171,8 @@ async def test_mcp_tool_error_result_preserves_structured_content():
     session.call_tool = AsyncMock(
         return_value=CallToolResult(
             content=[TextContent(type="text", text="upstream error")],
-            isError=True,
-            structuredContent={"error_details": {"code": 42}},
+            is_error=True,
+            structured_content={"error_details": {"code": 42}},
         )
     )
 
@@ -1168,16 +1185,16 @@ async def test_mcp_tool_error_result_preserves_structured_content():
 
 @pytest.mark.asyncio
 async def test_mcp_tool_result_handles_missing_structured_content_attr():
-    # mcp < 1.10.0 CallToolResult has no structuredContent attribute; the wrapper
+    # A result object with no structured_content attribute; the wrapper
     # must fall back to None instead of raising AttributeError.
     mock_tool = MagicMock()
     mock_tool.name = "get_data"
 
     result = MagicMock()
-    result.isError = False
+    result.is_error = False
     result.content = [TextContent(type="text", text="hello")]
     result.meta = None
-    del result.structuredContent
+    del result.structured_content
 
     session = AsyncMock()
     session.send_ping = AsyncMock()
@@ -1187,7 +1204,7 @@ async def test_mcp_tool_result_handles_missing_structured_content_attr():
     result = await entrypoint()
 
     assert result.content == "hello"
-    # No _meta and no structuredContent -> the envelope collapses to None.
+    # No _meta and no structured_content -> the envelope collapses to None.
     assert result.metadata is None
 
 
@@ -1208,7 +1225,7 @@ async def test_mcp_tool_result_preserves_meta():
     session.call_tool = AsyncMock(
         return_value=CallToolResult(
             content=[TextContent(type="text", text="hello")],
-            isError=False,
+            is_error=False,
             _meta={"trace_id": "abc-123"},
         )
     )
@@ -1230,7 +1247,7 @@ async def test_mcp_tool_error_result_preserves_meta():
     session.call_tool = AsyncMock(
         return_value=CallToolResult(
             content=[TextContent(type="text", text="upstream error")],
-            isError=True,
+            is_error=True,
             _meta={"trace_id": "err-456"},
         )
     )
@@ -1252,9 +1269,9 @@ async def test_mcp_tool_result_preserves_meta_and_structured_content():
     session.call_tool = AsyncMock(
         return_value=CallToolResult(
             content=[TextContent(type="text", text="hello")],
-            isError=False,
+            is_error=False,
             _meta={"trace_id": "abc-123"},
-            structuredContent={"id": "u1", "name": "Ada"},
+            structured_content={"id": "u1", "name": "Ada"},
         )
     )
 
@@ -1279,10 +1296,9 @@ def test_tool_result_model_dump_roundtrip_preserves_metadata():
 
 @pytest.mark.asyncio
 async def test_mcp_tool_mcperror_returns_actionable_tool_result():
-    """When the MCP server dies mid-call, call_tool raises McpError. The wrapper
+    """When the MCP server dies mid-call, call_tool raises MCPError. The wrapper
     must return a short, actionable ToolResult."""
-    from mcp.shared.exceptions import McpError
-    from mcp.types import ErrorData
+    from mcp.shared.exceptions import MCPError
 
     mock_tool = MagicMock()
     mock_tool.name = "slow_tool"
@@ -1290,7 +1306,7 @@ async def test_mcp_tool_mcperror_returns_actionable_tool_result():
     session = AsyncMock()
     session.send_ping = AsyncMock()
     session.call_tool = AsyncMock(
-        side_effect=McpError(ErrorData(code=-32001, message="Timed out while waiting for response to ClientRequest."))
+        side_effect=MCPError(-32001, "Timed out while waiting for response to ClientRequest.")
     )
 
     entrypoint = get_entrypoint_for_tool(mock_tool, session)
@@ -1352,10 +1368,10 @@ def _make_session_returning(content_text: str):
     from mcp.types import TextContent
 
     result = MagicMock()
-    result.isError = False
+    result.is_error = False
     result.content = [TextContent(type="text", text=content_text)]
     result.meta = None
-    result.structuredContent = None
+    result.structured_content = None
 
     session = AsyncMock()
     session.send_ping = AsyncMock()
@@ -1580,31 +1596,6 @@ async def test_mcp_initialize_propagates_cancelled_error():
 
 
 @pytest.mark.asyncio
-async def test_multimcp_is_alive_propagates_cancelled_error():
-    """MultiMCPTools.is_alive() must let CancelledError propagate."""
-    import asyncio
-
-    tools = MultiMCPTools(urls=["http://localhost:8080/mcp"])
-    session = AsyncMock()
-    session.send_ping = AsyncMock(side_effect=asyncio.CancelledError)
-    tools._sessions = [session]
-
-    with pytest.raises(asyncio.CancelledError):
-        await tools.is_alive()
-
-
-@pytest.mark.asyncio
-async def test_multimcp_is_alive_returns_false_on_ordinary_error():
-    """An ordinary error during MultiMCPTools.is_alive() returns False."""
-    tools = MultiMCPTools(urls=["http://localhost:8080/mcp"])
-    session = AsyncMock()
-    session.send_ping = AsyncMock(side_effect=ConnectionResetError("connection dropped"))
-    tools._sessions = [session]
-
-    assert await tools.is_alive() is False
-
-
-@pytest.mark.asyncio
 async def test_agent_refresh_propagates_cancelled_error_during_reconnect():
     """A CancelledError raised while reconnecting a refresh_connection MCP tool
     must propagate out of aget_tools so the run can be cancelled cleanly"""
@@ -1776,3 +1767,124 @@ async def test_mcp_cached_hit_returns_tool_result(tmp_path):
     assert session.call_tool.await_count == 1
     assert isinstance(second.result, ToolResult)
     assert second.result.content == "payload"
+
+
+# ----------------------------- _streamable_http_connection -----------------------------
+
+
+def _run_streamable_http_connection(params):
+    """Call the helper with the SDK client factories stubbed; return the captured calls.
+
+    Returns (streamable_http_client_mock, create_client_mock, context, session_read_timeout).
+    """
+    from agno.tools.mcp.mcp import _streamable_http_connection
+
+    with (
+        patch("agno.tools.mcp.mcp.streamable_http_client", return_value="connection-context") as client_mock,
+        patch("mcp.shared._httpx_utils.create_mcp_http_client", return_value="http-client") as http_client_factory,
+    ):
+        context, session_read_timeout = _streamable_http_connection(dict(params))
+    return client_mock, http_client_factory, context, session_read_timeout
+
+
+def test_streamable_http_connection_maps_both_timeouts():
+    """Both knobs set: op timeout covers connect/write/pool, sse_read_timeout bounds reads."""
+    import httpx2
+
+    client_mock, factory, context, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "timeout": 10.0, "sse_read_timeout": 300.0}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert isinstance(timeout_arg, httpx2.Timeout)
+    assert timeout_arg.connect == 10.0
+    assert timeout_arg.read == 300.0
+    assert factory.call_args.kwargs["headers"] is None
+    assert client_mock.call_args.args == ("http://localhost:8080/mcp",)
+    assert client_mock.call_args.kwargs["http_client"] == "http-client"
+    assert client_mock.call_args.kwargs["terminate_on_close"] is True
+    assert context == "connection-context"
+    # The ClientSession read timeout mirrors the operation timeout.
+    assert session_read_timeout == 10.0
+
+
+def test_streamable_http_connection_defaults_missing_sse_read_timeout():
+    """Only `timeout` set: the stream read keeps the SDK's 300s default instead of
+    going unbounded -- httpx2.Timeout(read=None) means 'no read limit'."""
+
+    _, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "timeout": 10.0}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert timeout_arg.read == 300.0
+    assert session_read_timeout == 10.0
+
+
+def test_streamable_http_connection_defaults_missing_operation_timeout():
+    """Only `sse_read_timeout` set: operations keep the SDK's 30s default."""
+
+    _, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "sse_read_timeout": 120.0}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert timeout_arg.connect == 30.0
+    assert timeout_arg.read == 120.0
+    assert session_read_timeout == 30.0
+
+
+def test_streamable_http_connection_normalizes_timedelta_timeouts():
+    """Legacy configs may still carry timedelta values; they are converted to seconds."""
+    from datetime import timedelta
+
+    _, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "timeout": timedelta(seconds=15), "sse_read_timeout": timedelta(minutes=5)}
+    )
+
+    timeout_arg = factory.call_args.kwargs["timeout"]
+    assert timeout_arg.connect == 15.0
+    assert timeout_arg.read == 300.0
+    assert session_read_timeout == 15.0
+
+
+def test_streamable_http_connection_without_timeouts_builds_no_custom_client():
+    """No timeouts or headers configured: no http_client is built and the SDK default
+    timeout applies; the session read timeout falls back to 30 seconds."""
+    client_mock, factory, _, session_read_timeout = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp"}
+    )
+
+    assert factory.call_args is None  # no custom client built at all
+    assert client_mock.call_args.kwargs["http_client"] is None
+    assert session_read_timeout == 30.0
+
+
+def test_streamable_http_connection_headers_only_build_client_without_timeout():
+    """Headers alone trigger a custom client, built without an explicit Timeout."""
+    _, factory, _, _ = _run_streamable_http_connection(
+        {"url": "http://localhost:8080/mcp", "headers": {"Authorization": "Bearer t"}}
+    )
+
+    assert factory.call_args.kwargs["headers"] == {"Authorization": "Bearer t"}
+    assert factory.call_args.kwargs["timeout"] is None
+
+
+@pytest.mark.asyncio
+async def test_connect_passes_terminate_on_close_false_through():
+    """A caller-supplied terminate_on_close=False reaches streamable_http_client."""
+    tools = MCPTools(
+        server_params=StreamableHTTPClientParams(url="http://localhost:8080/mcp", terminate_on_close=False),
+        transport="streamable-http",
+    )
+
+    with (
+        patch(
+            "agno.tools.mcp.mcp.streamable_http_client", return_value=_AsyncContextManager(("read", "write"))
+        ) as client_mock,
+        patch("agno.tools.mcp.mcp.ClientSession", return_value=_AsyncContextManager(MagicMock())),
+        patch.object(MCPTools, "initialize", new=AsyncMock()),
+    ):
+        await tools._connect()
+
+    assert client_mock.call_args.kwargs["terminate_on_close"] is False

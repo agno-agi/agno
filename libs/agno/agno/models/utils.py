@@ -41,6 +41,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "litellm-openai": ("agno.models.litellm", "LiteLLMOpenAI", "LiteLLMOpenAI", "litellm"),
     "llama-cpp": ("agno.models.llama_cpp", "LlamaCpp", "LlamaCpp", "llamacpp"),
     "llama-openai": ("agno.models.meta", "LlamaOpenAI", "LlamaOpenAI", "llamaopenai"),
+    "llmman": ("agno.models.llmman", "Llmman", "Llmman", "llmman"),
     "lmstudio": ("agno.models.lmstudio", "LMStudio", "LMStudio", "lmstudio"),
     "meta": ("agno.models.meta", "Llama", "Llama", "llama"),
     "minimax": ("agno.models.minimax", "MiniMax", "MiniMax", "minimax"),
@@ -61,9 +62,11 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "openrouter-responses": ("agno.models.openrouter", "OpenRouterResponses", "OpenRouterResponses", "openrouter"),
     "perplexity": ("agno.models.perplexity", "Perplexity", "Perplexity", "perplexity"),
     "portkey": ("agno.models.portkey", "Portkey", "Portkey", "portkey"),
+    "ramp": ("agno.models.ramp", "RampRouter", "RampRouter", "ramprouter"),
     "requesty": ("agno.models.requesty", "Requesty", "Requesty", "requesty"),
     "sambanova": ("agno.models.sambanova", "Sambanova", "Sambanova", "sambanova"),
     "siliconflow": ("agno.models.siliconflow", "Siliconflow", "Siliconflow", "siliconflow"),
+    "synthorai": ("agno.models.synthorai", "Synthorai", "Synthorai", "synthorai"),
     "together": ("agno.models.together", "Together", "Together", "together"),
     "tokenlab": ("agno.models.tokenlab", "TokenLab", "TokenLab", "tokenlab"),
     "trustedrouter": ("agno.models.trustedrouter", "TrustedRouter", "TrustedRouter", "trustedrouter"),
@@ -72,6 +75,7 @@ _PROVIDERS: Dict[str, Tuple[str, str, str, str]] = {
     "vertexai-claude": ("agno.models.vertexai.claude", "Claude", "Claude", "vertexai"),
     "vllm": ("agno.models.vllm", "VLLM", "VLLM", "vllm"),
     "xai": ("agno.models.xai", "xAI", "xAI", "xai"),
+    "xai-responses": ("agno.models.xai", "xAIResponses", "xAIResponses", "xai"),
     "xiaomi": ("agno.models.xiaomi", "MiMo", "MiMo", "xiaomi mimo"),
 }
 

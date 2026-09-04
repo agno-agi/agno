@@ -25,9 +25,8 @@ Requirements:
 
 from agno.agent import Agent
 from agno.db.redis import RedisDb
-from agno.job_queue.config import QueueConfig
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
+from agno.os import AgentOS, QueueConfig
 
 REDIS_URL = "redis://localhost:6379"
 

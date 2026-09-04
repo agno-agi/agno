@@ -17,6 +17,7 @@ from agno.os.scopes import (
 from agno.os.service_accounts import TOKEN_PREFIX as SERVICE_ACCOUNT_TOKEN_PREFIX
 from agno.os.service_accounts import ServiceAccountVerification, authenticate_service_account_request
 from agno.os.settings import AgnoAPISettings
+from agno.utils.log import log_warning
 
 # Create a global HTTPBearer instance
 security = HTTPBearer(auto_error=False)
@@ -53,6 +54,61 @@ def resolve_authorization_provider(app_or_request: Any) -> AuthorizationProvider
     if provider is not None:
         return provider
     return _default_authorization_provider()
+
+
+def _store_default_role(role_store: Any) -> Optional[str]:
+    """The role store's ``is_default`` role, tolerating custom stores that lack the method
+    (a third-party PolicyEngine-backed store need not implement ``default_role``)."""
+    fn = getattr(role_store, "default_role", None)
+    if not callable(fn):
+        return None
+    try:
+        return fn()
+    except Exception:
+        return None
+
+
+def provision_user_with_default_role(
+    user_store: Any,
+    role_store: Any,
+    default_role: Optional[str],
+    subject: str,
+    claims: Dict[str, Any],
+    *,
+    email_claim: str = "email",
+    name_claim: str = "name",
+) -> Optional[dict]:
+    """JIT-provision ``subject`` from token claims; on first creation, grant the default role.
+
+    Shared by the three provisioning choke points (HTTP middleware, WebSocket connect, MCP
+    identity bridge) so the behaviour is identical wherever a token first arrives.
+
+    Single-role model (a subject holds one role). Default resolution: the explicit
+    ``default_role`` (``UserDirectoryConfig.default_role`` override) wins; otherwise the role
+    flagged ``is_default`` in the role store. If neither resolves and a role store is present,
+    the new user is left inert -- denied until an admin assigns a role -- and a warning is
+    logged, never a silent grant. With no role store (the scope plane) roles do not apply, so
+    nothing is granted and nothing is warned. Granting happens only on first creation, so a
+    later login never re-grants and never fights an admin who removed the role.
+
+    Returns the provisioned user row (so the caller can read ``disabled`` off it without a
+    second query).
+    """
+    user, created = user_store.provision_from_claims(subject, claims, email_claim=email_claim, name_claim=name_claim)
+    if created and role_store is not None:
+        role = default_role or _store_default_role(role_store)
+        if role:
+            try:
+                role_store.assign(subject, role, actor="system:jit")
+            except Exception as e:
+                log_warning(f"could not grant default role {role!r} to provisioned user {subject!r}: {e}")
+        else:
+            log_warning(
+                f"auto-provisioned user {subject!r} has no default role "
+                "(set UserDirectoryConfig(default_role=...) or flag a role is_default); "
+                "they are denied until a role is assigned"
+            )
+    return user
 
 
 def token_scopes_are_authoritative(app_or_request: Any) -> bool:
@@ -154,6 +210,9 @@ def _default_scope_mappings() -> Dict[str, List[str]]:
 
 # Scopes granted to the internal service token (used by the scheduler executor).
 # Shared constant so auth.py and jwt.py stay in sync.
+# Deliberately excludes schedules:write and schedules:delete: the executor only
+# POSTs a schedule's own run endpoint, so a leaked internal token must not be
+# able to create or repoint schedule rows.
 INTERNAL_SERVICE_SCOPES: List[str] = [
     "agents:read",
     "agents:run",
@@ -162,8 +221,6 @@ INTERNAL_SERVICE_SCOPES: List[str] = [
     "workflows:read",
     "workflows:run",
     "schedules:read",
-    "schedules:write",
-    "schedules:delete",
 ]
 
 

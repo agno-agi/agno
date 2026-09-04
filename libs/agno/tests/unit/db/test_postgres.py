@@ -15,6 +15,7 @@ from agno.db.postgres.schemas import (
     get_table_schema_definition,
 )
 from agno.db.utils import json_serializer
+from agno.exceptions import MigrationRequiredError
 
 
 @pytest.fixture
@@ -397,8 +398,11 @@ def test_get_or_create_table_invalid_schema(mock_is_valid, mock_is_available, po
 
     postgres_db.Session = Mock(return_value=mock_session)
 
-    with pytest.raises(ValueError, match="has an invalid schema"):
+    with pytest.raises(MigrationRequiredError, match="has an invalid schema") as exc_info:
         postgres_db._get_or_create_table("test_table", "sessions", "test_schema")
+
+    assert exc_info.value.table_name == "test_schema.test_table"
+    assert exc_info.value.error_id == "migration_required_error"
 
 
 @patch("agno.db.postgres.postgres.is_table_available")
@@ -461,3 +465,35 @@ def test_get_table_schema_definition_invalid():
     """Test getting schema for invalid table type"""
     with pytest.raises(ValueError, match="Unknown table type"):
         get_table_schema_definition("invalid_table")
+
+
+def test_get_schedules_default_swallows_error(postgres_db, monkeypatch):
+    """Test that get_schedules returns ([], 0) on DB failure by default"""
+
+    def _boom(table_type, create_table_if_not_found=False):
+        raise RuntimeError("forced failure")
+
+    monkeypatch.setattr(postgres_db, "_get_table", _boom)
+
+    assert postgres_db.get_schedules() == ([], 0)
+
+
+def test_get_schedules_raise_on_error_reraises(postgres_db, monkeypatch):
+    """Test that get_schedules(raise_on_error=True) re-raises DB failures"""
+
+    def _boom(table_type, create_table_if_not_found=False):
+        raise RuntimeError("forced failure")
+
+    monkeypatch.setattr(postgres_db, "_get_table", _boom)
+
+    with pytest.raises(RuntimeError, match="forced failure"):
+        postgres_db.get_schedules(raise_on_error=True)
+
+
+def test_get_schedules_table_none_raises_under_flag(postgres_db, monkeypatch):
+    """Test that an unavailable schedules table raises under raise_on_error=True"""
+    monkeypatch.setattr(postgres_db, "_get_table", lambda table_type, create_table_if_not_found=False: None)
+
+    assert postgres_db.get_schedules() == ([], 0)
+    with pytest.raises(RuntimeError, match="schedules table unavailable"):
+        postgres_db.get_schedules(raise_on_error=True)

@@ -6,6 +6,7 @@ from datetime import date, datetime, timedelta, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Sequence, Tuple, Union
 from uuid import UUID
 
+from agno.exceptions import MigrationRequiredError, SchemaMismatchError
 from agno.metrics import ModelMetrics, RunMetrics, SessionMetrics
 from agno.models.message import Message
 from agno.run.base import HISTORY_SKIP_STATUSES as _RUN_HISTORY_SKIP_STATUSES
@@ -24,7 +25,6 @@ DB_TABLE_NAME_KEYS: frozenset = frozenset(
         "session_table",
         "job_table",
         "runs_table",
-        "culture_table",
         "memory_table",
         "metrics_table",
         "eval_table",
@@ -97,6 +97,70 @@ def detect_session_type(record: Dict[str, Any]) -> str:
     if record.get("workflow_id"):
         return "workflow"
     return "agent"
+
+
+def deserialize_history_run(run_dict: Dict[str, Any]) -> Optional[Any]:
+    """One stored run dict as a run object, mirroring AgentSession.from_dict's
+    per-run dispatch (a dict matching neither shape is skipped there too)."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+
+    if "agent_id" in run_dict:
+        return RunOutput.from_dict(run_dict)
+    if "team_id" in run_dict:
+        return TeamRunOutput.from_dict(run_dict)
+    return None
+
+
+class SessionRunObjectCache:
+    """Deserialized history-run objects for one db adapter, keyed per run by
+    the raw JSON text of its row.
+
+    Rebuilding every historical run from its row on every read made per-turn
+    conversation cost grow with session length. An adapter that can read the
+    run column as text builds each run object once and shares it across
+    reads: the validity token is (hash, length) of the text, so ANY write to
+    the run -- from this process or another one -- changes the text and
+    misses the cache. Shared objects are immutable by contract (every library
+    path that changes a historical run copies it first) and nothing ever
+    serializes them back to the store; the rows stay canonical.
+
+    Sessions are pruned least-recently-read beyond ``max_sessions``, and a
+    read replaces the session's entry map wholesale, so deleted runs do not
+    linger.
+
+    The token must never be persisted or shared between processes: ``hash`` is
+    randomized per process, so the same text yields different tokens in
+    different processes (and after a restart). It is only meaningful within the
+    lifetime of one adapter instance, which is the only place it is used.
+    """
+
+    def __init__(self, max_sessions: int = 64):
+        from collections import OrderedDict
+
+        self._per_session: "OrderedDict[str, Dict[str, Tuple[Tuple[int, int], Any]]]" = OrderedDict()
+        self._max_sessions = max_sessions
+
+    def runs_from_rows(self, session_id: str, rows: Sequence[Tuple[str, str]]) -> List[Any]:
+        """The run objects for ``rows`` of (run_id, raw run_data text), in order."""
+        cache = self._per_session.pop(session_id, None) or {}
+        fresh: Dict[str, Tuple[Tuple[int, int], Any]] = {}
+        objects: List[Any] = []
+        for run_id, text in rows:
+            token = (hash(text), len(text))
+            entry = cache.get(run_id)
+            if entry is None or entry[0] != token:
+                entry = (token, deserialize_history_run(json.loads(text)))
+            fresh[run_id] = entry
+            if entry[1] is not None:
+                objects.append(entry[1])
+        self._per_session[session_id] = fresh
+        while len(self._per_session) > self._max_sessions:
+            self._per_session.popitem(last=False)
+        return objects
+
+    def drop_session(self, session_id: str) -> None:
+        self._per_session.pop(session_id, None)
 
 
 def deserialize_session_by_type(record: Dict[str, Any]) -> "Session":
@@ -173,9 +237,10 @@ def get_run_type(run: Any) -> str:
     if isinstance(run, WorkflowRunOutput):
         return "workflow"
     if isinstance(run, dict):
-        if run.get("agent_id"):
+        # A member run persisted without its id still identifies itself by name.
+        if run.get("agent_id") or run.get("agent_name"):
             return "agent"
-        if run.get("team_id"):
+        if run.get("team_id") or run.get("team_name"):
             return "team"
         return "workflow"
     raise ValueError(f"Cannot determine run type for: {type(run)}")
@@ -493,6 +558,59 @@ def validate_pagination(limit: Optional[int], page: Optional[int]) -> None:
         )
     if page is not None and page < 1:
         raise ValueError(f"`page` must be >= 1 (pages are 1-indexed); got {page}.")
+
+
+# Table types MigrationManager.up() knows how to migrate at all, across every
+# version it ships, not just the ones with a pending step in the current
+# release: a sessions table still at its 2.0 shape needs the 2.3/2.5 steps even
+# though 3.0 adds none. Must stay in sync with ``_table_type_to_attr`` in
+# agno/db/migrations/manager.py, which cannot be imported here: manager ->
+# db.base -> this module would be a cycle.
+MIGRATABLE_TABLE_TYPES = frozenset(
+    {
+        "memories",
+        "sessions",
+        "metrics",
+        "evals",
+        "knowledge",
+        "approvals",
+        "components",
+        "schedules",
+        "schedule_runs",
+        "learnings",
+    }
+)
+
+
+def table_schema_mismatch_error(table_ref: str, table_type: Optional[str] = None) -> SchemaMismatchError:
+    """Build the error raised when an existing table fails schema validation.
+
+    For table types MigrationManager can handle, the most common cause is an
+    upgrade across Agno versions whose migrations have not been applied yet
+    (e.g. v2.x data with a v3.x install), so the result is a
+    ``MigrationRequiredError`` whose message points the user at the migration
+    path instead of dead-ending. Other table types have no pending migrations,
+    so migration advice would send the user in a circle; they get a plain
+    ``SchemaMismatchError`` with repair guidance instead.
+    """
+    message = (
+        f"Table {table_ref} has an invalid schema: it does not match what this version of Agno "
+        "expects (see the warning or error logged above for details). "
+    )
+    if table_type is None or table_type in MIGRATABLE_TABLE_TYPES:
+        message += (
+            "If this database was created by an older version of Agno, apply the pending "
+            "migrations with `asyncio.run(MigrationManager(db).up())` (import it from "
+            "`agno.db.migrations.manager`; await the call directly in async code), or via the "
+            "AgentOS endpoint `POST /databases/all/migrate`."
+        )
+        return MigrationRequiredError(table_name=table_ref, message=message)
+    message += (
+        "No Agno migration covers this table, so it was likely created or modified outside "
+        "Agno. Compare it against the expected schema and repair it, or move Agno to a new "
+        "table name so the table is recreated."
+    )
+    return SchemaMismatchError(table_name=table_ref, message=message)
 
 
 def metric_record_day(record: Dict[str, Any]) -> Optional[date]:

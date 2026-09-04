@@ -16,10 +16,10 @@ from .conftest import DeterministicEmbedder
 # The adapter import is deferred past the skip: ``redisdb`` raises ImportError without redisvl.
 pytest.importorskip("redisvl")
 
-from agno.vectordb.redis.redisdb import RedisDB  # noqa: E402
+from agno.vectordb.redis.redisdb import RedisDb  # noqa: E402
 
-USER_ID_FIELD = RedisDB.USER_ID_FIELD
-SHARED = RedisDB.SHARED_OWNER_TAG
+USER_ID_FIELD = RedisDb.USER_ID_FIELD
+SHARED = RedisDb.SHARED_OWNER_TAG
 
 
 def _embedded(name: str, content: str, content_id: str = None, doc_id: str = None) -> Document:
@@ -35,7 +35,7 @@ def _embedded(name: str, content: str, content_id: str = None, doc_id: str = Non
 
 @pytest.fixture
 def redis_db():
-    """A RedisDB whose redis client and redisvl ``SearchIndex`` are patched."""
+    """A RedisDb whose redis client and redisvl ``SearchIndex`` are patched."""
     with (
         patch("agno.vectordb.redis.redisdb.Redis") as mock_redis,
         patch("agno.vectordb.redis.redisdb.SearchIndex") as mock_index_cls,
@@ -45,7 +45,7 @@ def redis_db():
         index.query.return_value = []
         mock_index_cls.return_value = index
 
-        db = RedisDB(
+        db = RedisDb(
             index_name="iso_test",
             redis_url="redis://patched.invalid:6379",
             embedder=DeterministicEmbedder(),
@@ -216,7 +216,7 @@ class TestUserIdValidation:
         "bad",
         [
             "",  # an owner tag no scope clause can match
-            RedisDB.SHARED_OWNER_TAG,  # shared-bucket impersonation
+            RedisDb.SHARED_OWNER_TAG,  # shared-bucket impersonation
             "alice*",  # wildcard matches other owners
             "alice?",  # wildcard matches other owners
             "alice{1}",  # brace can never be matched by a scope clause

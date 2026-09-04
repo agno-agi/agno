@@ -793,6 +793,9 @@ def test_intermediate_steps_with_parser_model(shared_db):
 
 
 def test_intermediate_steps_with_member_agents():
+    # gpt-4o-mini on purpose: a weak leader is the one that stops decomposing the request
+    # when the delegation prompt drifts, and a stronger model hides that. This test caught
+    # the leader skipping the Analyst on 8 of 8 runs while gpt-5-mini delegated to both.
     agent_1 = Agent(
         name="Analyst",
         model=OpenAIChat(id="gpt-4o-mini"),

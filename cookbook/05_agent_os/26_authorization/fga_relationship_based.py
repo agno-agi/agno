@@ -78,6 +78,13 @@ agent_os = AgentOS(
         algorithm="HS256",
         verify_audience=True,
         audience=OS_ID,
+        # IMPORTANT -- composite semantics: with TWO providers a request is allowed if EITHER
+        # grants (OR). So a token that carries a *resource* scope (e.g. "agents:x:run") is
+        # authorized by the scope plane EVEN WHEN FGA denies the relationship. This demo depends
+        # on that not happening: its tokens carry no scopes (see _token, "scopes": []), so FGA is
+        # the effective per-resource gate. For strict ReBAC in production, either drop the scope
+        # provider (FGA alone) or guarantee end-user tokens carry no resource scopes -- otherwise
+        # a scoped token bypasses the relationship policy.
         authorization_provider=[
             ScopeAuthorizationProvider(),  # coarse: gates non-resource routes by scope
             FGAAuthorizationProvider(

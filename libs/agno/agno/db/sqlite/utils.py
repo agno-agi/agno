@@ -6,7 +6,6 @@ from uuid import uuid4
 
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession
 
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.sqlite.schemas import get_table_schema_definition
 from agno.utils.log import log_debug, log_error, log_warning
 
@@ -72,8 +71,6 @@ def is_table_available(session: Session, table_name: str, db_schema: Optional[st
         # SQLite uses sqlite_master instead of information_schema
         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
         exists = session.execute(exists_query, {"table": table_name}).scalar() is not None
-        if not exists:
-            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
@@ -91,8 +88,6 @@ async def ais_table_available(session: AsyncSession, table_name: str, db_schema:
     try:
         exists_query = text("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = :table")
         exists = (await session.execute(exists_query, {"table": table_name})).scalar() is not None
-        if not exists:
-            log_debug(f"Table {table_name} {'exists' if exists else 'does not exist'}")
         return exists
     except Exception as e:
         log_error(f"Error checking if table exists: {str(e)}")
@@ -109,7 +104,10 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
         table_type (str): Type of table to get expected schema
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -129,7 +127,7 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str) -> bool:
         return True
     except Exception as e:
         log_error(f"Error validating table schema for {table_name}: {str(e)}")
-        return False
+        raise
 
 
 async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: str) -> bool:
@@ -142,7 +140,10 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
         table_type (str): Type of table to get expected schema
 
     Returns:
-        bool: True if table has all expected columns, False otherwise
+        bool: True if table has all expected columns, False if expected columns are missing
+
+    Raises:
+        Any error from inspecting the table, so a failed inspection is not read as a stale schema.
     """
     try:
         expected_table_schema = get_table_schema_definition(table_type)
@@ -161,7 +162,7 @@ async def ais_valid_table(db_engine: AsyncEngine, table_name: str, table_type: s
 
     except Exception as e:
         log_error(f"Error validating table schema for {table_name}: {str(e)}")
-        return False
+        raise
 
 
 def _get_table_columns(conn, table_name: str) -> set[str]:
@@ -397,64 +398,3 @@ def get_dates_to_calculate_metrics_for(starting_date: date) -> list[date]:
     if days_diff <= 0:
         return []
     return [starting_date + timedelta(days=x) for x in range(days_diff)]
-
-
-# -- Cultural Knowledge util methods --
-def serialize_cultural_knowledge_for_db(cultural_knowledge: CulturalKnowledge) -> str:
-    """Serialize a CulturalKnowledge object for database storage.
-
-    Converts the model's separate content, categories, and notes fields
-    into a single JSON string for the database content column.
-    SQLite requires JSON to be stored as strings.
-
-    Args:
-        cultural_knowledge (CulturalKnowledge): The cultural knowledge object to serialize.
-
-    Returns:
-        str: A JSON string containing content, categories, and notes.
-    """
-    content_dict: Dict[str, Any] = {}
-    if cultural_knowledge.content is not None:
-        content_dict["content"] = cultural_knowledge.content
-    if cultural_knowledge.categories is not None:
-        content_dict["categories"] = cultural_knowledge.categories
-    if cultural_knowledge.notes is not None:
-        content_dict["notes"] = cultural_knowledge.notes
-
-    return json.dumps(content_dict) if content_dict else None  # type: ignore
-
-
-def deserialize_cultural_knowledge_from_db(db_row: Dict[str, Any]) -> CulturalKnowledge:
-    """Deserialize a database row to a CulturalKnowledge object.
-
-    The database stores content as a JSON dict containing content, categories, and notes.
-    This method extracts those fields and converts them back to the model format.
-
-    Args:
-        db_row (Dict[str, Any]): The database row as a dictionary.
-
-    Returns:
-        CulturalKnowledge: The cultural knowledge object.
-    """
-    # Extract content, categories, and notes from the JSON content field
-    content_json = db_row.get("content", {}) or {}
-
-    if isinstance(content_json, str):
-        content_json = json.loads(content_json) if content_json else {}
-
-    return CulturalKnowledge.from_dict(
-        {
-            "id": db_row.get("id"),
-            "name": db_row.get("name"),
-            "summary": db_row.get("summary"),
-            "content": content_json.get("content"),
-            "categories": content_json.get("categories"),
-            "notes": content_json.get("notes"),
-            "metadata": db_row.get("metadata"),
-            "input": db_row.get("input"),
-            "created_at": db_row.get("created_at"),
-            "updated_at": db_row.get("updated_at"),
-            "agent_id": db_row.get("agent_id"),
-            "team_id": db_row.get("team_id"),
-        }
-    )

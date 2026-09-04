@@ -19,12 +19,9 @@ from agno.db.mongo.utils import (
     apply_sorting,
     calculate_date_metrics,
     create_collection_indexes_async,
-    deserialize_cultural_knowledge_from_db,
     fetch_all_sessions_data,
     get_dates_to_calculate_metrics_for,
-    serialize_cultural_knowledge_for_db,
 )
-from agno.db.schemas.culture import CulturalKnowledge
 from agno.db.schemas.evals import EvalFilterType, EvalRunRecord, EvalType
 from agno.db.schemas.knowledge import KnowledgeRow
 from agno.db.schemas.memory import UserMemory
@@ -167,7 +164,6 @@ class AsyncMongoDb(AsyncBaseDb):
         metrics_collection: Optional[str] = None,
         eval_collection: Optional[str] = None,
         knowledge_collection: Optional[str] = None,
-        culture_collection: Optional[str] = None,
         traces_collection: Optional[str] = None,
         spans_collection: Optional[str] = None,
         learnings_collection: Optional[str] = None,
@@ -193,7 +189,6 @@ class AsyncMongoDb(AsyncBaseDb):
             metrics_collection (Optional[str]): Name of the collection to store metrics.
             eval_collection (Optional[str]): Name of the collection to store evaluation runs.
             knowledge_collection (Optional[str]): Name of the collection to store knowledge documents.
-            culture_collection (Optional[str]): Name of the collection to store cultural knowledge.
             traces_collection (Optional[str]): Name of the collection to store traces.
             spans_collection (Optional[str]): Name of the collection to store spans.
             learnings_collection (Optional[str]): Name of the collection to store learnings.
@@ -219,7 +214,6 @@ class AsyncMongoDb(AsyncBaseDb):
             metrics_table=metrics_collection,
             eval_table=eval_collection,
             knowledge_table=knowledge_collection,
-            culture_table=culture_collection,
             traces_table=traces_collection,
             spans_table=spans_collection,
             learnings_table=learnings_collection,
@@ -274,7 +268,6 @@ class AsyncMongoDb(AsyncBaseDb):
             ("metrics", self.metrics_table_name),
             ("evals", self.eval_table_name),
             ("knowledge", self.knowledge_table_name),
-            ("culture", self.culture_table_name),
             ("schedules", self.schedules_table_name),
             ("schedule_runs", self.schedule_runs_table_name),
         ]
@@ -467,17 +460,6 @@ class AsyncMongoDb(AsyncBaseDb):
                     create_collection_if_not_found=create_collection_if_not_found,
                 )
             return self.knowledge_collection
-
-        if table_type == "culture":
-            if reset_cache or getattr(self, "culture_collection", None) is None:
-                if self.culture_table_name is None:
-                    raise ValueError("Culture collection was not provided on initialization")
-                self.culture_collection = await self._get_or_create_collection(
-                    collection_name=self.culture_table_name,
-                    collection_type="culture",
-                    create_collection_if_not_found=create_collection_if_not_found,
-                )
-            return self.culture_collection
 
         if table_type == "traces":
             if reset_cache or getattr(self, "traces_collection", None) is None:
@@ -1875,211 +1857,6 @@ class AsyncMongoDb(AsyncBaseDb):
             log_error(f"Exception deleting all memories: {str(e)}")
             raise e
 
-    # -- Cultural Knowledge methods --
-    async def clear_cultural_knowledge(self) -> None:
-        """Delete all cultural knowledge from the database.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            await collection.delete_many({})
-
-        except Exception as e:
-            log_error(f"Exception deleting all cultural knowledge: {str(e)}")
-            raise e
-
-    async def delete_cultural_knowledge(self, id: str) -> None:
-        """Delete cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to delete.
-
-        Raises:
-            Exception: If an error occurs during deletion.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                return
-
-            await collection.delete_one({"id": id})
-            log_debug(f"Deleted cultural knowledge with ID: {id}")
-
-        except Exception as e:
-            log_error(f"Error deleting cultural knowledge: {str(e)}")
-            raise e
-
-    async def get_cultural_knowledge(
-        self, id: str, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Get cultural knowledge by ID.
-
-        Args:
-            id (str): The ID of the cultural knowledge to retrieve.
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge object. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The cultural knowledge if found, None otherwise.
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                return None
-
-            result = await collection.find_one({"id": id})
-            if result is None:
-                return None
-
-            # Remove MongoDB's _id field
-            result_filtered = {k: v for k, v in result.items() if k != "_id"}
-
-            if not deserialize:
-                return result_filtered
-
-            return deserialize_cultural_knowledge_from_db(result_filtered)
-
-        except Exception as e:
-            log_error(f"Error getting cultural knowledge: {str(e)}")
-            raise e
-
-    async def get_all_cultural_knowledge(
-        self,
-        agent_id: Optional[str] = None,
-        team_id: Optional[str] = None,
-        name: Optional[str] = None,
-        limit: Optional[int] = None,
-        page: Optional[int] = None,
-        sort_by: Optional[str] = None,
-        sort_order: Optional[str] = None,
-        deserialize: Optional[bool] = True,
-    ) -> Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-        """Get all cultural knowledge with filtering and pagination.
-
-        Args:
-            agent_id (Optional[str]): Filter by agent ID.
-            team_id (Optional[str]): Filter by team ID.
-            name (Optional[str]): Filter by name (case-insensitive partial match).
-            limit (Optional[int]): Maximum number of results to return.
-            page (Optional[int]): Page number for pagination.
-            sort_by (Optional[str]): Field to sort by.
-            sort_order (Optional[str]): Sort order ('asc' or 'desc').
-            deserialize (Optional[bool]): Whether to deserialize to CulturalKnowledge objects. Defaults to True.
-
-        Returns:
-            Union[List[CulturalKnowledge], Tuple[List[Dict[str, Any]], int]]:
-                - When deserialize=True: List of CulturalKnowledge objects
-                - When deserialize=False: Tuple with list of dictionaries and total count
-
-        Raises:
-            Exception: If an error occurs during retrieval.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture")
-            if collection is None:
-                if not deserialize:
-                    return [], 0
-                return []
-
-            # Build query
-            query: Dict[str, Any] = {}
-            if agent_id is not None:
-                query["agent_id"] = agent_id
-            if team_id is not None:
-                query["team_id"] = team_id
-            if name is not None:
-                query["name"] = {"$regex": name, "$options": "i"}
-
-            # Get total count for pagination
-            total_count = await collection.count_documents(query)
-
-            # Apply sorting
-            sort_criteria = apply_sorting({}, sort_by, sort_order)
-
-            # Apply pagination
-            query_args = apply_pagination({}, limit, page)
-
-            cursor = collection.find(query)
-            if sort_criteria:
-                cursor = cursor.sort(sort_criteria)
-            if query_args.get("skip"):
-                cursor = cursor.skip(query_args["skip"])
-            if query_args.get("limit"):
-                cursor = cursor.limit(query_args["limit"])
-
-            # Remove MongoDB's _id field from all results
-            results_filtered = [{k: v for k, v in item.items() if k != "_id"} async for item in cursor]
-
-            if not deserialize:
-                return results_filtered, total_count
-
-            return [deserialize_cultural_knowledge_from_db(item) for item in results_filtered]
-
-        except Exception as e:
-            log_error(f"Error getting all cultural knowledge: {str(e)}")
-            raise e
-
-    async def upsert_cultural_knowledge(
-        self, cultural_knowledge: CulturalKnowledge, deserialize: Optional[bool] = True
-    ) -> Optional[Union[CulturalKnowledge, Dict[str, Any]]]:
-        """Upsert cultural knowledge in MongoDB.
-
-        Args:
-            cultural_knowledge (CulturalKnowledge): The cultural knowledge to upsert.
-            deserialize (Optional[bool]): Whether to deserialize the result. Defaults to True.
-
-        Returns:
-            Optional[Union[CulturalKnowledge, Dict[str, Any]]]: The upserted cultural knowledge.
-
-        Raises:
-            Exception: If an error occurs during upsert.
-        """
-        try:
-            collection = await self._get_collection(table_type="culture", create_collection_if_not_found=True)
-            if collection is None:
-                return None
-
-            # Serialize content, categories, and notes into a dict for DB storage
-            content_dict = serialize_cultural_knowledge_for_db(cultural_knowledge)
-
-            # Create the document with serialized content
-            update_doc = {
-                "id": cultural_knowledge.id,
-                "name": cultural_knowledge.name,
-                "summary": cultural_knowledge.summary,
-                "content": content_dict if content_dict else None,
-                "metadata": cultural_knowledge.metadata,
-                "input": cultural_knowledge.input,
-                "created_at": cultural_knowledge.created_at,
-                "updated_at": int(time.time()),
-                "agent_id": cultural_knowledge.agent_id,
-                "team_id": cultural_knowledge.team_id,
-            }
-
-            result = await collection.replace_one({"id": cultural_knowledge.id}, update_doc, upsert=True)
-
-            if result.upserted_id:
-                update_doc["_id"] = result.upserted_id
-
-            # Remove MongoDB's _id field
-            doc_filtered = {k: v for k, v in update_doc.items() if k != "_id"}
-
-            if not deserialize:
-                return doc_filtered
-
-            return deserialize_cultural_knowledge_from_db(doc_filtered)
-
-        except Exception as e:
-            log_error(f"Error upserting cultural knowledge: {str(e)}")
-            raise e
-
     # -- Metrics methods --
 
     async def _get_all_sessions_for_metrics_calculation(
@@ -3355,10 +3132,13 @@ class AsyncMongoDb(AsyncBaseDb):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
 
             query: Dict[str, Any] = {}
@@ -3369,13 +3149,17 @@ class AsyncMongoDb(AsyncBaseDb):
 
             total_count = await collection.count_documents(query)
             offset = (page - 1) * limit
-            cursor = collection.find(query).sort([("created_at", -1)]).skip(offset).limit(limit)
+            # id is a unique tiebreaker so skip/limit pages do not overlap or skip
+            # rows when many schedules share a created_at second.
+            cursor = collection.find(query).sort([("created_at", -1), ("id", -1)]).skip(offset).limit(limit)
             schedules = await cursor.to_list(length=None)
             for schedule in schedules:
                 schedule.pop("_id", None)
             return schedules, total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     async def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:
@@ -3394,6 +3178,13 @@ class AsyncMongoDb(AsyncBaseDb):
     async def update_schedule(
         self, schedule_id: str, user_id: Optional[str] = None, **kwargs: Any
     ) -> Optional[Dict[str, Any]]:
+        from agno.db.schemas.scheduler import validate_schedule_update
+
+        validate_schedule_update(kwargs)
+        if kwargs.get("enabled") is True:
+            # A system-set disabled_reason describes why the row was off;
+            # turning it on retires the explanation.
+            kwargs.setdefault("disabled_reason", None)
         try:
             collection = await self._get_collection(table_type="schedules")
             if collection is None:
@@ -3439,6 +3230,67 @@ class AsyncMongoDb(AsyncBaseDb):
         except Exception as e:
             log_debug(f"Error deleting schedule: {e}")
             return False
+
+    async def disable_schedules_for_target(
+        self,
+        target_type: str,
+        target_id: str,
+        reason: Optional[str] = None,
+    ) -> int:
+        """Disable every enabled schedule aimed at one component; returns the count.
+
+        Async variant of the sync adapter's primitive: matches provenance-tagged
+        rows and generic rows whose endpoint is the component's run endpoint,
+        across owners, and records the system reason in disabled_reason.
+        """
+        from agno.db.schemas.scheduler import build_run_endpoint
+
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return 0
+            endpoint = build_run_endpoint(target_type, target_id)
+            result = await collection.update_many(
+                {
+                    "enabled": True,
+                    "$or": [
+                        {"target_type": target_type, "target_id": target_id},
+                        {"endpoint": {"$in": [endpoint, endpoint + "/"]}},
+                    ],
+                },
+                {"$set": {"enabled": False, "disabled_reason": reason, "updated_at": int(time.time())}},
+            )
+            return int(result.modified_count or 0)
+        except Exception as e:
+            log_error(f"Error disabling schedules for target: {e}")
+            raise
+
+    async def stamp_schedule_provenance(self, schedule_id: str, **provenance: Any) -> bool:
+        """Write provenance columns the generic update_schedule refuses."""
+        allowed = {
+            "managed_by",
+            "target_type",
+            "target_id",
+            "created_by_run_id",
+            "created_by_session_id",
+            "updated_by_run_id",
+            "updated_by_session_id",
+        }
+        rejected = sorted(set(provenance) - allowed)
+        if rejected:
+            raise ValueError(f"stamp_schedule_provenance cannot write {rejected}")
+        try:
+            collection = await self._get_collection(table_type="schedules")
+            if collection is None:
+                return False
+            result = await collection.update_one(
+                {"id": schedule_id},
+                {"$set": {"updated_at": int(time.time()), **provenance}},
+            )
+            return result.matched_count > 0
+        except Exception as e:
+            log_error(f"Error stamping schedule provenance: {e}")
+            raise
 
     async def claim_due_schedule(self, worker_id: str, lock_grace_seconds: int = 300) -> Optional[Dict[str, Any]]:
         try:

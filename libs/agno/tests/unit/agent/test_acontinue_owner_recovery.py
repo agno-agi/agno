@@ -47,6 +47,7 @@ class TestAgentAsyncOwnerRecovery:
         monkeypatch.setattr(_storage, "update_metadata", boom)
 
         agent = MagicMock()
+        agent.save_response_to_file = None
         agent.retries = 0
         run_context = _run_context()
         try:
@@ -68,6 +69,7 @@ class TestAgentAsyncOwnerRecovery:
         monkeypatch.setattr(_storage, "update_metadata", boom)
 
         agent = MagicMock()
+        agent.save_response_to_file = None
         agent.retries = 0
         run_context = _run_context()
         try:
@@ -103,6 +105,7 @@ class TestAgentAsyncOwnerRecovery:
         stream.complete_run = AsyncMock()
 
         agent = MagicMock()
+        agent.save_response_to_file = None
         agent.db = None
         run_context = _run_context()
 
@@ -135,6 +138,7 @@ class TestAgentAsyncOwnerRecovery:
         monkeypatch.setattr(_storage, "update_metadata", boom)
 
         agent = MagicMock()
+        agent.save_response_to_file = None
         agent.retries = 0
         run_context = RunContext(run_id="r-1", session_id="s-1", user_id="bob")
         try:
@@ -160,6 +164,7 @@ class TestTeamAsyncOwnerRecovery:
         monkeypatch.setattr(team_run, "_resolve_continue_from_team", boom)
 
         team = MagicMock()
+        team.save_response_to_file = None
         team.retries = 0
         run_context = _run_context()
         try:
@@ -180,6 +185,7 @@ class TestTeamAsyncOwnerRecovery:
         monkeypatch.setattr(team_run, "_resolve_continue_from_team", boom)
 
         team = MagicMock()
+        team.save_response_to_file = None
         team.retries = 0
         run_context = _run_context()
         try:

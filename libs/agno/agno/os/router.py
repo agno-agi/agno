@@ -15,6 +15,7 @@ from agno.exceptions import RemoteServerUnavailableError
 from agno.os.auth import (
     get_authentication_dependency,
     get_effective_auth_mode,
+    provision_user_with_default_role,
     validate_websocket_token,
     verify_websocket_service_account,
 )
@@ -244,7 +245,7 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         response_model=InfoResponse,
     )
     async def get_info(request: Request) -> InfoResponse:
-        mcp_enabled = bool(os.mcp_server)
+        mcp_enabled = bool(os.mcp)
         mcp_oauth = None
         if mcp_enabled and getattr(os, "mcp_auth", None) is not None:
             from agno.os.mcp_auth import describe_mcp_auth
@@ -533,13 +534,20 @@ def get_websocket_router(
                             if user_store is not None and ws_user_id:
                                 try:
                                     if getattr(websocket.app.state, "user_auto_provision", False):
-                                        user_store.provision_from_claims(
+                                        provisioned = provision_user_with_default_role(
+                                            user_store,
+                                            getattr(websocket.app.state, "role_store", None),
+                                            getattr(websocket.app.state, "user_default_role", None),
                                             ws_user_id,
                                             payload,
                                             email_claim=getattr(websocket.app.state, "user_email_claim", "email"),
                                             name_claim=getattr(websocket.app.state, "user_name_claim", "name"),
                                         )
-                                    ws_disabled = user_store.is_disabled(ws_user_id)
+                                        ws_disabled = (
+                                            bool(provisioned.get("disabled")) if provisioned is not None else False
+                                        )
+                                    else:
+                                        ws_disabled = user_store.is_disabled(ws_user_id)
                                 except Exception as e:  # directory unreachable: honour configured policy
                                     fail_closed = bool(
                                         getattr(websocket.app.state, "user_directory_fail_closed", False)
@@ -644,7 +652,7 @@ def get_websocket_router(
                     # client cannot attribute a run to another user by spoofing
                     # the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_is_admin()
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
@@ -668,7 +676,7 @@ def get_websocket_router(
                     # so reconnecting cannot read another user's run events by
                     # swapping user_id.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_is_admin()
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
@@ -749,7 +757,7 @@ def get_websocket_router(
                     # callers so the client cannot continue another user's paused
                     # run by spoofing the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_is_admin()
+                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
@@ -764,7 +772,9 @@ def get_websocket_router(
                         is_admin=is_admin,
                         user_isolation_enabled=ws_user_isolation_enabled,
                     )
-                    await handle_workflow_continue_via_websocket(websocket, message, os, ws_auth=ws_auth)
+                    await handle_workflow_continue_via_websocket(
+                        websocket, message, os, ws_user_context=websocket_user_context, ws_auth=ws_auth
+                    )
 
                 else:
                     await websocket.send_text(json.dumps({"event": "error", "error": f"Unknown action: {action}"}))

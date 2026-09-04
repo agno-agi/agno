@@ -2098,27 +2098,6 @@ class TestToolsDeepCopy:
         assert copy.tools[0] is mcp_tool
         assert copy.tools[0].instance_id == mcp_tool.instance_id
 
-    def test_multi_mcp_tools_are_shared(self):
-        """MultiMCPTools should also be shared."""
-
-        class MultiMCPTools:
-            """Mock MultiMCPTools for testing."""
-
-            def __init__(self):
-                self.instance_id = uuid.uuid4()
-                self.servers = ["server1", "server2"]
-
-        class TestMultiMCPTools(MultiMCPTools):
-            pass
-
-        multi_mcp = TestMultiMCPTools()
-        agent = Agent(name="test-agent", id="test-id", tools=[multi_mcp])
-
-        copy = agent.deep_copy()
-
-        # MultiMCPTools should be shared
-        assert copy.tools[0] is multi_mcp
-
     def test_mixed_tools_handled_correctly(self):
         """Mix of MCP and regular tools should be handled correctly."""
         from agno.tools.toolkit import Toolkit

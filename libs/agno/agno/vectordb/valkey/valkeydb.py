@@ -29,13 +29,14 @@ try:
 except ImportError:
     raise ImportError("`valkey-glide-sync` not installed. Please install it using `pip install valkey-glide-sync`")
 
+from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_warning
 from agno.utils.string import hash_string_sha256
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import VectorDb, embed_before_replace
 from agno.vectordb.distance import Distance
 from agno.vectordb.search import SearchType
 
@@ -85,7 +86,7 @@ def _decode_value(val: Any) -> str:
     return str(val) if val is not None else ""
 
 
-class ValkeyDB(VectorDb):
+class ValkeyDb(VectorDb):
     """
     Valkey class for managing vector operations with Valkey and valkey-search.
 
@@ -131,7 +132,7 @@ class ValkeyDB(VectorDb):
         description: Optional[str] = None,
     ):
         """
-        Initialize the ValkeyDB instance.
+        Initialize the ValkeyDb instance.
 
         Args:
             index_name (str): Name of the Valkey index to store vector data.
@@ -203,7 +204,7 @@ class ValkeyDB(VectorDb):
         # Whether the live index schema has the owner field; resolved lazily and cached
         self._owner_field_exists: Optional[bool] = None
 
-        log_debug(f"Initialized ValkeyDB with index '{self.index_name}'")
+        log_debug(f"Initialized ValkeyDb with index '{self.index_name}'")
 
     def _get_client(self) -> GlideClient:
         """Get or create the GlideClient."""
@@ -458,7 +459,7 @@ class ValkeyDB(VectorDb):
             f"user_id={user_id!r} was passed but Valkey index '{self.index_name}' has no "
             f"'{self.USER_ID_FIELD}' field, so a scoped search cannot match anything. Agno always "
             "creates the field, so this index was created elsewhere — drop it with FT.DROPINDEX "
-            "(without DD, which keeps the stored vectors) and let ValkeyDB.create() rebuild it."
+            "(without DD, which keeps the stored vectors) and let ValkeyDb.create() rebuild it."
         )
 
     def create(self) -> None:
@@ -482,7 +483,7 @@ class ValkeyDB(VectorDb):
                         f"'{self.USER_ID_FIELD}' field; per-user scoped searches will not match. "
                         "Agno always creates the field, so this index was created elsewhere. Drop "
                         "it with FT.DROPINDEX (without DD, which keeps the stored vectors) and let "
-                        "ValkeyDB.create() rebuild it. Do not call drop() — it deletes the vectors "
+                        "ValkeyDb.create() rebuild it. Do not call drop() — it deletes the vectors "
                         "along with the index."
                     )
         except Exception as e:
@@ -610,6 +611,9 @@ class ValkeyDB(VectorDb):
         Strategy: delete existing docs with the same content_hash (scoped to the
         caller's bucket), then insert new docs.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        embed_before_replace(documents, self.embedder)
         self._validate_user_id(user_id)
         self._require_owner_field(user_id)
         try:
@@ -789,6 +793,10 @@ class ValkeyDB(VectorDb):
                 documents = self.reranker.rerank(query=query, documents=documents)
 
             return documents
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error in vector search: {str(e)}")
             return []

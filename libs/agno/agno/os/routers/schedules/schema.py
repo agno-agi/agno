@@ -124,6 +124,13 @@ class ScheduleResponse(BaseModel):
     retry_delay_seconds: int
     enabled: bool
     next_run_at: Optional[int] = None
+    # Control-plane provenance: which plane manages the row ("studio" for
+    # builder-created schedules), the exact component it targets, and - when
+    # the system disabled it - why (for example "target_archived:agent:x").
+    managed_by: Optional[str] = None
+    target_type: Optional[str] = None
+    target_id: Optional[str] = None
+    disabled_reason: Optional[str] = None
     created_at: Optional[int] = None
     updated_at: Optional[int] = None
 
