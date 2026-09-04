@@ -140,8 +140,12 @@ class Message(BaseModel):
         return ""
 
     def get_content(self, use_compressed_content: bool = False) -> Optional[Union[List[Any], str]]:
-        """Return tool result content to send to API"""
-        if use_compressed_content and self.compressed_content is not None:
+        """Return tool result content to send to API.
+
+        Empty compressed_content is an already-attempted marker, not usable
+        compressed text, so fall back to the original content.
+        """
+        if use_compressed_content and self.compressed_content:
             return self.compressed_content
         return self.content
 
