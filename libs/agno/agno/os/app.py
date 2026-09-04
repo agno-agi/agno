@@ -1495,6 +1495,16 @@ class AgentOS:
         authz_config = self.authorization_config
         role_store = getattr(authz_config, "role_store", None) if authz_config is not None else None
         directory_store = self.user_directory.store if self.user_directory is not None else None
+
+        # OS metrics are derived from the managed user directory and do not depend
+        # on how authorization providers are composed. Mount them whenever that
+        # directory exists, including custom/composite authorization setups.
+        if directory_store is not None:
+            from agno.os.routers.metrics.os_metrics import get_os_metrics_router
+
+            audit_sink = getattr(authz_config, "audit", None) if authz_config is not None else None
+            routers.append(get_os_metrics_router(directory_store, audit_sink=audit_sink, settings=self.settings))
+
         if role_store is not None:
             from agno.os.authz.role_router import get_roles_router
 
@@ -1506,8 +1516,8 @@ class AgentOS:
                 # configured via AgentOS(user_directory=...). Auto-mounted here alongside
                 # the roles router ONLY in the role_store shortcut, mirroring it: with a
                 # composite/custom provider (or a directory on plain scope RBAC) the operator
-                # mounts both routers themselves (get_roles_router + get_users_router), so we
-                # do not auto-mount a second, role-store-less /users that would shadow theirs.
+                # mounts the management routers themselves, so we do not auto-mount a
+                # second, role-store-less /users that would shadow theirs.
                 routers.append(get_users_router(directory_store, role_store=role_store))
 
         for router in routers:

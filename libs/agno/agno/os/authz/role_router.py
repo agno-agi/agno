@@ -21,11 +21,15 @@ of the MCP catch-all mount. That ordering matters: a router included AFTER
 
 That caveat still applies to the multi-plane setup, which composes providers instead
 of naming a store (``authorization_provider=[ScopeAuthorizationProvider(), roles.provider]``)
-and so has no ``role_store`` for AgentOS to find. Mount it yourself there -- and if you
-also run ``mcp_server=True``, mount it before the MCP app is added or it will 404:
+and so has no ``role_store`` for AgentOS to find. Mount the management routers yourself
+there -- and if you also run ``mcp_server=True``, mount them before the MCP app is added
+or they will 404:
 
     app.include_router(get_roles_router(roles))
     app.include_router(get_users_router(users, role_store=roles))  # the /users directory
+
+The OS metrics router is mounted automatically whenever ``AgentOS`` has a managed user
+directory, including when authorization providers are composed manually.
 
 Response shapes mirror the agno cloud RBAC API so a frontend can reuse its
 integration: roles are objects (slug/name/description/is_default/created_at/
@@ -33,12 +37,10 @@ updated_at + parsed scopes), scopes are ``{raw, namespace, sub_namespace,
 permission, value}``, and list endpoints use the SDK ``PaginatedResponse``
 ({data, meta}). Single-OS: scopes are a flat list (no org/os split).
 
-Every route is admin-only — admin comes from an admin role in the store OR, when a
-scope plane actually enforces on this OS, an ``agent_os:admin`` token scope. Under a
-role-store-only (or ReBAC-only) deployment the token's scopes carry no authorization
-weight anywhere else, so they are not trusted here either (see ``require_admin``).
-Unauthenticated requests are rejected (401) by the JWT middleware before these
-handlers; a valid-but-non-admin caller gets 403.
+Every role and user-directory route is admin-only — admin comes from an admin role in
+the store OR, when a scope plane actually enforces on this OS, an ``agent_os:admin``
+token scope. The OS metrics routes follow the normal ``metrics:read`` / ``metrics:write``
+scope mappings. Unauthenticated requests are rejected (401) by the JWT middleware.
 
 Roles admin API -- get_roles_router (default prefix ``/authz``):
     GET    /authz/roles                          list roles (paginated)
@@ -58,6 +60,11 @@ User directory admin API -- get_users_router (default prefix ``/users``):
     GET    /users/{user_id}                      a user
     PATCH  /users/{user_id}                      update profile / disable (the kill-switch)
     DELETE /users/{user_id}                      remove a user (cascades role revocation)
+
+OS metrics API -- get_os_metrics_router (default prefix ``/metrics/os``):
+    GET    /metrics/os                           cached daily OS-level metrics
+    POST   /metrics/os/refresh                   rebuild OS-level metrics
+    GET    /metrics/os/refresh/status            most recent refresh status
 """
 
 import time

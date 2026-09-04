@@ -342,6 +342,7 @@ class BaseDb(ABC):
             self.runs_table_name = "agno_runs"
         self.memory_table_name = memory_table or "agno_memories"
         self.metrics_table_name = metrics_table or "agno_metrics"
+        self.os_metrics_table_name = "agno_os_metrics"
         self.eval_table_name = eval_table or "agno_eval_runs"
         self.knowledge_table_name = knowledge_table or "agno_knowledge"
         self.trace_table_name = traces_table or "agno_traces"
@@ -2157,6 +2158,24 @@ class BaseDb(ABC):
         """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
+    def calculate_os_metrics(
+        self,
+        decision_metrics: Optional[List[Dict[str, Any]]] = None,
+        decisions_since: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Rebuild aggregates derived from OS-level data sources. ``decision_metrics``
+        covers days at or after ``decisions_since``; cached counts for earlier days are
+        kept (``None`` replaces all history)."""
+        raise NotImplementedError
+
+    def get_os_metrics(
+        self,
+        starting_at: Optional[int] = None,
+        ending_before: Optional[int] = None,
+    ) -> Tuple[List[Dict[str, Any]], Optional[int]]:
+        """Read cached OS-level daily aggregates and their latest update time."""
+        raise NotImplementedError
+
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         """Create or update a directory row's profile fields. Never overwrites
         ``disabled`` on an existing row -- that is the revocation tombstone, changed only
@@ -2199,6 +2218,11 @@ class BaseDb(ABC):
 
     def count_authz_audit_events(self, search: Optional[str] = None, decisions: bool = False) -> int:
         """How many audit events match, for pagination."""
+        raise NotImplementedError
+
+    def aggregate_authz_decisions_by_day(self, starting_at: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Daily allowed/denied authorization decision counts for rows created at or
+        after ``starting_at`` (all rows when ``None``)."""
         raise NotImplementedError
 
     # --- Service Accounts (Optional) ---

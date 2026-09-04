@@ -79,6 +79,7 @@ class ManagedUserStore:
         """
         self._audit = audit
         self._mem: Optional[Dict[str, dict]] = None
+        self._os_metrics_mem: Dict[int, dict] = {}
         from agno.os.authz._db import resolve_authz_db
 
         self._db: Any = resolve_authz_db(db, db_url)
@@ -110,6 +111,7 @@ class ManagedUserStore:
         pending = list((self._mem or {}).values())
         self._db = db
         self._mem = None
+        self._os_metrics_mem = {}
         # Carry rows written before adoption across verbatim -- including ``disabled``,
         # which upsert() deliberately refuses to set, so a revoked user stays revoked.
         for row in pending:
@@ -334,6 +336,55 @@ class ManagedUserStore:
             return len(self._filtered_mem_rows(include_disabled, search))
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
+
+    def calculate_os_metrics(
+        self,
+        decision_metrics: Optional[List[Dict[str, Any]]] = None,
+        decisions_since: Optional[int] = None,
+    ) -> List[dict]:
+        """Rebuild cached daily aggregates derived from OS-level data.
+
+        Registrations are always recounted; ``decision_metrics`` covers days at or after
+        ``decisions_since`` and cached decision counts for earlier days are kept (see
+        ``agno.db.os_metrics_store``).
+        """
+        if self._mem is None:
+            return self._db.calculate_os_metrics(decision_metrics=decision_metrics, decisions_since=decisions_since)
+
+        from agno.db.os_metrics_aggregation import SECONDS_PER_DAY, merge_os_metric_rows
+
+        counts: Dict[int, int] = {}
+        for user in self._mem.values():
+            created_at = int(user["created_at"])
+            day_start = created_at - (created_at % SECONDS_PER_DAY)
+            counts[day_start] = counts.get(day_start, 0) + 1
+
+        rows = merge_os_metric_rows(
+            existing=self._os_metrics_mem,
+            users_by_day=counts,
+            decision_metrics=decision_metrics,
+            decisions_since=decisions_since,
+            now=_now(),
+        )
+        self._os_metrics_mem = {int(row["date"]): row for row in rows}
+        return [dict(row) for row in rows]
+
+    def os_metrics(
+        self,
+        starting_at: Optional[int] = None,
+        ending_before: Optional[int] = None,
+    ) -> Tuple[List[dict], Optional[int]]:
+        """Read cached OS-level aggregates without scanning the user directory."""
+        if self._mem is None:
+            return self._db.get_os_metrics(starting_at=starting_at, ending_before=ending_before)
+
+        rows = [
+            dict(row)
+            for day, row in sorted(self._os_metrics_mem.items())
+            if (starting_at is None or day >= starting_at) and (ending_before is None or day < ending_before)
+        ]
+        updated_at = max((int(row["updated_at"]) for row in self._os_metrics_mem.values()), default=None)
+        return rows, updated_at
 
     def is_disabled(self, id: Optional[str]) -> bool:
         """Fast path for the enforcement point: True only if the user exists AND is

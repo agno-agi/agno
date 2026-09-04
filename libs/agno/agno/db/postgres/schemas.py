@@ -4,6 +4,7 @@ from typing import Any
 
 from agno.db.schemas.authz import AUTHZ_TABLE_SCHEMAS
 from agno.db.schemas.mcp_oauth import MCP_OAUTH_TABLE_SCHEMAS
+from agno.db.schemas.os_metrics import OS_METRICS, OS_METRICS_TABLE_SCHEMA
 
 try:
     from sqlalchemy.dialects.postgresql import JSONB
@@ -515,6 +516,7 @@ def get_table_schema_definition(
         # "runs" is handled by _get_run_table_schema above (needs session_table_name)
         "evals": EVAL_TABLE_SCHEMA,
         "metrics": METRICS_TABLE_SCHEMA,
+        OS_METRICS: OS_METRICS_TABLE_SCHEMA,
         "memories": MEMORY_TABLE_SCHEMA,
         "knowledge": KNOWLEDGE_TABLE_SCHEMA,
         "versions": VERSIONS_TABLE_SCHEMA,
