@@ -1055,6 +1055,8 @@ DOCUMENT_MIME_TYPES = {
     "application/vnd.ms-powerpoint",  # .ppt
     "application/vnd.ms-excel",  # .xls
     "application/vnd.ms-outlook",  # .msg
+    "application/zip",  # .zip
+    "message/rfc822",  # .eml
     "text/javascript",
     "application/x-python",
     "text/x-python",
@@ -1065,6 +1067,17 @@ DOCUMENT_MIME_TYPES = {
     "text/csv",
     "text/xml",
     "text/rtf",
+}
+
+# Other registered names for types already listed above (Windows browsers send
+# `application/x-zip-compressed` for `.zip`). Normalize at the upload boundary so a file
+# is not rejected for arriving under its alternate spelling.
+_DOCUMENT_MIME_TYPE_ALIASES = {
+    "application/x-zip": "application/zip",
+    "application/x-zip-compressed": "application/zip",
+    "application/xml": "text/xml",
+    "application/rtf": "text/rtf",
+    "application/javascript": "text/javascript",
 }
 
 # Fallback mapping from file extension to media category. Used when the browser sends a
@@ -1082,6 +1095,8 @@ EXTENSION_CATEGORY: Dict[str, str] = {
     "xlsx": "document",
     "xls": "document",
     "msg": "document",
+    "zip": "document",
+    "eml": "document",
     "py": "document",
     "txt": "document",
     "html": "document",
@@ -1127,6 +1142,13 @@ EXTENSION_CATEGORY: Dict[str, str] = {
 _AMBIGUOUS_CONTENT_TYPES = {None, "", "application/octet-stream"}
 
 
+def _normalize_document_mime_type(content_type: Optional[str]) -> Optional[str]:
+    """Map an alternate MIME spelling onto the type listed in DOCUMENT_MIME_TYPES."""
+    if content_type is None:
+        return None
+    return _DOCUMENT_MIME_TYPE_ALIASES.get(content_type, content_type)
+
+
 def classify_upload_file(file: UploadFile) -> Optional[str]:
     """Classify an uploaded file into one of: image, audio, video, document.
 
@@ -1134,7 +1156,7 @@ def classify_upload_file(file: UploadFile) -> Optional[str]:
     to be useful (common for `.md` and `.pptx` uploaded from browsers), falls back to the
     filename extension. Returns None if the file type is not supported.
     """
-    content_type = file.content_type
+    content_type = _normalize_document_mime_type(file.content_type)
     if content_type in IMAGE_MIME_TYPES:
         return "image"
     if content_type in AUDIO_MIME_TYPES:
@@ -1186,6 +1208,8 @@ _DOCUMENT_EXTENSION_MIME: Dict[str, str] = {
     "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     "xls": "application/vnd.ms-excel",
     "msg": "application/vnd.ms-outlook",
+    "zip": "application/zip",
+    "eml": "message/rfc822",
     "py": "text/x-python",
     "txt": "text/plain",
     "html": "text/html",
@@ -1206,12 +1230,13 @@ def _resolve_document_mime_type(file: UploadFile) -> Optional[str]:
     documents with ambiguous content types (e.g. `.md` sent as octet-stream) still get a
     mime_type accepted by `FileMedia`.
     """
-    if file.content_type and file.content_type in DOCUMENT_MIME_TYPES:
-        return file.content_type
+    content_type = _normalize_document_mime_type(file.content_type)
+    if content_type and content_type in DOCUMENT_MIME_TYPES:
+        return content_type
     if file.filename and "." in file.filename:
         extension = file.filename.rsplit(".", 1)[-1].lower()
         return _DOCUMENT_EXTENSION_MIME.get(extension)
-    return file.content_type
+    return content_type
 
 
 def process_document(file: UploadFile, metadata: Optional[Dict[str, Any]] = None) -> Optional[FileMedia]:
@@ -1237,8 +1262,9 @@ def extract_format(file: UploadFile) -> Optional[str]:
         return file.filename.split(".")[-1].lower()
 
     # Fallback to the file content_type
-    if file.content_type:
-        return file.content_type.strip().split("/")[-1]
+    content_type = _normalize_document_mime_type(file.content_type)
+    if content_type:
+        return content_type.strip().split("/")[-1]
 
     return None
 

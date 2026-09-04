@@ -14,6 +14,7 @@ import pytest
 pytest.importorskip("fastmcp")
 
 import asyncio  # noqa: E402
+import re  # noqa: E402
 import time  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from typing import Any, AsyncIterator, Iterator, Optional  # noqa: E402
@@ -670,7 +671,7 @@ async def test_custom_tool_user_id_is_injected_and_hidden(monkeypatch):
     )
 
     async with Client(build_mcp_server(os)) as client:
-        schema = {t.name: t for t in await client.list_tools()}["ask"].inputSchema
+        schema = {t.name: t for t in await client.list_tools()}["ask"].input_schema
         props = schema.get("properties", {})
         assert "message" in props
         assert "user_id" not in props  # hidden from the client-facing schema
@@ -692,7 +693,7 @@ async def test_custom_tool_without_user_id_is_unchanged():
     )
 
     async with Client(build_mcp_server(os)) as client:
-        props = {t.name: t for t in await client.list_tools()}["echo"].inputSchema.get("properties", {})
+        props = {t.name: t for t in await client.list_tools()}["echo"].input_schema.get("properties", {})
         assert set(props) == {"text"}
         result = await client.call_tool("echo", {"text": "abc"})
 
@@ -711,7 +712,7 @@ async def test_custom_tool_can_use_native_ctx():
     )
 
     async with Client(build_mcp_server(os)) as client:
-        props = {t.name: t for t in await client.list_tools()}["whoami"].inputSchema.get("properties", {})
+        props = {t.name: t for t in await client.list_tools()}["whoami"].input_schema.get("properties", {})
         assert "ctx" not in props
         result = await client.call_tool("whoami", {})
 
@@ -1206,3 +1207,571 @@ async def test_assigning_config_to_mcp_server_attribute_applies_config():
     assert os.mcp_server is True
     assert os.mcp_config is not None
     assert await _tool_names(os) == {"ping"}
+
+
+# ----------------------------- server identity -----------------------------
+
+
+def test_server_identity_defaults_to_the_agentos_name_and_version():
+    os = AgentOS(name="Ops OS", version="2.3.4", agents=[_agent()], mcp=True)
+
+    server = build_mcp_server(os)
+
+    assert server.name == "Ops OS"
+    assert server.version == "2.3.4"
+    assert server.instructions is None
+
+
+def test_server_identity_without_any_value_keeps_the_fastmcp_defaults():
+    """No name or version anywhere: the server is called AgentOS and reports fastmcp's version."""
+    import fastmcp
+
+    server = build_mcp_server(AgentOS(agents=[_agent()], mcp=True))
+
+    assert server.name == "AgentOS"
+    assert server.version == fastmcp.__version__
+    assert server.instructions is None
+
+
+def test_mcp_config_identity_overrides_the_agentos_values():
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="0.1.0",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Prefer the docs over prior knowledge."),
+    )
+
+    server = build_mcp_server(os)
+
+    assert server.name == "Docs"
+    assert server.version == "1.0.0"
+    assert server.instructions == "Prefer the docs over prior knowledge."
+
+
+async def test_initialize_response_carries_name_version_and_instructions():
+    """The values reach a client through the handshake, not only the server object."""
+    os = AgentOS(
+        agents=[_agent()],
+        mcp=MCPConfig(name="Docs", version="1.0.0", instructions="Cite the page you used."),
+    )
+
+    async with Client(build_mcp_server(os), mode="legacy") as client:
+        result = client.initialize_result
+
+    assert result is not None
+    assert result.server_info.name == "Docs"
+    assert result.server_info.version == "1.0.0"
+    assert result.instructions == "Cite the page you used."
+
+
+# ----------------------------- server card -----------------------------
+
+SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
+
+
+def _docs_os(**mcp_kwargs) -> AgentOS:
+    return AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description="Search the docs.",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com"], **mcp_kwargs),
+    )
+
+
+@asynccontextmanager
+async def _mcp_client(app, base_url: str = "http://example.com") -> AsyncIterator[httpx.AsyncClient]:
+    """An HTTP client on the app with its lifespan running, so fastmcp's transport is live."""
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(transport=httpx.ASGITransport(app=app), base_url=base_url) as client:
+            yield client
+
+
+def test_card_name_is_reverse_dns_and_slugged():
+    assert mcp_mod._card_name("docs.agno.com", "Agno Docs AgentOS") == "com.agno.docs/agno-docs-agentos"
+    assert mcp_mod._card_name("localhost", "Ops") == "localhost/ops"
+    assert mcp_mod._card_name("[::1]", "") == "localhost/agentos"
+    assert mcp_mod._card_name("127.0.0.1", "Ops") == "localhost/ops"
+
+
+async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        response = await client.get("/mcp/server-card", headers={"accept": "application/mcp-server-card+json"})
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/mcp-server-card+json")
+    assert response.headers["access-control-allow-origin"] == "*"
+    assert response.headers["cache-control"] == "public, max-age=300"
+    card = response.json()
+    # The tool entries have their own tests; everything else is pinned exactly.
+    assert {key: value for key, value in card.items() if key != "tools"} == {
+        "$schema": SERVER_CARD_SCHEMA,
+        "name": "com.example/agno-docs",
+        "title": "Agno Docs",
+        "version": "1.0.0",
+        "description": "Search the docs.",
+        "remotes": [{"type": "streamable-http", "url": "http://example.com/mcp"}],
+    }
+
+
+async def test_server_card_endpoint_follows_the_proxy_headers(monkeypatch):
+    """A forwarded host is advertised only when it is itself an allowed host."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description="Search the docs.",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com", "docs.agno.com"]),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        response = await client.get(
+            "/mcp/server-card", headers={"x-forwarded-proto": "https", "x-forwarded-host": "docs.agno.com"}
+        )
+
+    card = response.json()
+    assert card["remotes"][0]["url"] == "https://docs.agno.com/mcp"
+    assert card["name"] == "com.agno.docs/agno-docs"
+
+
+async def test_gated_server_card_declares_the_bearer_header(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: False)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert card["remotes"][0]["headers"] == [
+        {"name": "Authorization", "description": "Bearer token", "isRequired": True, "isSecret": True}
+    ]
+
+
+async def test_browser_get_on_mcp_redirects_to_the_card():
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        for path in ("/mcp", "/mcp/"):
+            response = await client.get(path, headers={"accept": "text/html,*/*"})
+            assert response.status_code == 302, path
+            assert response.headers["location"] == "/mcp/server-card"
+        # An MCP client's GET (it always accepts text/event-stream) is left to fastmcp.
+        response = await client.get("/mcp", headers={"accept": "text/event-stream"})
+        assert response.status_code != 302
+
+
+async def test_server_card_can_be_turned_off():
+    app = get_mcp_server(_docs_os(server_card=False))
+
+    async with _mcp_client(app) as client:
+        assert (await client.get("/mcp/server-card")).status_code == 404
+        assert (await client.get("/mcp", headers={"accept": "text/html"})).status_code == 406
+
+
+async def test_server_card_is_public_on_an_authorized_agentos():
+    os = AgentOS(
+        agents=[_agent()],
+        authorization=True,
+        authorization_config=AuthorizationConfig(verification_keys=["dummy"]),
+        mcp=True,
+    )
+    app = os.get_app()
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        assert (await client.get("/mcp/server-card")).status_code == 200
+        assert (await client.get("/sessions")).status_code == 401  # the auth layer is on
+        # The endpoint itself stays behind the auth layer; only the card is public.
+        assert (await client.get("/mcp", headers={"accept": "text/html"})).status_code == 401
+
+
+@pytest.mark.parametrize(
+    "accept",
+    ["text/event-stream", "TEXT/EVENT-STREAM", "Text/Event-Stream", "application/json, text/event-stream"],
+)
+async def test_an_mcp_clients_get_is_never_redirected_whatever_the_header_case(accept):
+    """Media types are case-insensitive, so an MCP client must reach fastmcp in any casing."""
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        assert (await client.get("/mcp", headers={"accept": accept})).status_code != 302
+
+
+@pytest.mark.parametrize("accept", ["text/html", "text/html,application/xhtml+xml,*/*;q=0.8", "*/*", ""])
+async def test_a_browser_get_is_still_redirected(accept):
+    """A bare wildcard is a browser, not an MCP client: the redirect is the point of the card."""
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        response = await client.get("/mcp", headers={"accept": accept})
+
+    assert response.status_code == 302
+    assert response.headers["location"] == "/mcp/server-card"
+
+
+async def test_card_version_matches_the_runtime_server_info(monkeypatch):
+    """The extension expects the card's identity to match what the runtime reports."""
+    import fastmcp
+
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = AgentOS(
+        name="Docs AgentOS",
+        description="Search the docs.",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["example.com"]),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    # Required by the schema and must agree with serverInfo.version, which fastmcp defaults
+    # to its own version when the deployment configures none.
+    assert card["version"] == build_mcp_server(os).version == fastmcp.__version__
+
+
+async def test_card_publishes_a_configured_version(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os(version="2.5.0"))
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert card["version"] == "2.5.0"
+
+
+async def test_forwarded_headers_are_ignored_without_allowed_hosts(monkeypatch):
+    """The card is publicly cacheable, so an unvalidated forwarded host must not reach it."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description="Search the docs.",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs"),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://localhost") as client:
+        response = await client.get(
+            "/mcp/server-card",
+            headers={"x-forwarded-proto": "https", "x-forwarded-host": "evil.attacker.com"},
+        )
+
+    card = response.json()
+    assert "evil.attacker.com" not in card["remotes"][0]["url"]
+    assert card["remotes"][0]["url"] == "http://localhost/mcp"
+    assert "attacker" not in card["name"]
+
+
+async def test_the_card_varies_on_the_headers_that_shape_it(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        vary = (await client.get("/mcp/server-card")).headers["vary"]
+
+    assert "X-Forwarded-Host" in vary
+    assert "Host" in vary
+
+
+async def test_a_configured_url_is_authoritative_and_ignores_forwarded_headers(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os(server_card_url="https://docs.agno.com/mcp"))
+
+    async with _mcp_client(app) as client:
+        response = await client.get("/mcp/server-card", headers={"x-forwarded-host": "evil.attacker.com"})
+
+    assert response.json()["remotes"][0]["url"] == "https://docs.agno.com/mcp"
+    assert response.headers["vary"] == "Origin"
+
+
+async def test_card_fields_are_clipped_to_the_schema_limits(monkeypatch):
+    """The schema caps title/description at 100 and name at 200; AgentOS text is unbounded."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description="d" * 400,
+        agents=[_agent()],
+        mcp=MCPConfig(name="N" * 400, allowed_hosts=["example.com"]),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert len(card["description"]) <= 100
+    assert len(card["title"]) <= 100
+    assert len(card["name"]) <= 200
+
+
+# The constraints the MCP Server Card schema puts on the fields this card publishes.
+# Mirrored here so the card is checked without fetching the schema over the network.
+_CARD_FIELD_RULES = {
+    "name": {"max": 200, "min": 3, "pattern": r"^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$"},
+    "title": {"max": 100, "min": 1},
+    "description": {"max": 100, "min": 1},
+    "version": {"max": 255},
+}
+
+
+@pytest.mark.parametrize(
+    "description, server_name",
+    [
+        ("Search the docs.", "Agno Docs"),
+        ("d" * 400, "N" * 400),  # unbounded AgentOS text must not produce an invalid card
+        ("d", "N"),
+    ],
+)
+async def test_the_card_conforms_to_the_server_card_schema(monkeypatch, description, server_name):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description=description,
+        agents=[_agent()],
+        mcp=MCPConfig(name=server_name, allowed_hosts=["example.com"]),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    # Required by the schema.
+    for field in ("$schema", "description", "name", "version"):
+        assert field in card, field
+
+    for field, rule in _CARD_FIELD_RULES.items():
+        value = card[field]
+        assert len(value) <= rule["max"], f"{field} too long: {len(value)}"
+        assert len(value) >= rule.get("min", 0), f"{field} too short: {len(value)}"
+        if "pattern" in rule:
+            assert re.fullmatch(rule["pattern"], value), f"{field} violates the schema pattern: {value!r}"
+
+
+async def test_an_unlisted_forwarded_host_is_not_advertised(monkeypatch):
+    """X-Forwarded-Host is attacker-controlled even when the request's own Host is allowed."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description="Search the docs.",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["docs.agno.com"]),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://docs.agno.com") as client:
+        card = (
+            await client.get(
+                "/mcp/server-card",
+                headers={"x-forwarded-proto": "https", "x-forwarded-host": "evil.attacker.com"},
+            )
+        ).json()
+
+    assert "evil.attacker.com" not in card["remotes"][0]["url"]
+    assert "attacker" not in card["name"]
+    assert card["remotes"][0]["url"] == "http://docs.agno.com/mcp"
+
+
+def test_card_name_keeps_its_slash_when_the_host_is_very_long():
+    """The schema requires exactly one slash; clipping the joined string could drop it."""
+    name = mcp_mod._card_name(".".join(["segment"] * 80), "Ops")
+
+    assert len(name) <= 200
+    assert re.fullmatch(r"^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$", name), name
+    assert name.endswith("/ops")
+
+
+def test_card_name_keeps_its_namespace_when_the_server_name_is_very_long():
+    name = mcp_mod._card_name("docs.agno.com", "N" * 400)
+
+    assert len(name) <= 200
+    assert re.fullmatch(r"^[a-zA-Z0-9.-]+/[a-zA-Z0-9._-]+$", name), name
+    assert name.startswith("com.agno.docs/")
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "/relative/mcp",
+        "ftp://docs.agno.com/mcp",
+        "javascript:alert(1)",
+        "not a url",
+        "https:///mcp",
+        "https://exa mple.com/mcp",  # whitespace inside the host
+        "http://:80/mcp",  # port with no host
+        "https://docs.agno.com/mcp\nX-Injected: y",  # newline must not be quietly stripped
+        "https://docs.agno.com:notaport/mcp",  # non-numeric port
+        "https://a\tb.com/mcp",  # tab inside the host
+        "https://[bad/mcp",  # unterminated ipv6 literal
+    ],
+)
+def test_server_card_url_must_be_an_absolute_http_url(url):
+    """The value is published verbatim as the endpoint, so it is checked at construction."""
+    with pytest.raises(ValueError, match="absolute http"):
+        MCPConfig(name="Agno Docs", server_card_url=url)
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://user:secret@docs.agno.com/mcp",
+        "https://token@docs.agno.com/mcp",
+        "https://evil.com@docs.agno.com/mcp",
+    ],
+)
+def test_server_card_url_must_not_carry_credentials(url):
+    """The card is published publicly, so a userinfo segment would leak whatever it holds."""
+    with pytest.raises(ValueError, match="must not contain credentials"):
+        MCPConfig(name="Agno Docs", server_card_url=url)
+
+
+@pytest.mark.parametrize("url", ["http://localhost:7777/mcp", "https://docs.agno.com/mcp", "http://127.0.0.1:7777/mcp"])
+def test_a_valid_server_card_url_is_accepted(url):
+    assert MCPConfig(name="Agno Docs", server_card_url=url).server_card_url == url
+
+
+@pytest.mark.parametrize("proto", ["javascript", "ftp", "file", "HTTPS"])
+async def test_only_http_schemes_are_taken_from_the_forwarded_proto(monkeypatch, proto):
+    """The header is caller-supplied; anything but http(s) must not reach the advertised URL."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = AgentOS(
+        name="Docs AgentOS",
+        version="1.0.0",
+        description="Search the docs.",
+        agents=[_agent()],
+        mcp=MCPConfig(name="Agno Docs", allowed_hosts=["docs.agno.com"]),
+    )
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app, base_url="http://docs.agno.com") as client:
+        card = (
+            await client.get(
+                "/mcp/server-card",
+                headers={"x-forwarded-host": "docs.agno.com", "x-forwarded-proto": proto},
+            )
+        ).json()
+
+    url = card["remotes"][0]["url"]
+    assert url.startswith(("http://", "https://")), url
+    assert proto.lower() not in url or proto.lower() == "https"
+
+
+@pytest.mark.parametrize(
+    "written, published",
+    [
+        ("HTTPS://docs.agno.com/mcp", "https://docs.agno.com/mcp"),
+        ("Http://docs.agno.com/mcp", "http://docs.agno.com/mcp"),
+        ("HTTP://[::1]:7777/mcp", "http://[::1]:7777/mcp"),
+    ],
+)
+def test_an_uppercase_scheme_is_lowercased(written, published):
+    """The card's URL pattern matches lowercase http(s):// only."""
+    assert MCPConfig(name="Agno Docs", server_card_url=written).server_card_url == published
+
+
+async def test_the_published_url_always_matches_the_schema_pattern(monkeypatch):
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os(server_card_url="HTTPS://docs.agno.com/mcp"))
+
+    async with _mcp_client(app) as client:
+        url = (await client.get("/mcp/server-card")).json()["remotes"][0]["url"]
+
+    assert re.fullmatch(r"^(https?://[^\s]+|\{[a-zA-Z_][a-zA-Z0-9_]*\}[^\s]*)$", url), url
+
+
+# ----------------------------- server card tools -----------------------------
+
+
+async def test_the_card_lists_the_served_tools(monkeypatch):
+    """A browser or crawler reading the card never speaks the protocol, so it needs the names."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    names = [entry["name"] for entry in card["tools"]]
+    assert names == sorted(names, key=names.index)  # order preserved, no duplicates injected
+    assert set(names) == {
+        "get_agentos_config",
+        "run_agent",
+        "run_team",
+        "run_workflow",
+        "continue_run",
+        "cancel_run",
+        "get_sessions",
+        "get_session_runs",
+    }
+    assert all(entry.get("description") for entry in card["tools"])
+
+
+async def test_the_card_tools_match_tools_list(monkeypatch):
+    """The card reads the same registry, so it cannot drift from the live surface."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = _docs_os()
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert {entry["name"] for entry in card["tools"]} == await _tool_names(os)
+
+
+async def test_the_card_follows_a_custom_tool_surface(monkeypatch):
+    """default_tools=False plus custom tools: the card shows exactly what is served."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search the documentation."""
+        return ""
+
+    app = get_mcp_server(_docs_os(default_tools=False, tools=[search_docs]))
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert [entry["name"] for entry in card["tools"]] == ["search_docs"]
+    assert card["tools"][0]["description"] == "Search the documentation."
+
+
+async def test_a_card_tool_description_is_published_whole(monkeypatch):
+    """Tool descriptions are prompts for the calling model; a clipped one is worse than none."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+
+    @tool
+    def verbose(query: str) -> str:
+        return ""
+
+    verbose.description = "d" * 500
+    app = get_mcp_server(_docs_os(default_tools=False, tools=[verbose]))
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert card["tools"][0]["description"] == "d" * 500
+
+
+async def test_the_card_tool_entries_match_the_tools_list_wire_format(monkeypatch):
+    """A reader of the card gets what a connected client gets, inputSchema included."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = _docs_os()
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    by_name = {entry["name"]: entry for entry in card["tools"]}
+    async with Client(build_mcp_server(os)) as client:
+        for served in await client.list_tools():
+            entry = by_name[served.name]
+            assert entry["description"] == served.description
+            assert entry["inputSchema"] == served.input_schema
+    # No internal transport metadata leaks into the published card.
+    assert all("_meta" not in entry for entry in card["tools"])

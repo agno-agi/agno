@@ -4,7 +4,6 @@ import time
 import weakref
 from contextlib import asynccontextmanager
 from dataclasses import asdict
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any, AsyncIterator, Callable, Literal, Optional, Tuple, Union
 
 from agno.tools import Toolkit
@@ -22,9 +21,57 @@ try:
     from mcp import ClientSession, StdioServerParameters
     from mcp.client.sse import sse_client
     from mcp.client.stdio import get_default_environment, stdio_client
-    from mcp.client.streamable_http import streamablehttp_client
-except (ImportError, ModuleNotFoundError):
-    raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+    from mcp.client.streamable_http import streamable_http_client
+except ModuleNotFoundError:
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
+
+
+def _streamable_http_connection(streamable_http_params: dict) -> Tuple[Any, float]:
+    """Build the v2 ``streamable_http_client`` context and the session read timeout.
+
+    The MCP SDK v2 ``streamable_http_client`` accepts only ``url``, ``http_client``
+    and ``terminate_on_close`` -- it no longer takes ``timeout``/``sse_read_timeout``.
+    Those are popped from ``streamable_http_params`` and mapped onto an
+    ``httpx2.Timeout`` on the ``http_client`` built here (following the SDK's own
+    ``create_mcp_http_client``, which enables ``follow_redirects``). Returns the
+    connection context manager plus the read timeout (seconds) to hand to
+    ``ClientSession``.
+    """
+    import httpx2
+    from mcp.shared._httpx_utils import create_mcp_http_client
+
+    params = dict(streamable_http_params)
+    url = params.pop("url")
+    headers = params.pop("headers", None)
+    timeout = params.pop("timeout", None)
+    sse_read_timeout = params.pop("sse_read_timeout", None)
+    terminate_on_close = params.pop("terminate_on_close", True)
+
+    # Guard against a caller-supplied timedelta from an older config: normalize to seconds.
+    if hasattr(timeout, "total_seconds"):
+        timeout = timeout.total_seconds()
+    if hasattr(sse_read_timeout, "total_seconds"):
+        sse_read_timeout = sse_read_timeout.total_seconds()
+
+    http_client = None
+    if headers is not None or timeout is not None or sse_read_timeout is not None:
+        httpx_timeout = None
+        if timeout is not None or sse_read_timeout is not None:
+            # Map the two v1 knobs onto one Timeout; the first value covers connect/write/pool.
+            # A knob left unset keeps the SDK default (30s ops / 300s stream read) rather than
+            # going unbounded -- httpx2.Timeout(read=None) means "no read limit" at all.
+            op_timeout = timeout if timeout is not None else 30.0
+            read_timeout = sse_read_timeout if sse_read_timeout is not None else 300.0
+            httpx_timeout = httpx2.Timeout(op_timeout, read=read_timeout)
+        http_client = create_mcp_http_client(headers=headers, timeout=httpx_timeout)
+
+    # The ClientSession read timeout mirrors the HTTP operation timeout so tool calls
+    # don't hang past the configured limit; it is unrelated to the stream read timeout.
+    session_read_timeout = float(timeout) if timeout is not None else 30.0
+
+    return streamable_http_client(
+        url, http_client=http_client, terminate_on_close=terminate_on_close
+    ), session_read_timeout
 
 
 class MCPTools(Toolkit):
@@ -374,10 +421,7 @@ class MCPTools(Toolkit):
                 streamable_http_params["url"] = self.url
             existing_headers = streamable_http_params.get("headers") or {}
             streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
-            context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
+            context, params_timeout = _streamable_http_connection(streamable_http_params)
             client_timeout = min(self.timeout_seconds, params_timeout)
         else:
             if self.session is None:
@@ -390,7 +434,7 @@ class MCPTools(Toolkit):
             session_params = await context.__aenter__()  # type: ignore
             read, write = session_params[0:2]
 
-            session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+            session_context = ClientSession(read, write, read_timeout_seconds=float(client_timeout))  # type: ignore
             session = await session_context.__aenter__()  # type: ignore
             await session.initialize()
 
@@ -486,10 +530,7 @@ class MCPTools(Toolkit):
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **dynamic_headers}
 
-                context = streamablehttp_client(**streamable_http_params)  # type: ignore
-                params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-                if isinstance(params_timeout, timedelta):
-                    params_timeout = int(params_timeout.total_seconds())
+                context, params_timeout = _streamable_http_connection(streamable_http_params)
                 client_timeout = min(self.timeout_seconds, params_timeout)
             else:
                 # stdio doesn't support headers, fall back to default session
@@ -504,7 +545,7 @@ class MCPTools(Toolkit):
                 session_params = await context.__aenter__()  # type: ignore
                 read, write = session_params[0:2]
 
-                session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+                session_context = ClientSession(read, write, read_timeout_seconds=float(client_timeout))  # type: ignore
                 session = await session_context.__aenter__()  # type: ignore
 
                 # Initialize the session
@@ -653,10 +694,7 @@ class MCPTools(Toolkit):
             if init_headers:
                 existing_headers = streamable_http_params.get("headers") or {}
                 streamable_http_params["headers"] = {**existing_headers, **init_headers}
-            self._context = streamablehttp_client(**streamable_http_params)  # type: ignore
-            params_timeout = streamable_http_params.get("timeout", self.timeout_seconds)
-            if isinstance(params_timeout, timedelta):
-                params_timeout = int(params_timeout.total_seconds())
+            self._context, params_timeout = _streamable_http_connection(streamable_http_params)
             client_timeout = min(self.timeout_seconds, params_timeout)
 
         else:
@@ -682,7 +720,7 @@ class MCPTools(Toolkit):
         self._active_contexts.append(self._context)
         read, write = session_params[0:2]
 
-        self._session_context = ClientSession(read, write, read_timeout_seconds=timedelta(seconds=client_timeout))  # type: ignore
+        self._session_context = ClientSession(read, write, read_timeout_seconds=float(client_timeout))  # type: ignore
         try:
             self.session = await self._session_context.__aenter__()  # type: ignore
         except BaseException:
@@ -805,7 +843,7 @@ class MCPTools(Toolkit):
                     f = Function(
                         name=tool_name_prefix + tool_name,
                         description=tool.description,
-                        parameters=tool.inputSchema,
+                        parameters=tool.input_schema,
                         entrypoint=entrypoint,
                         # Set skip_entrypoint_processing to True to avoid processing the entrypoint
                         skip_entrypoint_processing=True,

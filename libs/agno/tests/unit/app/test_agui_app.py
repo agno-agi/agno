@@ -15,11 +15,15 @@ from ag_ui.core.types import (
     VideoInputContent,
 )
 
+from agno.models.response import ToolExecution
 from agno.os.interfaces.agui.input import extract_context, extract_media, extract_user_input
 from agno.os.interfaces.agui.router import run_entity
 from agno.os.interfaces.agui.state import StreamState
 from agno.os.interfaces.agui.stream import async_stream_agno_response_as_agui_events
-from agno.run.agent import RunContentEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.agent import RunContentEvent, RunErrorEvent, RunEvent, ToolCallCompletedEvent, ToolCallStartedEvent
+from agno.run.team import RunContentEvent as TeamRunContentEvent
+from agno.run.team import RunErrorEvent as TeamRunErrorEvent
+from agno.run.team import ToolCallStartedEvent as TeamToolCallStartedEvent
 
 
 def test_event_buffer_initial_state():
@@ -177,6 +181,92 @@ async def test_stream_basic():
     assert events[1].delta == "Hello world"
     assert events[2].type == EventType.TEXT_MESSAGE_END
     assert events[3].type == EventType.RUN_FINISHED
+
+
+@pytest.mark.parametrize(
+    "error_event",
+    [
+        RunErrorEvent(content="Invalid API key", error_type="AuthenticationError"),
+        TeamRunErrorEvent(content="Invalid API key", error_type="AuthenticationError"),
+    ],
+    ids=["agent", "team"],
+)
+@pytest.mark.asyncio
+async def test_stream_error_emits_run_error_without_run_finished(error_event):
+    """An in-stream run error should be visible to the AG-UI client."""
+
+    async def mock_error_stream():
+        yield error_event
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_error_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    assert [event.type for event in events] == [EventType.RUN_ERROR]
+    assert events[0].message == "Invalid API key"
+    assert events[0].code == "AuthenticationError"
+
+
+@pytest.mark.parametrize(
+    "content_event, error_event",
+    [
+        (RunContentEvent(content="Hello"), RunErrorEvent(content="boom", error_type="RuntimeError")),
+        (TeamRunContentEvent(content="Hello"), TeamRunErrorEvent(content="boom", error_type="RuntimeError")),
+    ],
+    ids=["agent", "team"],
+)
+@pytest.mark.asyncio
+async def test_stream_error_closes_open_text_message(content_event, error_event):
+    """A run that streamed text and then failed closes the message before RUN_ERROR."""
+
+    async def mock_stream():
+        yield content_event
+        yield error_event
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    assert [event.type for event in events] == [
+        EventType.TEXT_MESSAGE_START,
+        EventType.TEXT_MESSAGE_CONTENT,
+        EventType.TEXT_MESSAGE_END,
+        EventType.RUN_ERROR,
+    ]
+    assert events[2].message_id == events[0].message_id
+    assert events[3].message == "boom"
+
+
+@pytest.mark.parametrize(
+    "tool_event, error_event",
+    [
+        (
+            ToolCallStartedEvent(tool=ToolExecution(tool_call_id="call_1", tool_name="lookup", tool_args={})),
+            RunErrorEvent(content="boom", error_type="RuntimeError"),
+        ),
+        (
+            TeamToolCallStartedEvent(tool=ToolExecution(tool_call_id="call_1", tool_name="lookup", tool_args={})),
+            TeamRunErrorEvent(content="boom", error_type="RuntimeError"),
+        ),
+    ],
+    ids=["agent", "team"],
+)
+@pytest.mark.asyncio
+async def test_stream_error_closes_open_tool_call(tool_event, error_event):
+    """A run that failed with a tool call in flight closes the call before RUN_ERROR."""
+
+    async def mock_stream():
+        yield tool_event
+        yield error_event
+
+    events = []
+    async for event in async_stream_agno_response_as_agui_events(mock_stream(), "thread_1", "run_1"):
+        events.append(event)
+
+    types = [event.type for event in events]
+    assert types[-2:] == [EventType.TOOL_CALL_END, EventType.RUN_ERROR]
+    assert events[-2].tool_call_id == "call_1"
+    assert EventType.RUN_FINISHED not in types
 
 
 @pytest.mark.asyncio
