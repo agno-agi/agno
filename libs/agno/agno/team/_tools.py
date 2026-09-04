@@ -175,8 +175,10 @@ def _determine_tools_for_model(
         team,
     )
 
-    # Prepare tools
+    # Prepare tools. Framework tools are registered before provided tools so a
+    # user-defined name cannot silently replace a Team capability.
     _tools: List[Union[Toolkit, Callable, Function, Dict]] = []
+    provided_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
     # Add provided tools
     if resolved_tools is not None:
@@ -186,7 +188,7 @@ def _determine_tools_for_model(
                 # Only add the tool if it successfully connected and built its tools
                 if check_mcp_tools and not tool.initialized:  # type: ignore
                     continue
-            _tools.append(tool)
+            provided_tools.append(tool)
 
     if team.read_chat_history:
         _tools.append(_get_chat_history_function(team, session=session, async_mode=async_mode))
@@ -331,6 +333,8 @@ def _determine_tools_for_model(
         _tools.append(delegate_task_func)
         if team.get_member_information_tool:
             _tools.append(team.get_member_information)
+
+    _tools.extend(provided_tools)
 
     # Get Agent tools
     if len(_tools) > 0:
