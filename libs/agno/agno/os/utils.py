@@ -1069,12 +1069,15 @@ DOCUMENT_MIME_TYPES = {
     "text/rtf",
 }
 
-# Some clients use legacy ZIP MIME types instead of the registered `application/zip`.
-# Normalize these at the upload boundary so the file is accepted without leaking a
-# non-canonical MIME type to FileMedia or model providers.
+# Other registered names for types already listed above (Windows browsers send
+# `application/x-zip-compressed` for `.zip`). Normalize at the upload boundary so a file
+# is not rejected for arriving under its alternate spelling.
 _DOCUMENT_MIME_TYPE_ALIASES = {
     "application/x-zip": "application/zip",
     "application/x-zip-compressed": "application/zip",
+    "application/xml": "text/xml",
+    "application/rtf": "text/rtf",
+    "application/javascript": "text/javascript",
 }
 
 # Fallback mapping from file extension to media category. Used when the browser sends a
@@ -1140,6 +1143,7 @@ _AMBIGUOUS_CONTENT_TYPES = {None, "", "application/octet-stream"}
 
 
 def _normalize_document_mime_type(content_type: Optional[str]) -> Optional[str]:
+    """Map an alternate MIME spelling onto the type listed in DOCUMENT_MIME_TYPES."""
     if content_type is None:
         return None
     return _DOCUMENT_MIME_TYPE_ALIASES.get(content_type, content_type)
@@ -1258,8 +1262,9 @@ def extract_format(file: UploadFile) -> Optional[str]:
         return file.filename.split(".")[-1].lower()
 
     # Fallback to the file content_type
-    if file.content_type:
-        return file.content_type.strip().split("/")[-1]
+    content_type = _normalize_document_mime_type(file.content_type)
+    if content_type:
+        return content_type.strip().split("/")[-1]
 
     return None
 

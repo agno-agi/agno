@@ -133,9 +133,14 @@ DOCUMENT_FORMATS = [
     ("doc.rtf", "text/rtf"),
 ]
 
-ZIP_MIME_ALIASES = [
-    "application/x-zip",
-    "application/x-zip-compressed",
+# Alternate spellings clients send for formats already in DOCUMENT_FORMATS:
+# (filename, MIME the client sends, canonical MIME it must resolve to).
+MIME_TYPE_ALIASES = [
+    ("archive.zip", "application/x-zip", "application/zip"),
+    ("archive.zip", "application/x-zip-compressed", "application/zip"),
+    ("feed.xml", "application/xml", "text/xml"),
+    ("doc.rtf", "application/rtf", "text/rtf"),
+    ("script.js", "application/javascript", "text/javascript"),
 ]
 
 
@@ -158,9 +163,9 @@ class TestClassifyUploadFile:
     def test_all_document_content_types_route_to_document(self, filename, content_type):
         assert classify_upload_file(_make_upload_file(filename, content_type)) == "document"
 
-    @pytest.mark.parametrize("content_type", ZIP_MIME_ALIASES)
-    def test_zip_mime_aliases_route_to_document(self, content_type):
-        assert classify_upload_file(_make_upload_file("archive.zip", content_type)) == "document"
+    @pytest.mark.parametrize("filename, content_type, _canonical", MIME_TYPE_ALIASES)
+    def test_mime_aliases_route_to_document(self, filename, content_type, _canonical):
+        assert classify_upload_file(_make_upload_file(filename, content_type)) == "document"
 
     @pytest.mark.parametrize("filename, _content_type", DOCUMENT_FORMATS)
     @pytest.mark.parametrize("ambiguous", ["application/octet-stream", "", None])
@@ -199,13 +204,21 @@ class TestProcessDocument:
         assert result.mime_type == content_type
         assert result.format == filename.rsplit(".", 1)[-1]
 
-    @pytest.mark.parametrize("content_type", ZIP_MIME_ALIASES)
-    def test_zip_mime_aliases_are_canonicalized(self, content_type):
-        result = process_document(_make_upload_file("archive.zip", content_type, b"zip-data"))
+    @pytest.mark.parametrize("filename, content_type, canonical", MIME_TYPE_ALIASES)
+    def test_mime_aliases_are_canonicalized(self, filename, content_type, canonical):
+        result = process_document(_make_upload_file(filename, content_type, b"data"))
 
         assert result is not None
-        assert result.mime_type == "application/zip"
-        assert result.format == "zip"
+        assert result.mime_type == canonical
+        assert result.format == filename.rsplit(".", 1)[-1]
+
+    @pytest.mark.parametrize("filename, content_type, canonical", MIME_TYPE_ALIASES)
+    def test_mime_aliases_without_extension_use_canonical_format(self, filename, content_type, canonical):
+        """Without an extension the format falls back to the content type, which must be canonical."""
+        result = process_document(_make_upload_file("attachment", content_type, b"data"))
+
+        assert result is not None
+        assert result.format == canonical.split("/")[-1]
 
     def test_empty_file_raises(self):
         from fastapi import HTTPException
