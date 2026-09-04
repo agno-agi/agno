@@ -854,26 +854,20 @@ class AsyncPostgresDb(AsyncBaseDb):
 
             async with self.async_session_factory() as sess:
                 async with sess.begin():
-                    # Backfill a monotonic run_index when the run arrives without one
-                    # (e.g. a background/continue save that couldn't resolve its position).
-                    # A NULL index has no position and breaks ORDER BY run_index. ON CONFLICT
-                    # preserves the existing index, so this only sets it on a genuine insert.
-                    if row.get("run_index") is None:
-                        # Serialize same-session backfills: under READ COMMITTED two
-                        # concurrent max-reads can both see the same MAX and land
-                        # duplicate indexes. The advisory lock is transaction-scoped
-                        # (released at COMMIT/ROLLBACK) and keyed on session_id, so
-                        # only same-session backfilling inserts queue behind it.
+                    # A new run always lands after the session's existing rows.
+                    # The advisory lock serializes same-session inserts around MAX+1.
+                    await sess.execute(
+                        text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
+                        {"sid": session_id},
+                    )
+                    current_max = (
                         await sess.execute(
-                            text("SELECT pg_advisory_xact_lock(hashtext('agno_run_index'), hashtext(:sid))"),
-                            {"sid": session_id},
+                            select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
                         )
-                        current_max = (
-                            await sess.execute(
-                                select(func.max(runs_table.c.run_index)).where(runs_table.c.session_id == session_id)
-                            )
-                        ).scalar()
-                        row["run_index"] = (current_max + 1) if current_max is not None else 0
+                    ).scalar()
+                    next_index = (current_max + 1) if current_max is not None else 0
+                    provided_index = row.get("run_index")
+                    row["run_index"] = next_index if provided_index is None else max(provided_index, next_index)
 
                     stmt = postgresql.insert(runs_table).values(**row)
                     stmt = stmt.on_conflict_do_update(
