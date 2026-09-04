@@ -80,7 +80,13 @@ Open `/mcp` in a browser and you are sent to `/mcp/server-card`, a JSON Server C
 with the name, description and endpoint URL in the shape of the MCP Server Card
 extension. The `version` is the one the server reports at connect time, so set it on
 `MCPConfig` or `AgentOS` to publish your deployment's version rather than the default.
-It lists no tools; `tools/list` does that. `MCPConfig(server_card=False)` turns it off.
+`MCPConfig(server_card=False)` turns it off.
+
+The card also lists the served tools in the same shape `tools/list` returns — name,
+title, description and `inputSchema` — built from each tool's own MCP representation,
+so it cannot drift from the live surface. That makes the endpoint readable by people
+and crawlers who never speak the protocol, while `tools/list` stays the authority a
+connected client calls.
 
 Behind a proxy or load balancer, set the public endpoint explicitly:
 

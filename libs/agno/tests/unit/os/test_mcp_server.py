@@ -1305,7 +1305,9 @@ async def test_server_card_describes_the_server_and_its_endpoint(monkeypatch):
     assert response.headers["content-type"].startswith("application/mcp-server-card+json")
     assert response.headers["access-control-allow-origin"] == "*"
     assert response.headers["cache-control"] == "public, max-age=300"
-    assert response.json() == {
+    card = response.json()
+    # The tool entries have their own tests; everything else is pinned exactly.
+    assert {key: value for key, value in card.items() if key != "tools"} == {
         "$schema": SERVER_CARD_SCHEMA,
         "name": "com.example/agno-docs",
         "title": "Agno Docs",
@@ -1681,3 +1683,95 @@ async def test_the_published_url_always_matches_the_schema_pattern(monkeypatch):
         url = (await client.get("/mcp/server-card")).json()["remotes"][0]["url"]
 
     assert re.fullmatch(r"^(https?://[^\s]+|\{[a-zA-Z_][a-zA-Z0-9_]*\}[^\s]*)$", url), url
+
+
+# ----------------------------- server card tools -----------------------------
+
+
+async def test_the_card_lists_the_served_tools(monkeypatch):
+    """A browser or crawler reading the card never speaks the protocol, so it needs the names."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    app = get_mcp_server(_docs_os())
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    names = [entry["name"] for entry in card["tools"]]
+    assert names == sorted(names, key=names.index)  # order preserved, no duplicates injected
+    assert set(names) == {
+        "get_agentos_config",
+        "run_agent",
+        "run_team",
+        "run_workflow",
+        "continue_run",
+        "cancel_run",
+        "get_sessions",
+        "get_session_runs",
+    }
+    assert all(entry.get("description") for entry in card["tools"])
+
+
+async def test_the_card_tools_match_tools_list(monkeypatch):
+    """The card reads the same registry, so it cannot drift from the live surface."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = _docs_os()
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert {entry["name"] for entry in card["tools"]} == await _tool_names(os)
+
+
+async def test_the_card_follows_a_custom_tool_surface(monkeypatch):
+    """default_tools=False plus custom tools: the card shows exactly what is served."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+
+    @tool
+    def search_docs(query: str) -> str:
+        """Search the documentation."""
+        return ""
+
+    app = get_mcp_server(_docs_os(default_tools=False, tools=[search_docs]))
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert [entry["name"] for entry in card["tools"]] == ["search_docs"]
+    assert card["tools"][0]["description"] == "Search the documentation."
+
+
+async def test_a_card_tool_description_is_published_whole(monkeypatch):
+    """Tool descriptions are prompts for the calling model; a clipped one is worse than none."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+
+    @tool
+    def verbose(query: str) -> str:
+        return ""
+
+    verbose.description = "d" * 500
+    app = get_mcp_server(_docs_os(default_tools=False, tools=[verbose]))
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    assert card["tools"][0]["description"] == "d" * 500
+
+
+async def test_the_card_tool_entries_match_the_tools_list_wire_format(monkeypatch):
+    """A reader of the card gets what a connected client gets, inputSchema included."""
+    monkeypatch.setattr(mcp_mod, "_mcp_server_is_open", lambda os: True)
+    os = _docs_os()
+    app = get_mcp_server(os)
+
+    async with _mcp_client(app) as client:
+        card = (await client.get("/mcp/server-card")).json()
+
+    by_name = {entry["name"]: entry for entry in card["tools"]}
+    async with Client(build_mcp_server(os)) as client:
+        for served in await client.list_tools():
+            entry = by_name[served.name]
+            assert entry["description"] == served.description
+            assert entry["inputSchema"] == served.input_schema
+    # No internal transport metadata leaks into the published card.
+    assert all("_meta" not in entry for entry in card["tools"])

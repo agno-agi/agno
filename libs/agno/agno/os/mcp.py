@@ -16,6 +16,7 @@ from typing import (
     Literal,
     NamedTuple,
     Optional,
+    Set,
     Union,
     get_type_hints,
 )
@@ -2017,7 +2018,28 @@ def _truncate(value: str, limit: int) -> str:
     return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
 
 
-def _server_card(
+async def _card_tools(mcp: FastMCP) -> List[Dict[str, Any]]:
+    """The published tools in the same shape ``tools/list`` returns.
+
+    Built from each tool's own MCP representation, so the card cannot drift from the live
+    surface and a reader gets what a connected client would get: name, title, description and
+    ``inputSchema``. Descriptions are published whole -- they are written for the calling model,
+    and a clipped one is worse than none. Internal transport metadata (``_meta``) is dropped.
+    """
+    entries: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    # list_tools returns every version of a tool; the card names each one once.
+    for tool in await mcp.list_tools():
+        if tool.name in seen:
+            continue
+        seen.add(tool.name)
+        entry = tool.to_mcp_tool().model_dump(exclude_none=True, by_alias=True)
+        entry.pop("_meta", None)
+        entries.append(entry)
+    return entries
+
+
+async def _server_card(
     mcp: FastMCP,
     os: "AgentOS",
     request: Any,
@@ -2068,6 +2090,10 @@ def _server_card(
     # even though fastmcp defaults that to its own library version. Set ``MCPConfig(version=...)``
     # or ``AgentOS(version=...)`` to publish the deployment's real version instead.
     card["version"] = _truncate(version or str(mcp.version), _CARD_VERSION_MAX)
+    # Not part of the Server Card schema, which leaves the tool surface to ``tools/list``. It is
+    # carried anyway (the schema allows extra keys) because the card is what a person or a crawler
+    # opening the endpoint in a browser sees, and they never speak the protocol.
+    card["tools"] = await _card_tools(mcp)
     return card
 
 
@@ -2088,7 +2114,7 @@ def _register_server_card(
     @mcp.custom_route(MCP_SERVER_CARD_PATH, methods=["GET"], include_in_schema=False)
     async def server_card(request: Request) -> Response:
         return JSONResponse(
-            _server_card(mcp, os, request, version, card_url, allowed_hosts),
+            await _server_card(mcp, os, request, version, card_url, allowed_hosts),
             media_type=SERVER_CARD_MEDIA_TYPE,
             headers={
                 "Cache-Control": "public, max-age=300",

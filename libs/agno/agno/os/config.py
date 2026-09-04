@@ -65,9 +65,10 @@ class MCPConfig(BaseModel):
     version: Optional[str] = None
     instructions: Optional[str] = None
 
-    # Publish a Server Card at ``/mcp/server-card`` (name, version, description and the
-    # endpoint URL, no tools) and send a browser that opens ``/mcp`` to it. The card is
-    # public even when the server is gated; it carries nothing secret.
+    # Publish a Server Card at ``/mcp/server-card`` (name, version, description, the endpoint
+    # URL, and the served tools by name and description) and send a browser that opens ``/mcp``
+    # to it. The card is public even when the server is gated; it carries nothing secret --
+    # the tool names it lists are the same ones ``tools/list`` returns to any caller.
     server_card: bool = True
 
     # The public URL of the MCP endpoint, e.g. ``https://docs.agno.com/mcp``. Set this when the
