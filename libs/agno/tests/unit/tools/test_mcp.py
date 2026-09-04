@@ -2116,3 +2116,19 @@ def test_missing_fastmcp_raises_an_install_hint():
     with patch.object(builtins, "__import__", blocked):
         with pytest.raises(ImportError, match=r"fastmcp.*not installed"):
             _import_fastmcp()
+
+
+def test_stdio_transport_does_not_keep_the_subprocess_alive():
+    """close() must stop the stdio server process.
+
+    fastmcp's StdioTransport defaults keep_alive to True, which would leave one orphaned
+    child per connect/close cycle -- and a non-AgentOS agent run does one cycle per run.
+    """
+    from mcp import StdioServerParameters
+
+    from agno.tools.mcp.mcp import _build_fastmcp_client
+
+    params = StdioServerParameters(command="echo", args=["hi"], env=None)
+    client = _build_fastmcp_client("stdio", {}, params, 10, "legacy")
+
+    assert client.transport.keep_alive is False
