@@ -269,6 +269,7 @@ _FK_EDGES = {
     "runs": [("sessions", "session_table_name")],
     "spans": [("traces", "trace_table_name")],
     "schedule_runs": [("schedules", "schedules_table_name")],
+    "monitor_events": [("monitors", "monitors_table_name")],
     "component_configs": [("components", "components_table_name")],
     "component_links": [
         ("components", "components_table_name"),
@@ -316,6 +317,8 @@ class BaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         job_table: Optional[str] = None,
+        monitors_table: Optional[str] = None,
+        monitor_events_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -355,6 +358,8 @@ class BaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.monitors_table_name = monitors_table or "agno_monitors"
+        self.monitor_events_table_name = monitor_events_table or "agno_monitor_events"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -438,6 +443,8 @@ class BaseDb(ABC):
             "learnings_table": self.learnings_table_name,
             "schedules_table": self.schedules_table_name,
             "schedule_runs_table": self.schedule_runs_table_name,
+            "monitors_table": self.monitors_table_name,
+            "monitor_events_table": self.monitor_events_table_name,
             "approvals_table": self.approvals_table_name,
             "auth_tokens_table": self.auth_tokens_table_name,
             "service_accounts_table": self.service_accounts_table_name,
@@ -469,6 +476,8 @@ class BaseDb(ABC):
             learnings_table=data.get("learnings_table"),
             schedules_table=data.get("schedules_table"),
             schedule_runs_table=data.get("schedule_runs_table"),
+            monitors_table=data.get("monitors_table"),
+            monitor_events_table=data.get("monitor_events_table"),
             approvals_table=data.get("approvals_table"),
             auth_tokens_table=data.get("auth_tokens_table"),
             service_accounts_table=data.get("service_accounts_table"),
@@ -1842,8 +1851,17 @@ class BaseDb(ABC):
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    def release_schedule(
+        self, schedule_id: str, next_run_at: Optional[int] = None, expected_worker: Optional[str] = None
+    ) -> bool:
+        """Release a claimed schedule and optionally update next_run_at.
+
+        ``expected_worker`` fences the release to the worker that still holds the
+        claim. A run outliving its lock is reclaimed by a peer; without the fence
+        the slow worker's release then clears the new holder's lock and rewrites
+        its next_run_at, so the schedule fires again. False means the caller was
+        superseded and must not re-arm.
+        """
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
@@ -1897,6 +1915,147 @@ class BaseDb(ABC):
 
     def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
         """Rows whose expires_at has passed."""
+        raise NotImplementedError
+
+    # --- Monitors (Optional) ---
+    # These methods are optional. Override in subclasses to enable monitor persistence.
+    # ``user_id`` scopes the user-facing reads, updates and deletes; ``claim_pending_monitor``
+    # takes none, since the poller has to run monitors across all users.
+
+    def get_monitor(self, monitor_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a monitor by ID."""
+        raise NotImplementedError
+
+    def get_monitor_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a monitor by name."""
+        raise NotImplementedError
+
+    def get_monitors(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List monitors with optional filtering.
+
+        Returns:
+            Tuple of (monitors, total_count)
+        """
+        raise NotImplementedError
+
+    def create_monitor(self, monitor_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new monitor."""
+        raise NotImplementedError
+
+    def update_monitor(
+        self,
+        monitor_id: str,
+        user_id: Optional[str] = None,
+        expected_lease: Optional[Tuple[str, int]] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Update a monitor by ID.
+
+        ``expected_lease`` is the ``(worker_id, attempt)`` the caller claimed with. The
+        write is refused, and None returned, once either has moved on. A monitor's work is a
+        live subprocess, so an unfenced write lets a superseded worker steal the
+        lock back and leaves two processes running the same watch.
+
+        With a lease set, None means exactly one thing: the lease is gone. A
+        genuine failure raises instead of returning None, because the caller acts
+        on that answer by killing its own subprocess -- so a database blip that
+        reported itself as a lost lease would take down healthy monitors and hand
+        their work to nobody. Unfenced callers keep the older, quieter contract
+        where None also covers "no such row".
+
+        A lease of ``(None, attempt)`` reads as "still unclaimed, and still at the
+        attempt I read", which is how an edit confirms nothing has taken the row
+        since it looked.
+        """
+        raise NotImplementedError
+
+    def delete_monitor(self, monitor_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete a monitor and its associated events."""
+        raise NotImplementedError
+
+    def claim_pending_monitor(
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 300,
+        excluded_user_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Atomically claim a pending (or orphaned running) monitor for execution.
+
+        ``excluded_user_ids`` skips rows belonging to owners the caller will not
+        take more work for. Without it the claim is strictly oldest-first across
+        every owner, so one tenant with enough pending monitors occupies every
+        worker slot and every other tenant waits behind it. Rows with no owner
+        are never excluded -- a NULL user_id means there is no tenant boundary to
+        enforce in the first place.
+        """
+        raise NotImplementedError
+
+    def heartbeat_monitors(self, worker_id: str, monitor_ids: List[str]) -> int:
+        """Refresh locked_at for this worker's in-flight monitors; returns the count.
+
+        Batched on purpose: one statement for every live monitor rather than one
+        per monitor per beat, and it deliberately does not read the rows back --
+        a heartbeat that returns the row costs two round trips to learn something
+        the caller already knows.
+
+        Fenced on ``locked_by`` alone rather than on the (worker, attempt) pair
+        that guards ``update_monitor``. A peer takeover changes locked_by and so
+        stops refreshing here, which is the case that matters; a re-claim by this
+        same worker leaves locked_by unchanged and its lock is the one that ought
+        to be kept alive anyway.
+        """
+        raise NotImplementedError
+
+    # --- Monitor Events (Optional) ---
+
+    def cleanup_monitor_events(self, retention_seconds: int) -> int:
+        """Delete monitor events older than the retention window.
+
+        Events accrue under live persistent monitors, not just finished ones, so
+        this prunes by age rather than by parent status -- otherwise a watch that
+        never ends grows its history without bound. ``event_count`` on the parent
+        is a lifetime counter and is deliberately left alone.
+        """
+        raise NotImplementedError
+
+    def create_monitor_event(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a monitor event record."""
+        raise NotImplementedError
+
+    def update_monitor_event(self, monitor_event_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a monitor event record."""
+        raise NotImplementedError
+
+    def get_monitor_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a monitor event by ID."""
+        raise NotImplementedError
+
+    def get_monitor_events(
+        self,
+        monitor_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        delivery_status: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List events for a monitor.
+
+        ``delivery_status`` narrows to one delivery outcome. It exists so
+        ``pending`` is answerable: the event counter is bumped before delivery,
+        so an execution that dies mid-delivery leaves a row resting there and
+        nothing retries it. Without a filter, "did this monitor lose any
+        deliveries?" can only be answered by paging every event it ever emitted,
+        which makes a deliberate trade-off effectively invisible.
+
+        Returns:
+            Tuple of (events, total_count)
+        """
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
@@ -2117,6 +2276,8 @@ class AsyncBaseDb(ABC):
         schedules_table: Optional[str] = None,
         schedule_runs_table: Optional[str] = None,
         job_table: Optional[str] = None,
+        monitors_table: Optional[str] = None,
+        monitor_events_table: Optional[str] = None,
         approvals_table: Optional[str] = None,
         auth_tokens_table: Optional[str] = None,
         service_accounts_table: Optional[str] = None,
@@ -2149,6 +2310,8 @@ class AsyncBaseDb(ABC):
         self.schedule_runs_table_name = schedule_runs_table or "agno_schedule_runs"
         self.job_table_name = job_table or "agno_jobs"
         self.tool_results_table_name = "agno_tool_results"
+        self.monitors_table_name = monitors_table or "agno_monitors"
+        self.monitor_events_table_name = monitor_events_table or "agno_monitor_events"
         self.approvals_table_name = approvals_table or "agno_approvals"
         self.auth_tokens_table_name = auth_tokens_table or "agno_auth_tokens"
         self.service_accounts_table_name = service_accounts_table or "agno_service_accounts"
@@ -3217,8 +3380,10 @@ class AsyncBaseDb(ABC):
         """Atomically claim a due schedule for execution."""
         raise NotImplementedError
 
-    async def release_schedule(self, schedule_id: str, next_run_at: Optional[int] = None) -> bool:
-        """Release a claimed schedule and optionally update next_run_at."""
+    async def release_schedule(
+        self, schedule_id: str, next_run_at: Optional[int] = None, expected_worker: Optional[str] = None
+    ) -> bool:
+        """Async variant of BaseDb.release_schedule. ``expected_worker`` fences the release."""
         raise NotImplementedError
 
     # --- Schedule Runs (Optional) ---
@@ -3272,6 +3437,104 @@ class AsyncBaseDb(ABC):
 
     async def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
         """Rows whose expires_at has passed."""
+        raise NotImplementedError
+
+    # --- Monitors (Optional) ---
+    # These methods are optional. Override in subclasses to enable monitor persistence.
+    # ``user_id`` scopes the user-facing reads, updates and deletes; ``claim_pending_monitor``
+    # takes none, since the poller has to run monitors across all users.
+
+    async def get_monitor(self, monitor_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a monitor by ID."""
+        raise NotImplementedError
+
+    async def get_monitor_by_name(self, name: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a monitor by name."""
+        raise NotImplementedError
+
+    async def get_monitors(
+        self,
+        status: Optional[str] = None,
+        limit: int = 100,
+        page: int = 1,
+        user_id: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List monitors with optional filtering.
+
+        Returns:
+            Tuple of (monitors, total_count)
+        """
+        raise NotImplementedError
+
+    async def create_monitor(self, monitor_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a new monitor."""
+        raise NotImplementedError
+
+    async def update_monitor(
+        self,
+        monitor_id: str,
+        user_id: Optional[str] = None,
+        expected_lease: Optional[Tuple[str, int]] = None,
+        **kwargs: Any,
+    ) -> Optional[Dict[str, Any]]:
+        """Async variant of BaseDb.update_monitor. ``expected_lease`` fences the write."""
+        raise NotImplementedError
+
+    async def delete_monitor(self, monitor_id: str, user_id: Optional[str] = None) -> bool:
+        """Delete a monitor and its associated events."""
+        raise NotImplementedError
+
+    async def claim_pending_monitor(
+        self,
+        worker_id: str,
+        lock_grace_seconds: int = 300,
+        excluded_user_ids: Optional[List[str]] = None,
+    ) -> Optional[Dict[str, Any]]:
+        """Async variant of BaseDb.claim_pending_monitor."""
+        raise NotImplementedError
+
+    async def heartbeat_monitors(self, worker_id: str, monitor_ids: List[str]) -> int:
+        """Async variant of BaseDb.heartbeat_monitors."""
+        raise NotImplementedError
+
+    # --- Monitor Events (Optional) ---
+
+    async def cleanup_monitor_events(self, retention_seconds: int) -> int:
+        """Async variant of BaseDb.cleanup_monitor_events."""
+        raise NotImplementedError
+
+    async def create_monitor_event(self, event_data: Dict[str, Any]) -> Dict[str, Any]:
+        """Create a monitor event record."""
+        raise NotImplementedError
+
+    async def update_monitor_event(self, monitor_event_id: str, **kwargs: Any) -> Optional[Dict[str, Any]]:
+        """Update a monitor event record."""
+        raise NotImplementedError
+
+    async def get_monitor_event(self, event_id: str, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        """Get a monitor event by ID."""
+        raise NotImplementedError
+
+    async def get_monitor_events(
+        self,
+        monitor_id: str,
+        limit: int = 20,
+        page: int = 1,
+        user_id: Optional[str] = None,
+        delivery_status: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], int]:
+        """List events for a monitor.
+
+        ``delivery_status`` narrows to one delivery outcome. It exists so
+        ``pending`` is answerable: the event counter is bumped before delivery,
+        so an execution that dies mid-delivery leaves a row resting there and
+        nothing retries it. Without a filter, "did this monitor lose any
+        deliveries?" can only be answered by paging every event it ever emitted,
+        which makes a deliberate trade-off effectively invisible.
+
+        Returns:
+            Tuple of (events, total_count)
+        """
         raise NotImplementedError
 
     # --- Approvals (Optional) ---
