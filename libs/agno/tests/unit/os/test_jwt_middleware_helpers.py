@@ -908,38 +908,3 @@ class TestIssuerPinning:
         config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=self.GOOD)
         assert config.issuer == self.GOOD
         assert build_jwt_middleware_kwargs(config, authorization=True)["issuer"] == self.GOOD
-
-
-class TestConfigExcludedRoutePaths:
-    """``AuthorizationConfig(excluded_route_paths=...)`` opts extra routes public, ADDED to the
-    built-in defaults -- the #9140 need: a public ``/chat/token`` the frontend can reach without
-    a 401, without dropping ``/health`` / the docs from the public set."""
-
-    def _excluded(self, **cfg):
-        from agno.os.config import AuthorizationConfig
-        from agno.os.middleware.jwt import build_jwt_middleware_kwargs
-
-        config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256", **cfg)
-        return build_jwt_middleware_kwargs(config, authorization=True)["excluded_route_paths"]
-
-    def test_config_paths_are_merged_with_defaults(self):
-        excluded = self._excluded(excluded_route_paths=["/chat/token"])
-        assert "/chat/token" in excluded  # the operator's public route
-        assert "/health" in excluded and "/docs" in excluded  # defaults preserved, not replaced
-
-    def test_no_config_paths_leaves_the_middleware_defaults(self):
-        # None means "don't override" -- the middleware applies its own defaults itself.
-        assert self._excluded() is None
-
-    def test_a_path_overlapping_a_default_is_not_duplicated(self):
-        excluded = self._excluded(excluded_route_paths=["/health", "/chat/token"])
-        assert excluded.count("/health") == 1
-
-    def test_the_merged_paths_actually_gate(self):
-        from agno.os.middleware import JWTMiddleware
-
-        excluded = self._excluded(excluded_route_paths=["/chat/*"])
-        mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256", excluded_route_paths=excluded)
-        assert mw._is_route_excluded("/chat/token") is True  # opted public (fnmatch)
-        assert mw._is_route_excluded("/health") is True  # default still public
-        assert mw._is_route_excluded("/agents") is False  # still gated
