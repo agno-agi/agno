@@ -1,5 +1,5 @@
 from copy import copy
-from dataclasses import asdict, dataclass
+from dataclasses import MISSING, asdict, dataclass, fields
 from enum import Enum
 from typing import Any, Dict, List, Optional, Type, Union
 
@@ -11,6 +11,36 @@ from agno.metrics import RunMetrics
 from agno.models.message import Citations, Message, MessageReferences
 from agno.reasoning.step import ReasoningStep
 from agno.utils.log import log_error
+
+
+def init_custom_event(event: Any, kwargs: Dict[str, Any]) -> None:
+    """Initialize a CustomEvent instance from arbitrary keyword arguments.
+
+    CustomEvent subclasses accept any keyword argument, so they cannot use the
+    dataclass-generated ``__init__``. They still have to end up with every
+    declared field set: ``to_dict`` serializes through ``asdict``, which reads
+    fields by declaration and raises ``AttributeError`` on the first one that
+    was never assigned (``created_at``, in practice).
+
+    Declared fields are filled from their dataclass defaults first, then the
+    caller's keyword arguments are applied on top - both the ones that name a
+    declared field and the arbitrary extras.
+
+    Args:
+        event: The CustomEvent instance being initialized.
+        kwargs: The keyword arguments passed to its ``__init__``.
+    """
+    for f in fields(event):
+        if f.name in kwargs:
+            continue
+        if f.default is not MISSING:
+            setattr(event, f.name, f.default)
+        elif f.default_factory is not MISSING:  # type: ignore[misc]
+            setattr(event, f.name, f.default_factory())  # type: ignore[misc]
+
+    # Store arbitrary attributes directly on the instance
+    for key, value in kwargs.items():
+        setattr(event, key, value)
 
 
 @dataclass

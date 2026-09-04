@@ -7,7 +7,7 @@ from pydantic import BaseModel
 
 from agno.media import Audio, File, Image, Video
 from agno.run.agent import RunEvent, RunOutput, run_output_event_from_dict
-from agno.run.base import BaseRunOutputEvent, RunStatus
+from agno.run.base import BaseRunOutputEvent, RunStatus, init_custom_event
 from agno.run.team import TeamRunEvent, TeamRunOutput, team_run_output_event_from_dict
 from agno.utils.log import log_warning
 from agno.utils.media import (
@@ -622,9 +622,7 @@ class CustomEvent(BaseWorkflowRunOutputEvent):
     event: str = WorkflowRunEvent.custom_event.value
 
     def __init__(self, **kwargs):
-        # Store arbitrary attributes directly on the instance
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+        init_custom_event(self, kwargs)
 
 
 # Union type for all workflow run response events
