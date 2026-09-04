@@ -2,6 +2,8 @@ from typing import List, Literal, Optional
 
 from pydantic import BaseModel
 
+from agno.os.schema import PaginationInfo
+
 
 class FileSystemEntry(BaseModel):
     path: str
@@ -22,6 +24,7 @@ class FileSystemListResponse(BaseModel):
     directory: str
     entries: List[FileSystemEntry]
     usage: FileSystemUsage
+    meta: PaginationInfo
 
 
 class FileSystemContentResponse(BaseModel):
@@ -48,3 +51,4 @@ class FileSystemSearchResponse(BaseModel):
     query: str
     directory: str
     entries: List[FileSystemSearchEntry]
+    meta: PaginationInfo

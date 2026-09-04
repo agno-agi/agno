@@ -22,6 +22,7 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginationInfo,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -144,6 +145,8 @@ def get_filesystem_router(
         agent_id: str,
         request: Request,
         directory: str = Query("", description="Relative directory inside the agent filesystem"),
+        page: int = Query(1, ge=1, description="1-indexed page number"),
+        limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemListResponse:
         filesystem = _get_agent_filesystem(os, agent_id, request)
         try:
@@ -152,14 +155,24 @@ def get_filesystem_router(
             usage = await filesystem.ausage()
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+        total_count = len(entries)
+        total_pages = (total_count + limit - 1) // limit if total_count else 0
+        start = (page - 1) * limit
         return FileSystemListResponse(
             agent_id=agent_id,
             directory=normalized_directory,
-            entries=entries,
+            entries=entries[start : start + limit],
             usage=FileSystemUsage(
                 file_count=usage.file_count,
                 total_bytes=usage.total_bytes,
                 bytes_limit=filesystem.max_namespace_bytes,
+            ),
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
             ),
         )
 
@@ -208,14 +221,24 @@ def get_filesystem_router(
         request: Request,
         query: str = Query(..., min_length=1, max_length=200),
         directory: str = Query(""),
-        limit: int = Query(50, ge=1, le=100),
+        page: int = Query(1, ge=1, description="1-indexed page number"),
+        limit: int = Query(50, ge=1, le=100, description="Page size"),
     ) -> FileSystemSearchResponse:
         filesystem = _get_agent_filesystem(os, agent_id, request)
         try:
             normalized_directory = normalize_directory(directory)
-            matches = await filesystem.asearch(query, directory=normalized_directory, limit=limit)
+            files = await filesystem.alist(normalized_directory)
+            matches = await filesystem.asearch(
+                query,
+                directory=normalized_directory,
+                limit=max(len(files), 1),
+            )
         except InvalidPathError as e:
             raise HTTPException(status_code=400, detail=str(e))
+
+        total_count = len(matches)
+        total_pages = (total_count + limit - 1) // limit if total_count else 0
+        start = (page - 1) * limit
         return FileSystemSearchResponse(
             agent_id=agent_id,
             query=query,
@@ -228,8 +251,14 @@ def get_filesystem_router(
                     line=match.line,
                     match_count=match.match_count,
                 )
-                for match in matches
+                for match in matches[start : start + limit]
             ],
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
         )
 
     return router
