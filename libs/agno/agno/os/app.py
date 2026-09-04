@@ -1746,8 +1746,14 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
+        # The Server Card is discovery before authentication: public by design, no secrets.
+        server_card_paths: List[str] = []
+        if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):
+            from agno.os.config import MCP_SERVER_CARD_PATH
+
+            server_card_paths = [MCP_SERVER_CARD_PATH]
         excluded_routes = (self.authorization_config.excluded_route_paths or []) if self.authorization_config else []
-        if excluded_routes or interface_prefixes or mcp_auth_paths:
+        if excluded_routes or interface_prefixes or mcp_auth_paths or server_card_paths:
             excluded_route_paths = (
                 [
                     "/",
@@ -1761,6 +1767,7 @@ class AgentOS:
                 + excluded_routes
                 + interface_prefixes
                 + mcp_auth_paths
+                + server_card_paths
             )
 
         middleware_kwargs["excluded_route_paths"] = excluded_route_paths
