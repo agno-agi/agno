@@ -700,6 +700,16 @@ class OpenAIResponses(Model):
                 if self._using_reasoning_model() and previous_response_id is not None:
                     continue
 
+                # A reasoning model's function_call is only valid alongside the reasoning item
+                # it was produced with. The server holds that item when the request chains on
+                # previous_response_id; without chaining - a fresh session, or a caller that
+                # severed the chain - it has to travel with the call or the API rejects the
+                # pair outright.
+                if self._using_reasoning_model():
+                    reasoning_output = (message.provider_data or {}).get("reasoning_output")
+                    if reasoning_output is not None:
+                        formatted_messages.append(ResponseReasoningItem.model_validate(reasoning_output))
+
                 for tool_call in message.tool_calls:
                     formatted_messages.append(
                         {

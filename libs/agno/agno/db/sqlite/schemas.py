@@ -419,6 +419,32 @@ TOOL_RESULTS_TABLE_SCHEMA = {
 }
 
 
+COMPACTIONS_TABLE_SCHEMA = {
+    "compaction_id": {"type": String, "primary_key": True, "nullable": False},
+    "session_id": {"type": String, "nullable": False},
+    # The run that produced this fold. A record is an immutable fact about one
+    # run, so resuming that run resolves the fold it actually saw.
+    "run_id": {"type": String, "nullable": True},
+    "user_id": {"type": String, "nullable": True},
+    # Anchors are message ids, never indexes: history is rebuilt from stored runs
+    # each run, so a position means something different every time.
+    "first_kept_message_id": {"type": String, "nullable": True},
+    "elision_watermark_message_id": {"type": String, "nullable": True},
+    "summary": {"type": String, "nullable": True},
+    # The folded transcript, verbatim. Null when the backend or the caller opted
+    # out: the summary still stands, only recoverability is lost.
+    "archived_messages": {"type": String, "nullable": True},
+    "messages_compacted": {"type": BigInteger, "nullable": True},
+    "tokens_before": {"type": BigInteger, "nullable": True},
+    "tokens_after": {"type": BigInteger, "nullable": True},
+    "created_at": {"type": BigInteger, "nullable": False},
+    "__composite_indexes__": [
+        # Resolving the fold in force, and session cleanup.
+        {"name": "compactions_session_created_at", "columns": ["session_id", "created_at"]},
+    ],
+}
+
+
 def get_table_schema_definition(
     table_type: str,
     traces_table_name: str = "agno_traces",
@@ -461,6 +487,7 @@ def get_table_schema_definition(
         "learnings": LEARNINGS_TABLE_SCHEMA,
         "schedules": SCHEDULE_TABLE_SCHEMA,
         "tool_results": TOOL_RESULTS_TABLE_SCHEMA,
+        "compactions": COMPACTIONS_TABLE_SCHEMA,
         "approvals": APPROVAL_TABLE_SCHEMA,
         "auth_tokens": AUTH_TOKEN_TABLE_SCHEMA,
         "service_accounts": SERVICE_ACCOUNT_TABLE_SCHEMA,

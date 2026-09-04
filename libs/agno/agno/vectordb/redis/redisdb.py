@@ -13,8 +13,8 @@ try:
 except ImportError:
     raise ImportError("`redis` and `redisvl` not installed. Please install using `pip install redis redisvl`")
 
-from agno.filters import FilterExpr
 from agno.exceptions import EmbeddingError
+from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker

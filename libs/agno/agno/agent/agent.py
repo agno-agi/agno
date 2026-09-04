@@ -32,6 +32,7 @@ from agno.agent import (
     _tools,
     _utils,
 )
+from agno.compaction.manager import Compaction
 from agno.compression.manager import CompressionManager
 from agno.db.base import AsyncBaseDb, BaseDb, ComponentType, UserMemory
 from agno.eval.base import BaseEval
@@ -351,6 +352,13 @@ class Agent:
     # Metadata stored with this agent
     metadata: Optional[Dict[str, Any]] = None
 
+    # --- Compaction ---
+    # Keep a long session inside the context window: when the conversation
+    # crosses a threshold, older messages are archived and replaced by a
+    # summary. True uses the defaults; a Compaction sets the thresholds, what
+    # is kept verbatim, and whether the agent can search the archive.
+    compaction: Optional[Union[bool, "Compaction"]] = None
+
     # --- Context Compression ---
     # If True, compress tool call results to save context
     compress_tool_results: bool = False
@@ -412,6 +420,7 @@ class Agent:
         enable_session_summaries: bool = False,
         add_session_summary_to_context: Optional[bool] = None,
         session_summary_manager: Optional[SessionSummaryManager] = None,
+        compaction: Optional[Union[bool, Compaction]] = None,
         compress_tool_results: bool = False,
         compression_manager: Optional[CompressionManager] = None,
         offload_tool_results: Optional[Union[bool, "ResultStore"]] = None,
@@ -538,6 +547,9 @@ class Agent:
             self.enable_session_summaries = True
 
         self.add_session_summary_to_context = add_session_summary_to_context
+
+        # Compaction settings
+        self.compaction = compaction
 
         # Context compression settings
         self.compress_tool_results = compress_tool_results

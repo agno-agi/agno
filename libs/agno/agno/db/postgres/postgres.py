@@ -749,6 +749,14 @@ class PostgresDb(BaseDb):
             )
             return self.service_accounts_table
 
+        if table_type == "compactions":
+            self.compactions_table = self._get_or_create_table(
+                table_name=self.compactions_table_name,
+                table_type="compactions",
+                create_table_if_not_found=create_table_if_not_found,
+            )
+            return self.compactions_table
+
         if table_type in MCP_OAUTH_TABLE_NAME_ATTRS:
             return self._get_or_create_table(
                 table_name=getattr(self, MCP_OAUTH_TABLE_NAME_ATTRS[table_type]),
@@ -1463,6 +1471,69 @@ class PostgresDb(BaseDb):
         with self.Session() as sess, sess.begin():
             result = sess.execute(table.delete().where(table.c.result_id.in_(result_ids)))
         return result.rowcount or 0
+
+    # --- Compactions ---
+
+    def upsert_compaction(self, row: Dict[str, Any]) -> None:
+        """Insert one compaction record.
+
+        Records are immutable facts about a single fold, so a conflicting id means
+        the same record is being written twice; the insert is a no-op rather than
+        an update.
+        """
+        table = self._get_table(table_type="compactions", create_table_if_not_found=True)
+        if table is None:
+            raise ValueError(f"Could not create table: {self.compactions_table_name}")
+        from sqlalchemy.dialects.postgresql import insert as _insert
+
+        stmt = _insert(table).values(**row).on_conflict_do_nothing(index_elements=["compaction_id"])
+        with self.Session() as sess, sess.begin():
+            sess.execute(stmt)
+
+    def get_compaction(self, compaction_id: str) -> Optional[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return None
+        with self.Session() as sess:
+            row = sess.execute(select(table).where(table.c.compaction_id == compaction_id)).fetchone()
+            return dict(row._mapping) if row is not None else None
+
+    def get_compactions_for_session(self, session_id: str, limit: Optional[int] = None) -> List[Dict[str, Any]]:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return []
+        stmt = select(table).where(table.c.session_id == session_id).order_by(table.c.created_at.desc())
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
+
+    def delete_compactions_for_session(self, session_id: str) -> int:
+        table = self._get_table(table_type="compactions")
+        if table is None:
+            return 0
+        with self.Session() as sess, sess.begin():
+            result = sess.execute(table.delete().where(table.c.session_id == session_id))
+            return result.rowcount or 0
+
+    def search_compactions(self, session_id: str, query: str, limit: int = 10) -> List[Dict[str, Any]]:
+        """Records whose archived transcript contains ``query``, newest first.
+
+        A substring match, scoped to one session so a search can never reach
+        another conversation's history.
+        """
+        table = self._get_table(table_type="compactions")
+        if table is None or not query:
+            return []
+        stmt = (
+            select(table)
+            .where(table.c.session_id == session_id)
+            .where(table.c.archived_messages.ilike(f"%{query}%"))
+            .order_by(table.c.created_at.desc())
+            .limit(limit)
+        )
+        with self.Session() as sess:
+            return [dict(r._mapping) for r in sess.execute(stmt).fetchall()]
 
     def get_expired_tool_results(self, now: int) -> List[Dict[str, Any]]:
         table = self._get_table(table_type="tool_results")

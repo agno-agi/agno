@@ -1,5 +1,5 @@
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import Any, List, Optional
 
 from agno.models.message import Message
 
@@ -13,12 +13,16 @@ class RunMessages:
         system_message: The system message for this run
         user_message: The user message for this run
         extra_messages: Extra messages added after the system and user messages
+        events: Events raised while assembling these messages, for the caller
+            to emit. Assembly is not a generator, so anything worth streaming
+            (compaction, for one) is collected here instead of yielded.
     """
 
     messages: List[Message] = field(default_factory=list)
     system_message: Optional[Message] = None
     user_message: Optional[Message] = None
     extra_messages: Optional[List[Message]] = None
+    events: List[Any] = field(default_factory=list)
 
     def get_input_messages(self) -> List[Message]:
         """Get the input messages for the model."""
