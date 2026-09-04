@@ -64,7 +64,6 @@ from agno.db.utils import (
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
-    serialize_session_json_fields,
     table_schema_mismatch_error,
     validate_pagination,
 )
@@ -1784,37 +1783,40 @@ class SqliteDb(BaseDb):
             if table is None:
                 return None
 
-            serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+            # Dicts are bound to the JSON columns as-is: the engine's json_serializer
+            # handles the encoding (incl. datetime/UUID/etc). Pre-dumping to a string
+            # here would double-encode, storing a JSON string instead of a JSON object.
+            session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
                 values = dict(
                     session_type=SessionType.AGENT.value,
-                    agent_id=serialized_session.get("agent_id"),
-                    user_id=serialized_session.get("user_id"),
-                    agent_data=serialized_session.get("agent_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    agent_id=session_dict.get("agent_id"),
+                    user_id=session_dict.get("user_id"),
+                    agent_data=session_dict.get("agent_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
             elif isinstance(session, TeamSession):
                 values = dict(
                     session_type=SessionType.TEAM.value,
-                    team_id=serialized_session.get("team_id"),
-                    user_id=serialized_session.get("user_id"),
-                    team_data=serialized_session.get("team_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    team_id=session_dict.get("team_id"),
+                    user_id=session_dict.get("user_id"),
+                    team_data=session_dict.get("team_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
             else:
                 values = dict(
                     session_type=SessionType.WORKFLOW.value,
-                    workflow_id=serialized_session.get("workflow_id"),
-                    user_id=serialized_session.get("user_id"),
-                    workflow_data=serialized_session.get("workflow_data"),
-                    session_data=serialized_session.get("session_data"),
-                    summary=serialized_session.get("summary"),
-                    metadata=serialized_session.get("metadata"),
+                    workflow_id=session_dict.get("workflow_id"),
+                    user_id=session_dict.get("user_id"),
+                    workflow_data=session_dict.get("workflow_data"),
+                    session_data=session_dict.get("session_data"),
+                    summary=session_dict.get("summary"),
+                    metadata=session_dict.get("metadata"),
                 )
 
             update_values = {k: v for k, v in values.items() if k != "session_type"}
@@ -1825,15 +1827,15 @@ class SqliteDb(BaseDb):
 
             with self.Session() as sess, sess.begin():
                 stmt = sqlite.insert(table).values(
-                    session_id=serialized_session.get("session_id"),
-                    created_at=serialized_session.get("created_at") or int(time.time()),
-                    updated_at=serialized_session.get("created_at") or int(time.time()),
+                    session_id=session_dict.get("session_id"),
+                    created_at=session_dict.get("created_at") or int(time.time()),
+                    updated_at=session_dict.get("created_at") or int(time.time()),
                     **values,
                 )
                 stmt = stmt.on_conflict_do_update(
                     index_elements=["session_id"],
                     set_=dict(updated_at=int(time.time()), **update_values),
-                    where=(table.c.user_id == serialized_session.get("user_id")) | (table.c.user_id.is_(None)),
+                    where=(table.c.user_id == session_dict.get("user_id")) | (table.c.user_id.is_(None)),
                 )
                 stmt = stmt.returning(*table.columns)  # type: ignore
                 result = sess.execute(stmt)
@@ -1920,20 +1922,22 @@ class SqliteDb(BaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        # Dicts bind to the JSON columns as-is (the engine's json_serializer
+                        # encodes them); pre-dumping to a string would double-encode.
+                        upsert_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = upsert_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": upsert_dict.get("session_id"),
                                 "session_type": SessionType.AGENT.value,
-                                "agent_id": serialized_session.get("agent_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "agent_data": serialized_session.get("agent_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "agent_id": upsert_dict.get("agent_id"),
+                                "user_id": upsert_dict.get("user_id"),
+                                "agent_data": upsert_dict.get("agent_data"),
+                                "session_data": upsert_dict.get("session_data"),
+                                "metadata": upsert_dict.get("metadata"),
+                                "summary": upsert_dict.get("summary"),
+                                "created_at": upsert_dict.get("created_at"),
                                 "updated_at": updated_at,
                             }
                         )
@@ -1973,21 +1977,21 @@ class SqliteDb(BaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        upsert_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = upsert_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": upsert_dict.get("session_id"),
                                 "session_type": SessionType.TEAM.value,
-                                "team_id": serialized_session.get("team_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "team_id": upsert_dict.get("team_id"),
+                                "user_id": upsert_dict.get("user_id"),
+                                "summary": upsert_dict.get("summary"),
+                                "created_at": upsert_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "team_data": serialized_session.get("team_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "team_data": upsert_dict.get("team_data"),
+                                "session_data": upsert_dict.get("session_data"),
+                                "metadata": upsert_dict.get("metadata"),
                             }
                         )
 
@@ -2026,21 +2030,21 @@ class SqliteDb(BaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        serialized_session = serialize_session_json_fields(session.to_dict(include_runs=False))
+                        upsert_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = serialized_session.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = upsert_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
-                                "session_id": serialized_session.get("session_id"),
+                                "session_id": upsert_dict.get("session_id"),
                                 "session_type": SessionType.WORKFLOW.value,
-                                "workflow_id": serialized_session.get("workflow_id"),
-                                "user_id": serialized_session.get("user_id"),
-                                "summary": serialized_session.get("summary"),
-                                "created_at": serialized_session.get("created_at"),
+                                "workflow_id": upsert_dict.get("workflow_id"),
+                                "user_id": upsert_dict.get("user_id"),
+                                "summary": upsert_dict.get("summary"),
+                                "created_at": upsert_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "workflow_data": serialized_session.get("workflow_data"),
-                                "session_data": serialized_session.get("session_data"),
-                                "metadata": serialized_session.get("metadata"),
+                                "workflow_data": upsert_dict.get("workflow_data"),
+                                "session_data": upsert_dict.get("session_data"),
+                                "metadata": upsert_dict.get("metadata"),
                             }
                         )
 
