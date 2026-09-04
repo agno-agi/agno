@@ -198,11 +198,15 @@ def _build_fastmcp_client(
         timeout = params.get("timeout")
     else:
         # stdio carries no headers: the server is a subprocess, not an HTTP endpoint.
+        # keep_alive=False because close() must stop that subprocess. fastmcp defaults it
+        # on, which would leave one orphaned child per connect/close cycle -- and a
+        # non-AgentOS agent run does one cycle per run.
         fastmcp_transport = StdioTransport(
             command=server_params.command,
             args=list(server_params.args or []),
             env=dict(server_params.env) if server_params.env else None,
             cwd=getattr(server_params, "cwd", None),
+            keep_alive=False,
         )
         timeout = None
 
