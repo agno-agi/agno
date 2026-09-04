@@ -44,3 +44,7 @@ class OpenResponses(OpenAIResponses):
         this if they support specific reasoning models.
         """
         return False
+
+    def _has_fixed_sampling_params(self) -> bool:
+        # A compatible provider's model ids say nothing about OpenAI's sampling rules.
+        return False
