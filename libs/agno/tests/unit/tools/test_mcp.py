@@ -2096,3 +2096,23 @@ def test_build_fastmcp_client_maps_both_sse_timeouts():
 
     assert http_client.timeout.connect == 5.0
     assert http_client.timeout.read == 600.0
+
+
+def test_missing_fastmcp_raises_an_install_hint():
+    """connect() swallows exceptions, so an unguarded ModuleNotFoundError would surface
+    only as an agent running with zero tools. The guard names the missing extra the way
+    the mcp import guard does."""
+    import builtins
+
+    from agno.tools.mcp.mcp import _import_fastmcp
+
+    real_import = builtins.__import__
+
+    def blocked(name, *args, **kwargs):
+        if name == "fastmcp" or name.startswith("fastmcp."):
+            raise ModuleNotFoundError("No module named 'fastmcp'")
+        return real_import(name, *args, **kwargs)
+
+    with patch.object(builtins, "__import__", blocked):
+        with pytest.raises(ImportError, match=r"fastmcp.*not installed"):
+            _import_fastmcp()

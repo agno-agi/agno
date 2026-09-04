@@ -24,6 +24,26 @@ except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
+_FASTMCP_INSTALL_HINT = (
+    "`fastmcp` not installed. MCPTools builds its connections with it. "
+    "Please install using `pip install 'fastmcp>=4.0.0,<5'`"
+)
+
+
+def _import_fastmcp() -> Any:
+    """Import fastmcp, raising the same shape of error the ``mcp`` guard above does.
+
+    fastmcp is imported lazily because it is only needed when the toolkit builds its own
+    connection, but a missing install must still say so: connect() swallows exceptions,
+    so an unguarded ModuleNotFoundError surfaces only as an agent running with no tools.
+    """
+    try:
+        import fastmcp
+    except ModuleNotFoundError:
+        raise ImportError(_FASTMCP_INSTALL_HINT)
+    return fastmcp
+
+
 def _retain_session_transport_class() -> Any:
     """A transport that keeps the server session alive when the client closes.
 
@@ -41,9 +61,11 @@ def _retain_session_transport_class() -> Any:
     """
     import contextlib
 
-    from fastmcp.client.transports import ClientTransport
     from mcp import ClientSession
     from mcp.client.streamable_http import streamable_http_client
+
+    _import_fastmcp()
+    from fastmcp.client.transports import ClientTransport
 
     class _RetainSessionTransport(ClientTransport):
         def __init__(
@@ -135,6 +157,7 @@ def _build_fastmcp_client(
     "legacy" keeps the session-based behaviour this toolkit has always had, "auto"
     negotiates the newest era both sides support.
     """
+    _import_fastmcp()
     from fastmcp import Client
     from fastmcp.client.transports import SSETransport, StdioTransport, StreamableHttpTransport
 
