@@ -396,17 +396,26 @@ def count_events(
         return int(conn.execute(stmt).scalar() or 0)
 
 
-def aggregate_decisions_by_day(engine: Engine, table: Any) -> List[Dict[str, Any]]:
-    """Count allowed and denied authorization decisions for each UTC day."""
+def aggregate_decisions_by_day(engine: Engine, table: Any, starting_at: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Count allowed and denied authorization decisions for each UTC day.
+
+    ``starting_at`` bounds the scan to rows created at or after that epoch second so an
+    incremental refresh only touches recent audit rows (the table gets one row per
+    authenticated request). The day grouping itself is an expression, so the bound on
+    the indexed ``created_at`` column is what keeps this cheap.
+    """
     seconds_per_day = 24 * 60 * 60
     day_start = (table.c.created_at - (table.c.created_at % seconds_per_day)).label("date")
+    filters = [table.c.action.in_(("access.allowed", "access.denied"))]
+    if starting_at is not None:
+        filters.append(table.c.created_at >= starting_at)
     statement = (
         select(
             day_start,
             func.sum(case((table.c.action == "access.allowed", 1), else_=0)).label("authorization_allowed_count"),
             func.sum(case((table.c.action == "access.denied", 1), else_=0)).label("authorization_denied_count"),
         )
-        .where(table.c.action.in_(("access.allowed", "access.denied")))
+        .where(*filters)
         .group_by(day_start)
         .order_by(day_start.asc())
     )

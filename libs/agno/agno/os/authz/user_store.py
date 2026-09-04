@@ -337,34 +337,35 @@ class ManagedUserStore:
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
-    def calculate_os_metrics(self, decision_metrics: Optional[List[Dict[str, Any]]] = None) -> List[dict]:
-        """Rebuild cached daily aggregates derived from OS-level data."""
-        if self._mem is None:
-            return self._db.calculate_os_metrics(decision_metrics=decision_metrics)
+    def calculate_os_metrics(
+        self,
+        decision_metrics: Optional[List[Dict[str, Any]]] = None,
+        decisions_since: Optional[int] = None,
+    ) -> List[dict]:
+        """Rebuild cached daily aggregates derived from OS-level data.
 
-        seconds_per_day = 24 * 60 * 60
+        Registrations are always recounted; ``decision_metrics`` covers days at or after
+        ``decisions_since`` and cached decision counts for earlier days are kept (see
+        ``agno.db.os_metrics_store``).
+        """
+        if self._mem is None:
+            return self._db.calculate_os_metrics(decision_metrics=decision_metrics, decisions_since=decisions_since)
+
+        from agno.db.os_metrics_aggregation import SECONDS_PER_DAY, merge_os_metric_rows
+
         counts: Dict[int, int] = {}
         for user in self._mem.values():
             created_at = int(user["created_at"])
-            day_start = created_at - (created_at % seconds_per_day)
+            day_start = created_at - (created_at % SECONDS_PER_DAY)
             counts[day_start] = counts.get(day_start, 0) + 1
 
-        now = _now()
-        decisions_by_day = {int(row["date"]): row for row in decision_metrics or []}
-        rows: List[Dict[str, Any]] = []
-        for day_start in sorted(counts.keys() | decisions_by_day.keys()):
-            decision_row = decisions_by_day.get(day_start, {})
-            rows.append(
-                {
-                    "id": str(day_start),
-                    "date": day_start,
-                    "users_created_count": counts.get(day_start, 0),
-                    "authorization_allowed_count": int(decision_row.get("authorization_allowed_count", 0)),
-                    "authorization_denied_count": int(decision_row.get("authorization_denied_count", 0)),
-                    "created_at": now,
-                    "updated_at": now,
-                }
-            )
+        rows = merge_os_metric_rows(
+            existing=self._os_metrics_mem,
+            users_by_day=counts,
+            decision_metrics=decision_metrics,
+            decisions_since=decisions_since,
+            now=_now(),
+        )
         self._os_metrics_mem = {int(row["date"]): row for row in rows}
         return [dict(row) for row in rows]
 

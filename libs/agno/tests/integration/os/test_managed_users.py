@@ -117,6 +117,17 @@ def test_store_creation_metrics(tmp_path, db_url, monkeypatch):
     assert [(row["date"], row["users_created_count"]) for row in cached] == [(86400, 1)]
     assert updated_at is not None
 
+    # Incremental refresh: days before ``decisions_since`` keep their cached counts.
+    timestamps = iter([259200])
+    incremental = store.calculate_os_metrics(
+        decision_metrics=[{"date": 172800, "authorization_allowed_count": 5, "authorization_denied_count": 2}],
+        decisions_since=172800,
+    )
+    assert [
+        (row["date"], row["users_created_count"], row["authorization_allowed_count"], row["authorization_denied_count"])
+        for row in incremental
+    ] == [(0, 2, 3, 1), (86400, 1, 0, 0), (172800, 0, 5, 2)]
+
 
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
@@ -296,6 +307,17 @@ def test_os_metrics_include_authorization_decisions():
     assert metrics[0]["users_created_count"] == 0
     assert metrics[0]["authorization_allowed_count"] == 1
     assert metrics[0]["authorization_denied_count"] == 1
+
+    # The refresh above recorded its own decisions (the metrics endpoints are
+    # authorized like any other route), so "today" now has cached counts too. A second
+    # refresh re-aggregates only from the day before the latest cached day: the seeded
+    # 1970 rows are untouched even though a new audit row landed there.
+    audit.record(AuditEvent(action="access.denied", actor="bob", target="GET /agents", timestamp=300))
+    assert client.post("/metrics/os/refresh", headers=_auth("alice")).status_code == 200
+    metrics = client.get("/metrics/os?starting_date=1970-01-01&ending_date=1970-01-01", headers=_auth("alice")).json()[
+        "metrics"
+    ]
+    assert (metrics[0]["authorization_allowed_count"], metrics[0]["authorization_denied_count"]) == (1, 1)
 
 
 def test_os_metrics_auto_mount_with_composite_authorization_provider():

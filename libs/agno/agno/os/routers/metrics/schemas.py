@@ -56,8 +56,19 @@ class DayAggregatedOSMetrics(BaseModel):
 
     id: str = Field(..., description="Unique identifier for the metrics record")
     users_created_count: int = Field(..., description="Users registered on this day", ge=0)
-    authorization_allowed_count: int = Field(..., description="Allowed authorization decisions on this day", ge=0)
-    authorization_denied_count: int = Field(..., description="Denied authorization decisions on this day", ge=0)
+    authorization_allowed_count: int = Field(
+        ...,
+        description=(
+            "Authorization checks that passed on this day. Counts decisions, not requests: "
+            "a request can record a route-level allow and a resource-level deny."
+        ),
+        ge=0,
+    )
+    authorization_denied_count: int = Field(
+        ...,
+        description="Authorization checks that were denied on this day (scope or resource-level).",
+        ge=0,
+    )
     date: datetime = Field(..., description="UTC day for which these metrics are aggregated")
     created_at: datetime = Field(..., description="Timestamp when metrics were created")
     updated_at: datetime = Field(..., description="Timestamp when metrics were last updated")

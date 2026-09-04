@@ -2158,8 +2158,14 @@ class BaseDb(ABC):
         """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
-    def calculate_os_metrics(self, decision_metrics: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
-        """Rebuild aggregates derived from OS-level data sources."""
+    def calculate_os_metrics(
+        self,
+        decision_metrics: Optional[List[Dict[str, Any]]] = None,
+        decisions_since: Optional[int] = None,
+    ) -> List[Dict[str, Any]]:
+        """Rebuild aggregates derived from OS-level data sources. ``decision_metrics``
+        covers days at or after ``decisions_since``; cached counts for earlier days are
+        kept (``None`` replaces all history)."""
         raise NotImplementedError
 
     def get_os_metrics(
@@ -2214,8 +2220,9 @@ class BaseDb(ABC):
         """How many audit events match, for pagination."""
         raise NotImplementedError
 
-    def aggregate_authz_decisions_by_day(self) -> List[Dict[str, Any]]:
-        """Daily allowed/denied authorization decision counts."""
+    def aggregate_authz_decisions_by_day(self, starting_at: Optional[int] = None) -> List[Dict[str, Any]]:
+        """Daily allowed/denied authorization decision counts for rows created at or
+        after ``starting_at`` (all rows when ``None``)."""
         raise NotImplementedError
 
     # --- Service Accounts (Optional) ---

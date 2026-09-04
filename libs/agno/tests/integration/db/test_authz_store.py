@@ -17,9 +17,8 @@ import pytest
 
 pytest.importorskip("sqlalchemy")
 
-from sqlalchemy import inspect  # noqa: E402
-
 from agno.db.sqlite import SqliteDb  # noqa: E402
+from agno.exceptions import SchemaMismatchError  # noqa: E402
 
 
 @pytest.fixture
@@ -234,46 +233,72 @@ def test_os_metrics_are_cached_and_filtered_by_utc_day(db):
     assert cached[0]["users_created_count"] == 2
 
 
-def test_existing_os_metrics_cache_adds_authorization_columns(db):
-    with db.db_engine.begin() as connection:
-        connection.exec_driver_sql(
-            """
-            CREATE TABLE agno_os_metrics (
-                id VARCHAR NOT NULL PRIMARY KEY,
-                users_created_count BIGINT NOT NULL,
-                date BIGINT NOT NULL UNIQUE,
-                created_at BIGINT NOT NULL,
-                updated_at BIGINT NOT NULL
-            )
-            """
-        )
-        connection.exec_driver_sql(
-            """
-            INSERT INTO agno_os_metrics
-                (id, users_created_count, date, created_at, updated_at)
-            VALUES ('0', 2, 0, 1, 1)
-            """
-        )
-
-    cached, _ = db.get_os_metrics()
-
-    assert cached[0]["users_created_count"] == 2
-    assert cached[0]["authorization_allowed_count"] == 0
-    assert cached[0]["authorization_denied_count"] == 0
-    assert {column["name"] for column in inspect(db.db_engine).get_columns("agno_os_metrics")} >= {
-        "authorization_allowed_count",
-        "authorization_denied_count",
-    }
+def _decision(db, event_id, created_at, action):
+    db.record_authz_decision(
+        {
+            "event_id": event_id,
+            "created_at": created_at,
+            "actor": "metric-user",
+            "action": action,
+            "target": "GET /agents",
+            "token_ref": None,
+            "required": None,
+            "scopes": None,
+        }
+    )
 
 
-def test_invalid_os_metrics_table_is_not_modified(db):
+def test_os_metrics_incremental_refresh_keeps_older_decision_counts(db):
+    _decision(db, "d-old", 300, "access.allowed")
+    _decision(db, "d-new", 86400 + 300, "access.denied")
+    first = db.calculate_os_metrics(decision_metrics=db.aggregate_authz_decisions_by_day())
+    assert [(r["date"], r["authorization_allowed_count"], r["authorization_denied_count"]) for r in first] == [
+        (0, 1, 0),
+        (86400, 0, 1),
+    ]
+    first_created_at = {r["date"]: r["created_at"] for r in first}
+
+    # New audit rows land on both days, but an incremental refresh only re-aggregates
+    # from ``starting_at`` on: the bounded scan is what keeps refreshes cheap.
+    _decision(db, "d-old-2", 400, "access.denied")
+    _decision(db, "d-new-2", 86400 + 400, "access.allowed")
+    bounded = db.aggregate_authz_decisions_by_day(starting_at=86400)
+    assert [row["date"] for row in bounded] == [86400]
+
+    second = db.calculate_os_metrics(decision_metrics=bounded, decisions_since=86400)
+    assert [(r["date"], r["authorization_allowed_count"], r["authorization_denied_count"]) for r in second] == [
+        (0, 1, 0),  # cached count preserved, the day-0 deny was not rescanned
+        (86400, 1, 1),
+    ]
+    # created_at marks when a day first appeared in the cache and survives refreshes.
+    assert {r["date"]: r["created_at"] for r in second} == first_created_at
+
+    # A full refresh (no lower bound) replaces every cached count.
+    full = db.calculate_os_metrics(decision_metrics=db.aggregate_authz_decisions_by_day())
+    assert [(r["date"], r["authorization_allowed_count"], r["authorization_denied_count"]) for r in full] == [
+        (0, 1, 1),
+        (86400, 1, 1),
+    ]
+
+
+def test_os_metrics_drops_days_with_no_remaining_data(db):
+    db.upsert_authz_user(
+        "only-user",
+        {"email": None, "name": None, "disabled": False, "created_at": 100, "updated_at": 100, "metadata": None},
+    )
+    assert [r["date"] for r in db.calculate_os_metrics()] == [0]
+
+    db.delete_authz_user("only-user")
+    assert db.calculate_os_metrics() == []
+    assert db.get_os_metrics() == ([], None)
+
+
+def test_invalid_os_metrics_table_is_rejected(db):
     with db.db_engine.begin() as connection:
         connection.exec_driver_sql("CREATE TABLE agno_os_metrics (id VARCHAR PRIMARY KEY)")
 
-    with pytest.raises(ValueError, match="invalid schema"):
+    with pytest.raises(SchemaMismatchError, match="invalid schema"):
         db.get_os_metrics()
-
-    assert {column["name"] for column in inspect(db.db_engine).get_columns("agno_os_metrics")} == {"id"}
 
 
 def test_both_audit_trails_are_separate_and_searchable(db):

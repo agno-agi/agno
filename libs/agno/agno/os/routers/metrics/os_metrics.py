@@ -1,4 +1,19 @@
-"""Admin API for metrics derived from OS-level data sources."""
+"""API for metrics derived from OS-level data sources.
+
+What the authorization counts mean: every enforcement choke point records one
+``access.allowed`` / ``access.denied`` decision per check (see
+``agno.os.authz.audit.record_decision``). They are decisions, not requests or users:
+
+* A request that passes the route gate and is then denied by the per-resource gate
+  contributes one allow AND one deny.
+* Allow-by-default routes (no required scopes) still record an allow, and so do the
+  metrics endpoints themselves, so a dashboard polling this API adds to ``allowed``.
+* Allowed + denied is therefore the number of authorization checks, not of requests.
+
+Refreshes are incremental for decisions: only audit rows at or after the last two
+cached days are re-aggregated; earlier days keep their cached counts, so a refresh
+stays cheap as the decision trail grows and survives audit retention purges.
+"""
 
 import logging
 from datetime import date, datetime, timedelta, timezone
@@ -7,6 +22,7 @@ from typing import TYPE_CHECKING, List, Optional, Union
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from starlette.concurrency import run_in_threadpool
 
+from agno.db.os_metrics_aggregation import SECONDS_PER_DAY
 from agno.os.auth import get_authentication_dependency
 from agno.os.routers.metrics.schemas import (
     DayAggregatedOSMetrics,
@@ -36,11 +52,22 @@ def get_os_metrics_router(
         tags=["OS metrics"],
         dependencies=[Depends(get_authentication_dependency(settings))],
     )
+    # Per-process: under several workers each one tracks its own refresh, so this is
+    # a courtesy status, not a lock. Mirrors the run-metrics router.
     refresh_state: Optional[MetricsRefreshStatusResponse] = None
 
     def _calculate_os_metrics() -> List[dict]:
-        decision_metrics = audit_sink.aggregate_decisions_by_day() if audit_sink is not None else []
-        return user_store.calculate_os_metrics(decision_metrics=decision_metrics)
+        if audit_sink is None:
+            return user_store.calculate_os_metrics(decision_metrics=[])
+
+        # Re-aggregate from the day before the latest cached day so a decision written
+        # just before a refresh (or by a worker with a slightly behind clock) is still
+        # picked up; everything older keeps its cached counts.
+        cached, _ = user_store.os_metrics()
+        latest_day = max((int(row["date"]) for row in cached), default=None)
+        decisions_since = latest_day - SECONDS_PER_DAY if latest_day is not None else None
+        decision_metrics = audit_sink.aggregate_decisions_by_day(starting_at=decisions_since)
+        return user_store.calculate_os_metrics(decision_metrics=decision_metrics, decisions_since=decisions_since)
 
     def _date_bounds(starting_date: Optional[date], ending_date: Optional[date]) -> tuple[Optional[int], Optional[int]]:
         if starting_date is not None and ending_date is not None and starting_date > ending_date:
