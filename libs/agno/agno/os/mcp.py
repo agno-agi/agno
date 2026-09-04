@@ -1989,7 +1989,15 @@ def build_mcp_server(
     # owns authentication for the HTTP transport: http_app() serves its discovery/OAuth
     # routes inside this app and wraps the MCP path in the SDK's challenge middleware.
     # The in-memory client path used in tests ignores it.
-    mcp = FastMCP(os.name or "AgentOS", auth=os._get_mcp_auth_provider())
+    server_name = (mcp_config.name if mcp_config is not None else None) or os.name or "AgentOS"
+    server_version = (mcp_config.version if mcp_config is not None else None) or getattr(os, "version", None)
+    server_instructions = mcp_config.instructions if mcp_config is not None else None
+    mcp = FastMCP(
+        server_name,
+        instructions=server_instructions,
+        version=server_version,
+        auth=os._get_mcp_auth_provider(),
+    )
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
     # whether components are exposed (the lifecycle pair rides along with exposure).

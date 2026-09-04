@@ -23,6 +23,7 @@ from agno.utils.models.claude import (
     format_tools_for_model,
     resolve_http_client,
     route_sampling_params_to_extra_body,
+    serialize_content_blocks,
     supports_prefill,
 )
 from agno.utils.tokens import count_schema_tokens
@@ -190,9 +191,11 @@ class Claude(Model):
         # Set up skills configuration if skills are enabled
         if self.skills:
             self._setup_skills_configuration()
-        # Auto-enable trailing user message for models that don't support prefill
+        # Auto-enable trailing user message for models that don't support prefill. Prefill is also
+        # rejected while thinking is on, on every model: a history ending in an assistant turn (a
+        # resumed run, or a response truncated inside its thinking) must be followed by a user turn.
         if self.append_trailing_user_message is None:
-            self.append_trailing_user_message = not supports_prefill(self.id)
+            self.append_trailing_user_message = not supports_prefill(self.id) or self._thinking_enabled()
 
     def _get_client_params(self) -> Dict[str, Any]:
         client_params: Dict[str, Any] = {}
@@ -264,6 +267,15 @@ class Claude(Model):
                         return True
 
         return False
+
+    def _thinking_enabled(self) -> bool:
+        """Return True when the request will run with thinking on.
+
+        ``request_params`` are applied last in ``get_request_params`` and override the ``thinking``
+        field, so a thinking config supplied there decides.
+        """
+        thinking = (self.request_params or {}).get("thinking", self.thinking)
+        return isinstance(thinking, dict) and thinking.get("type") != "disabled"
 
     def _validate_thinking_support(self) -> None:
         """
@@ -1035,6 +1047,11 @@ class Claude(Model):
                     server_blocks = model_response.provider_data.setdefault("server_tool_blocks", [])
                     server_blocks.append(block.model_dump())
 
+            # Keep the response's content blocks verbatim and in order so history replay can echo
+            # the turn back exactly; the convenience fields above are lossy views of these blocks.
+            model_response.provider_data = model_response.provider_data or {}
+            model_response.provider_data["content_blocks"] = serialize_content_blocks(response.content)
+
         # Extract tool calls from the response
         if response.stop_reason == "tool_use":
             for block in response.content:
@@ -1206,6 +1223,14 @@ class Claude(Model):
                 if model_response.provider_data is None:
                     model_response.provider_data = {}
                 model_response.provider_data.setdefault("server_tool_blocks", []).extend(server_tool_blocks)
+
+            # Keep the final content blocks verbatim and in order so history replay can echo the
+            # turn back exactly; the streamed deltas above are lossy views of these blocks.
+            content_blocks = serialize_content_blocks(response.message.content)  # type: ignore
+            if content_blocks:
+                if model_response.provider_data is None:
+                    model_response.provider_data = {}
+                model_response.provider_data["content_blocks"] = content_blocks
 
             # Handle structured outputs (JSON outputs) from accumulated text
             # Note: We parse from accumulated_text but don't set model_response.content to avoid duplication

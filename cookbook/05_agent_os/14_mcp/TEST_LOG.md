@@ -169,6 +169,28 @@ PAT principal `sa:secure-mcp-client-b0ebb699ad` authenticated, exactly the six
 
 ---
 
+### server_identity.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (MCP transport), MOCK (model)
+
+**Description:** Served the cookbook (agno from this branch, fastmcp 4.0.2 / mcp
+2.1.1) and connected a FastMCP streamable-HTTP client twice, once with
+`mode="legacy"` and once with `mode="auto"`, to read what a client learns about
+the server at connect time.
+
+**Result:** Both handshakes reported `server_info` name `Acme Support` and version
+`1.4.0` and the full instructions string from `MCPConfig(instructions=...)`; the
+legacy handshake carried them in the initialize result and the 2026-07-28
+negotiation exposed the same values on the client. `tools/list` returned the
+eight default tools. No `OPENAI_API_KEY` was set, so `run_agent` was not
+exercised. The four unit tests in `test_mcp_server.py` cover the AgentOS
+defaults, the fastmcp fallback when nothing is set, the `MCPConfig` overrides,
+and the initialize response.
+
+---
+
 ### oauth_builtin.py
 
 **Status:** PASS
