@@ -4516,7 +4516,20 @@ async def _acontinue_run_background_stream(
     # reads PAUSED for the whole execution while the run actually runs. The
     # loaded run is used ONLY for the status persists - the continue dispatch
     # below still receives the caller's run_response untouched.
-    persist_run = run_response or cast(Optional[RunOutput], agent_session.get_run(_run_id))
+    stored_run = cast(Optional[RunOutput], agent_session.get_run(_run_id))
+    if (
+        run_response is not None
+        and stored_run is not None
+        and not (fork or regenerate)
+        and stored_run.status in (RunStatus.completed, RunStatus.cancelled)
+        and run_response.status == RunStatus.paused
+    ):
+        raise RunNotContinuableError(
+            f"Cannot continue run {_run_id}: the stored run has status "
+            f"{getattr(stored_run.status, 'value', stored_run.status)} "
+            "and cannot be continued in place from a paused caller snapshot. The stored run is unchanged."
+        )
+    persist_run = run_response or stored_run
     if persist_run:
         persist_run.status = RunStatus.pending
         storage_run = await abuild_offloaded_storage_copy(agent, persist_run, session_id) or persist_run
