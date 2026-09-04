@@ -24,6 +24,9 @@ class PlivoTools(Toolkit):
         enable_list_messages: bool = True,
         enable_list_calls: bool = True,
         enable_lookup_number: bool = True,
+        enable_send_verification: bool = True,
+        enable_validate_verification: bool = True,
+        enable_send_whatsapp: bool = True,
         all: bool = False,
         **kwargs,
     ):
@@ -42,6 +45,9 @@ class PlivoTools(Toolkit):
             enable_list_messages: Register the list_messages tool
             enable_list_calls: Register the list_calls tool
             enable_lookup_number: Register the lookup_number tool
+            enable_send_verification: Register the send_verification tool
+            enable_validate_verification: Register the validate_verification tool
+            enable_send_whatsapp: Register the send_whatsapp tool
             all: Register all tools regardless of the individual enable_* flags
         """
         self.auth_id = auth_id or getenv("PLIVO_AUTH_ID")
@@ -73,6 +79,12 @@ class PlivoTools(Toolkit):
             tools.append(self.list_calls)
         if all or enable_lookup_number:
             tools.append(self.lookup_number)
+        if all or enable_send_verification:
+            tools.append(self.send_verification)
+        if all or enable_validate_verification:
+            tools.append(self.validate_verification)
+        if all or enable_send_whatsapp:
+            tools.append(self.send_whatsapp)
 
         super().__init__(name="plivo", tools=tools, **kwargs)
 
@@ -273,3 +285,130 @@ class PlivoTools(Toolkit):
         except PlivoRestError as e:
             log_error(f"Failed to look up number {number}")
             return {"error": str(e)}
+
+    def send_verification(self, to: str, channel: str = "sms") -> str:
+        """
+        Start a phone-number verification and send a one-time code using Plivo Verify.
+
+        Plivo delivers a one-time code to the recipient and returns a session_uuid.
+        Keep that session_uuid and pass it to validate_verification along with the
+        code the user enters.
+
+        Args:
+            to: Recipient phone number (E.164 format) that receives the code
+            channel: Delivery channel for the code, either "sms" (default) or "voice"
+
+        Returns:
+            str: The session_uuid to use for validation if successful, error message if failed
+        """
+        try:
+            if not self.validate_phone_number(to):
+                return "Error: 'to' number must be in E.164 format (e.g., +1234567890)"
+            channel = channel.lower()
+            if channel not in ("sms", "voice"):
+                return "Error: channel must be sms or voice"
+
+            response = self.client.verify_session.create(recipient=to, channel=channel)
+            session_uuid = getattr(response, "session_uuid", None) or "unknown"
+            log_info(f"Verification started via {channel}. session_uuid: {session_uuid}, to: {to}")
+            return f"Verification code sent to {to} via {channel}. session_uuid: {session_uuid}"
+        except PlivoRestError as e:
+            log_error(f"Failed to start verification for {to}")
+            return f"Error starting verification: {str(e)}"
+
+    def validate_verification(self, session_uuid: str, otp: str) -> str:
+        """
+        Check a verification code the user received against its Plivo Verify session.
+
+        The code is treated as valid only when Plivo confirms it. A wrong or expired
+        code, or any error, is reported as not verified so a false positive is never
+        returned.
+
+        Args:
+            session_uuid: The session_uuid returned by send_verification
+            otp: The one-time code the user entered
+
+        Returns:
+            str: "verified" when the code matches, otherwise "not verified" with the reason
+        """
+        try:
+            if not session_uuid or len(session_uuid.strip()) == 0:
+                return "Error: session_uuid cannot be empty"
+            if not otp or len(otp.strip()) == 0:
+                return "Error: otp cannot be empty"
+
+            response = self.client.verify_session.validate(session_uuid, otp=otp)
+            message = getattr(response, "message", "") or ""
+            verified = message == "session validated successfully"
+            log_info(f"Verification checked for session {session_uuid}: verified={verified}")
+            outcome = "verified" if verified else "not verified"
+            return f"{outcome} (session {session_uuid}): {message}"
+        except PlivoRestError as e:
+            log_error(f"Failed to validate verification for session {session_uuid}")
+            return f"not verified (session {session_uuid}): {str(e)}"
+
+    def send_whatsapp(
+        self,
+        to: str,
+        from_: str,
+        body: Optional[str] = None,
+        template: Optional[Dict[str, Any]] = None,
+    ) -> str:
+        """
+        Send an outbound WhatsApp message using Plivo.
+
+        A conversation must be opened with a pre-approved template. Freeform text is
+        only delivered within 24 hours of the recipient's last message; outside that
+        window a template is required. Provide either body or template.
+
+        Args:
+            to: Recipient phone number (E.164 format)
+            from_: Sender — a WhatsApp-enabled Plivo number
+            body: Freeform message text, delivered only within the 24-hour session window
+            template: Pre-approved template as a dict with "name", "language", and optional
+                "components" (each a dict with "type" and optional "parameters"); required to
+                open a conversation or to message outside the 24-hour window
+
+        Returns:
+            str: Message UUID if successful, error message if failed
+        """
+        try:
+            if not self.validate_phone_number(to):
+                return "Error: 'to' number must be in E.164 format (e.g., +1234567890)"
+            if not from_ or len(from_.strip()) == 0:
+                return "Error: Sender (from_) cannot be empty"
+            if not template and (not body or len(body.strip()) == 0):
+                return "Error: Provide either body or template"
+
+            if template:
+                try:
+                    built_template = self._build_whatsapp_template(template)
+                except (KeyError, TypeError, ValueError) as e:
+                    return f"Error: invalid WhatsApp template ({str(e)})"
+                response = self.client.messages.create(src=from_, dst=to, type_="whatsapp", template=built_template)
+            else:
+                response = self.client.messages.create(src=from_, dst=to, type_="whatsapp", text=body)
+            message_uuid = response.message_uuid[0] if getattr(response, "message_uuid", None) else "unknown"
+            log_info(f"WhatsApp message sent. UUID: {message_uuid}, to: {to}")
+            return f"WhatsApp message sent successfully. UUID: {message_uuid}"
+        except PlivoRestError as e:
+            log_error(f"Failed to send WhatsApp message to {to}")
+            return f"Error sending WhatsApp message: {str(e)}"
+
+    @staticmethod
+    def _build_whatsapp_template(template: Dict[str, Any]) -> Any:
+        """Build a Plivo WhatsApp Template object from a plain dict."""
+        from plivo.utils.template import Component, Parameter, Template
+
+        components = []
+        for component in template.get("components", []):
+            parameters = [Parameter(**parameter) for parameter in component.get("parameters", [])]
+            components.append(
+                Component(
+                    type=component["type"],
+                    sub_type=component.get("sub_type"),
+                    index=component.get("index"),
+                    parameters=parameters,
+                )
+            )
+        return Template(name=template["name"], language=template["language"], components=components)
