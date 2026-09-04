@@ -8,11 +8,14 @@ Requirements:
     ``pip install simple-salesforce``
 
 Authentication (pick one):
-    **Username / Password** — set SALESFORCE_USERNAME, SALESFORCE_PASSWORD,
-    SALESFORCE_SECURITY_TOKEN, and optionally SALESFORCE_DOMAIN env vars.
-
     **Session / Instance URL** — pass ``instance_url`` and ``session_id`` directly.
     Use this when SOAP API login is disabled (default in newer Developer Edition orgs).
+
+    **Connected App (OAuth 2.0 Client Credentials)** — set SALESFORCE_CONSUMER_KEY
+    and SALESFORCE_CONSUMER_SECRET. Optionally set SALESFORCE_DOMAIN for custom domains.
+
+    **Username / Password** — set SALESFORCE_USERNAME, SALESFORCE_PASSWORD,
+    SALESFORCE_SECURITY_TOKEN, and optionally SALESFORCE_DOMAIN env vars.
 """
 
 import json
@@ -55,6 +58,8 @@ class SalesforceTools(Toolkit):
         domain: Optional[str] = None,
         instance_url: Optional[str] = None,
         session_id: Optional[str] = None,
+        consumer_key: Optional[str] = None,
+        consumer_secret: Optional[str] = None,
         max_records: int = 200,
         max_fields: int = 100,
         enable_list_objects: bool = True,
@@ -79,9 +84,23 @@ class SalesforceTools(Toolkit):
         password = password or getenv("SALESFORCE_PASSWORD")
         security_token = security_token or getenv("SALESFORCE_SECURITY_TOKEN")
         domain = domain or getenv("SALESFORCE_DOMAIN", "login")
+        consumer_key = consumer_key or getenv("SALESFORCE_CONSUMER_KEY")
+        consumer_secret = consumer_secret or getenv("SALESFORCE_CONSUMER_SECRET")
 
         if instance_url and session_id:
             self.sf = Salesforce(instance_url=instance_url, session_id=session_id)
+        elif consumer_key and consumer_secret:
+            cc_kwargs: Dict[str, Any] = {
+                "consumer_key": consumer_key,
+                "consumer_secret": consumer_secret,
+            }
+            if username:
+                cc_kwargs["username"] = username
+            if password:
+                cc_kwargs["password"] = password
+            if domain != "login":
+                cc_kwargs["domain"] = domain
+            self.sf = Salesforce(**cc_kwargs)
         elif username and password:
             self.sf = Salesforce(
                 username=username,
@@ -91,9 +110,11 @@ class SalesforceTools(Toolkit):
             )
         else:
             raise ValueError(
-                "Salesforce credentials not configured. "
-                "Set SALESFORCE_USERNAME, SALESFORCE_PASSWORD, and SALESFORCE_SECURITY_TOKEN "
-                "or pass instance_url and session_id."
+                "Salesforce credentials not configured. Provide one of:\n"
+                "  1. instance_url + session_id\n"
+                "  2. consumer_key + consumer_secret (Connected App OAuth 2.0)\n"
+                "  3. username + password + security_token\n"
+                "All values can be set via SALESFORCE_* environment variables."
             )
 
         tools: List[Any] = []
@@ -122,6 +143,8 @@ class SalesforceTools(Toolkit):
         """List all available Salesforce objects in the org."""
         try:
             describe = self.sf.describe()
+            if not describe:
+                return json.dumps({"total": 0, "returned": 0, "objects": []})
             objects = [
                 {
                     "name": obj.get("name", ""),
