@@ -1,12 +1,11 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol, runtime_checkable
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_error, log_exception
 
 try:
-    from mcp import ClientSession
     from mcp.shared.exceptions import MCPError
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
@@ -16,6 +15,30 @@ except ModuleNotFoundError:
 
 from agno.media import Image
 from agno.tools.function import ToolResult
+
+
+@runtime_checkable
+class MCPSession(Protocol):
+    """The session surface this package uses, satisfied by both session types.
+
+    A connection is driven either by a ``fastmcp.Client`` the toolkit built or by a
+    ``ClientSession`` the caller supplied. The two are unrelated classes, so this
+    structural type is what lets the shared code paths stay checked instead of falling
+    back to ``Any``.
+
+    Only the three methods every caller needs are required. Liveness probing is left
+    out deliberately: ``ClientSession`` spells it ``send_ping`` and ``fastmcp.Client``
+    spells it ``ping``, so ``ping_session`` resolves it by name at the one call site.
+    """
+
+    async def call_tool(
+        self, name: str, arguments: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any
+    ) -> Any: ...
+
+    async def list_tools(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    async def initialize(self, *args: Any, **kwargs: Any) -> Any: ...
+
 
 if TYPE_CHECKING:
     from agno.agent import Agent
@@ -84,9 +107,36 @@ def _strip_url_for_name(url: str) -> str:
     return authority + slash + path
 
 
+def _is_fastmcp_client(session: Any) -> bool:
+    """True when the session is a fastmcp Client rather than a raw ClientSession."""
+    try:
+        from fastmcp import Client
+    except ModuleNotFoundError:
+        return False
+    return isinstance(session, Client)
+
+
+async def ping_session(session: MCPSession) -> None:
+    """Send an MCP ping, or do nothing when the negotiated protocol has none.
+
+    The sessionless 2026-07-28 era removed ping, so a client that negotiated it would
+    raise "Method not found" on every probe. There is no connection to keep alive
+    there, so skipping is the correct behaviour rather than a swallowed failure.
+    """
+    protocol_version = getattr(session, "protocol_version", None)
+    # Compare only a real version string: a mock attribute must not look like an era.
+    if isinstance(protocol_version, str) and protocol_version >= "2026-07-28":
+        return
+
+    # A ClientSession exposes send_ping(); fastmcp's Client exposes ping(). Neither is
+    # on MCPSession, which is why both are resolved by name here rather than called.
+    ping = getattr(session, "send_ping", None) or getattr(session, "ping")
+    await ping()
+
+
 def get_entrypoint_for_tool(
     tool: MCPTool,
-    session: ClientSession,
+    session: MCPSession,
     mcp_tools_instance: Optional["MCPTools"] = None,
 ):
     """
@@ -116,14 +166,22 @@ def get_entrypoint_for_tool(
         # server as an ordinary argument of the declared tool.
         tool_name = tool.name
 
-        async def _call_with_session(active_session: ClientSession) -> ToolResult:
+        async def _call_with_session(active_session: MCPSession) -> ToolResult:
             try:
-                await active_session.send_ping()
+                await ping_session(active_session)
             except Exception as e:
                 log_exception(e)
 
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            # fastmcp's Client raises ToolError on a failed call, where a ClientSession
+            # returns is_error=True. Ask it not to, so both types land on the is_error
+            # branch below: a failing tool is ordinary model-loop traffic, and routing it
+            # through the generic handler drops the result's meta/structured_content and
+            # logs a stack trace for it. Only fastmcp's Client takes the kwarg.
+            if _is_fastmcp_client(active_session):
+                result: CallToolResult = await active_session.call_tool(tool_name, kwargs, raise_on_error=False)
+            else:
+                result = await active_session.call_tool(tool_name, kwargs)
 
             # Return an error if the tool call failed
             if result.is_error:
