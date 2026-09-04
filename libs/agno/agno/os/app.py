@@ -1725,8 +1725,8 @@ class AgentOS:
         # BaseInterface.authenticates_own_requests) are excluded from the central auth
         # layer alongside the public routes. Interfaces that do NOT self-authenticate
         # (e.g. A2A) stay behind AuthMiddleware, so enabling authentication protects them
-        # too. Passing excluded_route_paths replaces the middleware defaults, so the
-        # defaults are repeated here.
+        # too. Passing excluded_route_paths replaces the middleware defaults, so custom,
+        # interface, and MCP exclusions are merged with the defaults here.
         excluded_route_paths: Optional[List[str]] = None
         interface_prefixes: List[str] = []
         if self.interfaces:
@@ -1746,7 +1746,14 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
-        if interface_prefixes or mcp_auth_paths:
+        # The Server Card is discovery before authentication: public by design, no secrets.
+        server_card_paths: List[str] = []
+        if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):
+            from agno.os.config import MCP_SERVER_CARD_PATH
+
+            server_card_paths = [MCP_SERVER_CARD_PATH]
+        excluded_routes = (self.authorization_config.excluded_route_paths or []) if self.authorization_config else []
+        if excluded_routes or interface_prefixes or mcp_auth_paths or server_card_paths:
             excluded_route_paths = (
                 [
                     "/",
@@ -1757,8 +1764,10 @@ class AgentOS:
                     "/openapi.json",
                     "/docs/oauth2-redirect",
                 ]
+                + excluded_routes
                 + interface_prefixes
                 + mcp_auth_paths
+                + server_card_paths
             )
 
         middleware_kwargs["excluded_route_paths"] = excluded_route_paths
