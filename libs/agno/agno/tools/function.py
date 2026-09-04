@@ -2286,8 +2286,8 @@ class FunctionCall(BaseModel):
             for param_name, hint in hints.items():
                 # get_type_hints reports the return annotation under "return"; it is
                 # not a parameter, and passing it as a keyword would raise.
-                if param_name not in sig.parameters or param_name in entrypoint_args:
-                    continue  # Not a parameter, or already handled by name-based injection
+                if param_name not in sig.parameters:
+                    continue  # Not a parameter
                 param = sig.parameters[param_name]
                 # A variadic parameter can never take a keyword bind (*rest: Agent
                 # binds rest=() by itself; **extra: RunContext binds {}), and a
@@ -2295,6 +2295,12 @@ class FunctionCall(BaseModel):
                 if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD, Parameter.POSITIONAL_ONLY):
                     continue
                 if not is_framework_typed(hint):
+                    continue
+                # A reserved name is filled before annotations are considered. If
+                # its matching object is unavailable, let an identity-only union
+                # select another object the wielder does have (for example,
+                # ``agent: Union[Agent, Team]`` on a Team).
+                if param_name in entrypoint_args and entrypoint_args[param_name] is not None:
                     continue
                 hint = unwrap_annotation(hint)
                 # The same resolver that decided to hide it. Matching only a
@@ -2319,6 +2325,8 @@ class FunctionCall(BaseModel):
                 injected = next((m for m in matches if m is not None), None)
                 if injected is not None or param.default is Parameter.empty:
                     entrypoint_args[param_name] = injected
+                else:
+                    entrypoint_args.pop(param_name, None)
         except Exception:
             pass
 
