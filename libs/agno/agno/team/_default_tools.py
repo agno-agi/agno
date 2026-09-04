@@ -68,7 +68,7 @@ from agno.run.team import (
     TeamRunOutputEvent,
 )
 from agno.session import TeamSession
-from agno.tools.function import Function
+from agno.tools.function import Function, FunctionCall
 from agno.utils.knowledge import get_agentic_or_user_search_filters, get_user_id_kwarg
 from agno.utils.log import (
     log_debug,
@@ -547,6 +547,7 @@ def _get_delegate_task_function(
         member_agent: Union[Agent, "Team"],
         delegated_task: Union[str, Message],
         member_session_state_copy: Dict[str, Any],
+        tool_call_id: Optional[str] = None,
     ):
         # Add team run id to the member run
 
@@ -556,7 +557,11 @@ def _get_delegate_task_function(
         # Update the top-level team run_response tool call to have the run_id of the member run
         if run_response.tools is not None and member_agent_run_response is not None:
             for tool in run_response.tools:
-                if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
+                if tool_call_id is not None:
+                    matches_tool_call = tool.tool_call_id == tool_call_id
+                else:
+                    matches_tool_call = tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member"
+                if matches_tool_call:
                     tool.child_run_id = member_agent_run_response.run_id  # type: ignore
 
         # Update the team run context
@@ -615,6 +620,7 @@ def _get_delegate_task_function(
         member_agent: Union[Agent, "Team"],
         delegated_task: Union[str, Message],
         member_session_state_copy: Dict[str, Any],
+        tool_call_id: Optional[str] = None,
     ):
         """Async twin of the sync post-processor above.
 
@@ -633,7 +639,11 @@ def _get_delegate_task_function(
         # Update the top-level team run_response tool call to have the run_id of the member run
         if run_response.tools is not None and member_agent_run_response is not None:
             for tool in run_response.tools:
-                if tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member":
+                if tool_call_id is not None:
+                    matches_tool_call = tool.tool_call_id == tool_call_id
+                else:
+                    matches_tool_call = tool.tool_name and tool.tool_name.lower() == "delegate_task_to_member"
+                if matches_tool_call:
                     tool.child_run_id = member_agent_run_response.run_id  # type: ignore
 
         # Update the team run context
@@ -687,7 +697,9 @@ def _get_delegate_task_function(
         if member_agent_run_response is not None:
             _update_team_media(team, member_agent_run_response)  # type: ignore
 
-    def delegate_task_to_member(member_id: str, task: str) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
+    def delegate_task_to_member(
+        member_id: str, task: str, fc: Optional[FunctionCall] = None
+    ) -> Iterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
 
         Args:
@@ -811,6 +823,7 @@ def _get_delegate_task_function(
                 member_agent,
                 task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                fc.call_id if fc is not None else None,
             )
             raise
 
@@ -823,6 +836,7 @@ def _get_delegate_task_function(
                 member_agent,
                 task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                fc.call_id if fc is not None else None,
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
@@ -863,10 +877,11 @@ def _get_delegate_task_function(
             member_agent,
             task,  # type: ignore
             member_session_state_copy,  # type: ignore
+            fc.call_id if fc is not None else None,
         )
 
     async def adelegate_task_to_member(
-        member_id: str, task: str
+        member_id: str, task: str, fc: Optional[FunctionCall] = None
     ) -> AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent, str]]:
         """Use this function to delegate a task to the selected team member.
 
@@ -996,6 +1011,7 @@ def _get_delegate_task_function(
                 member_agent,
                 task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                fc.call_id if fc is not None else None,
             )
             raise
 
@@ -1008,6 +1024,7 @@ def _get_delegate_task_function(
                 member_agent,
                 task,  # type: ignore
                 member_session_state_copy,  # type: ignore
+                fc.call_id if fc is not None else None,
             )
             yield f"Member '{member_agent.name}' requires human input before continuing."
             return
@@ -1045,6 +1062,7 @@ def _get_delegate_task_function(
             member_agent,
             task,  # type: ignore
             member_session_state_copy,  # type: ignore
+            fc.call_id if fc is not None else None,
         )
 
     # When the task should be delegated to all members
