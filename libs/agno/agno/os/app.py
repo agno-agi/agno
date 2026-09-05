@@ -312,7 +312,6 @@ class AgentOS:
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
-        url: Optional[str] = None,
         public: Optional[Any] = None,
     ):
         """Initialize AgentOS.
@@ -427,9 +426,6 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
-        from agno.os._url import resolve_url
-
-        self.url = resolve_url(url)
         self._public_explicit_id = id
         self.public = public
         self.mcp_config: Optional[MCPConfig] = None
@@ -439,10 +435,6 @@ class AgentOS:
                 "AgentOS() got both mcp= and its deprecated alias mcp_server= with different values; pass only mcp=."
             )
         self.mcp = mcp if mcp is not None else (mcp_server if mcp_server is not None else False)
-        if self.url and self.mcp:
-            self.mcp_config = (self.mcp_config or MCPConfig()).model_copy()
-            if self.mcp_config.server_card_url is None:
-                self.mcp_config.server_card_url = self.url + "/mcp"
         self.mcp_auth: Optional["AuthProvider"] = mcp_auth
         # Resolved lazily (and once): the MultiAuth-wrapped provider handed to FastMCP.
         self._resolved_mcp_auth: Optional["AuthProvider"] = None
@@ -492,7 +484,7 @@ class AgentOS:
         # Scheduler configuration
         self._scheduler_enabled = scheduler
         self._scheduler_poll_interval = scheduler_poll_interval
-        self._scheduler_base_url = scheduler_base_url if scheduler_base_url is not None else self.url
+        self._scheduler_base_url = scheduler_base_url
         if self._scheduler_enabled and not internal_service_token:
             import secrets
 

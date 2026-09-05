@@ -23,7 +23,7 @@ from agno.os.public import _client_id
 from agno.utils.bounded import BoundedWorkers
 from agno.utils.log import log_warning
 
-ROUTE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
+ROUTE = re.compile(r"^/(agents|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
 IDENTITY_WORKERS = BoundedWorkers(8, "public-identity")
 
 
@@ -45,7 +45,7 @@ class PublicMiddleware:
         self.app, self.surface, self.agent_os = app, surface, agent_os
         self.active_runs = self.active_mcp = 0
         self.selected = {
-            kind: {component.id for component in getattr(surface, kind)} for kind in ("agents", "teams", "workflows")
+            kind: {component.id for component in getattr(surface, kind)} for kind in ("agents", "workflows")
         }
         self.registered = {
             kind: {component.id for component in getattr(agent_os, kind) or []} for kind in self.selected
@@ -226,7 +226,6 @@ class PublicMiddleware:
                             event = {}
                         if isinstance(event, dict) and event.get("event") in (
                             "RunError",
-                            "TeamRunError",
                             "WorkflowRunError",
                         ):
                             frame = (
@@ -286,7 +285,7 @@ class PublicMiddleware:
                 await WORKERS.run(ready, seconds=3)
                 await JSONResponse({"status": "ok", "database": "ok", "request_limits": "ok"})(scope, receive, send)
                 return
-            if path in ("/agents", "/teams") and method == "GET":
+            if path == "/agents" and method == "GET":
                 await JSONResponse(
                     [
                         {"id": item.id, "name": item.name, "description": (item.description or "")[:2048]}

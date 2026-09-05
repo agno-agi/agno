@@ -240,20 +240,16 @@ def _determine_tools_for_model(
     # Single unified path through get_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().
     if (resolved_knowledge is not None or team.knowledge_retriever is not None) and team.search_knowledge:
-        search_tool = create_knowledge_search_tool(
-            team,
-            run_response=run_response,
-            run_context=run_context,
-            knowledge_filters=run_context.knowledge_filters,
-            enable_agentic_filters=team.enable_agentic_knowledge_filters,
-            async_mode=async_mode,
+        _tools.append(
+            create_knowledge_search_tool(
+                team,
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=team.enable_agentic_knowledge_filters,
+                async_mode=async_mode,
+            )
         )
-        from agno.agent._references import append_page_tools, page_knowledge
-
-        if page_knowledge(team, run_context):
-            append_page_tools(_tools, resolved_knowledge, team, run_context, search_tool, async_mode)
-        else:
-            _tools.append(search_tool)
 
     if resolved_knowledge is not None and team.update_knowledge:
         _tools.append(create_add_to_knowledge_tool(team, run_context=run_context))

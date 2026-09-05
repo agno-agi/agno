@@ -219,20 +219,16 @@ def get_tools(
     # Single unified path through get_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().
     if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
-        search_tool = _default_tools.create_knowledge_search_tool(
-            agent,
-            run_response=run_response,
-            run_context=run_context,
-            knowledge_filters=run_context.knowledge_filters,
-            enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-            async_mode=False,
+        agent_tools.append(
+            _default_tools.create_knowledge_search_tool(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
+                async_mode=False,
+            )
         )
-        from agno.agent._references import append_page_tools, page_knowledge
-
-        if page_knowledge(agent, run_context):
-            append_page_tools(agent_tools, resolved_knowledge, agent, run_context, search_tool, False)
-        else:
-            agent_tools.append(search_tool)
 
     if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))
@@ -358,20 +354,16 @@ async def aget_tools(
     # Single unified path through aget_relevant_docs_from_knowledge(),
     # which checks knowledge_retriever first, then falls back to knowledge.search().
     if (resolved_knowledge is not None or agent.knowledge_retriever is not None) and agent.search_knowledge:
-        search_tool = _default_tools.create_knowledge_search_tool(
-            agent,
-            run_response=run_response,
-            run_context=run_context,
-            knowledge_filters=run_context.knowledge_filters,
-            enable_agentic_filters=agent.enable_agentic_knowledge_filters,
-            async_mode=True,
+        agent_tools.append(
+            _default_tools.create_knowledge_search_tool(
+                agent,
+                run_response=run_response,
+                run_context=run_context,
+                knowledge_filters=run_context.knowledge_filters,
+                enable_agentic_filters=agent.enable_agentic_knowledge_filters,
+                async_mode=True,
+            )
         )
-        from agno.agent._references import append_page_tools, page_knowledge
-
-        if page_knowledge(agent, run_context):
-            append_page_tools(agent_tools, resolved_knowledge, agent, run_context, search_tool, True)
-        else:
-            agent_tools.append(search_tool)
 
     if resolved_knowledge is not None and agent.update_knowledge:
         agent_tools.append(_default_tools.create_add_to_knowledge_tool(agent, run_context=run_context))

@@ -80,11 +80,11 @@ def _identifier(value: Optional[str]) -> str:
 class PageCoordinator:
     def __init__(self, knowledge: Any):
         self.knowledge = knowledge
-        self.db = knowledge.content_db
+        self.db = knowledge.contents_db
         self.fs = knowledge.page_store
         self.vector = knowledge.vector_db
         if not isinstance(self.db, PostgresDb) or not isinstance(self.fs, FileSystem):
-            raise ValueError("page_store requires FileSystem and synchronous PostgresDb content_db")
+            raise ValueError("page_store requires FileSystem and synchronous PostgresDb contents_db")
         if not isinstance(self.fs.backend, DbFileSystem) or self.fs.backend.dialect != "postgresql":
             raise ValueError("page_store requires PostgreSQL DbFileSystem")
         if not isinstance(self.vector, PgVector):
@@ -927,16 +927,12 @@ class PageCoordinator:
         *,
         alternatives: Optional[List[str]] = None,
         limit: int = 10,
-        expand: bool = False,
-        context_max_bytes: int = MAX_JSON_BYTES,
         budget: Optional[WorkBudget] = None,
-    ) -> Any:
+    ) -> SearchResult:
         if not isinstance(query, str) or not query.strip() or len(query.strip()) > 500 or not 1 <= limit <= 20:
             raise ValueError("invalid_search_query")
         if alternatives is not None and (not isinstance(alternatives, list) or len(alternatives) > 3):
             raise ValueError("invalid_search_alternatives")
-        if not 1 <= context_max_bytes <= MAX_JSON_BYTES:
-            raise ValueError("invalid_context_budget")
         budget = budget or WorkBudget(2)
         queries = [query.strip()]
         for alternative in alternatives or []:
@@ -1043,48 +1039,7 @@ class PageCoordinator:
                     omitted_count=total - len(hits),
                     warnings=("alternative_unavailable",) if partial else (),
                 )
-                if not expand:
-                    return result
-                documents: List[Document] = []
-                expanded: set[str] = set()
-                for hit in hits:
-                    content = hit.content
-                    if hit.path not in expanded and len(expanded) < 2:
-                        page, full = self._one(conn, hit.path)
-                        if len(full.encode("utf-8")) <= 6000:
-                            content = full
-                    elif hit.path in expanded:
-                        continue
-                    document = Document(
-                        id=hit.chunk_id,
-                        name=hit.title,
-                        content=content,
-                        meta_data={
-                            "path": hit.path,
-                            "url": hit.url,
-                            "title": hit.title,
-                            "revision": hit.revision,
-                            "availability": "partial" if partial else "available",
-                            "score": hit.score,
-                        },
-                    )
-                    size = len(
-                        json.dumps([d.to_dict() for d in [*documents, document]], ensure_ascii=False).encode("utf-8")
-                    )
-                    if size > context_max_bytes and content != hit.content:
-                        content = hit.content
-                        document.content = content
-                        size = len(
-                            json.dumps([d.to_dict() for d in [*documents, document]], ensure_ascii=False).encode(
-                                "utf-8"
-                            )
-                        )
-                    if size > context_max_bytes:
-                        continue
-                    documents.append(document)
-                    if content != hit.content:
-                        expanded.add(hit.path)
-                return documents
+                return result
         except PageError:
             raise
         except Exception as exc:

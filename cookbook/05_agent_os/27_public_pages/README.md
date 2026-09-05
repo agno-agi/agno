@@ -1,54 +1,58 @@
 # Public documentation pages
 
-`public_pages.py` uses one PostgreSQL database for the Knowledge catalog, a quota-bounded FileSystem, vectors, sessions, and shared public request counters. It demonstrates initial references, custom tool names/instructions, Agent and Team selection, native MCP, and a typed protected sync workflow.
+`public_pages.py` uses one PostgreSQL database for the Knowledge catalog, quota-bounded FileSystem, vectors, sessions, durable jobs and shared public request counters. It demonstrates application-owned retrieval through a visible pre-hook, explicit search/read/grep tools, native MCP and a typed protected sync workflow.
 
 ## Setup
 
-Use the repository demo environment with `agno[os,mcp,pages]` and `openai` installed. Start the cookbook PostgreSQL service with `./cookbook/scripts/run_pgvector.sh`, then create a separate `page_demo` database on that local service. Its user needs permission to create the `vector` extension, tables, and indexes. Point `PAGE_DEMO_DB_URL` at that database if its port differs from 5532.
+Use the repository demo environment with `agno[os,mcp,pages]` and `openai` installed. Start `./cookbook/scripts/run_pgvector.sh` and create a separate `page_demo` database. Its user needs permission to create the vector extension, tables and indexes. Use a direct PostgreSQL connection for advisory locks.
 
 ```sh
 export OPENAI_API_KEY=...
 export PAGE_DEMO_DB_URL=postgresql+psycopg://ai:ai@localhost:5532/page_demo
 export PAGE_DEMO_INDEX_URL=https://docs.agno.com/llms.txt
-export AGENTOS_URL=http://localhost:7777
 export PAGE_DEMO_SYNC_TOKEN=local-demo-secret
 .venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_pages.py sync
 .venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_pages.py chat
 .venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_pages.py serve
 ```
 
-The `sync` command reconciles the entire configured index and makes embedding calls. Choose a small documentation source for an inexpensive first run. Discovery and redirects remain on the configured public HTTPS origin; local/private source destinations are rejected. The store allows 4 MiB per file and 256 MiB per namespace. Call `setup`/`asetup` during trusted startup, before serving queries. Use a direct PostgreSQL connection for session advisory locks.
+Sync reconciles the entire configured index and makes embedding calls. Choose a small source for the first run. Discovery and redirects stay on the configured public HTTPS origin; private destinations are rejected. The store allows 4 MiB per file and 256 MiB per namespace. Call `setup`/`asetup` during trusted startup.
 
 In another terminal:
 
 ```sh
 curl http://localhost:7777/readyz
 curl http://localhost:7777/agents
-curl http://localhost:7777/teams
 curl http://localhost:7777/mcp/server-card
 curl -N http://localhost:7777/agents/docs/runs -F 'message=What is an agent?' -F stream=true
 .venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_pages.py mcp-client
 curl http://localhost:7777/workflows/sync-docs/runs \
   -H "Authorization: Bearer $PAGE_DEMO_SYNC_TOKEN" \
-  -F 'message={"reason":"manual"}' -F stream=false
+  -F 'message={"reason":"manual"}' -F stream=false -F background=true
 ```
 
-The public Team is `docs-team`. Its `researcher` member is not independently public. Sessions, configuration, arbitrary components, and write tools are closed to anonymous requests. Native MCP publishes exactly `search_docs`, `read_docs`, and `grep_docs`; default/lifecycle tools are disabled. Full-page reads return `next_offset` for Unicode-safe continuation; grep explicitly reports an incomplete scan. All model-facing errors use safe codes.
+The background trigger returns run/session IDs. Poll `/workflows/sync-docs/runs/<run_id>?session_id=<session_id>` with the same bearer credential until completion. Execution and polling use the durable Agno queue.
 
-## Addresses, authentication, and limits
+## Explicit retrieval and customization
 
-`AgentOS.url` prefers an explicit argument, then `AGENTOS_URL`. Without either, scheduler and MCP discovery keep their existing fallbacks. The resolved base includes deployment prefixes and derives `/mcp`. `PAGE_DEMO_SCHEDULER_URL` and `PAGE_DEMO_MCP_URL` demonstrate the existing explicit scheduler/card overrides; neither changes the socket bind address. When using a proxy prefix, mount the application at that prefix or configure ASGI root_path consistently. Forwarded headers do not override an explicit canonical URL. Add the real host to the MCP host allowlist and the browser origin to CORS before using a remote deployment.
+`attach_docs_context` calls the same `search_docs` exposed to the model and places its bounded JSON in `{docs_context}` before the first model call. The example owns its instructions and evidence formatting; customize that hook for query alternatives or full-page rendering. No Knowledge object is attached to the Agent. The model can use the three explicitly named tools. Follow-up suggestions use a separately configured model after the answer.
 
-Workflow trigger and status routes require verified bearer credentials even while chat is anonymous. Scoped service accounts need the selected workflow's run/read permissions; they cannot submit scheduler-only overrides. `PAGE_DEMO_SYNC_TOKEN` configures the existing internal-service principal for a trusted scheduler or deploy hook. Use the same token on independently configured scheduler and callback instances. Keep that credential out of browsers and MCP clients.
+Reads return `revision` and `next_offset`; preserve both for consistent Unicode-safe continuation. Literal grep reports incomplete scans. Search failures produce safe error codes. Source metadata/text/vectors publish atomically and failed refreshes keep the prior revision available.
 
-Public chat defaults to 10 requests/client/minute, 50 globally/minute, 80/client/day and 3,000 globally/day. Cancel and MCP use separate shared buckets. Counters live in PostgreSQL, keyed by the stable AgentOS id; replicas share admission. Socket-derived client identity ignores arbitrary forwarded headers. Configure `PublicSurface.client_id` only for a deployment header your trusted edge overwrites. Run bodies, uploads, durations, output and active concurrency are bounded; uploads are disabled in this example. CORS includes failures and readiness is checked after table preparation.
+## Addresses, authentication and limits
 
-Cancellation follows existing AgentOS deployment behavior: in-process cancellation alone is not a cross-replica delivery guarantee. Configure the existing shared cancellation backend when requests can land on different replicas. Queues, source synchronization and public counters still use PostgreSQL.
+`PAGE_DEMO_SERVER_URL` sets the MCP client's destination, defaulting to `http://localhost:7777`. `PAGE_DEMO_MCP_URL` optionally sets the existing explicit MCP card URL; otherwise native request-derived discovery applies. For a proxy prefix, configure the mount or ASGI root path consistently. Add the deployed host to MCP allowed hosts and the browser origin to CORS.
+
+Only the selected Agent, native MCP and protected sync Workflow are exposed. Sessions, configuration and unselected components are closed. Workflow trigger/status require verified bearer credentials even while chat is anonymous. Scoped service accounts require the workflow run/read permissions and cannot use internal-service exemptions. `PAGE_DEMO_SYNC_TOKEN` configures the existing internal-service principal for a trusted deployment hook; keep it out of browsers and MCP clients.
+
+Public chat defaults to 10 requests/client/minute, 50 globally/minute, 80/client/day and 3,000 globally/day. Cancel and MCP use separate shared buckets. PostgreSQL counters use the stable AgentOS ID across replicas. Default identity ignores arbitrary forwarded headers; customize `PublicSurface.client_id` only for an edge-overwritten trusted header. Request bodies, output, duration and concurrency are bounded; uploads are disabled here. CORS includes admission failures and readiness checks table preparation.
+
+In-process cancellation alone does not guarantee delivery across replicas; configure an existing shared cancellation backend when needed. Queues, source synchronization and public counters use PostgreSQL.
 
 ## Compatibility
 
-`Knowledge.content_db` and `contents_db` name one value; conflicting constructor objects fail. Legacy knowledge without `page_store` keeps its behavior. Page storage supports the listed synchronous PostgreSQL adapters in one logical database; custom embedders must accept and enforce a `timeout` keyword, or use the supported OpenAI embedder.
+`Knowledge` retains its existing `contents_db` constructor and positional fields; `page_store` is keyword-only. Other Knowledge configurations retain their behavior. Page storage supports synchronous PostgreSQL adapters in one logical database; custom embedders must enforce a timeout or use the supported OpenAI embedder.
 
-`add_knowledge_to_context` retrieves one separate user-role reference message per run. `search_knowledge` independently enables page tools. This example supplies custom tools and leaves automatic tool registration off. References remain available during the active tool loop, stay out of recorded history, and are refreshed before checkpoint continuation. `Message.add_to_history` aliases `add_to_agent_memory`; normal Pydantic serialization retains the existing key, while the existing `to_dict()` intentionally omits the retention flag.
+Page-mode `search`/`asearch` and `retrieve`/`aretrieve` return revision-checked ranked chunks as Documents without expanding pages. Filters are unsupported; the configured corpus is shared among readers. Existing KnowledgeProtocol signatures and the ordinary `search_knowledge_base` tool remain. Applications needing completeness flags should consume `search_pages` directly. No new Agent/Team context machinery or Message retention alias is introduced.
 
-Actual local/live execution evidence is in [TEST_LOG.md](TEST_LOG.md).
+Actual execution evidence is in [TEST_LOG.md](TEST_LOG.md).

@@ -1,6 +1,7 @@
 import asyncio
 import copy
 import dataclasses
+import inspect
 import threading
 
 import pytest
@@ -12,23 +13,71 @@ from agno.knowledge.knowledge import Knowledge
 from agno.utils.bounded import BoundedWorkers
 
 
-def test_database_alias_keeps_positional_fields_and_dataclass_replacement():
+def test_constructor_preserves_positional_fields_and_keyword_only_page_store():
     first, second = SqliteDb(), SqliteDb()
     knowledge = Knowledge("docs", None, None, first, 5)
-    assert knowledge.content_db is knowledge.contents_db is first
-    assert knowledge.max_results == 5
-    assert Knowledge(content_db=first, contents_db=first).contents_db is first
-    with pytest.raises(ValueError):
-        Knowledge(content_db=first, contents_db=second)
-    with pytest.raises(ValueError):
-        Knowledge(content_db=first, contents_db=None)
-    assert dataclasses.replace(knowledge, contents_db=second).content_db is second
-    assert copy.copy(knowledge).content_db is first
-    assert Knowledge(**{f.name: getattr(knowledge, f.name) for f in dataclasses.fields(knowledge)}).content_db is first
-    knowledge.content_db = second
-    assert knowledge.contents_db is second
-    knowledge.contents_db = first
-    assert knowledge.content_db is first
+    assert knowledge.contents_db is first and knowledge.max_results == 5
+    assert dataclasses.replace(knowledge, contents_db=second).contents_db is second
+    assert copy.copy(knowledge).contents_db is first
+    assert Knowledge(**{f.name: getattr(knowledge, f.name) for f in dataclasses.fields(knowledge)}).contents_db is first
+    assert inspect.signature(Knowledge).parameters["page_store"].kind is inspect.Parameter.KEYWORD_ONLY
+    with pytest.raises(TypeError):
+        Knowledge("docs", None, None, first, 5, None, None, False, 0, 1.0, None)
+
+
+@pytest.mark.asyncio
+async def test_page_legacy_search_and_retrieve_use_published_chunks_without_expansion(monkeypatch):
+    from unittest.mock import AsyncMock, Mock
+
+    from agno.knowledge.page import SearchHit, SearchResult, SearchUnavailable
+
+    knowledge = Knowledge(max_results=3)
+    knowledge.page_store = object()
+    result = SearchResult(
+        results=(
+            SearchHit(
+                path="/page.md",
+                url="https://example.com/page",
+                title="Page",
+                revision="published",
+                chunk_id="chunk",
+                content="Ranked excerpt",
+                score=0.7,
+                rank=1,
+            ),
+        )
+    )
+    search = Mock(return_value=result)
+    asearch = AsyncMock(return_value=result)
+    monkeypatch.setattr(knowledge, "search_pages", search)
+    monkeypatch.setattr(knowledge, "asearch_pages", asearch)
+    monkeypatch.setattr(knowledge, "read_page", Mock(side_effect=AssertionError("unexpected expansion")))
+    monkeypatch.setattr(knowledge, "aread_page", AsyncMock(side_effect=AssertionError("unexpected expansion")))
+    for method in (knowledge.search, knowledge.retrieve):
+        docs = method("query", user_id="shared-reader")
+        assert len(docs) == 1 and docs[0].content == "Ranked excerpt"
+        assert docs[0].meta_data["revision"] == "published"
+        with pytest.raises(ValueError, match="filters"):
+            method("query", filters={"name": "private"})
+    for method in (knowledge.asearch, knowledge.aretrieve):
+        docs = await method("query", max_results=2, user_id="shared-reader")
+        assert len(docs) == 1 and docs[0].content == "Ranked excerpt"
+        assert docs[0].meta_data["revision"] == "published"
+        with pytest.raises(ValueError, match="filters"):
+            await method("query", filters={"name": "private"})
+    assert search.call_count == asearch.await_count == 2
+    search.assert_called_with("query", limit=3)
+    asearch.assert_awaited_with("query", limit=2)
+    assert [tool.name for tool in knowledge.get_tools()] == ["search_knowledge_base"]
+    assert [tool.name for tool in await knowledge.aget_tools()] == ["search_knowledge_base"]
+    with pytest.raises(ValueError, match="filters"):
+        knowledge.get_tools(enable_agentic_filters=True)
+    search.side_effect = SearchUnavailable()
+    asearch.side_effect = SearchUnavailable()
+    with pytest.raises(SearchUnavailable):
+        knowledge.retrieve("query")
+    with pytest.raises(SearchUnavailable):
+        await knowledge.aretrieve("query")
 
 
 @pytest.mark.parametrize(

@@ -34,7 +34,6 @@ class FileUploadLimits:
 @dataclass
 class PublicSurface:
     agents: List[Any] = field(default_factory=list)
-    teams: List[Any] = field(default_factory=list)
     workflows: List[Any] = field(default_factory=list)
     mcp: bool = False
     namespace: Optional[str] = None
@@ -56,7 +55,6 @@ class PublicSurface:
     def _bind(self, agent_os: Any) -> None:
         from agno.agent import Agent
         from agno.db.postgres import PostgresDb
-        from agno.team import Team
         from agno.workflow import Workflow
 
         if not isinstance(agent_os.db, PostgresDb):
@@ -67,7 +65,7 @@ class PublicSurface:
         if min(self.max_body_bytes, self.max_run_seconds, self.max_output_bytes, self.max_active_runs) <= 0:
             raise ValueError("PublicSurface request bounds must be positive")
         self.namespace = namespace
-        for field_name, kind in (("agents", Agent), ("teams", Team), ("workflows", Workflow)):
+        for field_name, kind in (("agents", Agent), ("workflows", Workflow)):
             registered = getattr(agent_os, field_name)
             selected: List[Any] = []
             by_id: Dict[Optional[str], Any] = {}

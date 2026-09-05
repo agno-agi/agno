@@ -60,7 +60,7 @@ def corpus(engine, monkeypatch):
     embedder = RecordingEmbedder()
     vector = PgVector(db_engine=engine, table_name="page_vectors", embedder=embedder)
     knowledge = Knowledge(
-        content_db=db,
+        contents_db=db,
         page_store=FileSystem(
             db, namespace=namespace, max_file_bytes=4 * 1024 * 1024, max_namespace_bytes=256 * 1024 * 1024
         ),
@@ -103,7 +103,7 @@ def test_atomic_publication_failed_refresh_and_reconciliation(corpus, monkeypatc
     assert report.status == "partial" and report.failed == 1
     assert knowledge.read_page("/agent") == before
     page = knowledge.list_pages().pages[0]
-    assert knowledge.content_db.get_knowledge_content(page.content_id).status == "failed"
+    assert knowledge.contents_db.get_knowledge_content(page.content_id).status == "failed"
     assert knowledge.search_pages("Agent").results[0].revision == before.revision
     monkeypatch.setattr(knowledge.vector_db, "_replace_page_on", original)
     assert knowledge.sync_pages(url=url).updated == 1
@@ -174,9 +174,9 @@ def test_namespaces_keep_hnsw_recall_and_legacy_search_scoped(corpus, monkeypatc
     knowledge.sync_pages(url=url)
     monkeypatch.setattr(embedder, "get_embedding", lambda query, *, timeout: [1.0, 0.0, 0.0])
     other = Knowledge(
-        content_db=knowledge.content_db,
+        contents_db=knowledge.contents_db,
         vector_db=knowledge.vector_db,
-        page_store=FileSystem(knowledge.content_db, namespace="neighbor-" + uuid4().hex[:8]),
+        page_store=FileSystem(knowledge.contents_db, namespace="neighbor-" + uuid4().hex[:8]),
     )
     other.setup()
     site[url] = "- [Other](https://docs.example.com/other.md)"
