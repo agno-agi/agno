@@ -54,6 +54,30 @@ Reads return `revision` and `next_offset`; preserve both for consistent Unicode-
 
 `search_pages` and `asearch_pages` accept the keyword-only `max_output_bytes` option, defaulting to 24,000 with an allowed integer range of 24,000–32,000. It bounds the UTF-8 serialized search result, including framework metadata; ranking and query limits stay the same. An adapter that removes framework fields can explicitly request `await knowledge.asearch_pages(query, max_output_bytes=32_000)` before applying its own smaller output limit. The tools in this example return the framework JSON directly, so they keep the default. This option does not change read/list/grep limits or add a model-controlled tool parameter. More retained evidence can increase rendering work and model tokens; the allowance is not a latency optimization.
 
+## Explicit search tuning
+
+`PgVector(vector_index=HNSW(ef_search=200))` controls the HNSW search breadth used
+by page search. Page search honors the existing HNSW setting; it has no separate
+`ef_search` override. Lower search breadth can retain fewer vector candidates and
+change retrieved evidence. The SQL candidate limit alone does not guarantee that
+many approximate-nearest-neighbor results.
+
+`Knowledge(page_search=PageSearchConfig(...))` supplies typed, transaction-local
+PostgreSQL planner options. Unset scan preferences, parallel costs, scan thresholds
+and worker counts inherit the database configuration. The default
+`plan_cache_mode="force_custom_plan"` lets parameterized searches use the
+namespace-specific partial HNSW index; set it to `None` to inherit the database
+setting. Parallel alternative queries use zero PostgreSQL parallel workers to
+bound nested parallelism. They reuse existing pooled connections; cold optional
+queries can run on the parent's snapshot instead of opening another connection.
+
+This example explicitly retains the documentation workload's original
+`ef_search=200` and index preference, together with the later parallel-planner
+tuning (zero setup/tuple costs and minimum table scan, four workers for serial
+queries). These choices require measurement on the deployment's corpus and load.
+`min_parallel_table_scan_size` uses PostgreSQL blocks, normally 8 KiB. The typed
+configuration accepts no arbitrary SQL or deadline overrides.
+
 ## Addresses, authentication and limits
 
 `PAGE_DEMO_SERVER_URL` sets the MCP client's destination, defaulting to `http://localhost:7777`. `PAGE_DEMO_MCP_URL` optionally sets the existing explicit MCP card URL; otherwise native request-derived discovery applies. For a proxy prefix, configure the mount or ASGI root path consistently. Add the deployed host to MCP allowed hosts and the browser origin to CORS.
@@ -70,8 +94,24 @@ In-process cancellation alone does not guarantee delivery across replicas; confi
 
 Page result types and errors live in `agno.knowledge.page.types` and are re-exported from `agno.knowledge.page`, so imports such as `from agno.knowledge.page import Page, SearchResult` remain unchanged. Importing these types does not load the private discovery/coordinator modules or their PostgreSQL/vector dependencies. The chunking strategy remains in `agno.knowledge.chunking.page`.
 
-`Knowledge` retains its existing `contents_db` constructor and positional fields; `page_store` is keyword-only. Other Knowledge configurations retain their behavior. Page storage supports synchronous PostgreSQL adapters in one logical database; custom embedders must enforce a timeout or use the supported OpenAI embedder.
+All `Knowledge` constructor arguments are keyword-only. `content_db` is preferred;
+`contents_db` remains a supported keyword and read/write alias without warnings.
+Both names share the existing dataclass field; serialization and
+`dataclasses.replace(..., contents_db=...)` retain its legacy spelling. Distinct
+objects supplied under both keywords are rejected. See the
+[constructor migration note](../../../libs/agno/CHANGELOG.md) for the intentional
+positional-call break. Other Knowledge configurations retain their behavior.
+Page storage supports synchronous PostgreSQL adapters in one logical database;
+custom embedders must enforce a timeout or use the supported OpenAI embedder.
+
+Startup validates an already-initialized schema and namespace without waiting for
+the long-running sync writer lock. First setup and required schema changes remain
+serialized and must finish validation before the instance becomes ready.
 
 Page-mode `search`/`asearch` and `retrieve`/`aretrieve` return revision-checked ranked chunks as Documents without expanding pages. Filters are unsupported; the configured corpus is shared among readers. Existing KnowledgeProtocol signatures and the ordinary `search_knowledge_base` tool remain. Applications needing completeness flags should consume `search_pages` directly. No new Agent/Team context machinery or Message retention alias is introduced.
+
+Public non-streaming Agent failures use a safe `503 run_failed` JSON response,
+matching the safe error behavior of streaming Agent runs. Successful responses
+retain their content. Authenticated sync operators retain workflow diagnostics.
 
 Actual execution evidence is in [TEST_LOG.md](TEST_LOG.md).

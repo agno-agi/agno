@@ -53,6 +53,7 @@ from agno.knowledge.page.types import (
     PageList,
     PageNotFound,
     PageRead,
+    PageSearchConfig,
     SearchHit,
     SearchResult,
     SearchUnavailable,
@@ -63,6 +64,7 @@ from agno.knowledge.page.types import (
 from agno.utils.bounded import BoundedWorkers, WorkBudget
 from agno.utils.log import log_warning
 from agno.vectordb.pgvector import PgVector
+from agno.vectordb.pgvector.index import HNSW
 
 READ_WORKERS = BoundedWorkers(8, "knowledge-read")
 SYNC_WORKERS = BoundedWorkers(2, "knowledge-sync")
@@ -73,13 +75,6 @@ MAX_SEARCH_JSON_BYTES = 32_000
 _PARALLEL_SEARCHES = BoundedSemaphore(2)
 _QUERY_WORKERS = ThreadPoolExecutor(max_workers=6, thread_name_prefix="knowledge-query")
 
-_SEARCH_SETTINGS = (
-    "set_config('plan_cache_mode', 'force_custom_plan', true), "
-    "set_config('hnsw.ef_search', '200', true), set_config('enable_seqscan', 'off', true), "
-    "set_config('parallel_setup_cost', '0', true), set_config('parallel_tuple_cost', '0', true), "
-    "set_config('max_parallel_workers_per_gather', :workers, true), "
-    "set_config('min_parallel_table_scan_size', '0', true)"
-)
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -97,6 +92,9 @@ class PageCoordinator:
         self.db = knowledge.contents_db
         self.fs = knowledge.page_store
         self.vector = knowledge.vector_db
+        if knowledge.page_search is not None and not isinstance(knowledge.page_search, PageSearchConfig):
+            raise ValueError("page_search must be a PageSearchConfig")
+        self.search_config = knowledge.page_search or PageSearchConfig()
         if not isinstance(self.db, PostgresDb) or not isinstance(self.fs, FileSystem):
             raise ValueError("page_store requires FileSystem and synchronous PostgresDb contents_db")
         if not isinstance(self.fs.backend, DbFileSystem) or self.fs.backend.dialect != "postgresql":
@@ -1082,14 +1080,15 @@ class PageCoordinator:
                 # Prepare the same stemmed OR queries once. Bound tsquery values let
                 # PostgreSQL estimate lexical matches instead of assuming a one-row
                 # CTE, and let its parallel bitmap scan rank broad matches in parallel.
+                settings, setting_values = self._search_settings(parallel=parallel)
                 tsqueries = conn.execute(
                     text(
                         "SELECT ARRAY(SELECT (SELECT string_agg(quote_literal(lexeme), ' | ') "
                         "FROM unnest(tsvector_to_array(to_tsvector('english', phrasing))) AS lexeme)::tsquery::text "
                         "FROM unnest(CAST(:queries AS text[])) WITH ORDINALITY AS inputs(phrasing, position) "
-                        "ORDER BY position), " + _SEARCH_SETTINGS
+                        "ORDER BY position)" + (", " + settings if settings else "")
                     ),
-                    {"queries": [phrasing for phrasing, _ in vectors], "workers": "0" if parallel else "4"},
+                    {"queries": [phrasing for phrasing, _ in vectors], **setting_values},
                 ).scalar_one()
                 query_specs = [
                     (
@@ -1207,7 +1206,8 @@ class PageCoordinator:
             try:
                 optional_budget.remaining()
                 with self._snapshot(optional_budget, snapshot=snapshot) as child:
-                    child.execute(text("SELECT " + _SEARCH_SETTINGS), {"workers": "0"})
+                    settings, values = self._search_settings(parallel=True)
+                    child.execute(text("SELECT " + settings), values)
                     return execute(child, query, optional_budget)
             except Exception as exc:
                 return exc
@@ -1236,6 +1236,25 @@ class PageCoordinator:
             for future in futures:
                 future.cancel()
             wait(futures)
+
+    def _search_settings(self, *, parallel: bool) -> Tuple[str, Dict[str, str]]:
+        settings = {
+            name: getattr(self.search_config, name)
+            for name in PageSearchConfig.model_fields
+            if getattr(self.search_config, name) is not None
+        }
+        if isinstance(self.vector.vector_index, HNSW):
+            settings["hnsw.ef_search"] = self.vector.vector_index.ef_search
+        if parallel:
+            settings["max_parallel_workers_per_gather"] = 0
+        sql, values = [], {}
+        for index, (name, value) in enumerate(settings.items()):
+            # Names come only from the typed config and the fixed HNSW setting;
+            # every caller-provided value is a bound parameter.
+            parameter = "search_setting_" + str(index)
+            sql.append(f"set_config('{name}', :{parameter}, true)")
+            values[parameter] = "on" if value is True else "off" if value is False else str(value)
+        return ", ".join(sql), values
 
     def _hybrid_sql(self) -> str:
         catalog = _identifier(self.catalog.schema) + "." + _identifier(self.catalog.name)

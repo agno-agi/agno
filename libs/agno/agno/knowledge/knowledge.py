@@ -18,7 +18,7 @@ from agno.exceptions import EmbeddingError
 from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
-from agno.knowledge.page import GrepResult, PageList, PageRead, SearchResult, SyncReport
+from agno.knowledge.page import GrepResult, PageList, PageRead, PageSearchConfig, SearchResult, SyncReport
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader.utils.urls import canonical_page_name, is_sitemap_url
 from agno.knowledge.remote_content.base import BaseStorageConfig
@@ -68,6 +68,7 @@ class Knowledge(RemoteKnowledge):
     embedding_retry_backoff: float = 1.0
 
     page_store: Optional[Any] = None
+    page_search: Optional[PageSearchConfig] = None
 
     def __init__(
         self,
@@ -81,6 +82,7 @@ class Knowledge(RemoteKnowledge):
         content_sources: Optional[List[BaseStorageConfig]] = None,
         max_results: int = 10,
         isolate_vector_search: bool = False,
+        page_search: Optional[PageSearchConfig] = None,
         max_embedding_retries: int = 0,
         embedding_retry_backoff: float = 1.0,
         contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = cast(Any, _DATABASE_UNSET),
@@ -105,6 +107,7 @@ class Knowledge(RemoteKnowledge):
         self.max_embedding_retries = max_embedding_retries
         self.embedding_retry_backoff = embedding_retry_backoff
         self.page_store = page_store
+        self.page_search = page_search
         self.__post_init__()
 
     @property

@@ -1,5 +1,17 @@
 # Public pages test log
 
+### public_pages.py — explicit search configuration and lifecycle fixes
+
+**Status:** PASS
+
+**Description:** Re-ran the updated executable in the owned `.venvs/demo` environment against a disposable PostgreSQL database. Discovery was bounded to the real public Agents overview page; fetch, embeddings, chat and follow-up models, HTTP/SSE, native MCP, authenticated durable sync and polling used their real implementations.
+
+**Result:** Sync/read/grep, explicit pre-hook chat, follow-up completion, readiness, selected roster, CORS, MCP discovery/search, anonymous workflow rejection and authorized background refresh all passed. The database was dropped. The example explicitly supplies `HNSW(ef_search=200)` and `PageSearchConfig`, using preferred `content_db`. This single-page smoke test establishes executable integration, not full-corpus quality or live latency acceptance.
+
+**Executable SHA-256:** `93b78e7699e71b785eda0db40d7032c83ce6b2c52dc46c21b14c46f1503ebf7b`
+
+---
+
 ### public_pages.py
 
 **Status:** PASS

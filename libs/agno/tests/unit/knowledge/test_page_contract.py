@@ -42,7 +42,7 @@ def test_page_public_imports_preserve_types_without_loading_storage():
 
                 expected = {
                     "GrepMatch", "GrepResult", "Page", "PageChanged", "PageError", "PageList",
-                    "PageNotFound", "PageRead", "PageResult", "SearchHit", "SearchResult",
+                    "PageNotFound", "PageRead", "PageResult", "PageSearchConfig", "SearchHit", "SearchResult",
                     "SearchUnavailable", "SyncFailed", "SyncReport", "encoded_size", "tool_error",
                 }
                 assert set(page.__all__) == expected

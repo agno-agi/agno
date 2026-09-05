@@ -13,12 +13,13 @@ from agno.db.postgres import PostgresDb
 from agno.fs import FileSystem
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.page import PageError, tool_error
+from agno.knowledge.page import PageError, PageSearchConfig, tool_error
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, MCPConfig, QueueConfig
 from agno.os.public import PublicSurface
 from agno.tools.mcp import MCPTools
 from agno.vectordb.pgvector import PgVector
+from agno.vectordb.pgvector.index import HNSW
 from agno.workflow import Step, StepInput, StepOutput, Workflow
 from pydantic import BaseModel, Field
 
@@ -29,7 +30,7 @@ db = PostgresDb(
     )
 )
 knowledge = Knowledge(
-    contents_db=db,
+    content_db=db,
     page_store=FileSystem(
         db,
         namespace="public-page-demo",
@@ -39,11 +40,19 @@ knowledge = Knowledge(
     vector_db=PgVector(
         db_engine=db.db_engine,
         table_name="demo_page_vectors",
+        vector_index=HNSW(ef_search=200),
         embedder=OpenAIEmbedder(
             id="text-embedding-3-small",
             dimensions=1536,
             client_params={"timeout": 20, "max_retries": 0},
         ),
+    ),
+    page_search=PageSearchConfig(
+        enable_seqscan=False,
+        parallel_setup_cost=0,
+        parallel_tuple_cost=0,
+        max_parallel_workers_per_gather=4,
+        min_parallel_table_scan_size=0,
     ),
 )
 index_url = getenv("PAGE_DEMO_INDEX_URL", "https://docs.agno.com/llms.txt")

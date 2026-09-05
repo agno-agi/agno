@@ -5,7 +5,26 @@ from __future__ import annotations
 import json
 from typing import Literal, Optional, Tuple
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
+
+
+class PageSearchConfig(BaseModel):
+    """Transaction-local PostgreSQL planner options for page search.
+
+    None inherits the database setting. Custom plans allow parameterized namespace
+    queries to use their partial indexes. Parallel alternative queries always use
+    zero PostgreSQL parallel workers to avoid multiplying worker fan-out.
+    HNSW search breadth is configured only through PgVector's HNSW.ef_search.
+    """
+
+    model_config = ConfigDict(frozen=True, extra="forbid")
+    plan_cache_mode: Optional[Literal["auto", "force_custom_plan", "force_generic_plan"]] = "force_custom_plan"
+    enable_seqscan: Optional[bool] = Field(default=None, strict=True)
+    parallel_setup_cost: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
+    parallel_tuple_cost: Optional[float] = Field(default=None, ge=0, allow_inf_nan=False, strict=True)
+    max_parallel_workers_per_gather: Optional[int] = Field(default=None, ge=0, le=1024, strict=True)
+    # PostgreSQL measures this setting in blocks (normally 8 KiB), not bytes.
+    min_parallel_table_scan_size: Optional[int] = Field(default=None, ge=0, le=2147483647, strict=True)
 
 
 class PageError(Exception):
