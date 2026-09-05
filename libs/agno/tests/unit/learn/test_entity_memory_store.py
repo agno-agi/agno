@@ -12,6 +12,7 @@ import pytest
 
 from agno.learn.config import EntityMemoryConfig, LearningMode
 from agno.learn.stores.entity_memory import EntityMemoryStore
+from agno.learn.utils import build_learning_id
 
 
 def _owner_matches(row_user_id: Any, filter_user_id: Any) -> bool:
@@ -189,6 +190,84 @@ class TestAgenticOnly:
         remember = next(t for t in tools if t.__name__ == "remember_about")
         remember(entity="radar", entity_type="project")
         assert all(row.get("namespace") == "team_west" for row in db.rows.values())
+
+
+class TestUserNamespaceIsolation:
+    def test_same_entity_for_two_users_uses_distinct_rows(self, db: RecordingLearningDb) -> None:
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=db, namespace="user"))  # type: ignore[arg-type]
+
+        first = store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Alice uses Acme for billing."],
+            user_id="alice",
+        )
+        second = store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Bob uses Acme for deployments."],
+            user_id="bob",
+        )
+
+        assert "Recorded" in first
+        assert "Recorded" in second
+        assert sorted(db.rows) == sorted(
+            [
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+                ),
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="bob"
+                ),
+            ]
+        )
+
+        alice = store.get(entity_id="acme", entity_type="company", user_id="alice", namespace="user")
+        bob = store.get(entity_id="acme", entity_type="company", user_id="bob", namespace="user")
+
+        assert alice is not None
+        assert bob is not None
+        assert [fact["content"] for fact in alice.facts] == ["Alice uses Acme for billing."]
+        assert [fact["content"] for fact in bob.facts] == ["Bob uses Acme for deployments."]
+
+    def test_sqlite_user_namespace_uses_tenant_scoped_primary_keys(self, tmp_path) -> None:
+        from agno.db.sqlite import SqliteDb
+
+        sqlite_db = SqliteDb(db_file=str(tmp_path / "entities.db"))
+        store = EntityMemoryStore(config=EntityMemoryConfig(db=sqlite_db, namespace="user"))
+
+        store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Alice uses Acme for billing."],
+            user_id="alice",
+        )
+        store.remember_about(
+            entity="Acme",
+            entity_type="company",
+            facts=["Bob uses Acme for deployments."],
+            user_id="bob",
+        )
+
+        rows = sqlite_db.get_learnings(learning_type="entity_memory", namespace="user")
+        assert sorted(row["learning_id"] for row in rows) == sorted(
+            [
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="alice"
+                ),
+                build_learning_id(
+                    "entity_memory", entity_id="acme", entity_type="company", namespace="user", user_id="bob"
+                ),
+            ]
+        )
+
+        alice = store.get(entity_id="acme", entity_type="company", user_id="alice", namespace="user")
+        bob = store.get(entity_id="acme", entity_type="company", user_id="bob", namespace="user")
+
+        assert alice is not None
+        assert bob is not None
+        assert [fact["content"] for fact in alice.facts] == ["Alice uses Acme for billing."]
+        assert [fact["content"] for fact in bob.facts] == ["Bob uses Acme for deployments."]
 
 
 class TestToolSurface:

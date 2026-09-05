@@ -79,6 +79,7 @@ dev = [
 os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
 mcp = ["mcp>=2.1.0,<3.0.0", "fastmcp>=4.0.0,<5"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
+guardrails = ["pyatr>=0.2.7"]
 
 # Dependencies for Telemetry
 opentelemetry = ["opentelemetry-sdk", "opentelemetry-exporter-otlp"]

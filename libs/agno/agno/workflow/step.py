@@ -2260,18 +2260,23 @@ class Step:
 
                         active_executor_run_response = None
                         executor_error_event = None
-                        async for event in response_stream:
-                            if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
-                                active_executor_run_response = event
-                                break
-                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
-                                executor_error_event = event
-                            # Only yield executor events if stream_executor_events is True
-                            if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
-                                enriched_event = self._enrich_event_with_context(
-                                    event, workflow_run_response, step_index
-                                )
-                                yield enriched_event  # type: ignore[misc]
+                        try:
+                            async for event in response_stream:
+                                if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
+                                    active_executor_run_response = event
+                                    break
+                                if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                    executor_error_event = event
+                                # Only yield executor events if stream_executor_events is True
+                                if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
+                                    enriched_event = self._enrich_event_with_context(
+                                        event, workflow_run_response, step_index
+                                    )
+                                    yield enriched_event  # type: ignore[misc]
+                        finally:
+                            aclose = getattr(response_stream, "aclose", None)
+                            if aclose is not None:
+                                await aclose()
 
                         # Update workflow session state
                         if run_context is None and session_state is not None:

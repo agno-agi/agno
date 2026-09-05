@@ -18,6 +18,8 @@ from agno.models.utils import (
     _get_model_class,
     _resolve_provider_key,
     get_model_from_dict,
+    get_model,
+    normalize_provider_key,
     resolve_model,
 )
 
@@ -114,6 +116,22 @@ def test_resolve_sdk_gated_providers(provider, name, expected_key):
 )
 def test_resolve_provider_aliases(provider, name, expected_key):
     assert _resolve_provider_key(provider, name) == expected_key
+
+
+@pytest.mark.parametrize(
+    "provider, name, expected_key",
+    [
+        ("OpenAI", None, "openai"),
+        ("OpenAI", "OpenAIChat", "openai-chat"),
+        ("OpenAI", "OpenAIResponses", "openai-responses"),
+        ("Azure", "AzureOpenAI", "azure-openai"),
+        ("LMStudio", "LMStudio", "lmstudio"),
+        ("Siliconflow", "Siliconflow", "siliconflow"),
+    ],
+)
+def test_normalize_provider_key_for_agentos_output(provider, name, expected_key):
+    assert normalize_provider_key(provider, name) == expected_key
+    assert get_model(f"{expected_key}:roundtrip-id").id == "roundtrip-id"
 
 
 @pytest.mark.parametrize(

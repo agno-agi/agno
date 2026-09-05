@@ -210,6 +210,35 @@ def get_base_router(
             ],
         )
 
+    @router.get(
+        "/models",
+        response_model=List[Model],
+        response_model_exclude_none=True,
+        tags=["Core"],
+        operation_id="get_models",
+        summary="Get Available Models",
+        description=(
+            "Retrieve a list of all unique models currently used by agents and teams in this OS instance. "
+            "This includes the model ID and provider information for each model."
+        ),
+        responses={
+            200: {
+                "description": "List of models retrieved successfully",
+                "content": {
+                    "application/json": {
+                        "example": [
+                            {"id": "gpt-4", "provider": "openai"},
+                            {"id": "claude-3-sonnet", "provider": "anthropic"},
+                        ]
+                    }
+                },
+            }
+        },
+    )
+    async def get_models() -> List[Model]:
+        """Return the list of all models used by agents and teams in the contextual OS"""
+        return _collect_unique_models(os)
+
     return router
 
 
