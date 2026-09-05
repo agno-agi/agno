@@ -31,3 +31,20 @@ def validate_webhook_signature(payload: bytes, signature_header: Optional[str]) 
 
     # Constant-time comparison prevents timing side-channels
     return hmac.compare_digest(calculated_signature, expected_signature)
+
+
+def verify_token_matches(provided_token: Optional[str], expected_token: str) -> bool:
+    """Compare the webhook verification token against the configured one in constant time.
+
+    ``hub.verify_token`` is supplied by the caller on an unauthenticated endpoint, so a
+    plain ``==`` short-circuits on the first differing byte and lets the token be
+    recovered one character at a time from response timing. The values are encoded first
+    because ``hmac.compare_digest`` rejects non-ASCII ``str`` input: query params are
+    caller-controlled text and the expected token comes from the environment, so either
+    side can carry non-ASCII characters.
+    """
+    if not provided_token:
+        return False
+    return hmac.compare_digest(
+        provided_token.encode("utf-8", "surrogateescape"), expected_token.encode("utf-8", "surrogateescape")
+    )

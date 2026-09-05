@@ -106,3 +106,20 @@ def test_app_env_development_does_not_bypass():
     with patch.dict("os.environ", {"WHATSAPP_APP_SECRET": APP_SECRET, "APP_ENV": "development"}):
         assert validate_webhook_signature(payload, None) is False
         assert validate_webhook_signature(payload, "sha256=invalid") is False
+
+
+def test_verify_token_matches_is_constant_time():
+    from agno.os.interfaces.whatsapp.security import verify_token_matches
+
+    with patch("hmac.compare_digest", wraps=hmac.compare_digest) as spy:
+        assert verify_token_matches("s3cret", "s3cret") is True
+        assert spy.called
+
+    assert verify_token_matches("s3crev", "s3cret") is False
+    assert verify_token_matches("s3cret-longer", "s3cret") is False
+    # Missing or empty tokens never verify
+    assert verify_token_matches(None, "s3cret") is False
+    assert verify_token_matches("", "s3cret") is False
+    # Non-ASCII values must not blow up (compare_digest rejects non-ASCII str)
+    assert verify_token_matches("tökén", "tökén") is True
+    assert verify_token_matches("tökén", "s3cret") is False
