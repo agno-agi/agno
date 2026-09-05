@@ -126,12 +126,13 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
         return _access_error(result_id, row, run_context)
 
     def _render(result_id: str, matches: Any) -> str:
-        from agno.offload.store import SEARCH_MAX_MATCHES
-
         if not matches:
             return f"No matches in {result_id}."
-        if matches[-1].more or len(matches) >= SEARCH_MAX_MATCHES:
-            lines = [f"First {len(matches)} matches in {result_id} (more follow; narrow the pattern):"]
+        if matches[-1].more:
+            lines = [
+                f"First {len(matches)} matches in {result_id} "
+                f"(more follow; search again with start_line={matches[-1].line_number + 1}):"
+            ]
         else:
             lines = [f"{len(matches)} match(es) in {result_id}:"]
         for match in matches:
@@ -143,7 +144,7 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
                 lines.append(f"{match.line_number}: {match.line}")
         return "\n".join(lines)
 
-    def search_result(result_id: str, pattern: str, context_lines: int = 0) -> str:
+    def search_result(result_id: str, pattern: str, context_lines: int = 0, *, start_line: int = 1) -> str:
         """Search a stored tool result with a regular expression.
 
         Returns at most 20 matches as line-number/line pairs, each line clipped to 500
@@ -153,6 +154,9 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
             pattern: A Python regular expression.
             context_lines: Lines of context to include around each match (at most 20).
+            start_line: First line to search (1-indexed, inclusive, default 1). Use the
+                reply's continuation line to retrieve more matches with the same pattern.
+                Context can include earlier lines; matching begins at this line.
 
         A long line is shown as a window around the match with its character
         offset; read the rest with read_result(start_line, start_char=offset).
@@ -167,13 +171,13 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
             error = _resolve(result_id, store.get_row(result_id))
             if error is not None:
                 return error
-            return _render(result_id, store.search(result_id, pattern, context_lines))
+            return _render(result_id, store.search(result_id, pattern, context_lines, start_line=start_line))
         except re.error as e:
             return f"Error: invalid regular expression: {e}"
         except Exception as e:
             return f"Error searching result: {e}"
 
-    async def asearch_result(result_id: str, pattern: str, context_lines: int = 0) -> str:
+    async def asearch_result(result_id: str, pattern: str, context_lines: int = 0, *, start_line: int = 1) -> str:
         """Search a stored tool result with a regular expression.
 
         Returns at most 20 matches as line-number/line pairs, each line clipped to 500
@@ -183,6 +187,9 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
             result_id: The id from the result envelope, e.g. "res_a91c4f20b3".
             pattern: A Python regular expression.
             context_lines: Lines of context to include around each match (at most 20).
+            start_line: First line to search (1-indexed, inclusive, default 1). Use the
+                reply's continuation line to retrieve more matches with the same pattern.
+                Context can include earlier lines; matching begins at this line.
 
         A long line is shown as a window around the match with its character
         offset; read the rest with read_result(start_line, start_char=offset).
@@ -197,7 +204,7 @@ def get_search_result_function(owner: Any, run_context: RunContext, async_mode: 
             error = _resolve(result_id, await store.aget_row(result_id))
             if error is not None:
                 return error
-            return _render(result_id, await store.asearch(result_id, pattern, context_lines))
+            return _render(result_id, await store.asearch(result_id, pattern, context_lines, start_line=start_line))
         except re.error as e:
             return f"Error: invalid regular expression: {e}"
         except Exception as e:

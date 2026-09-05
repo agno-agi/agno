@@ -883,9 +883,9 @@ async def test_async_search_does_not_block_the_event_loop(db):
     # Stand in for a slow scan: the real one is CPU-bound regex work over the payload.
     real_matches = store._matches_from_content
 
-    def slow_matches(content, pattern, context_lines):
+    def slow_matches(content, pattern, context_lines, start_line=1):
         _time.sleep(0.3)
-        return real_matches(content, pattern, context_lines)
+        return real_matches(content, pattern, context_lines, start_line)
 
     store._matches_from_content = slow_matches  # type: ignore[method-assign]
     ticks = []
