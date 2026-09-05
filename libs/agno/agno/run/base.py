@@ -43,6 +43,14 @@ class RunContext:
     # Merged AFTER agent.tools during tool resolution
     client_tools: Optional[List[Any]] = None
 
+    # False withholds everything keyed to the user from this run, on read and on
+    # write: user memories are neither injected nor created, the past-session
+    # search tools are not registered, and the user-scoped learning stores
+    # (user_profile, user_memory) are skipped. Namespace-scoped learning stores
+    # (entity_memory, learned_knowledge) are unaffected -- they belong to the
+    # agent, not to the user.
+    use_user_context: bool = True
+
 
 class _EventIndexCarrier:
     """Plain (non-dataclass) base carrying ``event_index``.

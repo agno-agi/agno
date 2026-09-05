@@ -145,6 +145,10 @@ def get_tools(
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
+    # Incognito runs withhold every user-keyed tool: the past-session readers reach
+    # into this user's other sessions, and update_user_memory writes to their store.
+    use_user_context = run_context.use_user_context
+
     # Resolve callable factories
     resolve_callable_tools(agent, run_context)
     resolve_callable_knowledge(agent, run_context)
@@ -170,7 +174,7 @@ def get_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_past_sessions:
+    if agent.search_past_sessions and use_user_context:
         agent_tools.append(
             _default_tools.get_search_past_sessions_function(
                 agent,
@@ -187,7 +191,7 @@ def get_tools(
             )
         )
 
-    if agent.enable_agentic_memory:
+    if agent.enable_agentic_memory and use_user_context:
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=False))
 
     # Read-back tools for offloaded results
@@ -201,6 +205,7 @@ def get_tools(
     if agent._learning is not None:
         learning_tools = agent._learning.get_tools(
             user_id=user_id,
+            include_user_scoped=use_user_context,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,
@@ -258,6 +263,9 @@ async def aget_tools(
 
     agent_tools: List[Union[Toolkit, Callable, Function, Dict]] = []
 
+    # Incognito runs withhold every user-keyed tool (see the sync twin)
+    use_user_context = run_context.use_user_context
+
     # Resolve callable factories
     await aresolve_callable_tools(agent, run_context)
     await aresolve_callable_knowledge(agent, run_context)
@@ -305,7 +313,7 @@ async def aget_tools(
         agent_tools.append(_default_tools.get_chat_history_function(agent, session=session))
     if agent.read_tool_call_history:
         agent_tools.append(_default_tools.get_tool_call_history_function(agent, session=session))
-    if agent.search_past_sessions:
+    if agent.search_past_sessions and use_user_context:
         agent_tools.append(
             await _default_tools.aget_search_past_sessions_function(
                 agent,
@@ -322,7 +330,7 @@ async def aget_tools(
             )
         )
 
-    if agent.enable_agentic_memory:
+    if agent.enable_agentic_memory and use_user_context:
         agent_tools.append(_default_tools.get_update_user_memory_function(agent, user_id=user_id, async_mode=True))
 
     # Read-back tools for offloaded results
@@ -336,6 +344,7 @@ async def aget_tools(
     if agent._learning is not None:
         learning_tools = await agent._learning.aget_tools(
             user_id=user_id,
+            include_user_scoped=use_user_context,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             run_context=run_context,

@@ -69,6 +69,12 @@ def _filter_store_kwargs(callee: Callable, kwargs: Dict[str, Any]) -> Dict[str, 
     return {key: value for key, value in kwargs.items() if key in parameters}
 
 
+# Stores keyed to the individual user. A run that withholds user context skips
+# these on both recall and tool exposure; every other store is scoped to the
+# session, a namespace, or the agent, and belongs to the run regardless.
+USER_SCOPED_STORES = frozenset({"user_profile", "user_memory"})
+
+
 # Type aliases for cleaner signatures
 UserProfileInput = Union[bool, UserProfileConfig, LearningStore, None]
 UserMemoryInput = Union[bool, UserMemoryConfig, LearningStore, None]
@@ -255,6 +261,18 @@ class LearningMachine:
 
         self._stores = stores
         log_debug(f"LearningMachine initialized with stores: {list(stores.keys())}")
+
+    def _selected_stores(self, include_user_scoped: bool = True) -> Dict[str, LearningStore]:
+        """The stores a call may touch.
+
+        With ``include_user_scoped`` False the user-keyed stores are dropped, so
+        an incognito run neither recalls from them nor exposes their tools. They
+        are skipped rather than called with ``user_id=None``: an unscoped write
+        would still land, just in the wrong bucket.
+        """
+        if include_user_scoped:
+            return self.stores
+        return {name: store for name, store in self.stores.items() if name not in USER_SCOPED_STORES}
 
     def _resolve_store(
         self,
@@ -500,6 +518,7 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> str:
         """Build memory context for the agent's system prompt.
@@ -515,6 +534,9 @@ class LearningMachine:
             namespace: Namespace filter for entity_memory and learned_knowledge.
             agent_id: Optional agent context.
             team_id: Optional team context.
+            include_user_scoped: When False, the user-keyed stores (user_profile,
+                user_memory) are skipped entirely -- an incognito run must not
+                read from or write to them.
 
         Returns:
             Context string to inject into the agent's system prompt.
@@ -528,6 +550,7 @@ class LearningMachine:
             namespace=namespace,
             agent_id=agent_id,
             team_id=team_id,
+            include_user_scoped=include_user_scoped,
             **kwargs,
         )
 
@@ -543,6 +566,7 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> str:
         """Async version of build_context."""
@@ -555,6 +579,7 @@ class LearningMachine:
             namespace=namespace,
             agent_id=agent_id,
             team_id=team_id,
+            include_user_scoped=include_user_scoped,
             **kwargs,
         )
 
@@ -748,6 +773,7 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> List[Callable]:
         """Get learning tools to expose to the agent.
@@ -764,12 +790,16 @@ class LearningMachine:
             namespace: Default namespace for entity/learning operations.
             agent_id: Optional agent context.
             team_id: Optional team context.
+            include_user_scoped: When False, the user-keyed stores (user_profile,
+                user_memory) are skipped entirely -- an incognito run must not
+                read from or write to them.
 
         Returns:
             List of callable tools.
         """
         tools = []
-        self._warn_if_user_id_missing(user_id)
+        if include_user_scoped:
+            self._warn_if_user_id_missing(user_id)
         self._warn_if_model_missing()
         context = {
             "user_id": user_id,
@@ -780,7 +810,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self.stores.items():
+        for name, store in self._selected_stores(include_user_scoped).items():
             try:
                 store_tools = store.get_tools(**_filter_store_kwargs(store.get_tools, context))
                 if store_tools:
@@ -798,11 +828,13 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> List[Callable]:
         """Async version of get_tools."""
         tools = []
-        self._warn_if_user_id_missing(user_id)
+        if include_user_scoped:
+            self._warn_if_user_id_missing(user_id)
         self._warn_if_model_missing()
         context = {
             "user_id": user_id,
@@ -813,7 +845,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self.stores.items():
+        for name, store in self._selected_stores(include_user_scoped).items():
             try:
                 store_tools = await store.aget_tools(**_filter_store_kwargs(store.aget_tools, context))
                 if store_tools:
@@ -832,6 +864,7 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> None:
         """Extract and save learnings from a conversation.
@@ -846,6 +879,9 @@ class LearningMachine:
             namespace: Namespace for entity/learning saves.
             agent_id: Optional agent context.
             team_id: Optional team context.
+            include_user_scoped: When False, the user-keyed stores (user_profile,
+                user_memory) are skipped entirely -- an incognito run must not
+                read from or write to them.
         """
         context = {
             "messages": messages,
@@ -857,7 +893,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self.stores.items():
+        for name, store in self._selected_stores(include_user_scoped).items():
             try:
                 store.process(**_filter_store_kwargs(store.process, context))
                 if getattr(store, "was_updated", False):
@@ -873,6 +909,7 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> None:
         """Async version of process."""
@@ -886,7 +923,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self.stores.items():
+        for name, store in self._selected_stores(include_user_scoped).items():
             try:
                 await store.aprocess(**_filter_store_kwargs(store.aprocess, context))
                 if getattr(store, "was_updated", False):
@@ -908,11 +945,17 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> Dict[str, Any]:
         """Retrieve raw data from all stores.
 
         Most users should use `build_context()` instead.
+
+        Args:
+            include_user_scoped: When False, the user-keyed stores (user_profile,
+                user_memory) are skipped entirely -- an incognito run must not
+                read from or write to them.
 
         Returns:
             Dict mapping store names to their recalled data.
@@ -931,7 +974,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self.stores.items():
+        for name, store in self._selected_stores(include_user_scoped).items():
             try:
                 result = store.recall(**_filter_store_kwargs(store.recall, context))
                 results[name] = result
@@ -954,6 +997,7 @@ class LearningMachine:
         namespace: Optional[str] = None,
         agent_id: Optional[str] = None,
         team_id: Optional[str] = None,
+        include_user_scoped: bool = True,
         **kwargs,
     ) -> Dict[str, Any]:
         """Async version of recall."""
@@ -971,7 +1015,7 @@ class LearningMachine:
             **kwargs,
         }
 
-        for name, store in self.stores.items():
+        for name, store in self._selected_stores(include_user_scoped).items():
             try:
                 result = await store.arecall(**_filter_store_kwargs(store.arecall, context))
                 results[name] = result

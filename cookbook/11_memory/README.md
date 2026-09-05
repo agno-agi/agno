@@ -4,7 +4,7 @@ This section demonstrates how Agno agents persist and use user memories across r
 
 ## Directory Layout
 
-- `01_agent_with_memory.py` to `08_memory_tools.py`: Core memory patterns with agents.
+- `01_agent_with_memory.py` to `09_incognito_chat.py`: Core memory patterns with agents.
 - `memory_manager/`: Direct `MemoryManager` API examples using PostgreSQL.
 - `optimize_memories/`: Memory optimization strategy examples.
 

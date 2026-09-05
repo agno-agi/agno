@@ -506,6 +506,7 @@ def _run(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
+                    use_user_context=run_context.use_user_context,
                 )
 
                 # Start learning extraction as a background task (runs concurrently with the main execution)
@@ -910,6 +911,7 @@ def _run_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_future=memory_future,
+                    use_user_context=run_context.use_user_context,
                 )
 
                 # Start learning extraction as a background task (runs concurrently with the main execution)
@@ -1299,6 +1301,7 @@ def run_dispatch(
     add_history_to_context: Optional[bool] = None,
     add_dependencies_to_context: Optional[bool] = None,
     add_session_state_to_context: Optional[bool] = None,
+    use_user_context: bool = True,
     dependencies: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
@@ -1411,6 +1414,11 @@ def run_dispatch(
         metadata_provided=metadata is not None,
         user_id=user_id,
     )
+
+    # A privacy opt-out only ever tightens. Whichever of the call-site argument and
+    # the incoming run_context withholds user context wins, so a nested executor
+    # reusing a run_context cannot re-grant memories to a run that arrived incognito.
+    run_context.use_user_context = run_context.use_user_context and use_user_context
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -1639,6 +1647,7 @@ async def _arun(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
+                    use_user_context=run_context.use_user_context,
                 )
 
                 # Start learning extraction as a background task
@@ -2397,6 +2406,7 @@ async def _arun_stream(
                     run_messages=run_messages,
                     user_id=user_id,
                     existing_task=memory_task,
+                    use_user_context=run_context.use_user_context,
                 )
 
                 # Start learning extraction as a background task
@@ -2817,6 +2827,7 @@ def arun_dispatch(  # type: ignore
     add_history_to_context: Optional[bool] = None,
     add_dependencies_to_context: Optional[bool] = None,
     add_session_state_to_context: Optional[bool] = None,
+    use_user_context: bool = True,
     dependencies: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
@@ -2931,6 +2942,11 @@ def arun_dispatch(  # type: ignore
         metadata_provided=metadata is not None,
         user_id=user_id,
     )
+
+    # A privacy opt-out only ever tightens. Whichever of the call-site argument and
+    # the incoming run_context withholds user context wins, so a nested executor
+    # reusing a run_context cannot re-grant memories to a run that arrived incognito.
+    run_context.use_user_context = run_context.use_user_context and use_user_context
 
     # Prepare arguments for the model (must be after run_context is fully initialized)
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
@@ -3369,6 +3385,7 @@ def continue_run_dispatch(
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    use_user_context: bool = True,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     **kwargs,
@@ -3495,6 +3512,11 @@ def continue_run_dispatch(
         metadata_provided=metadata is not None,
         user_id=user_id,
     )
+
+    # A privacy opt-out only ever tightens. Whichever of the call-site argument and
+    # the incoming run_context withholds user context wins, so a nested executor
+    # reusing a run_context cannot re-grant memories to a run that arrived incognito.
+    run_context.use_user_context = run_context.use_user_context and use_user_context
 
     # Resolve dependencies
     if run_context.dependencies is not None:
@@ -4262,6 +4284,7 @@ def acontinue_run_dispatch(  # type: ignore
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     dependencies: Optional[Dict[str, Any]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    use_user_context: bool = True,
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
@@ -4378,6 +4401,11 @@ def acontinue_run_dispatch(  # type: ignore
         metadata_provided=metadata is not None,
         user_id=user_id,
     )
+
+    # A privacy opt-out only ever tightens. Whichever of the call-site argument and
+    # the incoming run_context withholds user context wins, so a nested executor
+    # reusing a run_context cannot re-grant memories to a run that arrived incognito.
+    run_context.use_user_context = run_context.use_user_context and use_user_context
 
     response_format = get_response_format(agent, run_context=run_context) if agent.parser_model is None else None
 

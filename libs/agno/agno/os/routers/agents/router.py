@@ -677,8 +677,22 @@ def get_agent_router(
             None,
             description="JSON object with factory-specific parameters for dynamic agent construction",
         ),
+        use_user_context: bool = Form(
+            True,
+            description=(
+                "Set to false for an incognito run: nothing keyed to the user is read or written. "
+                "User memories are neither injected nor created, the past-session search tools are "
+                "not registered, and the user-scoped learning stores are skipped. The run itself is "
+                "still saved to the session"
+            ),
+        ),
     ):
         kwargs = await get_request_kwargs(request, create_agent_run)
+
+        # Declared as an endpoint parameter, so get_request_kwargs excludes it. Fold it
+        # back in here: every execution path below (inline, streaming, background and
+        # queued) forwards kwargs, and the queued payload carries it to the worker.
+        kwargs["use_user_context"] = use_user_context
 
         files_metadata_list = parse_files_metadata(files_metadata)
 

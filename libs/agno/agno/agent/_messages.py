@@ -156,6 +156,7 @@ def get_system_message(
 
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
+    use_user_context = run_context.use_user_context if run_context else True
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -313,8 +314,10 @@ def get_system_message(
         skills_snippet = agent.skills.get_system_prompt_snippet()
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
-    # 3.3.9 Then add memories to the system prompt
-    if agent.add_memories_to_context:
+    # 3.3.9 Then add memories to the system prompt. An incognito run pulls nothing
+    # keyed to the user, so the block is skipped entirely -- not even the
+    # "no memories yet" fallback, which would still advertise the capability.
+    if agent.add_memories_to_context and use_user_context:
         _memory_manager_not_set = False
         if not user_id:
             user_id = "default"
@@ -373,6 +376,7 @@ def get_system_message(
         learning_guidance = agent._learning._framework_instructions()
         learning_context = agent._learning.build_context(
             user_id=user_id,
+            include_user_scoped=use_user_context,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             message=_learning_message_text(input),
@@ -452,6 +456,7 @@ async def aget_system_message(
 
     session_state = run_context.session_state if run_context else None
     user_id = run_context.user_id if run_context else None
+    use_user_context = run_context.use_user_context if run_context else True
 
     # Get output_schema from run_context
     output_schema = run_context.output_schema if run_context else None
@@ -610,8 +615,10 @@ async def aget_system_message(
         skills_snippet = agent.skills.get_system_prompt_snippet()
         if skills_snippet:
             system_message_content += f"\n{skills_snippet}\n"
-    # 3.3.9 Then add memories to the system prompt
-    if agent.add_memories_to_context:
+    # 3.3.9 Then add memories to the system prompt. An incognito run pulls nothing
+    # keyed to the user, so the block is skipped entirely -- not even the
+    # "no memories yet" fallback, which would still advertise the capability.
+    if agent.add_memories_to_context and use_user_context:
         _memory_manager_not_set = False
         if not user_id:
             user_id = "default"
@@ -670,6 +677,7 @@ async def aget_system_message(
         learning_guidance = agent._learning._framework_instructions()
         learning_context = await agent._learning.abuild_context(
             user_id=user_id,
+            include_user_scoped=use_user_context,
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             message=_learning_message_text(input),

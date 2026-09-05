@@ -65,3 +65,12 @@
 **Description:** Tests MemoryTools and WebSearchTools integration with user memory.
 
 ---
+
+### 09_incognito_chat.py
+
+**Status:** PENDING
+
+**Description:** Tests that a run with use_user_context=False neither reads nor writes user memories, while surrounding normal runs still do.
+
+---
+

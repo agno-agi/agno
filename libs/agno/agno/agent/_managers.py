@@ -141,6 +141,7 @@ async def astart_memory_task(
     run_messages: RunMessages,
     user_id: Optional[str],
     existing_task: Optional[Task],
+    use_user_context: bool = True,
 ) -> Optional[Task]:
     """Cancel any existing memory task and start a new one if conditions are met.
 
@@ -149,6 +150,8 @@ async def astart_memory_task(
         run_messages: The run messages containing the user message.
         user_id: The user ID for memory creation.
         existing_task: An existing memory task to cancel before starting a new one.
+        use_user_context: False on an incognito run, which must not write to the
+            user's memory store.
 
     Returns:
         A new memory task if conditions are met, None otherwise.
@@ -167,6 +170,7 @@ async def astart_memory_task(
     )
     if (
         has_content
+        and use_user_context
         and agent.memory_manager is not None
         and agent.update_memory_on_run
         and not agent.enable_agentic_memory
@@ -182,6 +186,7 @@ def start_memory_future(
     run_messages: RunMessages,
     user_id: Optional[str],
     existing_future: Optional[Future] = None,
+    use_user_context: bool = True,
 ) -> Optional[Future]:
     """Cancel any existing memory future and start a new one if conditions are met.
 
@@ -190,6 +195,8 @@ def start_memory_future(
         run_messages: The run messages containing the user message.
         user_id: The user ID for memory creation.
         existing_future: An existing memory future to cancel before starting a new one.
+        use_user_context: False on an incognito run, which must not write to the
+            user's memory store.
 
     Returns:
         A new memory future if conditions are met, None otherwise.
@@ -205,6 +212,7 @@ def start_memory_future(
     )
     if (
         has_content
+        and use_user_context
         and agent.memory_manager is not None
         and agent.update_memory_on_run
         and not agent.enable_agentic_memory
@@ -283,6 +291,7 @@ def process_learnings(
         agent._learning.process(
             messages=messages,
             user_id=user_id,
+            include_user_scoped=getattr(run_context, "use_user_context", True),
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             team_id=agent.team_id,
@@ -318,6 +327,7 @@ async def aprocess_learnings(
         await agent._learning.aprocess(
             messages=messages,
             user_id=user_id,
+            include_user_scoped=getattr(run_context, "use_user_context", True),
             session_id=session.session_id if session else None,
             agent_id=agent.id,
             team_id=agent.team_id,
