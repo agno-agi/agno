@@ -74,7 +74,7 @@ def _arguments(agent: Any, run_context: Any, query: str, asynchronous: bool):
     return callback, arguments
 
 
-def _render(documents: Any, *, unavailable: bool = False) -> Optional[Message]:
+def _reference_json(documents: Any, *, unavailable: bool = False) -> Optional[str]:
     if documents is None and not unavailable:
         return None
     records: list[Any] = []
@@ -89,11 +89,11 @@ def _render(documents: Any, *, unavailable: bool = False) -> Optional[Message]:
             "truncated": omitted > 0,
             "omitted_count": omitted,
         }
-        return (
-            "<knowledge_references>\n"
-            + json.dumps(data, ensure_ascii=False, separators=(",", ":"))
-            + "\n</knowledge_references>"
-        )
+        return json.dumps(data, ensure_ascii=False, separators=(",", ":"))
+
+    # Reserve the context-message delimiters even when returning bare tool JSON,
+    # so both surfaces retain the same bounded evidence selection.
+    wrapper_bytes = len("<knowledge_references>\n\n</knowledge_references>".encode("utf-8"))
 
     if documents is not None:
         for document in documents[:100]:
@@ -102,14 +102,26 @@ def _render(documents: Any, *, unavailable: bool = False) -> Optional[Message]:
                 omitted += 1
                 continue
             records.append(item)
-            if len(content().encode("utf-8")) > 24000:
+            if wrapper_bytes + len(content().encode("utf-8")) > 24000:
                 records.pop()
                 omitted += 1
         omitted += max(0, len(documents) - 100)
-    while records and len(content().encode("utf-8")) > 24000:
+    while records and wrapper_bytes + len(content().encode("utf-8")) > 24000:
         records.pop()
         omitted += 1
-    return Message(role="user", name="knowledge_references", content=content(), add_to_history=False)
+    return content()
+
+
+def _render(documents: Any, *, unavailable: bool = False) -> Optional[Message]:
+    payload = _reference_json(documents, unavailable=unavailable)
+    if payload is None:
+        return None
+    return Message(
+        role="user",
+        name="knowledge_references",
+        content="<knowledge_references>\n" + payload + "\n</knowledge_references>",
+        add_to_history=False,
+    )
 
 
 def _invoke(callback: Any, arguments: Any, *, budget: Any):
@@ -221,10 +233,10 @@ def append_page_tools(
             """Search documentation with the configured custom retriever."""
             callback, arguments = _arguments(owner, run_context, _query(query), False)
             try:
-                evidence = _render(CALLBACK_WORKERS.run_sync(_invoke, callback, arguments, seconds=2))
+                payload = _reference_json(CALLBACK_WORKERS.run_sync(_invoke, callback, arguments, seconds=2))
             except Exception:
-                evidence = _render(None, unavailable=True)
-            return str(evidence.content).split("\n", 1)[1] if evidence is not None else '{"results":[]}'
+                payload = _reference_json(None, unavailable=True)
+            return payload if payload is not None else '{"results":[]}'
 
         async def asearch_knowledge(query: str) -> str:
             """Search documentation with the configured custom retriever."""
@@ -234,10 +246,10 @@ def append_page_tools(
                     documents = await asyncio.wait_for(callback(**arguments), timeout=2)
                 else:
                     documents = await CALLBACK_WORKERS.run(_invoke, callback, arguments, seconds=2)
-                evidence = _render(documents)
+                payload = _reference_json(documents)
             except Exception:
-                evidence = _render(None, unavailable=True)
-            return str(evidence.content).split("\n", 1)[1] if evidence is not None else '{"results":[]}'
+                payload = _reference_json(None, unavailable=True)
+            return payload if payload is not None else '{"results":[]}'
 
         asearch_knowledge.__name__ = "search_knowledge"
         tools = [asearch_knowledge if async_mode else search_knowledge, *tools[1:]]

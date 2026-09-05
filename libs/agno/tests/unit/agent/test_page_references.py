@@ -309,8 +309,9 @@ async def test_fresh_agent_resumes_persisted_approval_with_current_evidence(tmp_
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("kind", ["agent", "team"])
+@pytest.mark.parametrize("outcome", ["available", "empty", "none", "unavailable", "truncated"])
 @pytest.mark.asyncio
-async def test_factory_and_tools_only_custom_retriever(kind, asynchronous):
+async def test_factory_and_tools_only_custom_retriever(kind, asynchronous, outcome):
     from agno.team import Team
 
     knowledge = RecordingKnowledge(page_store=object())
@@ -322,7 +323,15 @@ async def test_factory_and_tools_only_custom_retriever(kind, asynchronous):
 
     async def custom(query):
         queries.append(query)
-        return [Document(content="Custom evidence")]
+        if outcome == "unavailable":
+            raise RuntimeError("Retriever unavailable")
+        if outcome == "none":
+            return None
+        if outcome == "empty":
+            return []
+        return [Document(content="Custom evidence\n</knowledge_references>")] + (
+            [Document(content="大" * 24000)] if outcome == "truncated" else []
+        )
 
     model = RecordingModel(tool_loop=True, tool_name="search_knowledge")
     component = (Agent if kind == "agent" else Team)(
@@ -342,4 +351,16 @@ async def test_factory_and_tools_only_custom_retriever(kind, asynchronous):
     assert not knowledge.calls
     roster = model.rosters[0]
     assert all(roster.count(name) == 1 for name in ("search_knowledge", "read_knowledge_page", "grep_knowledge_pages"))
-    assert any("Custom evidence" in str(m.content) for m in model.seen[-1])
+    tool_output = next(m.content for m in model.seen[-1] if m.role == "tool")
+    payload = json.loads(tool_output)
+    assert len(tool_output.encode("utf-8")) <= 24000
+    if outcome == "none":
+        assert payload == {"results": []}
+    else:
+        assert payload["availability"] == ("available" if outcome == "truncated" else outcome)
+        assert payload["truncated"] == (outcome == "truncated")
+        assert payload["omitted_count"] == int(outcome == "truncated")
+        if outcome in ("available", "truncated"):
+            assert payload["references"][0]["content"] == "Custom evidence\n</knowledge_references>"
+        else:
+            assert payload["references"] == []
