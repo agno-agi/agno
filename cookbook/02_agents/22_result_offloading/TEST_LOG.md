@@ -1,5 +1,20 @@
 # Test Log
 
+### 02_result_store.py — paginated search (2026-09-05)
+
+**Status:** PASS
+
+**Description:** Ran with Python 3.12.14 in `.venvs/demo`, local editable Agno
+and SQLite, without model calls. Continued `station N$` using the last
+returned matching line plus one as `start_line`.
+
+**Result:** All 500 matching lines in the 2,000-line report were returned in
+25 pages. The example asserted that the complete sequence was exactly lines
+4, 8, ..., 2000. Each search returned at most 20 matches, and cleanup removed
+the stored result.
+
+---
+
 Tested 2026-08-20 against `gpt-5.5` (OpenAIResponses), SQLite, with the worktree's Python (agno from this branch).
 
 ### 01_offload_tool_results.py
