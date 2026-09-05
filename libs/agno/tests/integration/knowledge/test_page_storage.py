@@ -432,3 +432,33 @@ def test_point_read_transfers_only_requested_unicode_slice(corpus, monkeypatch):
     assert result.text == body[13:32]
     assert result.next_offset == 32 and result.total_chars == len(body)
     assert transferred == [(19, len(body))]
+
+
+def test_parallel_lexical_cutoff_preserves_serial_ties(corpus):
+    knowledge, _, site = corpus
+    site["https://docs.example.com/agent.md"] = "# Agent\n\n" + "\n\n".join(
+        "## Section " + str(index) + "\n\nShared lexical match." for index in range(800)
+    )
+    assert knowledge.sync_pages(url="https://docs.example.com/llms.txt").updated == 1
+    coordinator = knowledge._pages()
+    params = {"namespace": coordinator.namespace, "tsquery": "'share'", "vector": "[1,0.5,0.2]"}
+    # The serial bitmap scan is the established reference for ties at the
+    # 200-candidate boundary. Compare the actual candidate IDs, not just scores.
+    serial = (
+        f"SELECT id FROM {coordinator._vector_name} WHERE meta_data->>'namespace'=:namespace "
+        "AND _agno_page_tsv @@ CAST(:tsquery AS tsquery) "
+        "ORDER BY ts_rank_cd(_agno_page_tsv, CAST(:tsquery AS tsquery)) DESC LIMIT 200"
+    )
+    parallel = coordinator._hybrid_sql().split(", candidates AS", 1)[0] + " SELECT id FROM by_keyword"
+    with coordinator._snapshot() as conn:
+        conn.execute(text("SET LOCAL enable_seqscan=off; SET LOCAL max_parallel_workers_per_gather=0"))
+        expected = list(conn.execute(text(serial), params).scalars())
+        assert len(expected) == 200
+        conn.execute(
+            text(
+                "SET LOCAL max_parallel_workers_per_gather=2; SET LOCAL parallel_setup_cost=0; "
+                "SET LOCAL parallel_tuple_cost=0; SET LOCAL min_parallel_table_scan_size=0; "
+                "SET LOCAL min_parallel_index_scan_size=0"
+            )
+        )
+        assert list(conn.execute(text(parallel), params).scalars()) == expected

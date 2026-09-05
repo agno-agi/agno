@@ -999,7 +999,9 @@ class PageCoordinator:
                         "FROM unnest(CAST(:queries AS text[])) WITH ORDINALITY AS inputs(phrasing, position) "
                         "ORDER BY position), set_config('plan_cache_mode', 'force_custom_plan', true), "
                         "set_config('hnsw.ef_search', '200', true), set_config('enable_seqscan', 'off', true), "
-                        "set_config('parallel_setup_cost', '0', true), set_config('parallel_tuple_cost', '0', true)"
+                        "set_config('parallel_setup_cost', '0', true), set_config('parallel_tuple_cost', '0', true), "
+                        "set_config('max_parallel_workers_per_gather', '4', true), "
+                        "set_config('min_parallel_table_scan_size', '0', true)"
                     ),
                     {"queries": [phrasing for phrasing, _ in vectors]},
                 ).scalar_one()
@@ -1081,13 +1083,18 @@ class PageCoordinator:
     def _hybrid_sql(self) -> str:
         catalog = _identifier(self.catalog.schema) + "." + _identifier(self.catalog.name)
         files = _identifier(self.backend.db_schema) + "." + _identifier(self.backend.table_name)
+        # Parallel ranking must restore bitmap-heap traversal order before the
+        # top-N sort, so ties at the lexical cutoff retain the serial candidates.
         return f"""WITH by_vector AS (
             SELECT id FROM {self._vector_name} WHERE meta_data->>'namespace'=:namespace
             ORDER BY embedding <=> CAST(:vector AS vector) LIMIT 200
-        ), by_keyword AS (
-            SELECT id FROM {self._vector_name}
+        ), keyword_scores AS MATERIALIZED (
+            SELECT id, ts_rank_cd(_agno_page_tsv, CAST(:tsquery AS tsquery)) AS keyword_score
+            FROM {self._vector_name}
             WHERE meta_data->>'namespace'=:namespace AND _agno_page_tsv @@ CAST(:tsquery AS tsquery)
-            ORDER BY ts_rank_cd(_agno_page_tsv, CAST(:tsquery AS tsquery)) DESC LIMIT 200
+            ORDER BY ctid
+        ), by_keyword AS (
+            SELECT id FROM keyword_scores ORDER BY keyword_score DESC LIMIT 200
         ), candidates AS (SELECT id FROM by_vector UNION SELECT id FROM by_keyword), ranked AS (
         SELECT v.id, v.content, v.meta_data->>'breadcrumb' AS breadcrumb,
             c.metadata->'_agno'->'page' AS page,
