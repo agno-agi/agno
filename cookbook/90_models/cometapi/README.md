@@ -15,7 +15,7 @@ source ~/.venvs/aienv/bin/activate
 
 ### 2. Export your `COMETAPI_KEY`
 
-Get your API key from: https://api.cometapi.com/console/token
+Get your API key from: https://www.cometapi.com/console/
 
 ```shell
 export COMETAPI_KEY=sk-***
@@ -71,7 +71,7 @@ python cookbook/90_models/cometapi/multi_model.py
 
 CometAPI provides access to multiple LLM providers through a unified interface. For the most up-to-date list of supported models and pricing information, please visit:
 
-📋 **Official Model List & Pricing**: https://api.cometapi.com/pricing
+📋 **Official Model List & Pricing**: https://www.cometapi.com/pricing/
 
 ### Popular Models (Examples)
 
@@ -111,7 +111,7 @@ CometAPI provides access to multiple LLM providers through a unified interface. 
 - `qwen3-30b-a3b`
 - `qwen3-coder-plus-2025-07-22`
 
-> **Note**: Model availability and names may change. Always refer to the [official pricing page](https://api.cometapi.com/pricing) for the most current information.
+> **Note**: Model availability and names may change. Always refer to the [official pricing page](https://www.cometapi.com/pricing/) for the most current information.
 
 ## Error Handling
 
@@ -130,9 +130,9 @@ print(f"Found {len(available_models)} available models")
 
 ### 🔗 Official Links
 - [Website](https://www.cometapi.com/?utm_source=agno&utm_campaign=integration&utm_medium=integration&utm_content=integration)
-- [API Documentation](https://api.cometapi.com/doc)
-- [Model List & Pricing](https://api.cometapi.com/pricing)
-- [Get API Key](https://api.cometapi.com/console/token)
+- [API Documentation](https://apidoc.cometapi.com)
+- [Model List & Pricing](https://www.cometapi.com/pricing/)
+- [Get API Key](https://www.cometapi.com/console/)
 
 ### 👥 Community & Development
 - [GitHub](https://github.com/cometapi-dev)

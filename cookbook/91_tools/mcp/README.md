@@ -72,7 +72,7 @@ Export your API keys:
 export OPENAI_API_KEY="your_openai_api_key"
 ```
 
-> For the GitHub example, create a Github PAT following [these steps](https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup).
+> For the GitHub example, create a Github PAT following [these steps](https://github.com/modelcontextprotocol/servers-archived/tree/main/src/github#setup).
 
 ### Run the Examples
 
