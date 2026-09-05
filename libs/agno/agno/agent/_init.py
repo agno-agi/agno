@@ -197,18 +197,9 @@ def set_result_store(agent: Agent) -> None:
 
     A None store means offloading is off. The public setting keeps whatever
     the caller passed, so a failure never rewrites their configuration.
+    CompressionManager treats stored-result envelopes as opaque, so the two
+    context-saving features can be enabled together.
     """
-    # Offloading and tool-result compression cannot run together: compression
-    # sends tool messages to a model and rewrites them, which would replace a
-    # stored-result envelope with text whose result id may be gone, while the
-    # payload it pointed at lives on unreferenced. Refuse the combination
-    # loudly instead of silently favouring one of them.
-    if agent.compress_tool_results and (agent.offload_tool_results or agent._result_store is not None):
-        raise ValueError(
-            "offload_tool_results and compress_tool_results cannot be enabled together: "
-            "compression rewrites the tool messages that hold stored-result envelopes. "
-            "Disable one of the two."
-        )
     # A store handed down by a team is the team's to manage.
     if agent._result_store is not None and agent._result_store is agent._inherited_result_store:
         return
