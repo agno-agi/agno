@@ -652,6 +652,22 @@ def _bind_member_result_store(team: "Team", member: Union[Agent, "Team"]) -> Non
             )
         else:
             store = team._result_store
+    elif declares_own_store:
+        from agno.offload.setup import build_result_store
+
+        # The team does not offload, but this member asked to. Its setting is
+        # explicit, so honour it rather than dropping it: the team's setting
+        # governs the team's own tool results, not whether a member's
+        # configuration survives being added to a team. Without this the store
+        # is overwritten with None below, silently, while the member's public
+        # ``offload_tool_results`` still reports a ResultStore, so the member
+        # looks configured and offloads nothing.
+        #
+        # Payloads go to the member's own db when it has one, falling back to
+        # the team's. There is no team store for them to be readable from here,
+        # so nothing is gained by forcing them onto the team's database.
+        bind_db = member.db if member.db is not None else team.db
+        store = build_result_store(setting=member.offload_tool_results, db=bind_db, owner=member, owner_kind="member")
     member._result_store = store
     member._inherited_result_store = store
 
