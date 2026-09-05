@@ -36,6 +36,24 @@ def minimal_skill() -> Skill:
 
 
 @pytest.fixture
+def content_skill() -> Skill:
+    """Create a content-carrying Skill: no source_path, script and reference text inline."""
+    return Skill(
+        name="content-skill",
+        description="A content-carrying skill",
+        instructions="# Content Skill\n\nFollow these instructions to complete the task.",
+        source_type="db",
+        scripts=["hello.py", "sibling.py"],
+        references=["guide.md"],
+        script_contents={
+            "hello.py": '#!/usr/bin/env python3\nprint("hello from content")',
+            "sibling.py": "VALUE = 1\n",
+        },
+        reference_contents={"guide.md": "# Guide\n\nThis is a reference guide."},
+    )
+
+
+@pytest.fixture
 def sample_skill_dict() -> dict:
     """Create a sample skill dictionary for testing from_dict."""
     return {
