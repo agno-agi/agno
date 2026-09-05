@@ -635,3 +635,29 @@ def test_search_clipping_accounts_for_partial_warning_bytes(corpus, monkeypatch)
     assert result.partial and result.warnings == ("alternative_unavailable",)
     assert result.truncated and result.omitted_count == 1 and not result.results
     assert encoded_size(result) <= 24000
+
+
+def test_alternative_wait_deadline_preserves_primary_results(corpus):
+    import threading
+    import time
+
+    from sqlalchemy import event
+
+    from agno.utils.bounded import WorkBudget
+
+    knowledge, _, _ = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+
+    def delay(conn, cursor, statement, parameters, context, executemany):
+        if "embedding <=>" in statement and threading.current_thread().name.startswith("knowledge-query"):
+            # Simulate a response arriving after the caller's remaining deadline.
+            time.sleep(0.15)
+
+    event.listen(knowledge._page_engine, "after_cursor_execute", delay)
+    try:
+        result = knowledge._pages().search("Agent", alternatives=["tools"], budget=WorkBudget(0.1))
+    finally:
+        event.remove(knowledge._page_engine, "after_cursor_execute", delay)
+    assert result.results and result.partial
+    assert result.warnings == ("alternative_unavailable",)
+    assert knowledge._page_engine.pool.checkedout() == 0

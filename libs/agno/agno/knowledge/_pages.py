@@ -1134,7 +1134,13 @@ class PageCoordinator:
             for query in queries[1:]:
                 futures.append(_QUERY_WORKERS.submit(contextvars.copy_context().run, alternative, query))
             primary = execute(conn, queries[0])
-            return [primary, *(future.result(timeout=budget.remaining()) for future in futures)]
+            outcomes = [primary]
+            for future in futures:
+                try:
+                    outcomes.append(future.result(timeout=budget.remaining()))
+                except Exception as exc:
+                    outcomes.append(exc)
+            return outcomes
         finally:
             # The exporting transaction and admission slot outlive every child,
             # including cancellation or failure while a child is using its snapshot.
