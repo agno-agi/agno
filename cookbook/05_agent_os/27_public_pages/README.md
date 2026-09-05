@@ -39,6 +39,8 @@ The background trigger returns run/session IDs. Poll `/workflows/sync-docs/runs/
 
 Reads return `revision` and `next_offset`; preserve both for consistent Unicode-safe continuation. Literal grep reports incomplete scans. Search failures produce safe error codes. Source metadata/text/vectors publish atomically and failed refreshes keep the prior revision available.
 
+`search_pages` and `asearch_pages` accept the keyword-only `max_output_bytes` option, defaulting to 24,000 with an allowed integer range of 24,000–32,000. It bounds the UTF-8 serialized search result, including framework metadata; ranking and query limits stay the same. An adapter that removes framework fields can explicitly request `await knowledge.asearch_pages(query, max_output_bytes=32_000)` before applying its own smaller output limit. The tools in this example return the framework JSON directly, so they keep the default. This option does not change read/list/grep limits or add a model-controlled tool parameter. More retained evidence can increase rendering work and model tokens; the allowance is not a latency optimization.
+
 ## Addresses, authentication and limits
 
 `PAGE_DEMO_SERVER_URL` sets the MCP client's destination, defaulting to `http://localhost:7777`. `PAGE_DEMO_MCP_URL` optionally sets the existing explicit MCP card URL; otherwise native request-derived discovery applies. For a proxy prefix, configure the mount or ASGI root path consistently. Add the deployed host to MCP allowed hosts and the browser origin to CORS.

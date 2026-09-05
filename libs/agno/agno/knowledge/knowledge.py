@@ -181,20 +181,45 @@ class Knowledge(RemoteKnowledge):
             seconds=3900,
         )
 
-    def search_pages(self, query: str, *, alternatives: Optional[List[str]] = None, limit: int = 10) -> SearchResult:
-        """Rank published chunks with indexed hybrid search and reciprocal-rank fusion."""
-        return self._pages().search(query, alternatives=alternatives, limit=limit)
+    def search_pages(
+        self,
+        query: str,
+        *,
+        alternatives: Optional[List[str]] = None,
+        limit: int = 10,
+        max_output_bytes: int = 24_000,
+    ) -> SearchResult:
+        """Rank published chunks with indexed hybrid search and reciprocal-rank fusion.
+
+        max_output_bytes bounds the UTF-8 serialized SearchResult, including metadata,
+        from 24,000 through 32,000 bytes. It controls output clipping, not ranking.
+        """
+        return self._pages().search(query, alternatives=alternatives, limit=limit, max_output_bytes=max_output_bytes)
 
     async def asearch_pages(
-        self, query: str, *, alternatives: Optional[List[str]] = None, limit: int = 10
+        self,
+        query: str,
+        *,
+        alternatives: Optional[List[str]] = None,
+        limit: int = 10,
+        max_output_bytes: int = 24_000,
     ) -> SearchResult:
-        """Search the shared corpus on bounded workers."""
+        """Search on bounded workers with a 24,000–32,000-byte serialized result budget.
+
+        max_output_bytes includes framework metadata and controls output clipping,
+        without changing ranking or the overall search deadline.
+        """
         from agno.knowledge._pages import READ_WORKERS
         from agno.knowledge.page import SearchUnavailable
 
         try:
             return await READ_WORKERS.run(
-                self._pages().search, query, alternatives=alternatives, limit=limit, seconds=2
+                self._pages().search,
+                query,
+                alternatives=alternatives,
+                limit=limit,
+                max_output_bytes=max_output_bytes,
+                seconds=2,
             )
         except TimeoutError as exc:
             raise SearchUnavailable() from exc

@@ -637,6 +637,89 @@ def test_search_clipping_accounts_for_partial_warning_bytes(corpus, monkeypatch)
     assert encoded_size(result) <= 24000
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_search", [False, True])
+@pytest.mark.parametrize("partial", [False, True])
+async def test_public_search_output_allowance_preserves_ranked_prefix_and_exact_bytes(
+    corpus, monkeypatch, async_search, partial
+):
+    from agno.knowledge._pages import PageCoordinator
+    from agno.knowledge.page import SearchHit, SearchResult, encoded_size
+
+    knowledge, _, _ = corpus
+    hits = tuple(
+        SearchHit(
+            path=f"/page-{index}.md",
+            url=f"https://docs.example.com/page-{index}",
+            title=f"Page {index}",
+            revision="r",
+            chunk_id=str(index),
+            content='é😀\\"\n' * 200,
+            score=0.8,
+            rank=index + 1,
+        )
+        for index in range(10)
+    )
+    rows = [
+        {
+            "id": hit.chunk_id,
+            "file_version": 1,
+            "score": hit.score,
+            "breadcrumb": hit.title,
+            "content": hit.content,
+            "page": {
+                "filesystem_version": 1,
+                "path": hit.path,
+                "url": hit.url,
+                "title": hit.title,
+                "revision": hit.revision,
+            },
+        }
+        for hit in hits
+    ]
+    outcomes = [rows, RuntimeError("alternative failed")] if partial else [rows]
+    monkeypatch.setattr(PageCoordinator, "_search_queries", lambda *args, **kwargs: outcomes)
+    warnings = ("alternative_unavailable",) if partial else ()
+    complete = SearchResult(results=hits, partial=partial, warnings=warnings)
+    full_size = encoded_size(complete)
+    assert 24_000 < full_size < 32_000
+
+    async def search(**kwargs):
+        alternatives = ["optional"] if partial else None
+        if async_search:
+            return await knowledge.asearch_pages("primary", alternatives=alternatives, **kwargs)
+        return knowledge.search_pages("primary", alternatives=alternatives, **kwargs)
+
+    default = await search()
+    assert default.truncated and encoded_size(default) <= 24_000
+    for allowance in (24_000, 26_000, full_size - 1, full_size, 32_000):
+        result = await search(max_output_bytes=allowance)
+        assert encoded_size(result) <= allowance
+        assert result.results == hits[: len(result.results)]
+        assert result.omitted_count == len(hits) - len(result.results)
+        assert result.partial == partial and result.warnings == warnings
+        assert result.truncated == (allowance < full_size)
+        if allowance >= full_size:
+            assert result == complete
+        elif allowance == full_size - 1:
+            assert result.omitted_count == 1
+        if allowance == 24_000:
+            assert result == default
+    # An opt-in on one search must not change subsequent callers' default budget.
+    assert await search() == default
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("allowance", [23_999, 32_001, True, False, 32_000.0, "32000", None])
+async def test_public_search_rejects_invalid_output_allowance_before_embedding(corpus, allowance):
+    knowledge, embedder, _ = corpus
+    with pytest.raises(ValueError, match="invalid_search_output_budget"):
+        knowledge.search_pages("primary", max_output_bytes=allowance)
+    with pytest.raises(ValueError, match="invalid_search_output_budget"):
+        await knowledge.asearch_pages("primary", max_output_bytes=allowance)
+    assert embedder.calls == []
+
+
 def test_alternative_wait_deadline_preserves_primary_results(corpus):
     import threading
     import time

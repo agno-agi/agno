@@ -67,6 +67,7 @@ from agno.vectordb.pgvector import PgVector
 READ_WORKERS = BoundedWorkers(8, "knowledge-read")
 SYNC_WORKERS = BoundedWorkers(2, "knowledge-sync")
 MAX_JSON_BYTES = 24_000
+MAX_SEARCH_JSON_BYTES = 32_000
 # At most two searches may fan out, so readers doing serial work can always
 # release connections back to the eight-connection pool while children wait.
 _PARALLEL_SEARCHES = BoundedSemaphore(2)
@@ -964,12 +965,15 @@ class PageCoordinator:
         *,
         alternatives: Optional[List[str]] = None,
         limit: int = 10,
+        max_output_bytes: int = MAX_JSON_BYTES,
         budget: Optional[WorkBudget] = None,
     ) -> SearchResult:
         if not isinstance(query, str) or not query.strip() or len(query.strip()) > 500 or not 1 <= limit <= 20:
             raise ValueError("invalid_search_query")
         if alternatives is not None and (not isinstance(alternatives, list) or len(alternatives) > 3):
             raise ValueError("invalid_search_alternatives")
+        if type(max_output_bytes) is not int or not MAX_JSON_BYTES <= max_output_bytes <= MAX_SEARCH_JSON_BYTES:
+            raise ValueError("invalid_search_output_budget")
         budget = budget or WorkBudget(2)
         queries = [query.strip()]
         for alternative in alternatives or []:
@@ -1076,12 +1080,12 @@ class PageCoordinator:
                         SearchResult(
                             results=tuple(hits),
                             partial=partial,
-                            truncated=True,
+                            truncated=len(hits) != total,
                             omitted_count=total - len(hits),
                             warnings=("alternative_unavailable",) if partial else (),
                         )
                     )
-                    > MAX_JSON_BYTES
+                    > max_output_bytes
                 ):
                     hits.pop()
                 result = SearchResult(
