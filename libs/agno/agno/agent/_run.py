@@ -3735,6 +3735,7 @@ def _continue_run(
     7. Create session summary
     8. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
+    setattr(run_context, "_page_reference_ready", False)
     # Register run for cancellation tracking
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
@@ -3761,6 +3762,10 @@ def _continue_run(
             try:
                 # Check for cancellation before model call
                 raise_if_cancelled(run_response.run_id)  # type: ignore
+
+                from agno.agent._references import resume_references
+
+                resume_references(agent, run_context, run_response, run_messages)
 
                 # 2. Generate a response from the Model (includes running function calls)
                 agent.model = cast(Model, agent.model)
@@ -3957,6 +3962,7 @@ def _continue_run_stream(
     5. Create session summary
     6. Cleanup and store the run response and session
     """
+    setattr(run_context, "_page_reference_ready", False)
 
     from agno.agent._hooks import execute_post_hooks
     from agno.agent._init import disconnect_connectable_tools
@@ -3999,6 +4005,10 @@ def _continue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         raise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                from agno.agent._references import resume_references
+
+                resume_references(agent, run_context, run_response, run_messages)
 
                 # 3. Process model response
                 for event in handle_model_response_stream(
@@ -4755,6 +4765,7 @@ async def _acontinue_run(
     13. Create session summary
     14. Cleanup and store (scrub, stop timer, save to file, add to session, calculate metrics, save session)
     """
+    setattr(run_context, "_page_reference_ready", False)
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_continue_run_messages
@@ -4989,6 +5000,10 @@ async def _acontinue_run(
                 await ahandle_tool_call_updates(
                     agent, run_response=run_response, run_messages=run_messages, tools=_tools
                 )
+
+                from agno.agent._references import aresume_references
+
+                await aresume_references(agent, run_context, run_response, run_messages)
 
                 # 8. Get model response
                 model_response: ModelResponse = await acall_model_with_fallback(
@@ -5267,6 +5282,7 @@ async def _acontinue_run_stream(
     10. Execute post-hooks
     11. Cleanup and store the run response and session
     """
+    setattr(run_context, "_page_reference_ready", False)
     from agno.agent._hooks import aexecute_post_hooks
     from agno.agent._init import disconnect_connectable_tools, disconnect_mcp_tools
     from agno.agent._messages import aget_continue_run_messages
@@ -5515,6 +5531,10 @@ async def _acontinue_run_stream(
                     if not isinstance(event, _CANCEL_BYPASS_EVENT_TYPES):
                         await araise_if_cancelled(run_response.run_id)  # type: ignore
                     yield event
+
+                from agno.agent._references import aresume_references
+
+                await aresume_references(agent, run_context, run_response, run_messages)
 
                 # 8. Process model response
                 if agent.output_model is None:

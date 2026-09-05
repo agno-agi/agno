@@ -14,6 +14,7 @@ from typing import (
     Sequence,
     Type,
     Union,
+    cast,
 )
 
 from pydantic import BaseModel
@@ -21,6 +22,7 @@ from pydantic import BaseModel
 if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
+from agno.agent._references import _insert, areference, page_knowledge, reference
 from agno.agent._utils import convert_dependencies_to_string, convert_documents_to_string
 from agno.filters import FilterExpr
 from agno.media import Audio, File, Image, Video
@@ -387,7 +389,11 @@ def get_system_message(
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
-    if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
+    if (
+        _resolved_knowledge is not None
+        and agent.add_search_knowledge_instructions
+        and (agent.search_knowledge or (agent.add_knowledge_to_context and page_knowledge(agent, run_context)))
+    ):
         build_context_fn = getattr(_resolved_knowledge, "build_context", None)
         if callable(build_context_fn):
             # The filter keys rendered here come from stored content, so scope them like retrieval
@@ -684,7 +690,11 @@ async def aget_system_message(
 
     # 3.3.13 then add search_knowledge instructions to the system prompt
     _resolved_knowledge = _get_resolved_knowledge(agent, run_context)
-    if _resolved_knowledge is not None and agent.search_knowledge and agent.add_search_knowledge_instructions:
+    if (
+        _resolved_knowledge is not None
+        and agent.add_search_knowledge_instructions
+        and (agent.search_knowledge or (agent.add_knowledge_to_context and page_knowledge(agent, run_context)))
+    ):
         # Prefer async version if available for async databases
         abuild_context_fn = getattr(_resolved_knowledge, "abuild_context", None)
         build_context_fn = getattr(_resolved_knowledge, "build_context", None)
@@ -838,7 +848,7 @@ def get_user_message(
                 raise Exception(f"Failed to convert BaseModel to message: {e}")
         else:
             user_msg_content = input
-            if agent.add_knowledge_to_context:
+            if agent.add_knowledge_to_context and not page_knowledge(agent, run_context):
                 if isinstance(input, str):
                     user_msg_content = input
                 elif callable(input):
@@ -867,7 +877,7 @@ def get_user_message(
                 except Exception as e:
                     log_warning(f"Failed to get references: {str(e)}")
 
-            if agent.resolve_in_context:
+            if agent.resolve_in_context and not page_knowledge(agent, run_context):
                 user_msg_content = format_message_with_state_variables(
                     agent,
                     user_msg_content,
@@ -1003,7 +1013,7 @@ async def aget_user_message(
                 raise Exception(f"Failed to convert BaseModel to message: {e}")
         else:
             user_msg_content = input
-            if agent.add_knowledge_to_context:
+            if agent.add_knowledge_to_context and not page_knowledge(agent, run_context):
                 if isinstance(input, str):
                     user_msg_content = input
                 elif callable(input):
@@ -1032,7 +1042,7 @@ async def aget_user_message(
                 except Exception as e:
                     log_warning(f"Failed to get references: {str(e)}")
 
-            if agent.resolve_in_context:
+            if agent.resolve_in_context and not page_knowledge(agent, run_context):
                 user_msg_content = format_message_with_state_variables(
                     agent,
                     user_msg_content,
@@ -1281,6 +1291,10 @@ def get_run_messages(
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
 
+    run_context.messages = run_messages.messages
+    if page_knowledge(agent, run_context):
+        _insert(run_messages, reference(agent, run_context, input))
+
     # Read offloaded media back on every message headed for the model: a member's history arrives as input.
     media_storage = _resolve_media_storage(agent)
     if media_storage is not None:
@@ -1486,6 +1500,10 @@ async def aget_run_messages(
     if user_message is not None:
         run_messages.user_message = user_message
         run_messages.messages.append(user_message)
+
+    run_context.messages = run_messages.messages
+    if page_knowledge(agent, run_context):
+        _insert(run_messages, await areference(agent, run_context, input))
 
     # Read offloaded media back on every message headed for the model: a member's history arrives as input.
     media_storage = _resolve_media_storage(agent)
@@ -1786,7 +1804,9 @@ def get_relevant_docs_from_knowledge(
                     run_context.user_id if run_context else agent.user_id,
                 )
             )
-            return agent.knowledge_retriever(**knowledge_retriever_kwargs)
+            return cast(
+                Optional[List[Union[Dict[str, Any], str]]], agent.knowledge_retriever(**knowledge_retriever_kwargs)
+            )
         except Exception as e:
             log_warning(f"Knowledge retriever failed: {str(e)}")
             raise e

@@ -5,6 +5,7 @@ from typing import (
     TYPE_CHECKING,
     Any,
     AsyncIterator,
+    Awaitable,
     Callable,
     Coroutine,
     Dict,
@@ -166,7 +167,7 @@ class Agent:
     # Signature:
     # def knowledge_retriever(agent: Agent, query: str, num_documents: Optional[int], **kwargs) -> Optional[list[dict]]:
     #     ...
-    knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None
+    knowledge_retriever: Optional[Callable[..., Union[Optional[List[Any]], Awaitable[Optional[List[Any]]]]]] = None
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Skills ---
@@ -427,7 +428,7 @@ class Agent:
         knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
         enable_agentic_knowledge_filters: Optional[bool] = None,
         add_knowledge_to_context: bool = False,
-        knowledge_retriever: Optional[Callable[..., Optional[List[Union[Dict, str]]]]] = None,
+        knowledge_retriever: Optional[Callable[..., Union[Optional[List[Any]], Awaitable[Optional[List[Any]]]]]] = None,
         references_format: Literal["json", "yaml"] = "json",
         skills: Optional[Skills] = None,
         metadata: Optional[Dict[str, Any]] = None,

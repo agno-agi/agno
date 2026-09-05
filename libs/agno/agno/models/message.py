@@ -3,7 +3,7 @@ from time import time
 from typing import Any, Dict, List, Optional, Sequence, Union
 from uuid import uuid4
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 import agno.utils.log
 from agno.media import Audio, File, Image, Video
@@ -125,6 +125,44 @@ class Message(BaseModel):
     checkpoint_created_at: Optional[int] = None
 
     model_config = ConfigDict(extra="allow", populate_by_name=True, arbitrary_types_allowed=True)
+
+    @staticmethod
+    def _history_values(values: Any) -> Any:
+        if not isinstance(values, dict) or "add_to_history" not in values:
+            return values
+        values = dict(values)
+        history = values.pop("add_to_history")
+        if "add_to_agent_memory" in values and values["add_to_agent_memory"] != history:
+            raise ValueError("add_to_history and add_to_agent_memory must agree")
+        values["add_to_agent_memory"] = history
+        return values
+
+    @model_validator(mode="before")
+    @classmethod
+    def _validate_history_alias(cls, values: Any) -> Any:
+        return cls._history_values(values)
+
+    @property
+    def add_to_history(self) -> bool:
+        """Whether to retain this message. Alias of the existing serialized memory flag.
+
+        ``to_dict()`` omits the flag, so that representation does not preserve
+        retention policy on round-trip. Use ``model_dump()`` when it is needed.
+        """
+        return self.add_to_agent_memory
+
+    @add_to_history.setter
+    def add_to_history(self, value: bool) -> None:
+        self.add_to_agent_memory = value
+
+    def model_copy(self, *, update: Optional[Dict[str, Any]] = None, deep: bool = False):
+        return super().model_copy(update=self._history_values(update), deep=deep)
+
+    @classmethod
+    def model_construct(cls, _fields_set=None, **values: Any):
+        if _fields_set is not None and "add_to_history" in _fields_set:
+            _fields_set = (_fields_set - {"add_to_history"}) | {"add_to_agent_memory"}
+        return super().model_construct(_fields_set=_fields_set, **cls._history_values(values))
 
     def get_content_string(self) -> str:
         """Returns the content as a string."""
