@@ -890,6 +890,137 @@ async def test_two_paused_members_in_one_subteam_both_execute_async(tmp_path):
     assert sorted(_EXECUTED) == ["a@x.com", "sms:b@x.com"]
 
 
+def _build_flat_two_member_team(db: SqliteDb, resuming: bool) -> Team:
+    """Flat team, two members, each pausing on its own gated tool in one turn."""
+    smser = Agent(
+        name="Smser",
+        id="smser",
+        model=_ScriptedModel(
+            "m-smser",
+            [("content", "SMS sent.")]
+            if resuming
+            else [("tool", "send_sms", {"to": "b@x.com"}, "tc-sms"), ("content", "SMS sent.")],
+        ),
+        tools=[send_sms],
+        db=db,
+        telemetry=False,
+    )
+    emailer = Agent(
+        name="Emailer",
+        id="emailer",
+        model=_ScriptedModel(
+            "m-emailer",
+            [("content", "Email sent.")]
+            if resuming
+            else [("tool", "send_email", {"to": "a@x.com"}, "tc-send"), ("content", "Email sent.")],
+        ),
+        tools=[send_email],
+        db=db,
+        telemetry=False,
+    )
+    return Team(
+        name="Comms Team",
+        id="comms-team",
+        model=_ScriptedModel(
+            "m-leader",
+            [("content", "All done.")]
+            if resuming
+            else [
+                (
+                    "tools",
+                    [
+                        ("delegate_task_to_member", {"member_id": "emailer", "task": "email it"}, "tc-d1"),
+                        ("delegate_task_to_member", {"member_id": "smser", "task": "sms it"}, "tc-d2"),
+                    ],
+                ),
+                ("content", "All done."),
+            ],
+        ),
+        members=[emailer, smser],
+        db=db,
+        telemetry=False,
+    )
+
+
+def test_continue_with_subset_of_requirements_does_not_orphan_sibling(tmp_path):
+    """Posting only the first of two member pauses must not complete the run
+    or leave the other member paused forever. The missing requirement stays
+    reachable on a later continue.
+    """
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "subset_orphan.db")
+    session_id = "s-subset-orphan"
+
+    team1 = _build_flat_two_member_team(SqliteDb(db_file=db_file), resuming=False)
+    run1 = team1.run("Notify everyone", session_id=session_id)
+    assert run1.is_paused
+    assert len(run1.requirements or []) == 2
+
+    first = (run1.requirements or [])[0]
+    team2 = _build_flat_two_member_team(SqliteDb(db_file=db_file), resuming=True)
+    run2 = team2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements([first]))
+    assert run2.status == RunStatus.paused, (
+        f"a one-of-N continue completed the run ({run2.status}); the other pause is orphaned"
+    )
+    unresolved = [r for r in (run2.requirements or []) if not r.is_resolved()]
+    assert len(unresolved) == 1, f"the undelivered pause vanished: {run2.requirements}"
+
+    stored = [r for r in _reload_runs(db_file, session_id) if r.run_id == run1.run_id]
+    assert stored and stored[0].is_paused
+    paused_members = [
+        r
+        for r in _reload_runs(db_file, session_id)
+        if getattr(r, "agent_id", None) in {"emailer", "smser"} and r.is_paused
+    ]
+    assert paused_members, "the undelivered member was left paused in storage with no way back"
+
+    remaining = [r for r in (run2.requirements or []) if not r.is_resolved()]
+    team3 = _build_flat_two_member_team(SqliteDb(db_file=db_file), resuming=True)
+    run3 = team3.continue_run(run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(remaining))
+    assert run3.status == RunStatus.completed, f"the later continue of the missing requirement no-op'd: {run3.status}"
+    assert sorted(_EXECUTED) == ["a@x.com", "sms:b@x.com"], f"both gated tools must still run: {_EXECUTED}"
+
+
+def test_already_consumed_confirmation_does_not_rerun_tool(tmp_path):
+    """After a chained pause, posting the first (already-run) confirmation
+    back must not execute that tool a second time, and must not complete
+    the run out from under the still-pending pause.
+    """
+    _EXECUTED.clear()
+    db_file = str(tmp_path / "consumed_rerun.db")
+    session_id = "s-consumed-rerun"
+
+    outer1 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="pause")
+    run1 = outer1.run("Email then sms", session_id=session_id)
+    assert run1.is_paused
+    first_reqs = list(run1.requirements or [])
+
+    outer2 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="chain")
+    run2 = outer2.continue_run(run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(first_reqs))
+    assert run2.is_paused
+    assert _EXECUTED == ["a@example.com"]
+
+    try:
+        outer3 = _build_nested_chained_team(SqliteDb(db_file=db_file), phase="finish")
+        run3 = outer3.continue_run(
+            run_id=run1.run_id, session_id=session_id, requirements=_wire_requirements(first_reqs)
+        )
+    except RunNotContinuableError:
+        run3 = None
+
+    assert _EXECUTED == ["a@example.com"], f"the gated tool ran a second time: {_EXECUTED}"
+    if run3 is not None:
+        assert run3.status != RunStatus.completed, (
+            f"re-delivering a consumed confirmation completed the run ({run3.status})"
+        )
+    stored = [r for r in _reload_runs(db_file, session_id) if getattr(r, "team_id", None) == "org-team"]
+    assert stored and stored[0].is_paused
+    unresolved = [r for r in (stored[0].requirements or []) if not r.is_resolved()]
+    assert any(r.tool_execution and r.tool_execution.tool_name == "send_sms" for r in unresolved), (
+        "the chained send_sms pause was dropped when the consumed confirmation was re-posted"
+    )
+
+
 def test_nested_member_pause_fresh_process_continue_streaming(tmp_path):
     _EXECUTED.clear()
     db_file = str(tmp_path / "nested_stream.db")
@@ -3394,11 +3525,54 @@ def test_unknown_requirement_id_still_binds_by_unique_tool_call_id():
     _apply_requirements_payload(run_response, [wire])
 
     # The fallback bound the entry to the STORED requirement object and merged
-    # only the decision onto it.
+    # only the decision onto it. The undelivered sibling stays in the pending set.
     assert run_response.requirements is not None
-    assert run_response.requirements[0] is stored[1]
+    assert stored[1] in run_response.requirements
+    assert stored[0] in run_response.requirements
     assert stored[1].confirmation is True
     assert stored[1].tool_execution.confirmed is True
+    assert stored[0].confirmation is None
+    assert not stored[0].is_resolved()
+
+
+def test_subset_payload_keeps_undelivered_stored_requirements():
+    """A continue payload with one of N stored requirements must merge, not
+    replace: the undelivered pause stays on the run so it can still be posted.
+    """
+    from agno.team._run import _apply_requirements_payload
+
+    stored = _stored_confirmation_requirements()
+    run_response = _run_with(stored)
+    wire = RunRequirement.from_dict(stored[0].to_dict())
+    wire.confirm()
+
+    _apply_requirements_payload(run_response, [wire])
+
+    assert run_response.requirements == stored
+    assert stored[0].confirmation is True
+    assert stored[0].is_resolved()
+    assert stored[1].confirmation is None
+    assert not stored[1].is_resolved()
+
+
+def test_already_consumed_payload_does_not_clear_stored_result():
+    """Re-delivering a confirmation whose tool already has a result must leave
+    that result in place so continue cannot treat it as a fresh approve.
+    """
+    from agno.team._run import _apply_requirements_payload
+
+    stored = _stored_confirmation_requirements()
+    stored[0].confirm()
+    stored[0].tool_execution.result = "already sent"
+    run_response = _run_with(stored)
+    wire = RunRequirement.from_dict(stored[0].to_dict())
+    wire.tool_execution.result = None
+
+    _apply_requirements_payload(run_response, [wire])
+
+    assert stored[0].tool_execution.result == "already sent"
+    assert stored[1] in (run_response.requirements or [])
+    assert not stored[1].is_resolved()
 
 
 # ---------------------------------------------------------------------------
