@@ -175,6 +175,8 @@ class PublicMiddleware:
         is_sse = False
         output_bytes = 0
         stream_buffer = b""
+        response_start = None
+        response_buffer = bytearray()
         error_status = None
         error_headers = {}
         capacity = None
@@ -189,7 +191,7 @@ class PublicMiddleware:
             )(scope, receive, send)
 
         async def bounded_send(message):
-            nonlocal started, output_bytes, is_sse, stream_buffer, error_status, error_headers
+            nonlocal started, output_bytes, is_sse, stream_buffer, error_status, error_headers, response_start
             if message["type"] == "http.response.start":
                 status = message["status"]
                 if status >= 400:
@@ -203,6 +205,11 @@ class PublicMiddleware:
                 is_sse = any(
                     k.lower() == b"content-type" and b"text/event-stream" in v for k, v in message.get("headers", [])
                 )
+                if not is_sse:
+                    # Validate the complete bounded body before committing success
+                    # headers, so overflow can still return a valid error response.
+                    response_start = message
+                    return
                 started = True
             elif message["type"] == "http.response.body":
                 if error_status is not None:
@@ -213,6 +220,16 @@ class PublicMiddleware:
                 output_bytes += len(body)
                 if output_bytes > self.surface.max_output_bytes:
                     raise Rejected(503, "output_limit")
+                if not is_sse:
+                    response_buffer.extend(body)
+                    if message.get("more_body", False):
+                        return
+                    assert response_start is not None
+                    started = True
+                    await send(response_start)
+                    await send({**message, "body": bytes(response_buffer)})
+                    response_buffer.clear()
+                    return
                 if is_sse and not mcp:
                     stream_buffer += body
                     frames = stream_buffer.split(b"\n\n")
@@ -398,6 +415,7 @@ class PublicMiddleware:
                     }
                 )
         finally:
+            response_buffer.clear()
             if capacity == "mcp":
                 self.active_mcp -= 1
             elif capacity == "run":

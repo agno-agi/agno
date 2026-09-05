@@ -62,6 +62,8 @@ Only the selected Agent, native MCP and protected sync Workflow are exposed. Ses
 
 Public chat defaults to 10 requests/client/minute, 50 globally/minute, 80/client/day and 3,000 globally/day. Cancel and MCP use separate shared buckets. PostgreSQL counters use the stable AgentOS ID across replicas. Default identity ignores arbitrary forwarded headers; customize `PublicSurface.client_id` only for an edge-overwritten trusted header. Request bodies, output, duration and concurrency are bounded; uploads are disabled here. CORS includes admission failures and readiness checks table preparation.
 
+Successful non-SSE responses are buffered up to `PublicSurface.max_output_bytes` (1 MiB by default) before sending headers. Overflow returns a complete `503` JSON response with `error.code="output_limit"`. The limit applies to the entire serialized response, including any attached input or run metadata, not just the model's answer. Accepted response headers and body are preserved; SSE retains its existing streaming behavior.
+
 In-process cancellation alone does not guarantee delivery across replicas; configure an existing shared cancellation backend when needed. Queues, source synchronization and public counters use PostgreSQL.
 
 ## Compatibility
