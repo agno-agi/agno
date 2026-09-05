@@ -462,3 +462,113 @@ def test_parallel_lexical_cutoff_preserves_serial_ties(corpus):
             )
         )
         assert list(conn.execute(text(parallel), params).scalars()) == expected
+
+
+@pytest.mark.asyncio
+async def test_parallel_phrasings_share_one_snapshot_on_distinct_connections(corpus):
+    from threading import Barrier
+
+    from sqlalchemy import event
+
+    knowledge, _, _ = corpus
+    await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
+    rendezvous = Barrier(3)
+    observed = []
+
+    def inspect(conn, cursor, statement, parameters, context, executemany):
+        if "embedding <=>" not in statement:
+            return
+        observed.append(
+            (
+                id(conn.connection.driver_connection),
+                conn.execute(text("SELECT txid_current_snapshot()::text")).scalar_one(),
+                conn.execute(text("SHOW transaction_read_only")).scalar_one(),
+            )
+        )
+        rendezvous.wait(timeout=1)
+
+    event.listen(knowledge._page_engine, "before_cursor_execute", inspect)
+    try:
+        result = await knowledge.asearch_pages("Agent", alternatives=["tools", "configuration"])
+    finally:
+        event.remove(knowledge._page_engine, "before_cursor_execute", inspect)
+    assert result.results and not result.partial
+    assert len({connection for connection, _, _ in observed}) == 3
+    assert len({snapshot for _, snapshot, _ in observed}) == 1
+    assert {readonly for _, _, readonly in observed} == {"on"}
+
+
+def test_search_stays_available_when_parallel_admission_is_full(corpus, monkeypatch):
+    from threading import BoundedSemaphore
+
+    from sqlalchemy import event
+
+    import agno.knowledge._pages as pages
+
+    knowledge, _, _ = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    monkeypatch.setattr(pages, "_PARALLEL_SEARCHES", BoundedSemaphore(0))
+    connections = []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        if "embedding <=>" in statement:
+            connections.append(id(conn.connection.driver_connection))
+
+    event.listen(knowledge._page_engine, "before_cursor_execute", capture)
+    try:
+        result = knowledge.search_pages("Agent", alternatives=["tools", "configuration"])
+    finally:
+        event.remove(knowledge._page_engine, "before_cursor_execute", capture)
+    assert result.results and not result.partial
+    assert len(connections) == 3 and len(set(connections)) == 1
+
+
+@pytest.mark.asyncio
+async def test_cancelled_parallel_search_retains_snapshot_and_admission_until_children_exit(corpus):
+    import asyncio
+    import threading
+
+    from sqlalchemy import event
+
+    import agno.knowledge._pages as pages
+
+    knowledge, _, _ = corpus
+    await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
+    entered, release = threading.Event(), threading.Event()
+
+    def delay(conn, cursor, statement, parameters, context, executemany):
+        if "embedding <=>" in statement and threading.current_thread().name.startswith("knowledge-query"):
+            entered.set()
+            release.wait(timeout=3)
+
+    event.listen(knowledge._page_engine, "after_cursor_execute", delay)
+    task = asyncio.create_task(knowledge.asearch_pages("Agent", alternatives=["tools"]))
+    try:
+        assert await asyncio.to_thread(entered.wait, 1)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert pages._PARALLEL_SEARCHES.acquire(blocking=False)
+        try:
+            assert not pages._PARALLEL_SEARCHES.acquire(blocking=False)
+            assert knowledge._page_engine.pool.checkedout() >= 2
+        finally:
+            pages._PARALLEL_SEARCHES.release()
+    finally:
+        release.set()
+        if not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        for _ in range(100):
+            if knowledge._page_engine.pool.checkedout() == 0:
+                break
+            await asyncio.sleep(0.01)
+        event.remove(knowledge._page_engine, "after_cursor_execute", delay)
+    assert knowledge._page_engine.pool.checkedout() == 0
+    assert pages._PARALLEL_SEARCHES.acquire(blocking=False)
+    assert pages._PARALLEL_SEARCHES.acquire(blocking=False)
+    pages._PARALLEL_SEARCHES.release()
+    pages._PARALLEL_SEARCHES.release()

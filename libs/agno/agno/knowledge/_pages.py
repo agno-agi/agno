@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import contextvars
 import hashlib
 import inspect
 import json
@@ -10,9 +11,10 @@ import math
 import re
 import time
 from collections import Counter, deque
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import closing, contextmanager, nullcontext
-from typing import Any, Dict, List, Optional
+from threading import BoundedSemaphore
+from typing import Any, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -65,6 +67,17 @@ from agno.vectordb.pgvector import PgVector
 READ_WORKERS = BoundedWorkers(8, "knowledge-read")
 SYNC_WORKERS = BoundedWorkers(2, "knowledge-sync")
 MAX_JSON_BYTES = 24_000
+# At most two searches may fan out, so readers doing serial work can always
+# release connections back to the eight-connection pool while children wait.
+_PARALLEL_SEARCHES = BoundedSemaphore(2)
+_QUERY_WORKERS = ThreadPoolExecutor(max_workers=6, thread_name_prefix="knowledge-query")
+_SEARCH_SETTINGS = (
+    "set_config('plan_cache_mode', 'force_custom_plan', true), "
+    "set_config('hnsw.ef_search', '200', true), set_config('enable_seqscan', 'off', true), "
+    "set_config('parallel_setup_cost', '0', true), set_config('parallel_tuple_cost', '0', true), "
+    "set_config('max_parallel_workers_per_gather', :workers, true), "
+    "set_config('min_parallel_table_scan_size', '0', true)"
+)
 
 
 def _digest(value: str) -> str:
@@ -256,7 +269,7 @@ class PageCoordinator:
         )
 
     @contextmanager
-    def _snapshot(self, budget: Optional[WorkBudget] = None):
+    def _snapshot(self, budget: Optional[WorkBudget] = None, *, snapshot: Optional[str] = None):
         self._ready()
         with (
             self.engine.connect().execution_options(
@@ -264,6 +277,10 @@ class PageCoordinator:
             ) as conn,
             conn.begin(),
         ):
+            if snapshot is not None:
+                # Import before any SELECT establishes this connection's snapshot.
+                quoted = literal(snapshot).compile(dialect=self.engine.dialect, compile_kwargs={"literal_binds": True})
+                conn.execute(text("SET TRANSACTION SNAPSHOT " + str(quoted)))
             self._settings(conn, budget or WorkBudget(2))
             yield conn
 
@@ -986,6 +1003,7 @@ class PageCoordinator:
                     partial = True
         scores: Dict[str, float] = {}
         payload: Dict[str, Any] = {}
+        parallel = len(vectors) > 1 and _PARALLEL_SEARCHES.acquire(blocking=False)
         try:
             with self._snapshot(budget) as conn:
                 # Each partial HNSW index contains one corpus before ANN traversal.
@@ -997,34 +1015,27 @@ class PageCoordinator:
                         "SELECT ARRAY(SELECT (SELECT string_agg(quote_literal(lexeme), ' | ') "
                         "FROM unnest(tsvector_to_array(to_tsvector('english', phrasing))) AS lexeme)::tsquery::text "
                         "FROM unnest(CAST(:queries AS text[])) WITH ORDINALITY AS inputs(phrasing, position) "
-                        "ORDER BY position), set_config('plan_cache_mode', 'force_custom_plan', true), "
-                        "set_config('hnsw.ef_search', '200', true), set_config('enable_seqscan', 'off', true), "
-                        "set_config('parallel_setup_cost', '0', true), set_config('parallel_tuple_cost', '0', true), "
-                        "set_config('max_parallel_workers_per_gather', '4', true), "
-                        "set_config('min_parallel_table_scan_size', '0', true)"
+                        "ORDER BY position), " + _SEARCH_SETTINGS
                     ),
-                    {"queries": [phrasing for phrasing, _ in vectors]},
+                    {"queries": [phrasing for phrasing, _ in vectors], "workers": "0" if parallel else "4"},
                 ).scalar_one()
-                for index, (phrasing, vector) in enumerate(vectors):
+                query_specs = [
+                    (
+                        self._hybrid_sql(),
+                        {
+                            "tsquery": tsqueries[index],
+                            "vector": json.dumps(vector),
+                            "namespace": self.namespace,
+                            "weight": self.vector.vector_score_weight,
+                        },
+                    )
+                    for index, (_, vector) in enumerate(vectors)
+                ]
+                for index, outcome in enumerate(self._search_queries(conn, query_specs, budget, parallel=parallel)):
                     try:
-                        # A primary failure aborts the whole search. Only alternatives
-                        # need a savepoint to keep the shared snapshot usable afterward.
-                        with conn.begin_nested() if index else nullcontext():
-                            self._settings(conn, budget)
-                            rows = (
-                                conn.execute(
-                                    text(self._hybrid_sql()),
-                                    {
-                                        "tsquery": tsqueries[index],
-                                        "vector": json.dumps(vector),
-                                        "namespace": self.namespace,
-                                        "weight": self.vector.vector_score_weight,
-                                    },
-                                )
-                                .mappings()
-                                .all()
-                            )
-                        for rank, row in enumerate(rows):
+                        if isinstance(outcome, Exception):
+                            raise outcome
+                        for rank, row in enumerate(outcome):
                             if row["file_version"] != row["page"]["filesystem_version"]:
                                 raise SearchUnavailable()
                             ident = row["id"]
@@ -1079,6 +1090,51 @@ class PageCoordinator:
             raise
         except Exception as exc:
             raise SearchUnavailable() from exc
+        finally:
+            if parallel:
+                _PARALLEL_SEARCHES.release()
+
+    def _search_queries(
+        self, conn: Any, queries: List[Tuple[str, Dict[str, Any]]], budget: WorkBudget, *, parallel: bool
+    ) -> List[Any]:
+        def execute(connection: Any, query: tuple) -> Any:
+            self._settings(connection, budget)
+            return connection.execute(text(query[0]), query[1]).mappings().all()
+
+        if not parallel:
+            outcomes = []
+            for index, query in enumerate(queries):
+                try:
+                    with conn.begin_nested() if index else nullcontext():
+                        outcomes.append(execute(conn, query))
+                except Exception as exc:
+                    if index == 0:
+                        raise
+                    outcomes.append(exc)
+            return outcomes
+
+        snapshot = conn.execute(text("SELECT pg_export_snapshot()")).scalar_one()
+
+        def alternative(query: tuple) -> Any:
+            try:
+                with self._snapshot(budget, snapshot=snapshot) as child:
+                    child.execute(text("SELECT " + _SEARCH_SETTINGS), {"workers": "0"})
+                    return execute(child, query)
+            except Exception as exc:
+                return exc
+
+        futures = []
+        try:
+            for query in queries[1:]:
+                futures.append(_QUERY_WORKERS.submit(contextvars.copy_context().run, alternative, query))
+            primary = execute(conn, queries[0])
+            return [primary, *(future.result(timeout=budget.remaining()) for future in futures)]
+        finally:
+            # The exporting transaction and admission slot outlive every child,
+            # including cancellation or failure while a child is using its snapshot.
+            for future in futures:
+                future.cancel()
+            wait(futures)
 
     def _hybrid_sql(self) -> str:
         catalog = _identifier(self.catalog.schema) + "." + _identifier(self.catalog.name)
