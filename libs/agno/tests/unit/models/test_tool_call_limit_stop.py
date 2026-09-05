@@ -13,12 +13,14 @@ These tests drive the real ``Model`` code with a local echo model, so they
 need no API keys and no network.
 """
 
-from typing import List, Optional
+import json
+from typing import Any, AsyncIterator, Iterator, List, Optional
 
 import pytest
 
+from agno.agent import Agent
 from agno.models.base import Model
-from agno.models.message import Message
+from agno.models.message import Message, MessageMetrics
 from agno.models.response import ModelResponse
 from agno.tools.function import Function, FunctionCall
 
@@ -47,6 +49,57 @@ class _EchoModel(Model):
 
     def _parse_provider_response_delta(self, *args, **kwargs):  # pragma: no cover
         raise NotImplementedError
+
+
+class _RepeatedToolCallModel(Model):
+    """Offline model that asks for the same tool after the limit is exhausted."""
+
+    def __init__(self, tool_name: str):
+        super().__init__(id="repeated-tool-call", name="Repeated tool call", provider="test")
+        self.tool_name = tool_name
+        self.invocations = 0
+
+    def _next_response(self) -> ModelResponse:
+        self.invocations += 1
+        if self.invocations <= 2:
+            return ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": f"call_{self.invocations}",
+                        "type": "function",
+                        "function": {"name": self.tool_name, "arguments": json.dumps({"query": "Agno"})},
+                    }
+                ],
+                response_usage=MessageMetrics(input_tokens=1, output_tokens=1, total_tokens=2),
+            )
+        return ModelResponse(
+            role="assistant",
+            content="fallback answer",
+            response_usage=MessageMetrics(input_tokens=1, output_tokens=1, total_tokens=2),
+        )
+
+    def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next_response()
+
+    async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
+        return self._next_response()
+
+    def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
+        yield self._next_response()
+
+    async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
+        yield self._next_response()
+
+    def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
+        return response
+
+    def _parse_provider_response_delta(self, response: Any) -> ModelResponse:
+        return response
+
+
+def _search_knowledge(query: str) -> str:
+    return f"result for {query}"
 
 
 def _make_call(name: str, fn) -> FunctionCall:
@@ -224,6 +277,74 @@ async def test_async_ordinary_failure_is_not_marked():
     assert results[0].tool_call_error is True
     assert results[0].tool_call_limit_reached is None
     assert _should_stop(results) is False
+
+
+# --- response loop behavior -------------------------------------------------
+
+
+def test_response_stream_stops_before_reasking_model_after_limit_refusal():
+    """Removing the stream guard makes the third scripted turn run.
+
+    The second request is refused because the only tool slot was used by the
+    first request.  A model that ignores that refusal must not receive a third
+    chance to request a tool or produce a fallback answer.
+    """
+    model = _RepeatedToolCallModel("search")
+
+    list(
+        model.response_stream(
+            messages=[Message(role="user", content="Find Agno")],
+            tools=[Function.from_callable(_search_knowledge, name="search")],
+            tool_call_limit=1,
+        )
+    )
+
+    assert model.invocations == 2
+
+
+@pytest.mark.asyncio
+async def test_aresponse_stream_stops_before_reasking_model_after_limit_refusal():
+    """Async streaming has the same no-progress termination behavior."""
+    model = _RepeatedToolCallModel("search")
+
+    _ = [
+        event
+        async for event in model.aresponse_stream(
+            messages=[Message(role="user", content="Find Agno")],
+            tools=[Function.from_callable(_search_knowledge, name="search")],
+            tool_call_limit=1,
+        )
+    ]
+
+    assert model.invocations == 2
+
+
+def test_agentic_rag_stops_after_search_knowledge_exhausts_tool_budget():
+    """Agentic-RAG stops when a repeated knowledge search is fully refused.
+
+    This exercises Agent's ``search_knowledge=True`` tool registration and
+    execution path rather than supplying the search function as a model tool.
+    Removing the limit guard invokes the scripted model a third time.
+    """
+    retrieved_queries: List[str] = []
+
+    def retrieve(query: str, num_documents: Optional[int] = None) -> List[dict]:
+        retrieved_queries.append(query)
+        return [{"content": "Agno is an agent framework."}]
+
+    model = _RepeatedToolCallModel("search_knowledge_base")
+    agent = Agent(
+        model=model,
+        search_knowledge=True,
+        knowledge_retriever=retrieve,
+        tool_call_limit=1,
+    )
+
+    result = agent.run("What is Agno?")
+
+    assert retrieved_queries == ["Agno"]
+    assert model.invocations == 2
+    assert result.content == ""
 
 
 # --- the guard is present in every response loop ----------------------------
