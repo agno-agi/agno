@@ -97,6 +97,49 @@ def test_a_sub_team_member_keeps_its_declared_store_settings(db):
     assert member._result_store.db is db
 
 
+def test_a_member_keeps_its_own_store_when_the_team_does_not_offload(db):
+    """A member's explicit setting is not a function of the team's.
+
+    The team's ``offload_tool_results`` decides what the team does with its own
+    tool results. A member that asked for a store still gets one, otherwise the
+    setting is dropped on the floor: ``member._result_store`` would be None
+    while ``member.offload_tool_results`` still reports a ResultStore, so the
+    member looks configured and offloads nothing.
+    """
+    member = Agent(name="member", db=db, offload_tool_results=ResultStore(threshold_chars=100))
+    team = Team(name="team", members=[member], db=db)  # the team itself does not offload
+    team.initialize_team()
+
+    assert member._result_store is not None
+    assert member._result_store.threshold_chars == 100
+    assert member._result_store.db is db
+
+
+def test_a_member_without_its_own_db_binds_to_the_team_db(db):
+    member = Agent(name="member", db=None, offload_tool_results=ResultStore(threshold_chars=100))
+    team = Team(name="team", members=[member], db=db)
+    team.initialize_team()
+
+    assert member._result_store is not None
+    assert member._result_store.db is db
+
+
+def test_a_member_opting_out_stays_out_when_the_team_does_not_offload(db):
+    member = Agent(name="member", db=db, offload_tool_results=False)
+    team = Team(name="team", members=[member], db=db)
+    team.initialize_team()
+
+    assert member._result_store is None
+
+
+def test_a_member_on_defaults_gets_no_store_when_the_team_does_not_offload(db):
+    member = Agent(name="member", db=db)
+    team = Team(name="team", members=[member], db=db)
+    team.initialize_team()
+
+    assert member._result_store is None
+
+
 def test_team_store_follows_a_db_change(db, tmp_path):
     import os as _os
 
