@@ -171,6 +171,7 @@ seltz = ["seltz>=0.2.0"]
 superserve = ["superserve"]
 tavily = ["tavily-python>=0.7.9"]
 telegram = ["pyTelegramBotAPI>=4.32.0", "aiohttp"]
+tenki = ["tenki>=0.5.1"]
 todoist = ["todoist-api-python"]
 trafilatura = ["trafilatura"]
 twelvelabs = ["twelvelabs>=1.2.8"]
@@ -336,6 +337,7 @@ tools = [
   "agno[superserve]",
   "agno[tavily]",
   "agno[telegram]",
+  "agno[tenki]",
   "agno[todoist]",
   "agno[trafilatura]",
   "agno[twelvelabs]",
@@ -662,6 +664,7 @@ module = [
   "streamlit.*",
   "tavily.*",
   "telebot.*",
+  "tenki.*",
   "textract.*",
   "timeout_decorator.*",
   "tiktoken.*",
