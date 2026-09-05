@@ -33,6 +33,19 @@ curl http://localhost:7777/workflows/sync-docs/runs \
 
 The background trigger returns run/session IDs. Poll `/workflows/sync-docs/runs/<run_id>?session_id=<session_id>` with the same bearer credential until completion. Execution and polling use the durable Agno queue.
 
+An application can validate discovery before any page fetching, embedding, publication or pruning. Both sync methods accept an optional keyword-only `validate_discovery` callback. It receives the discovered count and current published count for this namespace under the writer lock. Keep it fast and synchronous; return `None` to accept or raise `ValueError` to abort. The async method runs it in the existing worker. For example, the following caller-owned policy rejects an unexpectedly shortened index:
+
+```python
+def validate_index(discovered: int, published: int) -> None:
+    if published and discovered < published // 2:
+        raise ValueError("Index unexpectedly shrank; verify the source before continuing")
+
+
+await knowledge.async_sync_pages(url=index_url, validate_discovery=validate_index)
+```
+
+An application may bind an explicit override into its callback. Acceptance still requires the existing discovery and processing checks before pruning; the callback cannot turn empty discovery or partial processing into a successful reconciliation. Without a callback, the framework applies no shrink threshold. Validation adds one namespace-scoped catalog count only on sync, not on query traffic.
+
 ## Explicit retrieval and customization
 
 `attach_docs_context` calls the same `search_docs` exposed to the model and places its bounded JSON in `{docs_context}` before the first model call. The example owns its instructions and evidence formatting; customize that hook for query alternatives or full-page rendering. No Knowledge object is attached to the Agent. The model can use the three explicitly named tools. Follow-up suggestions use a separately configured model after the answer.

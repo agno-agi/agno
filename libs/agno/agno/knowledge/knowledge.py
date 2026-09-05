@@ -8,7 +8,7 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -153,10 +153,21 @@ class Knowledge(RemoteKnowledge):
         transform: Any = None,
         index_version: str = "1",
         reindex: bool = False,
+        validate_discovery: Optional[Callable[[int, int], None]] = None,
     ) -> SyncReport:
-        """Reconcile an llms.txt source, publishing each page atomically."""
+        """Reconcile an llms.txt source, publishing each page atomically.
+
+        validate_discovery receives (discovered_count, published_count) under the
+        namespace sync lock, before fetching or publishing pages. Supply a fast,
+        synchronous check that returns None to accept or raises ValueError to abort.
+        """
         return self._pages().sync(
-            url=url, public_url=public_url, transform=transform, index_version=index_version, reindex=reindex
+            url=url,
+            public_url=public_url,
+            transform=transform,
+            index_version=index_version,
+            reindex=reindex,
+            validate_discovery=validate_discovery,
         )
 
     async def async_sync_pages(
@@ -167,8 +178,13 @@ class Knowledge(RemoteKnowledge):
         transform: Any = None,
         index_version: str = "1",
         reindex: bool = False,
+        validate_discovery: Optional[Callable[[int, int], None]] = None,
     ) -> SyncReport:
-        """Reconcile pages off the event loop with retained capacity on cancellation."""
+        """Reconcile pages off the event loop with retained capacity on cancellation.
+
+        validate_discovery follows sync_pages' contract and runs synchronously in
+        the existing worker, under the sync lock and before page fetching/publication.
+        """
         from agno.knowledge._pages import SYNC_WORKERS
 
         return await SYNC_WORKERS.run(
@@ -178,6 +194,7 @@ class Knowledge(RemoteKnowledge):
             transform=transform,
             index_version=index_version,
             reindex=reindex,
+            validate_discovery=validate_discovery,
             seconds=3900,
         )
 

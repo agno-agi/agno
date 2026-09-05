@@ -14,7 +14,7 @@ from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import closing, contextmanager, nullcontext
 from threading import BoundedSemaphore
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple, cast
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -1199,8 +1199,11 @@ class PageCoordinator:
         transform: Any = None,
         index_version: str = "1",
         reindex: bool = False,
+        validate_discovery: Optional[Callable[[int, int], None]] = None,
         budget: Optional[WorkBudget] = None,
     ) -> SyncReport:
+        if validate_discovery is not None and not callable(validate_discovery):
+            raise ValueError("validate_discovery must be a synchronous callable")
         self._ready()
         budget = budget or WorkBudget(3900)
         source = PageSource(url, public_url, budget)
@@ -1234,6 +1237,21 @@ class PageCoordinator:
                     )
                     self._source_attempt(conn, source, "processing")
                 pages = source.discover()
+                if validate_discovery is not None:
+                    with conn.begin():
+                        self._settings(conn, budget)
+                        published = conn.execute(
+                            select(func.count()).select_from(self.catalog).where(self._predicate())
+                        ).scalar_one()
+                    budget.remaining()
+                    # Enforce the callback contract even for untyped callers. An
+                    # accidental boolean or coroutine must not approve publication.
+                    outcome = cast(Callable[[int, int], Any], validate_discovery)(len(pages), published)
+                    if outcome is not None:
+                        if inspect.iscoroutine(outcome):
+                            outcome.close()
+                        raise ValueError("validate_discovery must return None or raise ValueError")
+                    budget.remaining()
                 fingerprint = self._fingerprint(index_version)
                 with closing(
                     self._embedding_pages(conn, source, pages, transform, fingerprint, budget, reindex)

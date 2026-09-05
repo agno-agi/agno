@@ -168,6 +168,158 @@ def test_initial_failure_and_incomplete_discovery_do_not_prune(corpus):
         knowledge.insert(text_content="must not bypass coordinator")
 
 
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_public_discovery_validation_preserves_publication_and_releases_lock(corpus, engine, monkeypatch, asynchronous):
+    import asyncio
+
+    from sqlalchemy import func, select
+
+    knowledge, embedder, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    for index in range(3):
+        site[url] += f"\n- [Extra](https://docs.example.com/extra-{index}.md)"
+        site[f"https://docs.example.com/extra-{index}.md"] = f"# Extra {index}\n\nPublished evidence."
+    assert knowledge.sync_pages(url=url).updated == 4
+    coordinator = knowledge._pages()
+    pages = knowledge.list_pages()
+    bodies = [knowledge.read_page(page.path) for page in pages.pages]
+    vector = knowledge.vector_db.table
+
+    def stored_state():
+        with engine.connect() as conn:
+            return (
+                conn.execute(select(coordinator.catalog).where(coordinator._predicate())).mappings().all(),
+                conn.execute(
+                    select(func.row_to_json(vector.table_valued()))
+                    .where(vector.c.content_id.in_([page.content_id for page in pages.pages]))
+                    .order_by(vector.c.id)
+                )
+                .scalars()
+                .all(),
+                conn.execute(
+                    select(coordinator.binding).where(coordinator.binding.c.namespace == coordinator.namespace)
+                )
+                .mappings()
+                .one(),
+            )
+
+    before = stored_state()
+    # A neighboring namespace must not inflate the published count.
+    other = Knowledge(
+        contents_db=knowledge.contents_db,
+        vector_db=knowledge.vector_db,
+        page_store=FileSystem(knowledge.contents_db, namespace="neighbor-" + uuid4().hex[:8]),
+    )
+    other.setup()
+    assert other.sync_pages(url=url).updated == 4
+    other._page_engine.dispose()
+    site[url] = "- [Agent](https://docs.example.com/agent.md)"
+    site["https://docs.example.com/agent.md"] += "\nMust not publish on rejection."
+    fetched = []
+
+    def fetch(self, url, max_bytes):
+        fetched.append(url)
+        return site[url]
+
+    monkeypatch.setattr(PageSource, "fetch", fetch)
+    calls = len(embedder.calls)
+
+    def reject(discovered, published):
+        assert (discovered, published) == (1, 4)
+        with engine.connect() as conn:
+            acquired = conn.execute(
+                text("SELECT pg_try_advisory_lock(:key)"), {"key": coordinator.lock_key}
+            ).scalar_one()
+            if acquired:
+                conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": coordinator.lock_key})
+            assert not acquired, "validation must hold the namespace writer lock"
+        raise ValueError("index rejected by product policy")
+
+    def run(callback):
+        if asynchronous:
+            return asyncio.run(knowledge.async_sync_pages(url=url, validate_discovery=callback))
+        return knowledge.sync_pages(url=url, validate_discovery=callback)
+
+    with pytest.raises(ValueError, match="index rejected by product policy"):
+        run(reject)
+    assert fetched == [url] and len(embedder.calls) == calls
+    assert stored_state() == before
+    assert knowledge.list_pages() == pages
+    assert [knowledge.read_page(page.path) for page in pages.pages] == bodies
+    with engine.connect() as conn:
+        assert (
+            conn.execute(
+                select(coordinator.catalog.c.status).where(
+                    coordinator.catalog.c.type == "source",
+                    coordinator.catalog.c.metadata["_agno"]["namespace"].astext == coordinator.namespace,
+                )
+            ).scalar_one()
+            == "failed"
+        )
+        assert conn.execute(text("SELECT pg_try_advisory_lock(:key)"), {"key": coordinator.lock_key}).scalar_one()
+        conn.execute(text("SELECT pg_advisory_unlock(:key)"), {"key": coordinator.lock_key})
+    report = run(lambda discovered, published: None)
+    assert (report.updated, report.deleted, report.status) == (1, 3, "completed")
+    assert knowledge.read_page("/agent").text == site["https://docs.example.com/agent.md"]
+
+
+@pytest.mark.parametrize("invalid", ["boolean", "coroutine", "noncallable"])
+def test_discovery_validation_rejects_invalid_callbacks_before_page_work(corpus, invalid):
+    import inspect
+
+    knowledge, embedder, _ = corpus
+    coroutine = None
+
+    async def asynchronous_check():
+        return None
+
+    if invalid == "coroutine":
+        coroutine = asynchronous_check()
+
+        def callback(discovered, published):
+            return coroutine
+
+    elif invalid == "boolean":
+
+        def callback(discovered, published):
+            return False
+
+    else:
+        callback = False
+    with pytest.raises(ValueError, match="validate_discovery must"):
+        knowledge.sync_pages(url="https://docs.example.com/llms.txt", validate_discovery=callback)
+    assert not embedder.calls and not knowledge.list_pages().pages
+    if coroutine is not None:
+        assert inspect.getcoroutinestate(coroutine) == inspect.CORO_CLOSED
+
+
+@pytest.mark.parametrize("failure", ["empty", "incomplete", "page"])
+def test_accepting_discovery_validation_does_not_bypass_other_pruning_guards(corpus, failure):
+    from agno.knowledge.page import SyncFailed
+
+    knowledge, _, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    original_index = site[url]
+    site[url] += "\n- [Keep](https://docs.example.com/keep.md)"
+    site["https://docs.example.com/keep.md"] = "# Keep\n\nPublished evidence."
+    assert knowledge.sync_pages(url=url).updated == 2
+    before = knowledge.list_pages()
+    site[url] = original_index
+    if failure == "empty":
+        site[url] = ""
+    elif failure == "incomplete":
+        site[url] += "\n- [Missing](https://docs.example.com/_llms/missing.md)"
+    else:
+        del site["https://docs.example.com/agent.md"]
+    if failure == "empty":
+        with pytest.raises(SyncFailed):
+            knowledge.sync_pages(url=url, validate_discovery=lambda discovered, published: None)
+    else:
+        report = knowledge.sync_pages(url=url, validate_discovery=lambda discovered, published: None)
+        assert report.status == "partial" and report.deleted == 0
+    assert knowledge.list_pages() == before
+
+
 def test_namespaces_keep_hnsw_recall_and_legacy_search_scoped(corpus, monkeypatch):
     knowledge, embedder, site = corpus
     url = "https://docs.example.com/llms.txt"
@@ -243,6 +395,10 @@ def test_two_embedding_pages_and_concurrent_syncs_keep_one_writer(corpus, monkey
     site[base + "/second.md"] = "# Second\n\nA second complete page.\n"
     barrier = threading.Barrier(2)
     embedding_threads, database_threads = set(), set()
+    validation_counts = []
+
+    def validate(discovered, published):
+        validation_counts.append((discovered, published))
 
     def embed(content, *, timeout):
         embedding_threads.add(threading.get_ident())
@@ -256,12 +412,15 @@ def test_two_embedding_pages_and_concurrent_syncs_keep_one_writer(corpus, monkey
     event.listen(knowledge._page_engine, "before_cursor_execute", statement)
     try:
         with ThreadPoolExecutor(max_workers=2) as pool:
-            futures = [pool.submit(knowledge.sync_pages, url=base + "/llms.txt") for _ in range(2)]
+            futures = [
+                pool.submit(knowledge.sync_pages, url=base + "/llms.txt", validate_discovery=validate) for _ in range(2)
+            ]
             reports = [future.result(timeout=10) for future in futures]
         assert sorted(report.updated for report in reports) == [0, 2]
         assert len(embedding_threads) == 2
         assert not embedding_threads & database_threads
         assert len(knowledge.list_pages().pages) == 2
+        assert validation_counts == [(2, 0), (2, 2)]
     finally:
         event.remove(knowledge._page_engine, "before_cursor_execute", statement)
 
