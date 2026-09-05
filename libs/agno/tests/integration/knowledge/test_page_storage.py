@@ -327,3 +327,108 @@ def test_ignore_case_grep_uses_consistent_unicode_folding(corpus):
         result = knowledge.grep_pages(query, ignore_case=True)
         assert result.complete and len(result.matches) == 1
     assert knowledge.grep_pages("absent", ignore_case=True).matches == ()
+
+
+def test_search_uses_readonly_snapshot_and_restores_transaction_settings(corpus):
+    from sqlalchemy import event
+
+    knowledge, _, _ = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    statements, settings = [], []
+
+    def capture(conn, cursor, statement, parameters, context, executemany):
+        statements.append(statement)
+        if "embedding <=>" in statement:
+            settings.append(
+                tuple(
+                    conn.execute(
+                        text(
+                            "SELECT current_setting('transaction_read_only'), "
+                            "current_setting('transaction_isolation'), current_setting('hnsw.ef_search')"
+                        )
+                    ).one()
+                )
+            )
+
+    event.listen(knowledge._page_engine, "before_cursor_execute", capture)
+    try:
+        assert knowledge.search_pages("the and").results
+    finally:
+        event.remove(knowledge._page_engine, "before_cursor_execute", capture)
+    assert settings == [("on", "repeatable read", "200")]
+    assert not any("SAVEPOINT" in statement for statement in statements)
+    assert len(statements) == 5  # Four search statements and the test's settings inspection.
+    with knowledge._page_engine.connect() as conn:
+        assert conn.execute(text("SHOW transaction_read_only")).scalar_one() == "off"
+        assert conn.execute(text("SHOW enable_seqscan")).scalar_one() == "on"
+        assert conn.execute(text("SHOW parallel_setup_cost")).scalar_one() != "0"
+
+
+def test_search_alternative_sql_failure_keeps_primary_snapshot(corpus, monkeypatch):
+    from agno.knowledge.page import SearchUnavailable
+
+    knowledge, _, _ = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    coordinator = knowledge._pages()
+    monkeypatch.setattr(knowledge, "_pages", lambda: coordinator)
+    original = coordinator._hybrid_sql
+    calls = []
+
+    def sql():
+        calls.append(None)
+        return "SELECT 1 / 0" if len(calls) == 2 else original()
+
+    monkeypatch.setattr(coordinator, "_hybrid_sql", sql)
+    result = knowledge.search_pages("Agent", alternatives=["broken", "tools"])
+    assert len(calls) == 3
+    assert result.results and result.partial and result.warnings == ("alternative_unavailable",)
+    monkeypatch.setattr(coordinator, "_hybrid_sql", lambda: "SELECT 1 / 0")
+    with pytest.raises(SearchUnavailable):
+        knowledge.search_pages("Agent", alternatives=["tools"])
+
+
+def test_search_alternatives_share_revision_during_concurrent_publication(corpus):
+    from sqlalchemy import event
+
+    knowledge, _, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    knowledge.sync_pages(url=url)
+    before = knowledge.read_page("/agent")
+    updated = []
+
+    def publish(conn, cursor, statement, parameters, context, executemany):
+        if "embedding <=>" in statement and not updated:
+            updated.append(True)
+            site["https://docs.example.com/agent.md"] += "\nA new published revision.\n"
+            assert knowledge.sync_pages(url=url).updated == 1
+
+    event.listen(knowledge._page_engine, "after_cursor_execute", publish)
+    try:
+        result = knowledge.search_pages("Agent", alternatives=["tools", "configured"])
+    finally:
+        event.remove(knowledge._page_engine, "after_cursor_execute", publish)
+    assert updated and result.results and not result.partial
+    assert {hit.revision for hit in result.results} == {before.revision}
+    assert knowledge.read_page("/agent").revision != before.revision
+
+
+def test_point_read_transfers_only_requested_unicode_slice(corpus, monkeypatch):
+    knowledge, _, site = corpus
+    body = "# Unicode\n\n" + '😀é中\\"\n' * 10000
+    site["https://docs.example.com/agent.md"] = body
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    coordinator = knowledge._pages()
+    monkeypatch.setattr(knowledge, "_pages", lambda: coordinator)
+    original = coordinator._rows
+    transferred = []
+
+    def rows(*args, **kwargs):
+        result = original(*args, **kwargs)
+        transferred.extend((len(row.content), row.total_chars) for row in result)
+        return result
+
+    monkeypatch.setattr(coordinator, "_rows", rows)
+    result = knowledge.read_page("/agent", offset=13, max_chars=19)
+    assert result.text == body[13:32]
+    assert result.next_offset == 32 and result.total_chars == len(body)
+    assert transferred == [(19, len(body))]

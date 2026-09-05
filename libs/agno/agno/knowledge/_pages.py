@@ -11,7 +11,7 @@ import re
 import time
 from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor
-from contextlib import closing, contextmanager
+from contextlib import closing, contextmanager, nullcontext
 from typing import Any, Dict, List, Optional
 from uuid import uuid4
 
@@ -258,9 +258,13 @@ class PageCoordinator:
     @contextmanager
     def _snapshot(self, budget: Optional[WorkBudget] = None):
         self._ready()
-        with self.engine.connect().execution_options(isolation_level="REPEATABLE READ") as conn, conn.begin():
+        with (
+            self.engine.connect().execution_options(
+                isolation_level="REPEATABLE READ", postgresql_readonly=True
+            ) as conn,
+            conn.begin(),
+        ):
             self._settings(conn, budget or WorkBudget(2))
-            conn.execute(text("SET TRANSACTION READ ONLY"))
             yield conn
 
     def _predicate(self):
@@ -286,6 +290,7 @@ class PageCoordinator:
         literal_query: Optional[str] = None,
         ignore_case: bool = False,
         exact_path: bool = False,
+        read_range: Optional[tuple[int, int]] = None,
     ):
         c, f = self.catalog, self.backend.table
         path = self._page_field("path")
@@ -312,6 +317,17 @@ class PageCoordinator:
             stmt = stmt.where(path == prefix)
         else:
             stmt = stmt.where(path > after, path >= prefix, func.starts_with(path, prefix))
+        if read_range is not None:
+            offset, max_chars = read_range
+            # Slice before transferring the row: a short read must not fetch a
+            # multi-megabyte body just to discard it in Python. PostgreSQL text
+            # positions and public offsets both count Unicode code points.
+            stmt = stmt.with_only_columns(
+                c.c.metadata,
+                func.substr(f.c.content, offset + 1, max_chars).label("content"),
+                f.c.version,
+                func.length(f.c.content).label("total_chars"),
+            )
         if ignore_case:
             stmt = stmt.add_columns(func.lower(f.c.content).label("folded_content"))
         if literal_query is not None:
@@ -791,10 +807,14 @@ class PageCoordinator:
         if not isinstance(offset, int) or isinstance(offset, bool) or offset < 0 or not 1 <= max_chars <= 24000:
             raise ValueError("invalid_page_range")
         with self._snapshot(budget) as conn:
-            page, content = self._one(conn, page_path(path))
+            rows = self._rows(conn, prefix=page_path(path), limit=1, exact_path=True, read_range=(offset, max_chars))
+            if not rows:
+                raise PageNotFound()
+            page, content = self._checked(rows[0])
+            total_chars = rows[0].total_chars
             if revision is not None and revision != page.revision:
                 raise PageChanged(current_revision=page.revision)
-            if offset > len(content):
+            if offset > total_chars:
                 raise ValueError("invalid_page_offset")
 
             def result(length: int) -> PageRead:
@@ -804,14 +824,14 @@ class PageCoordinator:
                     url=page.url,
                     title=page.title,
                     revision=page.revision,
-                    text=content[offset:end],
+                    text=content[:length],
                     offset=offset,
-                    next_offset=end if end < len(content) else None,
-                    total_chars=len(content),
-                    truncated=end < len(content),
+                    next_offset=end if end < total_chars else None,
+                    total_chars=total_chars,
+                    truncated=end < total_chars,
                 )
 
-            low, high = 0, min(max_chars, len(content) - offset)
+            low, high = 0, len(content)
             full = result(high)
             if encoded_size(full) <= MAX_JSON_BYTES:
                 return full
@@ -969,18 +989,31 @@ class PageCoordinator:
         try:
             with self._snapshot(budget) as conn:
                 # Each partial HNSW index contains one corpus before ANN traversal.
-                conn.execute(text("SET LOCAL plan_cache_mode = force_custom_plan"))
-                conn.execute(text("SET LOCAL hnsw.ef_search = 200"))
-                conn.execute(text("SET LOCAL enable_seqscan = off"))
+                # Prepare the same stemmed OR queries once. Bound tsquery values let
+                # PostgreSQL estimate lexical matches instead of assuming a one-row
+                # CTE, and let its parallel bitmap scan rank broad matches in parallel.
+                tsqueries = conn.execute(
+                    text(
+                        "SELECT ARRAY(SELECT (SELECT string_agg(quote_literal(lexeme), ' | ') "
+                        "FROM unnest(tsvector_to_array(to_tsvector('english', phrasing))) AS lexeme)::tsquery::text "
+                        "FROM unnest(CAST(:queries AS text[])) WITH ORDINALITY AS inputs(phrasing, position) "
+                        "ORDER BY position), set_config('plan_cache_mode', 'force_custom_plan', true), "
+                        "set_config('hnsw.ef_search', '200', true), set_config('enable_seqscan', 'off', true), "
+                        "set_config('parallel_setup_cost', '0', true), set_config('parallel_tuple_cost', '0', true)"
+                    ),
+                    {"queries": [phrasing for phrasing, _ in vectors]},
+                ).scalar_one()
                 for index, (phrasing, vector) in enumerate(vectors):
                     try:
-                        with conn.begin_nested():
+                        # A primary failure aborts the whole search. Only alternatives
+                        # need a savepoint to keep the shared snapshot usable afterward.
+                        with conn.begin_nested() if index else nullcontext():
                             self._settings(conn, budget)
                             rows = (
                                 conn.execute(
                                     text(self._hybrid_sql()),
                                     {
-                                        "query": phrasing,
+                                        "tsquery": tsqueries[index],
                                         "vector": json.dumps(vector),
                                         "namespace": self.namespace,
                                         "weight": self.vector.vector_score_weight,
@@ -1048,26 +1081,23 @@ class PageCoordinator:
     def _hybrid_sql(self) -> str:
         catalog = _identifier(self.catalog.schema) + "." + _identifier(self.catalog.name)
         files = _identifier(self.backend.db_schema) + "." + _identifier(self.backend.table_name)
-        return f"""WITH q AS (
-            SELECT (SELECT string_agg(quote_literal(lexeme), ' | ')
-                    FROM unnest(tsvector_to_array(to_tsvector('english', :query))) AS lexeme)::tsquery AS tsq
-        ), by_vector AS (
+        return f"""WITH by_vector AS (
             SELECT id FROM {self._vector_name} WHERE meta_data->>'namespace'=:namespace
             ORDER BY embedding <=> CAST(:vector AS vector) LIMIT 200
         ), by_keyword AS (
-            SELECT id FROM {self._vector_name}, q
-            WHERE meta_data->>'namespace'=:namespace AND _agno_page_tsv @@ q.tsq
-            ORDER BY ts_rank_cd(_agno_page_tsv, q.tsq) DESC LIMIT 200
+            SELECT id FROM {self._vector_name}
+            WHERE meta_data->>'namespace'=:namespace AND _agno_page_tsv @@ CAST(:tsquery AS tsquery)
+            ORDER BY ts_rank_cd(_agno_page_tsv, CAST(:tsquery AS tsquery)) DESC LIMIT 200
         ), candidates AS (SELECT id FROM by_vector UNION SELECT id FROM by_keyword), ranked AS (
         SELECT v.id, v.content, v.meta_data->>'breadcrumb' AS breadcrumb,
             c.metadata->'_agno'->'page' AS page,
             :weight * GREATEST(0, 1 - (v.embedding <=> CAST(:vector AS vector))) +
-            (1 - :weight) * COALESCE(ts_rank_cd(v._agno_page_tsv, q.tsq) /
-                                       (ts_rank_cd(v._agno_page_tsv, q.tsq) + 0.1), 0) AS score
+            (1 - :weight) * COALESCE(ts_rank_cd(v._agno_page_tsv, CAST(:tsquery AS tsquery)) /
+                                       (ts_rank_cd(v._agno_page_tsv, CAST(:tsquery AS tsquery)) + 0.1), 0) AS score
         FROM {self._vector_name} v JOIN candidates USING (id)
         JOIN {catalog} c ON c.id=v.content_id
             AND c.metadata->'_agno'->'page'->>'namespace'=:namespace
-            AND c.metadata->'_agno'->'page'->>'revision'=v.meta_data->>'revision', q
+            AND c.metadata->'_agno'->'page'->>'revision'=v.meta_data->>'revision'
         ORDER BY score DESC, v.id LIMIT 20)
         SELECT ranked.*, f.version AS file_version FROM ranked
         LEFT JOIN {files} f ON f.namespace=:namespace AND f.path=substr(ranked.page->>'path', 2)
