@@ -57,9 +57,8 @@ class RecursiveChunking(ChunkingStrategy):
 
             new_start = end - self.overlap
             if new_start <= start:  # Prevent infinite loop
-                new_start = min(
-                    len(content), start + max(1, self.chunk_size // 10)
-                )  # Move forward by at least 10% of chunk size
+                # Advance without skipping text beyond the chunk we just emitted.
+                new_start = min(end, start + max(1, self.chunk_size // 10))
             start = new_start
 
         return chunks
