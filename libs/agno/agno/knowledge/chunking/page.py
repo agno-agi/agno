@@ -2,10 +2,11 @@
 Docs Chunking
 =============
 
-A heading-aware markdown chunker and the reader that applies it. Agno's own
+A heading-aware markdown chunker and reader.
+
 MarkdownChunking depends on `unstructured` (a very large dependency tree) and
 its base strategy collapses whitespace, which flattens code examples onto one
-line. This one keeps newlines exactly as written.
+line. This chunker keeps newlines exactly as written.
 
 Rules:
 - Split on H1/H2 headings; deeper headings stay with their section.
