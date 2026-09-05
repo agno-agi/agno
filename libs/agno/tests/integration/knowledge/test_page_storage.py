@@ -132,6 +132,27 @@ def test_unicode_pagination_and_listing_revision(corpus):
     assert "".join(parts) == site["https://docs.example.com/agent.md"]
 
 
+def test_listing_byte_budget_recovers_every_page_with_large_unicode_metadata(corpus):
+    knowledge, _, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    paths = [f"/section/page-{index:03}.md" for index in range(40)]
+    site[url] = "\n".join(f"- [Page](https://docs.example.com{path})" for path in paths)
+    for path in paths:
+        site["https://docs.example.com" + path] = "# " + ('标题 😀 \\"' * 80) + "\n\nPage body.\n"
+    assert knowledge.sync_pages(url=url).updated == len(paths)
+    cursor, recovered = None, []
+    while True:
+        result = knowledge.list_pages(prefix="/section/", cursor=cursor, limit=200)
+        assert len(result.model_dump_json().encode()) <= 24000
+        assert result.pages and not result.restart_required
+        recovered.extend(page.path for page in result.pages)
+        cursor = result.next_cursor
+        if cursor is None:
+            break
+    assert recovered == paths
+    assert knowledge.read_page("/section/page-010").text == site["https://docs.example.com/section/page-010.md"]
+
+
 def test_initial_failure_and_incomplete_discovery_do_not_prune(corpus):
     knowledge, embedder, site = corpus
     url = "https://docs.example.com/llms.txt"
