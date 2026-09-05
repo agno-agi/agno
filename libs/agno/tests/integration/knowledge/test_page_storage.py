@@ -572,3 +572,66 @@ async def test_cancelled_parallel_search_retains_snapshot_and_admission_until_ch
     assert pages._PARALLEL_SEARCHES.acquire(blocking=False)
     pages._PARALLEL_SEARCHES.release()
     pages._PARALLEL_SEARCHES.release()
+
+
+def test_rrf_ties_keep_primary_query_order_at_result_limit(corpus, monkeypatch):
+    from agno.knowledge._pages import PageCoordinator
+
+    knowledge, _, _ = corpus
+
+    def row(ident):
+        return {
+            "id": ident,
+            "file_version": 1,
+            "score": 0.8,
+            "breadcrumb": ident,
+            "content": ident,
+            "page": {
+                "filesystem_version": 1,
+                "path": f"/{ident}.md",
+                "url": f"https://docs.example.com/{ident}",
+                "title": ident,
+                "revision": "r",
+            },
+        }
+
+    primary, alternative = row("z-primary"), row("a-alternative")
+    monkeypatch.setattr(
+        PageCoordinator, "_search_queries", lambda *args, **kwargs: [[primary, alternative], [alternative, primary]]
+    )
+    result = knowledge.search_pages("primary", alternatives=["alternative"], limit=1)
+    assert [hit.path for hit in result.results] == ["/z-primary.md"]
+
+
+def test_search_clipping_accounts_for_partial_warning_bytes(corpus, monkeypatch):
+    from agno.knowledge._pages import PageCoordinator
+    from agno.knowledge.page import SearchHit, SearchResult, encoded_size
+
+    knowledge, _, _ = corpus
+    hit = SearchHit(
+        path="/agent.md",
+        url="https://docs.example.com/agent",
+        title="Agent",
+        revision="r",
+        chunk_id="c",
+        content="",
+        score=0.8,
+        rank=1,
+    )
+    overhead = encoded_size(SearchResult(results=(hit,), partial=True, truncated=True))
+    content = "x" * (24000 - overhead - 5)
+    row = {
+        "id": "c",
+        "file_version": 1,
+        "score": 0.8,
+        "breadcrumb": "Agent",
+        "content": content,
+        "page": {"filesystem_version": 1, "path": hit.path, "url": hit.url, "title": hit.title, "revision": "r"},
+    }
+    monkeypatch.setattr(
+        PageCoordinator, "_search_queries", lambda *args, **kwargs: [[row], RuntimeError("alternative failed")]
+    )
+    result = knowledge.search_pages("primary", alternatives=["alternative"])
+    assert result.partial and result.warnings == ("alternative_unavailable",)
+    assert result.truncated and result.omitted_count == 1 and not result.results
+    assert encoded_size(result) <= 24000

@@ -1048,7 +1048,9 @@ class PageCoordinator:
                         partial = True
                 hits: List[SearchHit] = []
                 per_page: Counter = Counter()
-                for ident in sorted(scores, key=lambda key: (-scores[key], key)):
+                # Equal fused scores retain first appearance in the caller's query
+                # order, so a primary-query hit wins a tie with an alternative.
+                for ident in sorted(scores, key=lambda key: -scores[key]):
                     row = payload[ident]
                     page = row["page"]
                     if per_page[page["path"]] >= 3:
@@ -1072,7 +1074,11 @@ class PageCoordinator:
                     hits
                     and encoded_size(
                         SearchResult(
-                            results=tuple(hits), partial=partial, truncated=True, omitted_count=total - len(hits)
+                            results=tuple(hits),
+                            partial=partial,
+                            truncated=True,
+                            omitted_count=total - len(hits),
+                            warnings=("alternative_unavailable",) if partial else (),
                         )
                     )
                     > MAX_JSON_BYTES
