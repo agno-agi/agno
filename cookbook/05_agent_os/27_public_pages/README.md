@@ -66,6 +66,8 @@ In-process cancellation alone does not guarantee delivery across replicas; confi
 
 ## Compatibility
 
+Page result types and errors live in `agno.knowledge.page.types` and are re-exported from `agno.knowledge.page`, so imports such as `from agno.knowledge.page import Page, SearchResult` remain unchanged. Importing these types does not load the private discovery/coordinator modules or their PostgreSQL/vector dependencies. The chunking strategy remains in `agno.knowledge.chunking.page`.
+
 `Knowledge` retains its existing `contents_db` constructor and positional fields; `page_store` is keyword-only. Other Knowledge configurations retain their behavior. Page storage supports synchronous PostgreSQL adapters in one logical database; custom embedders must enforce a timeout or use the supported OpenAI embedder.
 
 Page-mode `search`/`asearch` and `retrieve`/`aretrieve` return revision-checked ranked chunks as Documents without expanding pages. Filters are unsupported; the configured corpus is shared among readers. Existing KnowledgeProtocol signatures and the ordinary `search_knowledge_base` tool remain. Applications needing completeness flags should consume `search_pages` directly. No new Agent/Team context machinery or Message retention alias is introduced.

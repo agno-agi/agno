@@ -12,7 +12,7 @@ from urllib.parse import quote, unquote, urljoin, urlsplit, urlunsplit
 import httpx
 
 from agno.fs._paths import normalize_path
-from agno.knowledge.page import SyncFailed
+from agno.knowledge.page.types import SyncFailed
 from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
 from agno.utils.bounded import WorkBudget
 

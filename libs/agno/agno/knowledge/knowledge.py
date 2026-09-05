@@ -102,7 +102,7 @@ class Knowledge(RemoteKnowledge):
 
         self.vector_db = cast(VectorDb, self.vector_db)
         if self.page_store is not None:
-            from agno.knowledge._pages import PageCoordinator
+            from agno.knowledge.page._coordinator import PageCoordinator
 
             PageCoordinator(self)  # Validate configuration without connecting or creating schema.
         elif self.vector_db and not self.vector_db.exists():
@@ -111,7 +111,7 @@ class Knowledge(RemoteKnowledge):
         self.construct_readers()
 
     def _pages(self):
-        from agno.knowledge._pages import PageCoordinator
+        from agno.knowledge.page._coordinator import PageCoordinator
 
         return PageCoordinator(self)
 
@@ -141,7 +141,7 @@ class Knowledge(RemoteKnowledge):
 
     async def asetup(self) -> None:
         """Prepare page storage on bounded workers."""
-        from agno.knowledge._pages import SYNC_WORKERS
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
 
         await SYNC_WORKERS.run(self._pages().setup, seconds=60)
 
@@ -185,7 +185,7 @@ class Knowledge(RemoteKnowledge):
         validate_discovery follows sync_pages' contract and runs synchronously in
         the existing worker, under the sync lock and before page fetching/publication.
         """
-        from agno.knowledge._pages import SYNC_WORKERS
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
 
         return await SYNC_WORKERS.run(
             self._pages().sync,
@@ -226,8 +226,8 @@ class Knowledge(RemoteKnowledge):
         max_output_bytes includes framework metadata and controls output clipping,
         without changing ranking or the overall search deadline.
         """
-        from agno.knowledge._pages import READ_WORKERS
         from agno.knowledge.page import SearchUnavailable
+        from agno.knowledge.page._coordinator import READ_WORKERS
 
         try:
             return await READ_WORKERS.run(
@@ -251,7 +251,7 @@ class Knowledge(RemoteKnowledge):
         self, path: str, *, revision: Optional[str] = None, offset: int = 0, max_chars: int = 12000
     ) -> PageRead:
         """Read published Markdown on bounded workers."""
-        from agno.knowledge._pages import READ_WORKERS
+        from agno.knowledge.page._coordinator import READ_WORKERS
 
         return await READ_WORKERS.run(
             self._pages().read, path, revision=revision, offset=offset, max_chars=max_chars, seconds=2
@@ -265,7 +265,7 @@ class Knowledge(RemoteKnowledge):
         self, query: str, *, prefix: str = "/", ignore_case: bool = False, limit: int = 20
     ) -> GrepResult:
         """Find literal text without blocking the event loop."""
-        from agno.knowledge._pages import READ_WORKERS
+        from agno.knowledge.page._coordinator import READ_WORKERS
 
         return await READ_WORKERS.run(
             self._pages().grep, query, prefix=prefix, ignore_case=ignore_case, limit=limit, seconds=2
@@ -277,7 +277,7 @@ class Knowledge(RemoteKnowledge):
 
     async def alist_pages(self, *, prefix: str = "/", cursor: Optional[str] = None, limit: int = 100) -> PageList:
         """List navigation metadata on bounded workers."""
-        from agno.knowledge._pages import READ_WORKERS
+        from agno.knowledge.page._coordinator import READ_WORKERS
 
         return await READ_WORKERS.run(self._pages().list, prefix=prefix, cursor=cursor, limit=limit, seconds=2)
 

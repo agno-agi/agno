@@ -8,9 +8,60 @@ import pytest
 
 from agno.db.sqlite import SqliteDb
 from agno.fs.errors import InvalidPathError
-from agno.knowledge._page_source import page_path
 from agno.knowledge.knowledge import Knowledge
+from agno.knowledge.page._source import page_path
 from agno.utils.bounded import BoundedWorkers
+
+
+def test_page_public_imports_preserve_types_without_loading_storage():
+    import subprocess
+    import sys
+    from pathlib import Path
+    from textwrap import dedent
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            dedent("""
+                import pickle
+                import sys
+
+                class BlockStorageImports:
+                    def find_spec(self, fullname, path=None, target=None):
+                        blocked = (
+                            "sqlalchemy", "psycopg", "pgvector", "agno.vectordb",
+                            "agno.knowledge.page._coordinator", "agno.knowledge.page._source",
+                        )
+                        if any(fullname == name or fullname.startswith(name + ".") for name in blocked):
+                            raise AssertionError("Page types eagerly imported " + fullname)
+
+                sys.meta_path.insert(0, BlockStorageImports())
+                from agno.knowledge import page
+                from agno.knowledge.page import types
+
+                expected = {
+                    "GrepMatch", "GrepResult", "Page", "PageChanged", "PageError", "PageList",
+                    "PageNotFound", "PageRead", "PageResult", "SearchHit", "SearchResult",
+                    "SearchUnavailable", "SyncFailed", "SyncReport", "encoded_size", "tool_error",
+                }
+                assert set(page.__all__) == expected
+                for name in expected:
+                    assert getattr(page, name) is getattr(types, name)
+                assert page.SearchResult().model_dump() == {
+                    "schema_version": 1, "results": (), "partial": False, "truncated": False,
+                    "omitted_count": 0, "warnings": (),
+                }
+                assert pickle.loads(b"cagno.knowledge.page\\nSearchResult\\n.") is types.SearchResult
+                assert "agno.knowledge.knowledge" not in sys.modules
+            """),
+        ],
+        cwd=Path(__file__).resolve().parents[3],
+        capture_output=True,
+        text=True,
+        timeout=15,
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
 
 
 def test_constructor_preserves_positional_fields_and_keyword_only_page_store():
@@ -116,7 +167,7 @@ async def test_cancelled_worker_retains_capacity_until_actual_exit():
 
 
 def test_discovery_nested_cycles_and_fumadocs_normalization(monkeypatch):
-    from agno.knowledge._page_source import PageSource
+    from agno.knowledge.page._source import PageSource
     from agno.utils.bounded import WorkBudget
 
     base = "https://docs.example.com/docs"
@@ -140,7 +191,7 @@ def test_discovery_nested_cycles_and_fumadocs_normalization(monkeypatch):
 
 
 def test_collisions_and_foreign_destinations_cannot_prune(monkeypatch):
-    from agno.knowledge._page_source import PageSource
+    from agno.knowledge.page._source import PageSource
     from agno.utils.bounded import WorkBudget
 
     base = "https://docs.example.com"

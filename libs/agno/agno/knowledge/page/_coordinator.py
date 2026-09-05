@@ -41,10 +41,10 @@ from agno.db.schemas.knowledge import KnowledgeRow
 from agno.fs import FileSystem
 from agno.fs.db import DbFileSystem
 from agno.fs.errors import QuotaExceededError
-from agno.knowledge._page_source import PageSource, SourcePage, page_path, page_prefix
 from agno.knowledge.chunking.page import PageMarkdownChunking
 from agno.knowledge.document import Document
-from agno.knowledge.page import (
+from agno.knowledge.page._source import PageSource, SourcePage, page_path, page_prefix
+from agno.knowledge.page.types import (
     GrepMatch,
     GrepResult,
     Page,

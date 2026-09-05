@@ -9,10 +9,10 @@ from sqlalchemy.engine import make_url
 
 from agno.db.postgres import PostgresDb
 from agno.fs import FileSystem
-from agno.knowledge._page_source import PageSource
 from agno.knowledge.embedder.base import Embedder
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.page import PageChanged, PageError
+from agno.knowledge.page._source import PageSource
 from agno.vectordb.pgvector import PgVector
 
 pytestmark = pytest.mark.skipif(not os.getenv("AGNO_PAGE_TEST_DB_URL"), reason="requires isolated local PostgreSQL")
@@ -662,7 +662,7 @@ def test_search_stays_available_when_parallel_admission_is_full(corpus, monkeypa
 
     from sqlalchemy import event
 
-    import agno.knowledge._pages as pages
+    import agno.knowledge.page._coordinator as pages
 
     knowledge, _, _ = corpus
     knowledge.sync_pages(url="https://docs.example.com/llms.txt")
@@ -689,7 +689,7 @@ async def test_cancelled_parallel_search_retains_snapshot_and_admission_until_ch
 
     from sqlalchemy import event
 
-    import agno.knowledge._pages as pages
+    import agno.knowledge.page._coordinator as pages
 
     knowledge, _, _ = corpus
     await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
@@ -734,7 +734,7 @@ async def test_cancelled_parallel_search_retains_snapshot_and_admission_until_ch
 
 
 def test_rrf_ties_keep_primary_query_order_at_result_limit(corpus, monkeypatch):
-    from agno.knowledge._pages import PageCoordinator
+    from agno.knowledge.page._coordinator import PageCoordinator
 
     knowledge, _, _ = corpus
 
@@ -763,8 +763,8 @@ def test_rrf_ties_keep_primary_query_order_at_result_limit(corpus, monkeypatch):
 
 
 def test_search_clipping_accounts_for_partial_warning_bytes(corpus, monkeypatch):
-    from agno.knowledge._pages import PageCoordinator
     from agno.knowledge.page import SearchHit, SearchResult, encoded_size
+    from agno.knowledge.page._coordinator import PageCoordinator
 
     knowledge, _, _ = corpus
     hit = SearchHit(
@@ -802,8 +802,8 @@ def test_search_clipping_accounts_for_partial_warning_bytes(corpus, monkeypatch)
 async def test_public_search_output_allowance_preserves_ranked_prefix_and_exact_bytes(
     corpus, monkeypatch, async_search, partial
 ):
-    from agno.knowledge._pages import PageCoordinator
     from agno.knowledge.page import SearchHit, SearchResult, encoded_size
+    from agno.knowledge.page._coordinator import PageCoordinator
 
     knowledge, _, _ = corpus
     hits = tuple(
@@ -918,7 +918,7 @@ async def test_public_async_search_returns_primary_before_optional_deadline(
 
     from sqlalchemy import event
 
-    import agno.knowledge._pages as pages
+    import agno.knowledge.page._coordinator as pages
 
     knowledge, embedder, _ = corpus
     await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
