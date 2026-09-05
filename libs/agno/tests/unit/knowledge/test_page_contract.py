@@ -64,16 +64,53 @@ def test_page_public_imports_preserve_types_without_loading_storage():
     assert result.returncode == 0, result.stdout + result.stderr
 
 
-def test_constructor_preserves_positional_fields_and_keyword_only_page_store():
+def test_constructor_is_keyword_only_and_preserves_dataclass_database_field():
     first, second = SqliteDb(), SqliteDb()
-    knowledge = Knowledge("docs", None, None, first, 5)
+    knowledge = Knowledge(name="docs", content_db=first, max_results=5)
     assert knowledge.contents_db is first and knowledge.max_results == 5
-    assert dataclasses.replace(knowledge, contents_db=second).contents_db is second
+    assert dataclasses.replace(knowledge, contents_db=second).content_db is second
     assert copy.copy(knowledge).contents_db is first
     assert Knowledge(**{f.name: getattr(knowledge, f.name) for f in dataclasses.fields(knowledge)}).contents_db is first
-    assert inspect.signature(Knowledge).parameters["page_store"].kind is inspect.Parameter.KEYWORD_ONLY
+    assert all(p.kind is inspect.Parameter.KEYWORD_ONLY for p in inspect.signature(Knowledge).parameters.values())
     with pytest.raises(TypeError):
-        Knowledge("docs", None, None, first, 5, None, None, False, 0, 1.0, None)
+        Knowledge("docs")
+    with pytest.raises(ValueError, match="same database object"):
+        dataclasses.replace(knowledge, content_db=second)
+    fields = {f.name for f in dataclasses.fields(knowledge)}
+    assert "contents_db" in fields and "content_db" not in fields
+
+
+def test_database_constructor_aliases_and_assignment_share_one_value():
+    first, second = SqliteDb(), SqliteDb()
+    for kwargs in ({"content_db": first}, {"contents_db": first}, {"content_db": first, "contents_db": first}):
+        knowledge = Knowledge(**kwargs)
+        assert knowledge.content_db is knowledge.contents_db is first
+        knowledge.content_db = second
+        assert knowledge.contents_db is second
+        knowledge.contents_db = first
+        assert knowledge.content_db is first
+        knowledge.content_db = None
+        assert knowledge.contents_db is None
+        assert set(vars(knowledge)).intersection({"content_db", "contents_db"}) == {"contents_db"}
+    for kwargs in ({}, {"content_db": None}, {"contents_db": None}, {"content_db": None, "contents_db": None}):
+        assert Knowledge(**kwargs).content_db is None
+    for kwargs in (
+        {"content_db": first, "contents_db": second},
+        {"content_db": None, "contents_db": first},
+        {"content_db": first, "contents_db": None},
+    ):
+        with pytest.raises(ValueError, match="same database object"):
+            Knowledge(**kwargs)
+
+
+def test_dataclass_serialization_and_copy_keep_the_legacy_spelling():
+    knowledge = Knowledge(name="docs", description="Reference", max_results=4, max_embedding_retries=2)
+    serialized = dataclasses.asdict(knowledge)
+    assert "contents_db" in serialized and "content_db" not in serialized
+    restored = Knowledge(**serialized)
+    assert restored.name == "docs" and restored.max_results == 4 and restored.max_embedding_retries == 2
+    assert dataclasses.asdict(restored) == serialized
+    assert dataclasses.asdict(copy.deepcopy(knowledge)) == serialized
 
 
 @pytest.mark.asyncio

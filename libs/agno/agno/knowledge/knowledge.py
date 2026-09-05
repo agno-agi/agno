@@ -34,6 +34,7 @@ from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.string import generate_id
 
 ContentDict = Dict[str, Union[str, Dict[str, str]]]
+_DATABASE_UNSET = object()
 
 
 class KnowledgeContentOrigin(Enum):
@@ -70,24 +71,33 @@ class Knowledge(RemoteKnowledge):
 
     def __init__(
         self,
+        *,
         name: Optional[str] = None,
         description: Optional[str] = None,
+        content_db: Optional[Union[BaseDb, AsyncBaseDb]] = cast(Any, _DATABASE_UNSET),
         vector_db: Optional[Any] = None,
-        contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
-        max_results: int = 10,
+        page_store: Optional[Any] = None,
         readers: Optional[Dict[str, Reader]] = None,
         content_sources: Optional[List[BaseStorageConfig]] = None,
+        max_results: int = 10,
         isolate_vector_search: bool = False,
         max_embedding_retries: int = 0,
         embedding_retry_backoff: float = 1.0,
-        *,
-        page_store: Optional[Any] = None,
+        contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = cast(Any, _DATABASE_UNSET),
     ):
-        # Python 3.9 dataclasses cannot declare a keyword-only field.
+        """Configure Knowledge using keyword arguments.
+
+        content_db is preferred; contents_db remains a supported read/write alias.
+        Dataclass fields, serialization and replace retain the contents_db spelling.
+        Supplying both keywords requires the same object, including explicit None.
+        """
+        if content_db is not _DATABASE_UNSET and contents_db is not _DATABASE_UNSET and content_db is not contents_db:
+            raise ValueError("content_db and contents_db must refer to the same database object")
+        database = content_db if content_db is not _DATABASE_UNSET else contents_db
         self.name = name
         self.description = description
         self.vector_db = vector_db
-        self.contents_db = contents_db
+        self.contents_db = None if database is _DATABASE_UNSET else database
         self.max_results = max_results
         self.readers = readers
         self.content_sources = content_sources
@@ -96,6 +106,14 @@ class Knowledge(RemoteKnowledge):
         self.embedding_retry_backoff = embedding_retry_backoff
         self.page_store = page_store
         self.__post_init__()
+
+    @property
+    def content_db(self) -> Optional[Union[BaseDb, AsyncBaseDb]]:
+        return self.contents_db
+
+    @content_db.setter
+    def content_db(self, value: Optional[Union[BaseDb, AsyncBaseDb]]) -> None:
+        self.contents_db = value
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
