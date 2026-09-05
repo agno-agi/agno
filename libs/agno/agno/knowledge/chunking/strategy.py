@@ -36,20 +36,18 @@ class ChunkingStrategy(ABC):
         return self.chunk(document)
 
     def clean_text(self, text: str) -> str:
-        """Clean the text by replacing multiple newlines with a single newline"""
+        """Clean the text by collapsing runs of each whitespace character type."""
         import re
 
-        # Replace multiple newlines with a single newline
+        # Collapse each whitespace type independently. The previous \s+ pattern
+        # matched every whitespace character (including the newlines and tabs
+        # the surrounding rules just preserved), flattening the document's
+        # structure to spaces. Collapse spaces specifically, not \s.
         cleaned_text = re.sub(r"\n+", "\n", text)
-        # Replace multiple spaces with a single space
-        cleaned_text = re.sub(r"\s+", " ", cleaned_text)
-        # Replace multiple tabs with a single tab
+        cleaned_text = re.sub(r" +", " ", cleaned_text)
         cleaned_text = re.sub(r"\t+", "\t", cleaned_text)
-        # Replace multiple carriage returns with a single carriage return
         cleaned_text = re.sub(r"\r+", "\r", cleaned_text)
-        # Replace multiple form feeds with a single form feed
         cleaned_text = re.sub(r"\f+", "\f", cleaned_text)
-        # Replace multiple vertical tabs with a single vertical tab
         cleaned_text = re.sub(r"\v+", "\v", cleaned_text)
 
         return cleaned_text
