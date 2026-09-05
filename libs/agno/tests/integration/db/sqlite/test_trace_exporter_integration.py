@@ -26,17 +26,18 @@ agno_traces row carries the TEAM's session_id, not the child's.
 from typing import Any, Iterator
 
 import pytest
+from agno.db.sqlite import SqliteDb
+from agno.tracing.exporter import DatabaseSpanExporter
 from opentelemetry import trace as trace_api  # type: ignore
 from opentelemetry.sdk.trace import TracerProvider  # type: ignore
 from opentelemetry.sdk.trace.export import BatchSpanProcessor, SimpleSpanProcessor  # type: ignore
-
-from agno.db.sqlite import SqliteDb
-from agno.tracing.exporter import DatabaseSpanExporter
 
 TEAM_SESSION = "mobile_session_chris@example.com"
 TEAM_ID = "customer_support_team"
 RATING_SESSION = "ratings_mobile_session_chris@example.com"
 RATING_AGENT_ID = "rating"
+WORKFLOW_ID = "research_workflow"
+AGENT_RUN_ID = "agent-run-1"
 
 
 @pytest.fixture
@@ -229,6 +230,40 @@ def test_batch_processor_size_one_root_ends_first(db):
     assert row["session_id"] == TEAM_SESSION
     assert row["team_id"] == TEAM_ID
     assert row["agent_id"] is None
+
+
+def test_simple_processor_workflow_root_without_run_id_keeps_child_run_id(db):
+    """Workflow root spans can omit agno.run.id while their child agent spans
+    carry the run_id users query traces by."""
+    tracer, provider = _make_tracer(db, batch=False)
+    try:
+        workflow_span = tracer.start_span(
+            "research_workflow.run",
+            attributes={"session.id": TEAM_SESSION, "agno.workflow.id": WORKFLOW_ID},
+        )
+        workflow_ctx = trace_api.set_span_in_context(workflow_span)
+
+        agent_span = tracer.start_span(
+            "ResearchAgent.run",
+            context=workflow_ctx,
+            attributes={
+                "session.id": RATING_SESSION,
+                "agno.agent.id": RATING_AGENT_ID,
+                "agno.run.id": AGENT_RUN_ID,
+            },
+        )
+        agent_span.end()
+        workflow_span.end()
+        trace_id = _otel_trace_id_hex(workflow_span)
+    finally:
+        provider.shutdown()
+
+    row = _read_trace(db, trace_id)
+    assert row["name"] == "research_workflow.run"
+    assert row["session_id"] == TEAM_SESSION
+    assert row["workflow_id"] == WORKFLOW_ID
+    assert row["agent_id"] is None
+    assert row["run_id"] == AGENT_RUN_ID
 
 
 # ---------------------------------------------------------------------------
