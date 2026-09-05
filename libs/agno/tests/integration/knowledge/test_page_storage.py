@@ -661,3 +661,90 @@ def test_alternative_wait_deadline_preserves_primary_results(corpus):
     assert result.results and result.partial
     assert result.warnings == ("alternative_unavailable",)
     assert knowledge._page_engine.pool.checkedout() == 0
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("parallel", [True, False])
+@pytest.mark.parametrize("alternative_count", [1, 3])
+@pytest.mark.parametrize("embedding_delay", [0, 1.2])
+async def test_public_async_search_returns_primary_before_optional_deadline(
+    corpus, monkeypatch, parallel, alternative_count, embedding_delay
+):
+    import asyncio
+    import time
+    from threading import BoundedSemaphore
+
+    from sqlalchemy import event
+
+    import agno.knowledge._pages as pages
+
+    knowledge, embedder, _ = corpus
+    await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
+    primary = await knowledge.asearch_pages("Agent")
+    assert primary.results and not primary.partial
+
+    embed = embedder.get_embedding
+
+    def delayed_embedding(content, *, timeout):
+        if content == "Agent":
+            time.sleep(embedding_delay)
+        return embed(content, timeout=timeout)
+
+    monkeypatch.setattr(embedder, "get_embedding", delayed_embedding)
+    admission = BoundedSemaphore(2 if parallel else 0)
+    monkeypatch.setattr(pages, "_PARALLEL_SEARCHES", admission)
+    coordinator = knowledge._pages()
+    hybrid = coordinator._hybrid_sql
+    calls, cancelled = [], []
+
+    def sql():
+        calls.append(None)
+        return hybrid() if len(calls) == 1 else "SELECT pg_sleep(3)"
+
+    def cleanup_delay(context):
+        if getattr(context.original_exception, "sqlstate", None) == "57014":
+            cancelled.append(context.statement)
+            # Leave real time for an ordinary rollback/connection cleanup after
+            # PostgreSQL cancels optional SQL, not just for catching its exception.
+            time.sleep(0.075)
+
+    monkeypatch.setattr(coordinator, "_hybrid_sql", sql)
+    monkeypatch.setattr(knowledge, "_pages", lambda: coordinator)
+    event.listen(knowledge._page_engine, "handle_error", cleanup_delay)
+    started = time.monotonic()
+    try:
+        result = await knowledge.asearch_pages(
+            "Agent", alternatives=[f"optional {i}" for i in range(alternative_count)]
+        )
+        elapsed = time.monotonic() - started
+        print(
+            f"PUBLIC_ASYNC_DEADLINE parallel={parallel} alternatives={alternative_count} "
+            f"embedding_delay={embedding_delay} seconds={elapsed:.6f}"
+        )
+        assert elapsed < 2
+        assert result.results == primary.results
+        assert result.partial and result.warnings == ("alternative_unavailable",)
+        assert cancelled and set(cancelled) == {"SELECT pg_sleep(3)"}
+        assert knowledge._page_engine.pool.checkedout() == 0
+        assert len(calls) == alternative_count + 1
+        if parallel:
+            assert admission.acquire(blocking=False)
+            assert admission.acquire(blocking=False)
+            admission.release()
+            admission.release()
+        # Capacity is returned only after the parent and children have finished.
+        acquired = 0
+        try:
+            while pages.READ_WORKERS._capacity.acquire(blocking=False):
+                acquired += 1
+            assert acquired == 8
+        finally:
+            for _ in range(acquired):
+                pages.READ_WORKERS._capacity.release()
+    finally:
+        # Also drain the failed pre-fix worker before removing its listener.
+        for _ in range(100):
+            if knowledge._page_engine.pool.checkedout() == 0:
+                break
+            await asyncio.sleep(0.01)
+        event.remove(knowledge._page_engine, "handle_error", cleanup_delay)

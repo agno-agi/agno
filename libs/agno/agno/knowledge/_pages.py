@@ -1103,8 +1103,16 @@ class PageCoordinator:
     def _search_queries(
         self, conn: Any, queries: List[Tuple[str, Dict[str, Any]]], budget: WorkBudget, *, parallel: bool
     ) -> List[Any]:
-        def execute(connection: Any, query: tuple) -> Any:
-            self._settings(connection, budget)
+        # Optional SQL must stop before the caller's deadline, leaving time for
+        # rollback, child cleanup and delivery of the successful primary result.
+        # Share cancellation with the parent; never extend its overall deadline.
+        remaining = budget.remaining()
+        optional_budget = WorkBudget(remaining)
+        optional_budget.deadline = budget.deadline - 0.2
+        optional_budget.cancelled = budget.cancelled
+
+        def execute(connection: Any, query: tuple, work_budget: WorkBudget) -> Any:
+            self._settings(connection, work_budget)
             return connection.execute(text(query[0]), query[1]).mappings().all()
 
         if not parallel:
@@ -1112,7 +1120,7 @@ class PageCoordinator:
             for index, query in enumerate(queries):
                 try:
                     with conn.begin_nested() if index else nullcontext():
-                        outcomes.append(execute(conn, query))
+                        outcomes.append(execute(conn, query, optional_budget if index else budget))
                 except Exception as exc:
                     if index == 0:
                         raise
@@ -1123,9 +1131,10 @@ class PageCoordinator:
 
         def alternative(query: tuple) -> Any:
             try:
-                with self._snapshot(budget, snapshot=snapshot) as child:
+                optional_budget.remaining()
+                with self._snapshot(optional_budget, snapshot=snapshot) as child:
                     child.execute(text("SELECT " + _SEARCH_SETTINGS), {"workers": "0"})
-                    return execute(child, query)
+                    return execute(child, query, optional_budget)
             except Exception as exc:
                 return exc
 
@@ -1133,11 +1142,11 @@ class PageCoordinator:
         try:
             for query in queries[1:]:
                 futures.append(_QUERY_WORKERS.submit(contextvars.copy_context().run, alternative, query))
-            primary = execute(conn, queries[0])
+            primary = execute(conn, queries[0], budget)
             outcomes = [primary]
             for future in futures:
                 try:
-                    outcomes.append(future.result(timeout=budget.remaining()))
+                    outcomes.append(future.result(timeout=0 if future.done() else optional_budget.remaining()))
                 except Exception as exc:
                     outcomes.append(exc)
             return outcomes
