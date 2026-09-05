@@ -8,7 +8,7 @@ from enum import Enum
 from io import BytesIO
 from os.path import basename
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Set, Tuple, Union, cast, overload
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
 from httpx import AsyncClient
 
@@ -18,6 +18,7 @@ from agno.exceptions import EmbeddingError
 from agno.filters import EQ, FilterExpr
 from agno.knowledge.content import Content, ContentAuth, ContentStatus, FileData
 from agno.knowledge.document import Document
+from agno.knowledge.page import GrepResult, PageList, PageRead, SearchResult, SyncReport
 from agno.knowledge.reader import Reader, ReaderFactory
 from agno.knowledge.reader.utils.urls import canonical_page_name, is_sitemap_url
 from agno.knowledge.remote_content.base import BaseStorageConfig
@@ -42,7 +43,7 @@ class KnowledgeContentOrigin(Enum):
     CONTENT = "content"
 
 
-@dataclass
+@dataclass(init=False)
 class Knowledge(RemoteKnowledge):
     """Knowledge class"""
 
@@ -65,14 +66,220 @@ class Knowledge(RemoteKnowledge):
     # Seconds before the first retry; each subsequent wait doubles.
     embedding_retry_backoff: float = 1.0
 
+    page_store: Optional[Any] = None
+
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        vector_db: Optional[Any] = None,
+        contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        max_results: int = 10,
+        readers: Optional[Dict[str, Reader]] = None,
+        content_sources: Optional[List[BaseStorageConfig]] = None,
+        isolate_vector_search: bool = False,
+        max_embedding_retries: int = 0,
+        embedding_retry_backoff: float = 1.0,
+        *,
+        page_store: Optional[Any] = None,
+    ):
+        # Python 3.9 dataclasses cannot declare a keyword-only field.
+        self.name = name
+        self.description = description
+        self.vector_db = vector_db
+        self.contents_db = contents_db
+        self.max_results = max_results
+        self.readers = readers
+        self.content_sources = content_sources
+        self.isolate_vector_search = isolate_vector_search
+        self.max_embedding_retries = max_embedding_retries
+        self.embedding_retry_backoff = embedding_retry_backoff
+        self.page_store = page_store
+        self.__post_init__()
+
     def __post_init__(self):
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
-        if self.vector_db and not self.vector_db.exists():
+        if self.page_store is not None:
+            from agno.knowledge.page._coordinator import PageCoordinator
+
+            PageCoordinator(self)  # Validate configuration without connecting or creating schema.
+        elif self.vector_db and not self.vector_db.exists():
             self.vector_db.create()
 
         self.construct_readers()
+
+    def _pages(self):
+        from agno.knowledge.page._coordinator import PageCoordinator
+
+        return PageCoordinator(self)
+
+    @staticmethod
+    def _page_documents(result: SearchResult) -> List[Document]:
+        """Keep legacy search/retrieve on published chunks, without expanding pages."""
+        return [
+            Document(
+                id=hit.chunk_id,
+                name=hit.title,
+                content=hit.content,
+                meta_data={
+                    "path": hit.path,
+                    "url": hit.url,
+                    "title": hit.title,
+                    "revision": hit.revision,
+                    "score": hit.score,
+                    "availability": "partial" if result.partial else "available",
+                },
+            )
+            for hit in result.results
+        ]
+
+    def setup(self) -> None:
+        """Prepare and validate coordinated page storage before query traffic."""
+        self._pages().setup()
+
+    async def asetup(self) -> None:
+        """Prepare page storage on bounded workers."""
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
+
+        await SYNC_WORKERS.run(self._pages().setup, seconds=60)
+
+    def sync_pages(
+        self,
+        *,
+        url: str,
+        public_url: Optional[str] = None,
+        transform: Any = None,
+        index_version: str = "1",
+        reindex: bool = False,
+        validate_discovery: Optional[Callable[[int, int], None]] = None,
+    ) -> SyncReport:
+        """Reconcile an llms.txt source, publishing each page atomically.
+
+        validate_discovery receives (discovered_count, published_count) under the
+        namespace sync lock, before fetching or publishing pages. Supply a fast,
+        synchronous check that returns None to accept or raises ValueError to abort.
+        """
+        return self._pages().sync(
+            url=url,
+            public_url=public_url,
+            transform=transform,
+            index_version=index_version,
+            reindex=reindex,
+            validate_discovery=validate_discovery,
+        )
+
+    async def async_sync_pages(
+        self,
+        *,
+        url: str,
+        public_url: Optional[str] = None,
+        transform: Any = None,
+        index_version: str = "1",
+        reindex: bool = False,
+        validate_discovery: Optional[Callable[[int, int], None]] = None,
+    ) -> SyncReport:
+        """Reconcile pages off the event loop with retained capacity on cancellation.
+
+        validate_discovery follows sync_pages' contract and runs synchronously in
+        the existing worker, under the sync lock and before page fetching/publication.
+        """
+        from agno.knowledge.page._coordinator import SYNC_WORKERS
+
+        return await SYNC_WORKERS.run(
+            self._pages().sync,
+            url=url,
+            public_url=public_url,
+            transform=transform,
+            index_version=index_version,
+            reindex=reindex,
+            validate_discovery=validate_discovery,
+            seconds=3900,
+        )
+
+    def search_pages(
+        self,
+        query: str,
+        *,
+        alternatives: Optional[List[str]] = None,
+        limit: int = 10,
+        max_output_bytes: int = 24_000,
+    ) -> SearchResult:
+        """Rank published chunks with indexed hybrid search and reciprocal-rank fusion.
+
+        max_output_bytes bounds the UTF-8 serialized SearchResult, including metadata,
+        from 24,000 through 32,000 bytes. It controls output clipping, not ranking.
+        """
+        return self._pages().search(query, alternatives=alternatives, limit=limit, max_output_bytes=max_output_bytes)
+
+    async def asearch_pages(
+        self,
+        query: str,
+        *,
+        alternatives: Optional[List[str]] = None,
+        limit: int = 10,
+        max_output_bytes: int = 24_000,
+    ) -> SearchResult:
+        """Search on bounded workers with a 24,000–32,000-byte serialized result budget.
+
+        max_output_bytes includes framework metadata and controls output clipping,
+        without changing ranking or the overall search deadline.
+        """
+        from agno.knowledge.page import SearchUnavailable
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        try:
+            return await READ_WORKERS.run(
+                self._pages().search,
+                query,
+                alternatives=alternatives,
+                limit=limit,
+                max_output_bytes=max_output_bytes,
+                seconds=2,
+            )
+        except TimeoutError as exc:
+            raise SearchUnavailable() from exc
+
+    def read_page(
+        self, path: str, *, revision: Optional[str] = None, offset: int = 0, max_chars: int = 12000
+    ) -> PageRead:
+        """Read published Markdown; continuation offsets count Unicode code points."""
+        return self._pages().read(path, revision=revision, offset=offset, max_chars=max_chars)
+
+    async def aread_page(
+        self, path: str, *, revision: Optional[str] = None, offset: int = 0, max_chars: int = 12000
+    ) -> PageRead:
+        """Read published Markdown on bounded workers."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return await READ_WORKERS.run(
+            self._pages().read, path, revision=revision, offset=offset, max_chars=max_chars, seconds=2
+        )
+
+    def grep_pages(self, query: str, *, prefix: str = "/", ignore_case: bool = False, limit: int = 20) -> GrepResult:
+        """Find literal text within a bounded scan; incomplete results cannot establish absence."""
+        return self._pages().grep(query, prefix=prefix, ignore_case=ignore_case, limit=limit)
+
+    async def agrep_pages(
+        self, query: str, *, prefix: str = "/", ignore_case: bool = False, limit: int = 20
+    ) -> GrepResult:
+        """Find literal text without blocking the event loop."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return await READ_WORKERS.run(
+            self._pages().grep, query, prefix=prefix, ignore_case=ignore_case, limit=limit, seconds=2
+        )
+
+    def list_pages(self, *, prefix: str = "/", cursor: Optional[str] = None, limit: int = 100) -> PageList:
+        """List navigation metadata with a namespace-revision-bound cursor."""
+        return self._pages().list(prefix=prefix, cursor=cursor, limit=limit)
+
+    async def alist_pages(self, *, prefix: str = "/", cursor: Optional[str] = None, limit: int = 100) -> PageList:
+        """List navigation metadata on bounded workers."""
+        from agno.knowledge.page._coordinator import READ_WORKERS
+
+        return await READ_WORKERS.run(self._pages().list, prefix=prefix, cursor=cursor, limit=limit, seconds=2)
 
     # ==========================================
     # PUBLIC API - INSERT METHODS
@@ -138,6 +345,8 @@ class Knowledge(RemoteKnowledge):
                 can read. A string scopes the content to that user: scoped reads return their own
                 rows plus shared ones, and scoped writes and deletes touch only their own.
         """
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
             log_warning(
@@ -210,6 +419,8 @@ class Knowledge(RemoteKnowledge):
         user_id: Optional[str] = None,
     ) -> None:
         """Insert a single piece of content. See ``insert``."""
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         # Validation: At least one of the parameters must be provided
         if all(argument is None for argument in [path, url, text_content, topics, remote_content]):
             log_warning(
@@ -274,6 +485,8 @@ class Knowledge(RemoteKnowledge):
 
     async def ainsert_many(self, *args, **kwargs) -> None:
         """Asynchronously insert multiple content items. See ``insert_many``."""
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
@@ -441,6 +654,8 @@ class Knowledge(RemoteKnowledge):
             user_id: Owner applied to every item in this call. A per-item ``user_id`` in the
                 list form takes precedence. See ``insert``.
         """
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         if args and isinstance(args[0], list):
             arguments = args[0]
             upsert = kwargs.get("upsert", True)
@@ -593,6 +808,12 @@ class Knowledge(RemoteKnowledge):
         Args:
             user_id: Owner scope forwarded to ``vector_db.search()``. ``None`` searches everything.
         """
+        if self.page_store is not None:
+            if filters:
+                raise ValueError("Page knowledge does not support filters")
+            return self._page_documents(
+                self.search_pages(query, limit=max_results if max_results is not None else self.max_results)
+            )
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -639,6 +860,12 @@ class Knowledge(RemoteKnowledge):
         user_id: Optional[str] = None,
     ) -> List[Document]:
         """Returns relevant documents matching a query. See ``search``."""
+        if self.page_store is not None:
+            if filters:
+                raise ValueError("Page knowledge does not support filters")
+            return self._page_documents(
+                await self.asearch_pages(query, limit=max_results if max_results is not None else self.max_results)
+            )
         from agno.vectordb import VectorDb
         from agno.vectordb.search import SearchType
 
@@ -805,9 +1032,13 @@ class Knowledge(RemoteKnowledge):
         return self._parse_content_status(content_row.status), content_row.status_message
 
     def patch_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         return self._update_content(content, user_id=user_id)
 
     async def apatch_content(self, content: Content, user_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         return await self._aupdate_content(content, user_id=user_id)
 
     def remove_content_by_id(
@@ -823,6 +1054,8 @@ class Knowledge(RemoteKnowledge):
         no recorded indexed content (site parents, legacy rows) is a zero-match no-op,
         not a failure — several adapters answer False for both.
         """
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -925,6 +1158,8 @@ class Knowledge(RemoteKnowledge):
         self, content_id: str, user_id: Optional[str] = None, _seen: Optional[Set[str]] = None
     ) -> bool:
         """Async version of :meth:`remove_content_by_id` (see there for the return contract)."""
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         scoped = user_id is not None and self.contents_db is not None
         content = await self.aget_content_by_id(content_id, user_id=user_id) if scoped else None
         if scoped and (content is None or self._content_is_shared(content, user_id)):
@@ -984,6 +1219,8 @@ class Knowledge(RemoteKnowledge):
     def remove_all_content(self, user_id: Optional[str] = None) -> bool:
         """Remove every deletable row. Returns False when any removal failed (see
         ``remove_content_by_id``); the failed rows are kept for retry."""
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         contents, _ = self.get_content(user_id=user_id)
         all_removed = True
         for content in contents:
@@ -996,6 +1233,8 @@ class Knowledge(RemoteKnowledge):
 
     async def aremove_all_content(self, user_id: Optional[str] = None) -> bool:
         """Async version of :meth:`remove_all_content`."""
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         contents, _ = await self.aget_content(user_id=user_id)
         all_removed = True
         for content in contents:
@@ -1043,6 +1282,8 @@ class Knowledge(RemoteKnowledge):
         return user_id is not None and content.user_id is None
 
     def remove_vector_by_id(self, id: str) -> bool:
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -1052,6 +1293,8 @@ class Knowledge(RemoteKnowledge):
         return self.vector_db.delete_by_id(id)
 
     def remove_vectors_by_name(self, name: str) -> bool:
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -1061,6 +1304,8 @@ class Knowledge(RemoteKnowledge):
         return self.vector_db.delete_by_name(name)
 
     def remove_vectors_by_metadata(self, metadata: Dict[str, Any]) -> bool:
+        if self.page_store is not None:
+            raise ValueError("Managed pages must be changed through sync_pages")
         from agno.vectordb import VectorDb
 
         self.vector_db = cast(VectorDb, self.vector_db)
@@ -4735,6 +4980,8 @@ Make sure to pass the filters as [Dict[str: Any]] to the tool. FOLLOW THIS STRUC
         Returns:
             List containing the search tool.
         """
+        if self.page_store is not None and (knowledge_filters or enable_agentic_filters):
+            raise ValueError("Page knowledge does not support filters")
         if enable_agentic_filters:
             tool = self._create_search_tool_with_filters(
                 run_response=run_response,
