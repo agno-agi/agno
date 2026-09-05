@@ -58,9 +58,13 @@ class _RepeatedToolCallModel(Model):
         super().__init__(id="repeated-tool-call", name="Repeated tool call", provider="test")
         self.tool_name = tool_name
         self.invocations = 0
+        self.requested_tools: List[Any] = []
+        self.requested_tool_choices: List[Any] = []
 
-    def _next_response(self) -> ModelResponse:
+    def _next_response(self, **kwargs: Any) -> ModelResponse:
         self.invocations += 1
+        self.requested_tools.append(kwargs.get("tools"))
+        self.requested_tool_choices.append(kwargs.get("tool_choice"))
         if self.invocations <= 2:
             return ModelResponse(
                 role="assistant",
@@ -80,16 +84,16 @@ class _RepeatedToolCallModel(Model):
         )
 
     def invoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
-        return self._next_response()
+        return self._next_response(**kwargs)
 
     async def ainvoke(self, *args: Any, **kwargs: Any) -> ModelResponse:
-        return self._next_response()
+        return self._next_response(**kwargs)
 
     def invoke_stream(self, *args: Any, **kwargs: Any) -> Iterator[ModelResponse]:
-        yield self._next_response()
+        yield self._next_response(**kwargs)
 
     async def ainvoke_stream(self, *args: Any, **kwargs: Any) -> AsyncIterator[ModelResponse]:
-        yield self._next_response()
+        yield self._next_response(**kwargs)
 
     def _parse_provider_response(self, response: Any, **kwargs: Any) -> ModelResponse:
         return response
@@ -282,16 +286,16 @@ async def test_async_ordinary_failure_is_not_marked():
 # --- response loop behavior -------------------------------------------------
 
 
-def test_response_stream_stops_before_reasking_model_after_limit_refusal():
-    """Removing the stream guard makes the third scripted turn run.
+def test_response_stream_allows_one_tool_free_final_answer_after_limit_refusal():
+    """The refused request is followed by one tool-free synthesis turn.
 
     The second request is refused because the only tool slot was used by the
-    first request.  A model that ignores that refusal must not receive a third
-    chance to request a tool or produce a fallback answer.
+    first request. The model must still get one final chance to answer from
+    the first tool result, without being offered tools again.
     """
     model = _RepeatedToolCallModel("search")
 
-    list(
+    events = list(
         model.response_stream(
             messages=[Message(role="user", content="Find Agno")],
             tools=[Function.from_callable(_search_knowledge, name="search")],
@@ -299,15 +303,18 @@ def test_response_stream_stops_before_reasking_model_after_limit_refusal():
         )
     )
 
-    assert model.invocations == 2
+    assert model.invocations == 3
+    assert model.requested_tools[2] == []
+    assert model.requested_tool_choices[2] == "none"
+    assert any(getattr(event, "content", None) == "fallback answer" for event in events)
 
 
 @pytest.mark.asyncio
-async def test_aresponse_stream_stops_before_reasking_model_after_limit_refusal():
-    """Async streaming has the same no-progress termination behavior."""
+async def test_aresponse_stream_allows_one_tool_free_final_answer_after_limit_refusal():
+    """Async streaming also preserves a final answer after the limit refusal."""
     model = _RepeatedToolCallModel("search")
 
-    _ = [
+    events = [
         event
         async for event in model.aresponse_stream(
             messages=[Message(role="user", content="Find Agno")],
@@ -316,15 +323,51 @@ async def test_aresponse_stream_stops_before_reasking_model_after_limit_refusal(
         )
     ]
 
-    assert model.invocations == 2
+    assert model.invocations == 3
+    assert model.requested_tools[2] == []
+    assert model.requested_tool_choices[2] == "none"
+    assert any(getattr(event, "content", None) == "fallback answer" for event in events)
 
 
-def test_agentic_rag_stops_after_search_knowledge_exhausts_tool_budget():
-    """Agentic-RAG stops when a repeated knowledge search is fully refused.
+def test_response_allows_one_tool_free_final_answer_after_limit_refusal():
+    """Non-streaming response also synthesizes after the limit is exhausted."""
+    model = _RepeatedToolCallModel("search")
+
+    response = model.response(
+        messages=[Message(role="user", content="Find Agno")],
+        tools=[Function.from_callable(_search_knowledge, name="search")],
+        tool_call_limit=1,
+    )
+
+    assert model.invocations == 3
+    assert model.requested_tools[2] == []
+    assert model.requested_tool_choices[2] == "none"
+    assert response.content == "fallback answer"
+
+
+@pytest.mark.asyncio
+async def test_aresponse_allows_one_tool_free_final_answer_after_limit_refusal():
+    """Async non-streaming response also synthesizes after the limit is exhausted."""
+    model = _RepeatedToolCallModel("search")
+
+    response = await model.aresponse(
+        messages=[Message(role="user", content="Find Agno")],
+        tools=[Function.from_callable(_search_knowledge, name="search")],
+        tool_call_limit=1,
+    )
+
+    assert model.invocations == 3
+    assert model.requested_tools[2] == []
+    assert model.requested_tool_choices[2] == "none"
+    assert response.content == "fallback answer"
+
+
+def test_agentic_rag_synthesizes_after_search_knowledge_exhausts_tool_budget():
+    """Agentic-RAG preserves its final answer when another search is refused.
 
     This exercises Agent's ``search_knowledge=True`` tool registration and
     execution path rather than supplying the search function as a model tool.
-    Removing the limit guard invokes the scripted model a third time.
+    The final, tool-free model turn can synthesize from the successful search.
     """
     retrieved_queries: List[str] = []
 
@@ -343,8 +386,10 @@ def test_agentic_rag_stops_after_search_knowledge_exhausts_tool_budget():
     result = agent.run("What is Agno?")
 
     assert retrieved_queries == ["Agno"]
-    assert model.invocations == 2
-    assert result.content == ""
+    assert model.invocations == 3
+    assert model.requested_tools[2] == []
+    assert model.requested_tool_choices[2] == "none"
+    assert result.content == "fallback answer"
 
 
 # --- the guard is present in every response loop ----------------------------
