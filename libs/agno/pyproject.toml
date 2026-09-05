@@ -190,6 +190,7 @@ firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
 postgres = ["sqlalchemy", "psycopg[binary]"]
+pages = ["agno[postgres]", "pgvector", "dnspython>=2.6.1", "beautifulsoup4"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy"]

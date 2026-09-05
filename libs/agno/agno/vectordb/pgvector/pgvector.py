@@ -32,7 +32,14 @@ from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb, aembed_before_replace, embed_before_replace, is_rate_limit_error, raise_embedding_failures, retrievable_documents
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+    retrievable_documents,
+)
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
@@ -163,6 +170,12 @@ class PgVector(VectorDb):
         # Database table
         self.table: Table = self.get_table()
         log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
+
+    def _replace_page_on(self, conn, content_id: str, records: List[Dict[str, Any]]) -> None:
+        """Replace already embedded page records using the caller's transaction."""
+        conn.execute(self.table.delete().where(self.table.c.content_id == content_id))
+        for start in range(0, len(records), 100):
+            conn.execute(self.table.insert(), records[start : start + 100])
 
     def get_table_v1(self) -> Table:
         """
