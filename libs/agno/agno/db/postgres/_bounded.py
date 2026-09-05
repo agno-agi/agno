@@ -1,5 +1,6 @@
 """Dedicated bounded pools retaining configured PostgreSQL connection behavior."""
 
+from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Lock
 from weakref import WeakSet
@@ -7,10 +8,46 @@ from weakref import WeakSet
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import QueuePool
+from sqlalchemy.util.queue import Queue
+
+from agno.utils.bounded import WorkBudget
 
 _connecting: ContextVar[bool] = ContextVar("agno_bounded_connect", default=False)
 _configured: WeakSet = WeakSet()
 _configuration_lock = Lock()
+_checkout_budget: ContextVar = ContextVar("agno_checkout_budget", default=None)
+
+
+class ConnectionUnavailable(TimeoutError):
+    """Optional work requires a new connection instead of a pooled connection."""
+
+
+class _BudgetQueue(Queue):
+    def get(self, block=True, timeout=None):
+        budget = _checkout_budget.get()
+        if block and budget is not None:
+            remaining = budget.remaining()
+            timeout = remaining if timeout is None else min(timeout, remaining)
+        return super().get(block, timeout)
+
+
+class _BudgetPool(QueuePool):
+    _queue_class = _BudgetQueue
+
+
+@contextmanager
+def optional_connection(budget: WorkBudget):
+    """Bound optional pool waits; connection establishment stays on the primary path.
+
+    A new connection's transport handshake cannot honor a subsecond SQL deadline.
+    Callers can instead execute optional work serially on their existing snapshot.
+    """
+    token = _checkout_budget.set(budget)
+    try:
+        budget.remaining()
+        yield
+    finally:
+        _checkout_budget.reset(token)
 
 
 def bounded_engine(source: Engine, *, capacity: int) -> Engine:
@@ -41,6 +78,8 @@ def bounded_engine(source: Engine, *, capacity: int) -> Engine:
     original_pool = source.pool
 
     def create(connection_record):
+        if _checkout_budget.get() is not None:
+            raise ConnectionUnavailable("optional_connection_unavailable")
         token = _connecting.set(True)
         try:
             # The original creator includes connect_args and credential listeners.
@@ -48,7 +87,7 @@ def bounded_engine(source: Engine, *, capacity: int) -> Engine:
         finally:
             _connecting.reset(token)
 
-    pool = QueuePool(
+    pool = _BudgetPool(
         create,
         pool_size=capacity,
         max_overflow=0,

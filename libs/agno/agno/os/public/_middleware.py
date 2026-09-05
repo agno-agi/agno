@@ -96,7 +96,7 @@ class PublicMiddleware:
 
         try:
             return await asyncio.wait_for(read(), timeout=seconds)
-        except TimeoutError as exc:
+        except asyncio.TimeoutError as exc:
             raise Rejected(408, "body_timeout") from exc
 
     async def _validate_form(self, scope: Any, body: bytes, *, workflow: bool, cancel: bool) -> None:
@@ -182,6 +182,7 @@ class PublicMiddleware:
         capacity = None
         identity_token = None
         mcp = False
+        public_agent_run = False
 
         async def error(status: int, code: str, headers=None):
             await JSONResponse(
@@ -224,6 +225,13 @@ class PublicMiddleware:
                     response_buffer.extend(body)
                     if message.get("more_body", False):
                         return
+                    if public_agent_run:
+                        payload = json.loads(response_buffer)
+                        if isinstance(payload, dict) and payload.get("status") == "ERROR":
+                            # Native runs encode model failures in HTTP 200 JSON.
+                            # Replace the entire failed run so nested diagnostics
+                            # cannot bypass the public error representation.
+                            raise Rejected(503, "run_failed")
                     assert response_start is not None
                     started = True
                     await send(response_start)
@@ -371,6 +379,7 @@ class PublicMiddleware:
                     raise Rejected(400, "mcp_batch_not_supported")
             else:
                 await self._validate_form(scope, body, workflow=workflow, cancel=bool(cancellation))
+                public_agent_run = component_kind == "agents" and not cancellation
             delivered = False
 
             async def replay():

@@ -72,6 +72,7 @@ MAX_SEARCH_JSON_BYTES = 32_000
 # release connections back to the eight-connection pool while children wait.
 _PARALLEL_SEARCHES = BoundedSemaphore(2)
 _QUERY_WORKERS = ThreadPoolExecutor(max_workers=6, thread_name_prefix="knowledge-query")
+
 _SEARCH_SETTINGS = (
     "set_config('plan_cache_mode', 'force_custom_plan', true), "
     "set_config('hnsw.ef_search', '200', true), set_config('enable_seqscan', 'off', true), "
@@ -79,7 +80,6 @@ _SEARCH_SETTINGS = (
     "set_config('max_parallel_workers_per_gather', :workers, true), "
     "set_config('min_parallel_table_scan_size', '0', true)"
 )
-
 
 def _digest(value: str) -> str:
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
@@ -190,69 +190,134 @@ class PageCoordinator:
             adapter.db_engine = self.engine
         setup_db.Session = sessionmaker(bind=self.engine)
         setup_vector.Session = sessionmaker(bind=self.engine)
-        self.catalog = setup_db._get_table(table_type="knowledge", create_table_if_not_found=True)
-        budget.remaining()
-        setup_fs._ensure_table()
-        budget.remaining()
-        setup_vector.create()
-        self.binding.create(self.engine, checkfirst=True)
-        assert self.catalog is not None
-        self.knowledge._page_catalog = self.catalog
+        self.catalog = setup_db._get_table(table_type="knowledge")
         with self.engine.begin() as conn:
             self._settings(conn, budget)
-            conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": self.lock_key})
-            conn.execute(
-                insert(self.binding)
-                .values(
-                    namespace=self.namespace,
-                    catalog=self.catalog.fullname,
-                    vectors=self.vector.table.fullname,
-                )
-                .on_conflict_do_nothing()
-            )
-            binding = (
-                conn.execute(select(self.binding).where(self.binding.c.namespace == self.namespace)).mappings().one()
-            )
-            if binding["catalog"] != self.catalog.fullname or binding["vectors"] != self.vector.table.fullname:
-                raise ValueError("filesystem namespace is bound to another knowledge catalog or vector table")
-            table = self._vector_name
-            namespace_literal = str(
-                literal(self.namespace).compile(dialect=self.engine.dialect, compile_kwargs={"literal_binds": True})
-            )
-            conn.execute(
-                text(
-                    f"ALTER TABLE {table} ADD COLUMN IF NOT EXISTS _agno_page_tsv tsvector "
-                    "GENERATED ALWAYS AS (to_tsvector('english', content)) STORED"
-                )
-            )
-            for suffix, definition in (
-                ("page_gin", "USING gin (_agno_page_tsv)"),
-                (
-                    "page_hnsw_" + self.namespace,
-                    "USING hnsw (embedding vector_cosine_ops) WHERE (meta_data->>'namespace') = " + namespace_literal,
-                ),
-            ):
-                index = "agno_" + _digest(self.vector.table.fullname + suffix)[:24]
-                conn.execute(text(f"CREATE INDEX IF NOT EXISTS {_identifier(index)} ON {table} {definition}"))
-                actual = conn.execute(
-                    text("SELECT indexdef FROM pg_indexes WHERE schemaname=:schema AND indexname=:name"),
-                    {"schema": self.vector.schema, "name": index},
-                ).scalar_one()
-
-                def normalized(value: str) -> str:
-                    return "".join(value.lower().replace("::text", "").replace("(", "").replace(")", "").split())
-
-                if normalized(definition) not in normalized(actual):
-                    raise ValueError("incompatible_page_search_index")
-            index = "agno_" + _digest(self.catalog.fullname + "pages")[:24]
-            catalog_name = _identifier(self.catalog.schema) + "." + _identifier(self.catalog.name)
-            conn.execute(
-                text(
-                    f"CREATE INDEX IF NOT EXISTS {_identifier(index)} ON {catalog_name} "
-                    "((metadata->'_agno'->'page'->>'namespace'), (metadata->'_agno'->'page'->>'path'))"
-                )
-            )
+            if not self._setup_complete(conn):
+                # Serialize first-time table/index creation independently of long
+                # namespace refreshes. Initialized startups take the read-only path.
+                setup_key = int.from_bytes(hashlib.sha256(b"agno.page.setup").digest()[:8], "big", signed=True)
+                conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": setup_key})
+                self.catalog = setup_db._get_table(table_type="knowledge")
+                if not self._setup_complete(conn):
+                    conn.execute(text("SELECT pg_advisory_xact_lock(:key)"), {"key": self.lock_key})
+                    self.catalog = setup_db._get_table(table_type="knowledge", create_table_if_not_found=True)
+                    budget.remaining()
+                    setup_fs._ensure_table()
+                    budget.remaining()
+                    setup_vector.create()
+                    self.binding.create(self.engine, checkfirst=True)
+                    assert self.catalog is not None
+                    conn.execute(
+                        insert(self.binding)
+                        .values(
+                            namespace=self.namespace, catalog=self.catalog.fullname, vectors=self.vector.table.fullname
+                        )
+                        .on_conflict_do_nothing()
+                    )
+                    self._check_binding(conn)
+                    conn.execute(
+                        text(
+                            f"ALTER TABLE {self._vector_name} ADD COLUMN IF NOT EXISTS _agno_page_tsv tsvector "
+                            "GENERATED ALWAYS AS (to_tsvector('english', content)) STORED"
+                        )
+                    )
+                    for schema, name, table, definition in self._search_indexes():
+                        conn.execute(text(f"CREATE INDEX IF NOT EXISTS {_identifier(name)} ON {table} {definition}"))
+                    if not self._setup_complete(conn):
+                        raise ValueError("incomplete_page_search_schema")
+        self.knowledge._page_catalog = self.catalog
         self.knowledge._page_ready = True
+
+    def _check_binding(self, conn: Any) -> bool:
+        binding = (
+            conn.execute(select(self.binding).where(self.binding.c.namespace == self.namespace))
+            .mappings()
+            .one_or_none()
+        )
+        if binding is None:
+            return False
+        if binding["catalog"] != self.catalog.fullname or binding["vectors"] != self.vector.table.fullname:
+            raise ValueError("filesystem namespace is bound to another knowledge catalog or vector table")
+        return True
+
+    @staticmethod
+    def _normalized_definition(value: str) -> str:
+        return "".join(value.lower().replace("::text", "").replace("(", "").replace(")", "").split())
+
+    def _search_indexes(self):
+        namespace_literal = str(
+            literal(self.namespace).compile(dialect=self.engine.dialect, compile_kwargs={"literal_binds": True})
+        )
+        for suffix, definition in (
+            ("page_gin", "USING gin (_agno_page_tsv)"),
+            (
+                "page_hnsw_" + self.namespace,
+                "USING hnsw (embedding vector_cosine_ops) WHERE (meta_data->>'namespace') = " + namespace_literal,
+            ),
+        ):
+            yield (
+                self.vector.schema,
+                "agno_" + _digest(self.vector.table.fullname + suffix)[:24],
+                self._vector_name,
+                definition,
+            )
+        yield (
+            self.catalog.schema,
+            "agno_" + _digest(self.catalog.fullname + "pages")[:24],
+            _identifier(self.catalog.schema) + "." + _identifier(self.catalog.name),
+            "((metadata->'_agno'->'page'->>'namespace'), (metadata->'_agno'->'page'->>'path'))",
+        )
+
+    def _setup_complete(self, conn: Any) -> bool:
+        if self.catalog is None:
+            return False
+        for table in (self.catalog, self.backend.table, self.vector.table, self.binding):
+            name = _identifier(table.schema) + "." + _identifier(table.name)
+            if conn.execute(text("SELECT to_regclass(:name)"), {"name": name}).scalar_one() is None:
+                return False
+        if not self._check_binding(conn):
+            return False
+        column = (
+            conn.execute(
+                text(
+                    "SELECT a.attgenerated, a.atttypid='tsvector'::regtype AS valid_type, "
+                    "pg_get_expr(d.adbin, d.adrelid) AS expression FROM pg_attribute a "
+                    "LEFT JOIN pg_attrdef d ON d.adrelid=a.attrelid AND d.adnum=a.attnum "
+                    "WHERE a.attrelid=to_regclass(:table) AND a.attname='_agno_page_tsv' AND NOT a.attisdropped"
+                ),
+                {"table": self._vector_name},
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if column is None:
+            return False
+        if (
+            column["attgenerated"] != "s"
+            or not column["valid_type"]
+            or self._normalized_definition(column["expression"] or "")
+            != self._normalized_definition("to_tsvector('english'::regconfig, content)")
+        ):
+            raise ValueError("incompatible_page_search_column")
+        for schema, name, _, definition in self._search_indexes():
+            row = (
+                conn.execute(
+                    text(
+                        "SELECT pg_get_indexdef(i.indexrelid) AS definition, i.indisvalid AND i.indisready AS valid "
+                        "FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid "
+                        "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=:schema AND c.relname=:name"
+                    ),
+                    {"schema": schema, "name": name},
+                )
+                .mappings()
+                .one_or_none()
+            )
+            if row is None or not row["valid"]:
+                return False
+            if self._normalized_definition(definition) not in self._normalized_definition(row["definition"]):
+                raise ValueError("incompatible_page_search_index")
+        return True
 
     @property
     def _vector_name(self) -> str:
@@ -271,8 +336,11 @@ class PageCoordinator:
 
     @contextmanager
     def _snapshot(self, budget: Optional[WorkBudget] = None, *, snapshot: Optional[str] = None):
+        from agno.db.postgres._bounded import optional_connection
+
         self._ready()
         with (
+            optional_connection(budget or WorkBudget(2)) if snapshot is not None else nullcontext(),
             self.engine.connect().execution_options(
                 isolation_level="REPEATABLE READ", postgresql_readonly=True
             ) as conn,
@@ -1107,6 +1175,8 @@ class PageCoordinator:
     def _search_queries(
         self, conn: Any, queries: List[Tuple[str, Dict[str, Any]]], budget: WorkBudget, *, parallel: bool
     ) -> List[Any]:
+        from agno.db.postgres._bounded import ConnectionUnavailable
+
         # Optional SQL must stop before the caller's deadline, leaving time for
         # rollback, child cleanup and delivery of the successful primary result.
         # Share cancellation with the parent; never extend its overall deadline.
@@ -1148,9 +1218,15 @@ class PageCoordinator:
                 futures.append(_QUERY_WORKERS.submit(contextvars.copy_context().run, alternative, query))
             primary = execute(conn, queries[0], budget)
             outcomes = [primary]
-            for future in futures:
+            for query, future in zip(queries[1:], futures):
                 try:
-                    outcomes.append(future.result(timeout=0 if future.done() else optional_budget.remaining()))
+                    outcome = future.result(timeout=0 if future.done() else optional_budget.remaining())
+                    if isinstance(outcome, ConnectionUnavailable):
+                        # Preserve query coverage without making the primary wait
+                        # for a new child's connection handshake or pool retry.
+                        with conn.begin_nested():
+                            outcome = execute(conn, query, optional_budget)
+                    outcomes.append(outcome)
                 except Exception as exc:
                     outcomes.append(exc)
             return outcomes

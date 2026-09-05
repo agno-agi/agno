@@ -47,11 +47,11 @@ def sync_step(step_input: StepInput) -> StepOutput:
     return StepOutput(content={"success": True, "input": str(step_input.input)})
 
 
-def application(engine, namespace, *, limit=100):
+def application(engine, namespace, *, limit=100, executor=sync_step):
     db = PostgresDb(db_engine=engine)
     visible, hidden = Agent(id="docs-agent", name="Docs", instructions="private prompt"), Agent(id="hidden")
     workflow = Workflow(
-        id="sync-docs", name="Sync", input_schema=SyncInput, db=db, steps=[Step(name="sync", executor=sync_step)]
+        id="sync-docs", name="Sync", input_schema=SyncInput, db=db, steps=[Step(name="sync", executor=executor)]
     )
     public = PublicSurface(
         agents=[visible], workflows=[workflow], namespace=namespace, limits={"run": RateLimit(limit, limit)}
@@ -144,6 +144,40 @@ def test_workflow_authentication_while_chat_is_anonymous(engine):
             ).status_code
             == 400
         )
+
+
+@pytest.mark.parametrize("internal", [False, True])
+def test_authenticated_workflow_retains_operator_step_diagnostics(engine, internal):
+    import time
+
+    from agno.db.schemas.service_accounts import ServiceAccount
+    from agno.os.service_accounts import generate_token
+
+    def failed_step(step_input: StepInput) -> StepOutput:
+        return StepOutput(content="operator-diagnostic-marker", success=False, error="operator-step-error")
+
+    app, _ = application(engine, "diagnostic-" + uuid4().hex[:8], executor=failed_step)
+    with TestClient(app) as client:
+        token = "shared-internal-token"
+        if not internal:
+            token, digest, prefix = generate_token()
+            PostgresDb(db_engine=engine).create_service_account(
+                ServiceAccount(
+                    id=str(uuid4()),
+                    name="operator",
+                    token_hash=digest,
+                    token_prefix=prefix,
+                    scopes=["workflows:sync-docs:run"],
+                    created_at=int(time.time()),
+                ).to_dict()
+            )
+        response = client.post(
+            "/workflows/sync-docs/runs",
+            data={"message": '{"reason":"operator check"}', "stream": "false"},
+            headers={"Authorization": "Bearer " + token},
+        )
+        assert response.status_code == 200, response.text
+        assert "operator-diagnostic-marker" in response.text and "operator-step-error" in response.text
 
 
 def test_scoped_service_credentials_and_native_mcp(engine):

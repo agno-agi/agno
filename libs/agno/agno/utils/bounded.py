@@ -7,6 +7,7 @@ import contextvars
 import threading
 import time
 from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, Callable
 
 
@@ -54,6 +55,9 @@ class BoundedWorkers:
         future.add_done_callback(lambda _: self._capacity.release())
         try:
             return future.result(timeout=seconds)
+        except FutureTimeoutError as exc:
+            budget.cancelled.set()
+            raise TimeoutError("operation_deadline") from exc
         except BaseException:
             budget.cancelled.set()
             raise
@@ -74,6 +78,9 @@ class BoundedWorkers:
         wrapped.add_done_callback(lambda done: None if done.cancelled() else done.exception())
         try:
             return await asyncio.wait_for(asyncio.shield(wrapped), timeout=seconds)
+        except asyncio.TimeoutError as exc:
+            budget.cancelled.set()
+            raise TimeoutError("operation_deadline") from exc
         except (asyncio.CancelledError, TimeoutError):
             budget.cancelled.set()
             raise

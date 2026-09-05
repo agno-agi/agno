@@ -1,6 +1,7 @@
 """Real transaction tests; each module owns a disposable local database."""
 
 import os
+from contextlib import ExitStack
 from uuid import uuid4
 
 import pytest
@@ -77,6 +78,121 @@ def corpus(engine, monkeypatch):
 
     monkeypatch.setattr(PageSource, "fetch", fetch)
     return knowledge, embedder, site
+
+
+def warm_search_pool(knowledge, count):
+    # Parallel optional work reuses pooled connections; cold work falls back to
+    # the parent's snapshot instead of adding an unbounded transport handshake.
+    with ExitStack() as stack:
+        for _ in range(count):
+            stack.enter_context(knowledge._page_engine.connect())
+
+
+def test_cold_optional_search_uses_parent_snapshot_without_losing_queries(corpus, monkeypatch):
+    from threading import BoundedSemaphore
+
+    from sqlalchemy import event
+
+    import agno.knowledge.page._coordinator as pages
+
+    knowledge, _, _ = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    knowledge._page_engine.dispose()
+    connections = []
+
+    def capture(conn, cursor, statement, parameters, context, many):
+        if "WITH by_vector AS" in statement:
+            connections.append(id(conn.connection.driver_connection))
+
+    event.listen(knowledge._page_engine, "before_cursor_execute", capture)
+    try:
+        actual = knowledge.search_pages("Agent", alternatives=["tools", "configuration"])
+    finally:
+        event.remove(knowledge._page_engine, "before_cursor_execute", capture)
+    assert actual.results and not actual.partial
+    assert len(connections) == 3 and len(set(connections)) == 1
+    monkeypatch.setattr(pages, "_PARALLEL_SEARCHES", BoundedSemaphore(0))
+    assert actual == knowledge.search_pages("Agent", alternatives=["tools", "configuration"])
+
+
+def test_first_setup_serializes_until_required_schema_is_committed(engine):
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import event
+
+    from agno.db.postgres._bounded import bounded_engine
+
+    suffix = uuid4().hex[:8]
+    db = PostgresDb(db_engine=engine, knowledge_table="init_catalog_" + suffix)
+    vector = PgVector(db_engine=engine, table_name="init_vectors_" + suffix, embedder=RecordingEmbedder())
+    first = Knowledge(content_db=db, vector_db=vector, page_store=FileSystem(db, namespace="init-" + suffix))
+    second = Knowledge(content_db=db, vector_db=vector, page_store=FileSystem(db, namespace="init-" + suffix))
+    first._page_engine = bounded_engine(engine, capacity=8)
+    entered, release = threading.Event(), threading.Event()
+
+    def hold(conn, cursor, statement, parameters, context, many):
+        if "ADD COLUMN IF NOT EXISTS _agno_page_tsv" in statement:
+            entered.set()
+            assert release.wait(5)
+
+    event.listen(first._page_engine, "before_cursor_execute", hold)
+    try:
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            one = pool.submit(first.setup)
+            assert entered.wait(3)
+            two = pool.submit(second.setup)
+            try:
+                time.sleep(0.1)
+                assert not two.done() and not getattr(second, "_page_ready", False)
+            finally:
+                release.set()
+            one.result(timeout=5)
+            two.result(timeout=5)
+        assert first._page_ready and second._page_ready
+        assert second.list_pages().pages == ()
+    finally:
+        release.set()
+        event.remove(first._page_engine, "before_cursor_execute", hold)
+        first._page_engine.dispose()
+        if hasattr(second, "_page_engine"):
+            second._page_engine.dispose()
+
+
+def test_initialized_setup_repairs_missing_index_and_rejects_wrong_definition(corpus):
+    knowledge, _, _ = corpus
+    coordinator = knowledge._pages()
+    schema, name, table, _ = next(coordinator._search_indexes())
+    with knowledge._page_engine.begin() as conn:
+        conn.execute(text(f'DROP INDEX "{schema}"."{name}"'))
+    second = Knowledge(
+        content_db=knowledge.content_db,
+        vector_db=knowledge.vector_db,
+        page_store=FileSystem(knowledge.content_db, namespace=knowledge.page_store.namespace),
+    )
+    try:
+        second.setup()
+        assert second._page_ready
+        with second._page_engine.begin() as conn:
+            conn.execute(text(f'DROP INDEX "{schema}"."{name}"'))
+            conn.execute(text(f'CREATE INDEX "{name}" ON {table} (id)'))
+        third = Knowledge(
+            content_db=knowledge.content_db,
+            vector_db=knowledge.vector_db,
+            page_store=FileSystem(knowledge.content_db, namespace=knowledge.page_store.namespace),
+        )
+        try:
+            with pytest.raises(ValueError, match="incompatible_page_search_index"):
+                third.setup()
+            assert not getattr(third, "_page_ready", False)
+        finally:
+            third._page_engine.dispose()
+    finally:
+        with second._page_engine.begin() as conn:
+            conn.execute(text(f'DROP INDEX "{schema}"."{name}"'))
+        knowledge.setup()
+        second._page_engine.dispose()
 
 
 def test_atomic_publication_failed_refresh_and_reconciliation(corpus, monkeypatch):
@@ -631,6 +747,7 @@ async def test_parallel_phrasings_share_one_snapshot_on_distinct_connections(cor
 
     knowledge, _, _ = corpus
     await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
+    warm_search_pool(knowledge, 3)
     rendezvous = Barrier(3)
     observed = []
 
@@ -693,6 +810,7 @@ async def test_cancelled_parallel_search_retains_snapshot_and_admission_until_ch
 
     knowledge, _, _ = corpus
     await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
+    warm_search_pool(knowledge, 2)
     entered, release = threading.Event(), threading.Event()
 
     def delay(conn, cursor, statement, parameters, context, executemany):
@@ -924,6 +1042,8 @@ async def test_public_async_search_returns_primary_before_optional_deadline(
     await knowledge.async_sync_pages(url="https://docs.example.com/llms.txt")
     primary = await knowledge.asearch_pages("Agent")
     assert primary.results and not primary.partial
+    if parallel:
+        warm_search_pool(knowledge, alternative_count + 1)
 
     embed = embedder.get_embedding
 
@@ -990,3 +1110,177 @@ async def test_public_async_search_returns_primary_before_optional_deadline(
                 break
             await asyncio.sleep(0.01)
         event.remove(knowledge._page_engine, "handle_error", cleanup_delay)
+
+
+def test_public_contention_preserves_completed_primary_and_cleans_up(corpus, monkeypatch):
+    import asyncio
+    import threading
+    import time
+    from concurrent.futures import ThreadPoolExecutor
+
+    from sqlalchemy import event
+
+    import agno.knowledge.page._coordinator as module
+
+    knowledge, embedder, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    knowledge.sync_pages(url=url)
+    published = knowledge.read_page("/agent")
+    sync_started, sync_release = threading.Event(), threading.Event()
+    site["https://docs.example.com/agent.md"] += "\nNew publication after the search.\n"
+
+    def fetch(self, address, max_bytes):
+        if address.endswith("/agent.md"):
+            sync_started.set()
+            assert sync_release.wait(10)
+        return site[address]
+
+    monkeypatch.setattr(PageSource, "fetch", fetch)
+    sync_results = []
+    sync_thread = threading.Thread(target=lambda: sync_results.append(knowledge.sync_pages(url=url)))
+    sync_thread.start()
+    assert sync_started.wait(5)
+    embedding_started, embedding_release, readers_ready = threading.Event(), threading.Event(), threading.Event()
+    original = embedder.get_embedding
+
+    def embed(content, *, timeout=30):
+        if content == "question":
+            embedding_started.set()
+            assert embedding_release.wait(timeout)
+        return original(content, timeout=timeout)
+
+    monkeypatch.setattr(embedder, "get_embedding", embed)
+    count = [0]
+    lock = threading.Lock()
+    read_times = []
+    primary_times = []
+
+    def before(conn, cursor, statement, params, context, many):
+        if " AS total_chars" in statement:
+            with lock:
+                count[0] += 1
+                if count[0] == 6:
+                    readers_ready.set()
+            # Simulate a 1.4-second database read on each real public aread_page
+            # connection, after its existing transaction deadline is installed.
+            cursor.execute("SELECT pg_sleep(1.4)")
+
+    def after(conn, cursor, statement, params, context, many):
+        if "WITH by_vector AS" in statement:
+            primary_times.append(time.monotonic())
+
+    event.listen(knowledge._page_engine, "before_cursor_execute", before)
+    event.listen(knowledge._page_engine, "after_cursor_execute", after)
+
+    def search():
+        start = time.monotonic()
+        try:
+            result = asyncio.run(knowledge.asearch_pages("question", alternatives=["tools"]))
+            return start, time.monotonic() - start, result
+        except Exception:
+            raise
+
+    def read():
+        start = time.monotonic()
+        result = asyncio.run(knowledge.aread_page("/agent"))
+        read_times.append(time.monotonic() - start)
+        return result
+
+    try:
+        with ThreadPoolExecutor(max_workers=7) as pool:
+            searched = pool.submit(search)
+            assert embedding_started.wait(5)
+            time.sleep(0.9)
+            reads = [pool.submit(read) for _ in range(6)]
+            assert readers_ready.wait(5)
+            embedding_release.set()
+            start, elapsed, outcome = searched.result(timeout=5)
+            held = module.READ_WORKERS._capacity._value
+            for r in reads:
+                assert r.result(timeout=5).text
+        time.sleep(0.1)
+        print(
+            "PUBLIC_CONTENTION",
+            {
+                "search_seconds": elapsed,
+                "outcome": type(outcome).__name__,
+                "primary_seconds": [t - start for t in primary_times],
+                "read_seconds": read_times,
+                "free_slots_at_timeout": held,
+                "free_slots_after_cleanup": module.READ_WORKERS._capacity._value,
+            },
+            flush=True,
+        )
+        assert elapsed < 2 and primary_times and primary_times[0] - start < 1.5
+        assert outcome.results and all(hit.revision == published.revision for hit in outcome.results)
+        assert outcome.partial and outcome.warnings == ("alternative_unavailable",)
+        assert module.READ_WORKERS._capacity._value == 8
+        assert knowledge._page_engine.pool.checkedout() == 1
+        assert all(t < 2 for t in read_times)
+    finally:
+        embedding_release.set()
+        sync_release.set()
+        sync_thread.join(10)
+        event.remove(knowledge._page_engine, "before_cursor_execute", before)
+        event.remove(knowledge._page_engine, "after_cursor_execute", after)
+    assert sync_results[0].updated == 1
+    assert knowledge.read_page("/agent").revision != published.revision
+
+
+def test_initialized_setup_during_sync_uses_validated_read_only_path(corpus, monkeypatch):
+    import threading
+    import time
+
+    from sqlalchemy import event
+
+    first, _, site = corpus
+    url = "https://docs.example.com/llms.txt"
+    first.sync_pages(url=url)
+    entered, release = threading.Event(), threading.Event()
+
+    def fetch(self, address, max_bytes):
+        if address.endswith("/agent.md"):
+            entered.set()
+            assert release.wait(45)
+        return site[address]
+
+    monkeypatch.setattr(PageSource, "fetch", fetch)
+    outcome = []
+
+    def synchronize():
+        try:
+            outcome.append(first.sync_pages(url=url))
+        except BaseException as e:
+            outcome.append(e)
+
+    worker = threading.Thread(target=synchronize)
+    worker.start()
+    assert entered.wait(5)
+    second = Knowledge(
+        contents_db=first.contents_db,
+        vector_db=first.vector_db,
+        page_store=FileSystem(first.contents_db, namespace=first.page_store.namespace),
+    )
+    statements = []
+    from agno.db.postgres._bounded import bounded_engine
+
+    second._page_engine = bounded_engine(second.contents_db.db_engine, capacity=8)
+
+    def capture(conn, cursor, statement, parameters, context, many):
+        statements.append(statement)
+
+    event.listen(second._page_engine, "before_cursor_execute", capture)
+    started = time.monotonic()
+    try:
+        second.setup()
+        elapsed = time.monotonic() - started
+        print("INITIALIZED_SETUP_DURING_SYNC", elapsed, flush=True)
+        assert elapsed < 2 and second._page_ready
+        assert not any("pg_advisory" in sql or sql.startswith(("ALTER", "CREATE", "INSERT")) for sql in statements)
+        assert second.read_page("/agent").text == first.read_page("/agent").text
+    finally:
+        release.set()
+        worker.join(10)
+        if hasattr(second, "_page_engine"):
+            second._page_engine.dispose()
+    assert len(outcome) == 1 and not isinstance(outcome[0], BaseException)

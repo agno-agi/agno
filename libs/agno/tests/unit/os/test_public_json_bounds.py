@@ -6,6 +6,7 @@ import time
 from contextlib import contextmanager
 
 import httpx
+import pytest
 import uvicorn
 from fastapi.testclient import TestClient
 
@@ -57,8 +58,8 @@ class LocalAdmission:
         return Admission(True)
 
 
-def application(*, bounded=True):
-    agent = Agent(id="docs-agent", model=ShortAnswerModel(), db=InMemoryDb(), telemetry=False)
+def application(*, bounded=True, model=None):
+    agent = Agent(id="docs-agent", model=model or ShortAnswerModel(), db=InMemoryDb(), telemetry=False)
     surface = PublicSurface(
         agents=[agent],
         max_active_runs=1,
@@ -149,3 +150,35 @@ def test_default_output_limit_returns_complete_json_over_uvicorn_http():
         response = client.post(ROUTE, data={"message": "Hello again", "stream": "false"})
         assert response.status_code == 200 and response.json()["content"] == "Short answer."
         assert int(response.headers["content-length"]) == len(response.content)
+
+
+class FailingModel(ShortAnswerModel):
+    def invoke(self, *args, **kwargs):
+        raise RuntimeError("private-diagnostic-marker")
+
+
+@pytest.mark.parametrize("stream", ["true", "false"])
+def test_native_failed_public_run_never_exposes_model_diagnostics(stream):
+    app, _ = application(model=FailingModel())
+    with TestClient(app) as client:
+        response = client.post(ROUTE, data={"message": "Hello", "stream": stream}, headers={"Origin": ORIGIN})
+    assert "private-diagnostic-marker" not in response.text
+    assert response.headers["access-control-allow-origin"] == ORIGIN
+    if stream == "true":
+        assert response.status_code == 200 and "event: RunError" in response.text
+        assert '"error_code": "run_failed"' in response.text
+    else:
+        assert response.status_code == 503
+        assert int(response.headers["content-length"]) == len(response.content)
+        payload = response.json()
+        assert set(payload) == {"error"}
+        assert payload["error"]["code"] == "run_failed"
+        assert len(payload["error"]["correlation_id"]) == 32
+
+
+def test_native_nonpublic_failed_run_retains_diagnostics():
+    app, _ = application(bounded=False, model=FailingModel())
+    with TestClient(app) as client:
+        response = client.post(ROUTE, data={"message": "Hello", "stream": "false"})
+    assert response.status_code == 200 and response.json()["status"] == "ERROR"
+    assert "private-diagnostic-marker" in response.text

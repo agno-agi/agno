@@ -256,7 +256,7 @@ class Knowledge(RemoteKnowledge):
                 max_output_bytes=max_output_bytes,
                 seconds=2,
             )
-        except TimeoutError as exc:
+        except (TimeoutError, asyncio.TimeoutError) as exc:
             raise SearchUnavailable() from exc
 
     def read_page(
