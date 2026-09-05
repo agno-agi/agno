@@ -3,7 +3,7 @@ import hashlib
 import io
 import json
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from enum import Enum
 from io import BytesIO
 from os.path import basename
@@ -43,7 +43,7 @@ class KnowledgeContentOrigin(Enum):
     CONTENT = "content"
 
 
-@dataclass
+@dataclass(init=False)
 class Knowledge(RemoteKnowledge):
     """Knowledge class"""
 
@@ -66,7 +66,36 @@ class Knowledge(RemoteKnowledge):
     # Seconds before the first retry; each subsequent wait doubles.
     embedding_retry_backoff: float = 1.0
 
-    page_store: Optional[Any] = field(default=None, kw_only=True)
+    page_store: Optional[Any] = None
+
+    def __init__(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        vector_db: Optional[Any] = None,
+        contents_db: Optional[Union[BaseDb, AsyncBaseDb]] = None,
+        max_results: int = 10,
+        readers: Optional[Dict[str, Reader]] = None,
+        content_sources: Optional[List[BaseStorageConfig]] = None,
+        isolate_vector_search: bool = False,
+        max_embedding_retries: int = 0,
+        embedding_retry_backoff: float = 1.0,
+        *,
+        page_store: Optional[Any] = None,
+    ):
+        # Python 3.9 dataclasses cannot declare a keyword-only field.
+        self.name = name
+        self.description = description
+        self.vector_db = vector_db
+        self.contents_db = contents_db
+        self.max_results = max_results
+        self.readers = readers
+        self.content_sources = content_sources
+        self.isolate_vector_search = isolate_vector_search
+        self.max_embedding_retries = max_embedding_retries
+        self.embedding_retry_backoff = embedding_retry_backoff
+        self.page_store = page_store
+        self.__post_init__()
 
     def __post_init__(self):
         from agno.vectordb import VectorDb
