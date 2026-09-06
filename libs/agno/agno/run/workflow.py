@@ -138,8 +138,10 @@ class BaseWorkflowRunOutputEvent(BaseRunOutputEvent):
 
         if isinstance(self, StepOutputEvent) and self.step_output is not None:
             _dict["step_output"] = self.step_output.to_dict()
-            # content is a convenience property, not a separate event field.
-            _dict.pop("content", None)
+            # Preserve the structured-content alias exposed by earlier events,
+            # using the same JSON-safe conversion as the nested StepOutput.
+            if "content" in _dict:
+                _dict["content"] = _dict["step_output"]["content"]
 
         # Handle StepOutput fields that contain Message objects
         if hasattr(self, "step_results") and self.step_results is not None:

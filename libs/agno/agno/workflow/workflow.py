@@ -2555,20 +2555,29 @@ class Workflow:
     async def _aterminalize_workflow_agent_run(
         self, workflow_run_response: WorkflowRunOutput, session_id: Optional[str], user_id: Optional[str]
     ) -> None:
-        """Terminalize a workflow-agent background run after its generator ends.
+        """Resolve a workflow-agent producer's status from the executed run.
 
-        _aexecute_workflow_agent maintains its own run output internally and
-        never mutates the caller's workflow_run_response, and its internal
-        session save does not flip the run row out of RUNNING. Without this,
-        the row stays RUNNING forever and the producers complete_run a stale
-        status. The generator finishing without raising means the leg is
-        complete; error paths are handled by the producers' except branches."""
+        The tool and direct-answer paths persist their own run output. The
+        producer holds a separate pending/running placeholder, so stream
+        exhaustion alone cannot determine whether execution succeeded.
+        """
         if workflow_run_response.status in (RunStatus.running, RunStatus.pending):
-            workflow_run_response.status = RunStatus.completed
             persist_session_id = session_id or workflow_run_response.session_id
-            if persist_session_id is None:
+            if persist_session_id is None or workflow_run_response.run_id is None:
                 return
             try:
+                executed_run = await self.aget_run_output(
+                    run_id=workflow_run_response.run_id, session_id=persist_session_id, user_id=user_id
+                )
+                if executed_run is not None and executed_run.status in (
+                    RunStatus.completed,
+                    RunStatus.error,
+                    RunStatus.cancelled,
+                    RunStatus.paused,
+                ):
+                    workflow_run_response.status = executed_run.status
+                    return
+                workflow_run_response.status = RunStatus.completed
                 await apersist_run_transition(
                     self, "workflow", persist_session_id, workflow_run_response, user_id=user_id
                 )
@@ -3175,7 +3184,9 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
-
+                if current_step is not None:
+                    _record_failed_step(current_step, e, workflow_run_response, collected_step_outputs)
+                workflow_run_response.step_results = list(collected_step_outputs)
                 raise e
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
@@ -3706,7 +3717,7 @@ class Workflow:
                 self._persist_errored_run_stream(session=session, run=workflow_run_response)
                 for error_event in error_events:
                     yield error_event
-                return
+                raise e
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -4197,7 +4208,10 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
-
+                if current_step is not None:
+                    _record_failed_step(current_step, e, workflow_run_response, collected_step_outputs)
+                workflow_run_response.step_results = list(collected_step_outputs)
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 raise e
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
@@ -4767,7 +4781,7 @@ class Workflow:
                 await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 for error_event in error_events:
                     yield error_event
-                return
+                raise e
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -5779,7 +5793,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent, WorkflowErrorEvent
 
         # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
@@ -5837,8 +5851,11 @@ class Workflow:
             if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
-                # Track if workflow was executed by checking for WorkflowCompletedEvent
-                if isinstance(event, WorkflowCompletedEvent):
+                # A tool failure is still an executed workflow. The model can catch
+                # its exception and answer, but must not replace the saved ERROR run.
+                if isinstance(event, WorkflowCompletedEvent) or (
+                    isinstance(event, WorkflowErrorEvent) and event.run_id == run_id
+                ):
                     workflow_executed = True
             elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                 if event.step_name is None:
@@ -5903,10 +5920,8 @@ class Workflow:
             # Workflow was executed by the tool
             reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-
+            executed_run = reloaded_session.get_run(run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
                     run_id=agent_response.run_id if agent_response else None,
@@ -5917,18 +5932,18 @@ class Workflow:
                 )
                 yield agent_completed_event
 
-                # Update the last run with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+                # Update the executed run with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                self._persist_session_and_run(session=reloaded_session, run=last_run)
+                self._persist_session_and_run(session=reloaded_session, run=executed_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -6180,7 +6195,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent, WorkflowErrorEvent
 
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
@@ -6245,9 +6260,11 @@ class Workflow:
             if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
-                if isinstance(event, WorkflowCompletedEvent):
+                if isinstance(event, WorkflowCompletedEvent) or (
+                    isinstance(event, WorkflowErrorEvent) and event.run_id == run_id
+                ):
                     workflow_executed = True
-                    log_debug("Workflow execution detected via WorkflowCompletedEvent")
+                    log_debug("Workflow execution detected via terminal event")
 
             elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                 if event.step_name is None:
@@ -6321,10 +6338,8 @@ class Workflow:
             else:
                 reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-
+            executed_run = reloaded_session.get_run(run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
                     run_id=agent_response.run_id if agent_response else None,
@@ -6338,18 +6353,18 @@ class Workflow:
 
                 yield agent_completed_event
 
-                # Update the last run with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+                # Update the executed run with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                await self._apersist_session_and_run(session=reloaded_session, run=last_run)
+                await self._apersist_session_and_run(session=reloaded_session, run=executed_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")

@@ -375,16 +375,24 @@ async def test_review_guardrail_is_terminal(database_factory, async_mode, check_
     iterator = await start(workflow, async_mode, False)
     events = []
     try:
-        if async_mode:
-            async for event in iterator:
-                events.append(event)
-                if close_early and event.event == "WorkflowError":
-                    break
-        else:
-            for event in iterator:
-                events.append(event)
-                if close_early and event.event == "WorkflowError":
-                    break
+        from contextlib import nullcontext
+
+        expected = (
+            nullcontext()
+            if close_early
+            else pytest.raises(InputCheckError if check_type == "input" else OutputCheckError)
+        )
+        with expected:
+            if async_mode:
+                async for event in iterator:
+                    events.append(event)
+                    if close_early and event.event == "WorkflowError":
+                        break
+            else:
+                for event in iterator:
+                    events.append(event)
+                    if close_early and event.event == "WorkflowError":
+                        break
         saved = load_run(database_factory, events[-1].run_id)
         assert saved is not None and saved.status == RunStatus.error
         assert sum(e.event == "WorkflowError" for e in saved.events) == 1
@@ -542,3 +550,220 @@ async def test_tolerated_failure_is_not_reported_again_after_later_hard_error(da
             events.extend(iterator)
     assert not any(e.event == "StepError" and e.step_name == "tolerated" for e in events)
     assert sum(e.event == "StepOutput" and e.step_name == "tolerated" for e in events) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("check_type", ["input", "output"])
+async def test_nonstream_guardrail_persists_and_cleans_up(database_factory, async_mode, check_type):
+    from agno.exceptions import InputCheckError, OutputCheckError
+    from agno.run.cancel import get_active_runs
+
+    error_type = InputCheckError if check_type == "input" else OutputCheckError
+
+    def reject(step_input):
+        raise error_type("blocked")
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        steps=[
+            Step(name="done", executor=successful_step),
+            Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail)),
+        ],
+    )
+    run_id = str(uuid4())
+    with pytest.raises(error_type):
+        if async_mode:
+            await workflow.arun("go", run_id=run_id, session_id="session")
+        else:
+            workflow.run("go", run_id=run_id, session_id="session")
+    saved = load_run(database_factory, run_id)
+    assert saved is not None and saved.status == RunStatus.error
+    assert [output.step_name for output in saved.step_results] == ["done", "guardrail"]
+    assert saved.step_results[-1].error == "blocked"
+    assert run_id not in get_active_runs()
+
+
+def recording_workflow_agent(tool_results, after_tool=None):
+    """Keep the real workflow tool and model tool-result handling; replace generation."""
+    from agno.models.openai import OpenAIResponses
+    from agno.run.agent import RunOutput
+    from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
+    from agno.tools.function import FunctionCall
+    from agno.workflow.agent import WorkflowAgent
+
+    class RecordingWorkflowAgent(WorkflowAgent):
+        def run(self, **kwargs):
+            results = []
+            call = FunctionCall(function=self.tools[0], arguments={"query": "go"}, call_id="call-1")
+            for event in self.model.run_function_call(call, results):
+                if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
+                    yield event
+            tool_results.extend(results)
+            if after_tool:
+                after_tool()
+            yield RunOutput(run_id="agent-response", content="The workflow rejected the request.")
+
+        async def arun(self, **kwargs):
+            results = []
+            call = FunctionCall(function=self.tools[0], arguments={"query": "go"}, call_id="call-1")
+            async for event in self.model.arun_function_calls([call], results):
+                if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
+                    yield event
+            tool_results.extend(results)
+            if after_tool:
+                after_tool()
+            yield RunOutput(run_id="agent-response", content="The workflow rejected the request.")
+
+    return RecordingWorkflowAgent(model=OpenAIResponses(id="unused"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("interleaved", [False, True])
+async def test_workflow_agent_preserves_its_failed_run(database_factory, async_mode, interleaved):
+    from agno.exceptions import InputCheckError
+
+    def reject(step_input):
+        raise InputCheckError("blocked")
+
+    def another_run():
+        other = Workflow(
+            id="review", db=database_factory(), telemetry=False, steps=[Step(name="other", executor=successful_step)]
+        )
+        other.run("other", run_id="other-run", session_id="session")
+
+    tool_results = []
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        agent=recording_workflow_agent(tool_results, another_run if interleaved else None),
+        steps=[Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    iterator = await start(workflow, async_mode, False)
+    events = [event async for event in iterator] if async_mode else list(iterator)
+    errors = [event for event in events if event.event == "WorkflowError"]
+    assert len(errors) == 1
+    assert not any(event.event == "WorkflowCompleted" for event in events)
+    saved = load_run(database_factory, errors[0].run_id)
+    assert saved.status == RunStatus.error
+    assert saved.step_results[-1].step_name == "guardrail"
+    assert saved.workflow_agent_run is not None
+    assert tool_results[-1].content == "blocked" and tool_results[-1].tool_call_error
+    if interleaved:
+        other = load_run(database_factory, "other-run")
+        assert other.status == RunStatus.completed
+        assert other.workflow_agent_run is None
+
+
+@pytest.mark.parametrize("background", [False, True])
+def test_native_workflow_agent_guardrail_keeps_error(database_factory, event_stream, background):
+    from fastapi.testclient import TestClient
+
+    from agno.exceptions import InputCheckError
+    from agno.os import AgentOS
+
+    def reject(step_input):
+        raise InputCheckError("blocked")
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        agent=recording_workflow_agent([]),
+        steps=[Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    with TestClient(AgentOS(workflows=[workflow], telemetry=False).get_app()) as client:
+        response = client.post(
+            "/workflows/review/runs",
+            data={"message": "go", "session_id": "session", "stream": "true", "background": str(background).lower()},
+        )
+        assert response.status_code == 200
+        assert '"WorkflowError"' in response.text
+        assert '"WorkflowCompleted"' not in response.text
+        session = workflow.get_session(session_id="session")
+        saved = load_run(database_factory, session.runs[0].run_id)
+        assert saved.status == RunStatus.error
+        assert saved.step_results[-1].error == "blocked"
+        if background:
+            assert client.portal.call(event_stream.get_run_status, saved.run_id) == RunStatus.error
+
+
+@pytest.mark.parametrize("check_type", ["input", "output"])
+def test_native_nonstream_guardrail_is_persisted(database_factory, check_type):
+    from fastapi.testclient import TestClient
+
+    from agno.exceptions import InputCheckError, OutputCheckError
+    from agno.os import AgentOS
+    from agno.run.cancel import get_active_runs
+
+    def reject(step_input):
+        raise (InputCheckError if check_type == "input" else OutputCheckError)("blocked")
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        steps=[Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    with TestClient(AgentOS(workflows=[workflow], telemetry=False).get_app(), raise_server_exceptions=False) as client:
+        response = client.post(
+            "/workflows/review/runs", data={"message": "go", "session_id": "session", "stream": "false"}
+        )
+        assert response.status_code == (400 if check_type == "input" else 500)
+        session = workflow.get_session(session_id="session")
+        assert session is not None and len(session.runs) == 1
+        saved = load_run(database_factory, session.runs[0].run_id)
+        assert saved.status == RunStatus.error and saved.step_results[-1].error == "blocked"
+        assert saved.run_id not in get_active_runs()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_nested_guardrail_propagates_reason(database_factory, async_mode):
+    from agno.exceptions import InputCheckError
+
+    def reject(step_input):
+        raise InputCheckError("blocked")
+
+    inner = Workflow(
+        id="inner",
+        telemetry=False,
+        steps=[Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        steps=[Step(name="child", workflow=inner, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    events = []
+    iterator = await start(workflow, async_mode, False)
+    with pytest.raises(InputCheckError, match="blocked"):
+        if async_mode:
+            async for event in iterator:
+                events.append(event)
+        else:
+            events.extend(iterator)
+    saved = load_run(database_factory, events[-1].run_id)
+    assert saved.status == RunStatus.error and saved.step_results[-1].error == "blocked"
+
+
+def test_structured_event_keeps_json_safe_content_alias():
+    from datetime import date
+
+    from pydantic import BaseModel
+
+    from agno.run.workflow import StepOutputEvent
+
+    class Report(BaseModel):
+        created: date
+
+    event = StepOutputEvent(step_output=StepOutput(content=Report(created=date(2026, 9, 6))))
+    serialized = json.loads(json.dumps(event.to_dict()))
+    assert serialized["content"] == serialized["step_output"]["content"] == {"created": "2026-09-06"}
+    restored = StepOutputEvent.from_dict(serialized)
+    assert restored.content == {"created": "2026-09-06"}
