@@ -41,6 +41,7 @@ class PublicSurface:
     """
 
     agents: List[Any] = field(default_factory=list)
+    teams: List[Any] = field(default_factory=list)
     workflows: List[Any] = field(default_factory=list)
     mcp: bool = False
     namespace: Optional[str] = None
@@ -51,7 +52,6 @@ class PublicSurface:
     max_run_seconds: float = 240
     max_output_bytes: int = 1024 * 1024
     max_active_runs: int = 8
-    teams: List[Any] = field(default_factory=list)
     _limiter: Optional[PublicLimiter] = field(default=None, init=False, repr=False)
 
     @property
