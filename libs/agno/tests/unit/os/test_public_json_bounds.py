@@ -313,3 +313,42 @@ def test_selected_team_and_agent_share_active_run_capacity():
             release.set()
         assert pending.result(timeout=5).status_code == 200
         assert client.post(ROUTE, data={"message": "Again", "stream": "false"}).status_code == 200
+
+
+@pytest.mark.parametrize("team_mode", [False, True])
+@pytest.mark.parametrize("gzip_position", ["inner", "outer"])
+@pytest.mark.parametrize("compress_sse", [False, True])
+def test_encoded_sse_cannot_bypass_public_error_inspection(team_mode, gzip_position, compress_sse):
+    from starlette.middleware.gzip import GZipMiddleware
+
+    app, surface = application(team_mode=team_mode, model=FailingModel(), gzip_inner=gzip_position == "inner")
+    options = {"exclude_content_types": ()} if compress_sse else {}
+    if gzip_position == "inner" and compress_sse:
+        for middleware in app.user_middleware:
+            if middleware.cls is GZipMiddleware:
+                middleware.kwargs.update(options)
+    if gzip_position == "outer":
+        app = GZipMiddleware(app, minimum_size=500, **options)
+    route = "/teams/support/runs" if team_mode else ROUTE
+    with live_server(app) as url, httpx.Client(base_url=url, timeout=10, trust_env=False) as client:
+        response = client.post(
+            route, data={"message": "hi", "stream": "true"}, headers={"Accept-Encoding": "gzip", "Origin": ORIGIN}
+        )
+        assert "private-diagnostic-marker" not in response.text
+        assert response.headers["access-control-allow-origin"] == ORIGIN
+        if compress_sse and gzip_position == "inner":
+            assert response.status_code == 503
+            assert response.headers["content-type"] == "application/json"
+            assert "content-encoding" not in response.headers
+            assert int(response.headers["content-length"]) == len(response.content)
+            assert response.json()["error"]["code"] == "unsupported_response_encoding"
+        else:
+            assert response.status_code == 200
+            assert "event: " + ("TeamRunError" if team_mode else "RunError") in response.text
+            assert '"error_code": "run_failed"' in response.text
+        component = surface.teams[0] if team_mode else surface.agents[0]
+        component.model = ShortAnswerModel()
+        following = client.post(
+            route, data={"message": "again", "stream": "false"}, headers={"Accept-Encoding": "identity"}
+        )
+        assert following.status_code == 200 and following.json()["content"] == "Short answer."

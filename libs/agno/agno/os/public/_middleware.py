@@ -208,13 +208,17 @@ class PublicMiddleware:
                 is_sse = any(
                     k.lower() == b"content-type" and b"text/event-stream" in v for k, v in message.get("headers", [])
                 )
+                encoding = next(
+                    (v.lower() for k, v in message.get("headers", []) if k.lower() == b"content-encoding"),
+                    b"identity",
+                )
+                if is_sse and encoding != b"identity":
+                    # Encoded frames cannot be inspected safely. Refuse them before
+                    # headers are sent; outer compression can still encode inspected SSE.
+                    raise Rejected(503, "unsupported_response_encoding")
                 if not is_sse:
                     # Validate the complete bounded body before committing success
                     # headers, so overflow can still return a valid error response.
-                    encoding = next(
-                        (v.lower() for k, v in message.get("headers", []) if k.lower() == b"content-encoding"),
-                        b"identity",
-                    )
                     if encoding == b"gzip":
                         decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
                     elif encoding != b"identity":
