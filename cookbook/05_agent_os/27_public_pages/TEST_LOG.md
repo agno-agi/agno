@@ -1,5 +1,19 @@
 # Public pages test log
 
+### public_pages.py — callable dependency context (2026-09-06)
+
+**Status:** PASS
+
+**Description:** Replaced the context pre-hook with an explicit async `docs_context` dependency. The application still chooses the query, calls `search_docs` and places evidence at the same instructions placeholder. `add_dependencies_to_context` remains unset at its existing `False` default. Product Docs Agent code retains its pre-hook.
+
+**Result:** Ran `--help` and an offline executable probe in `.venvs/demo` with `PYTHONPATH=libs/agno`. Streaming/non-streaming chat, whitespace trimming, blank/non-text/absent inputs, fresh multi-turn context and three follow-up suggestions passed with recording models and a recording search function. Planner defaults and HNSW breadth remain unchanged. Framework public-run regressions compare both sync/async and streaming/non-streaming prompt/history/follow-up inputs, model retry reuse, continuation input/session injection and concurrent input isolation. Required format/validation scripts passed.
+
+**Limits:** This validation makes no live retrieval/provider, HTTP or MCP claim. Earlier live results below retain their original executable hashes. Dependency resolution runs before pre-hooks, reuses successful values on model retries and emits no pre-hook events; it is not a claim of identical hook lifecycle or improved live latency.
+
+**Executable SHA-256:** `e9122dd16a779f29529a29713b7b6509b41551e82dc3735eebbbc46812d63d86`
+
+---
+
 ### public_pages.py — default planner configuration (2026-09-06)
 
 **Status:** PASS
@@ -34,6 +48,6 @@
 
 **Result:** Setup/sync/read/grep, explicit pre-hook chat, HTTP SSE with follow-up completion, selected Agent listing, readiness/CORS, explicit MCP card URL, actual MCPTools search, anonymous sync rejection, and authenticated durable background sync/status polling passed. Background refresh returned unchanged. The isolated database was dropped. No full-site sync or deployment was performed.
 
-**Validation scope:** The current example uses explicit instructions/pre-hook/tools and existing URL configuration. Product recording-model tests independently check prompt, multi-turn/tool-loop evidence and follow-up suggestions. Earlier automatic-reference/Team/derived-URL example results are preserved separately and do not validate this example.
+**Validation scope:** That executable used explicit instructions/pre-hook/tools and existing URL configuration. Product recording-model tests independently check prompt, multi-turn/tool-loop evidence and follow-up suggestions. Earlier automatic-reference/Team/derived-URL example results are preserved separately and do not validate this example.
 
 ---

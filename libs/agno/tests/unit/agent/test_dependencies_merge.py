@@ -9,14 +9,17 @@ These tests run the full ``run()`` / ``arun()`` path against a mock model (no ne
 and assert the rendered system message — the same message an interface would send.
 """
 
+from copy import deepcopy
 from typing import Any, AsyncIterator, Iterator
 
 import pytest
 
 from agno.agent.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.models.base import Model
 from agno.models.message import MessageMetrics
 from agno.models.response import ModelResponse
+from agno.run.agent import RunInput, RunOutput
 
 
 class MockModel(Model):
@@ -186,3 +189,196 @@ class TestArunDependenciesMerge:
         )
         response = await agent.arun("hi", dependencies={"z": "1"})
         assert "X=RESOLVED Z=1" in _system_content(response)
+
+
+class RecordingModel(MockModel):
+    def __init__(self, content="ok", fail_first=False):
+        super().__init__()
+        self.calls = []
+        self.fail_first = fail_first
+        self._mock_response.content = content
+
+    def invoke(self, messages, *args, **kwargs):
+        self.calls.append(deepcopy([(m.role, m.content) for m in messages]))
+        if self.fail_first and len(self.calls) == 1:
+            raise RuntimeError("transient model failure")
+        return self._mock_response
+
+    async def ainvoke(self, messages, *args, **kwargs):
+        return self.invoke(messages, *args, **kwargs)
+
+    def invoke_stream(self, messages, *args, **kwargs):
+        yield self.invoke(messages, *args, **kwargs)
+
+    async def ainvoke_stream(self, messages, *args, **kwargs):
+        yield self.invoke(messages, *args, **kwargs)
+
+
+async def _execute(agent, *, async_mode, stream, continuing=False, **kwargs):
+    if async_mode:
+        method = agent.acontinue_run if continuing else agent.arun
+        result = method(stream=stream, yield_run_output=stream, **kwargs)
+        if stream:
+            outputs = [event async for event in result if isinstance(event, RunOutput)]
+            return outputs[-1]
+        return await result
+    method = agent.continue_run if continuing else agent.run
+    result = method(stream=stream, yield_run_output=stream, **kwargs)
+    if stream:
+        return [event for event in result if isinstance(event, RunOutput)][-1]
+    return result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_dependency_input_session_and_prompt_equivalence(async_mode, stream):
+    """Current input/history injection preserves explicit prompt and follow-up inputs."""
+    calls = []
+
+    def resolve(run_input, session, agent, run_context):
+        assert isinstance(run_input, RunInput)
+        assert agent is dependency_agent
+        assert session.session_id == run_context.session_id == "test-session"
+        assert run_context.session_state is not None
+        previous = [m.content for m in session.get_messages() if m.role == "user"]
+        calls.append((run_input.input_content, previous))
+        return f"Evidence for {run_input.input_content}; previous={previous}"
+
+    async def aresolve(run_input, session, agent, run_context):
+        return resolve(run_input, session, agent, run_context)
+
+    def attach(run_input, session, run_context):
+        previous = [m.content for m in session.get_messages() if m.role == "user"]
+        run_context.dependencies = {"docs_context": f"Evidence for {run_input.input_content}; previous={previous}"}
+
+    def check_resolved(run_context):
+        assert isinstance(run_context.dependencies["docs_context"], str)
+
+    dependency_model, hook_model = RecordingModel(), RecordingModel()
+    dependency_followup = RecordingModel('{"suggestions": ["Next?"]}')
+    hook_followup = RecordingModel('{"suggestions": ["Next?"]}')
+    options = dict(
+        instructions="<search_results>{docs_context}</search_results>",
+        add_history_to_context=True,
+        followups=True,
+        num_followups=1,
+        telemetry=False,
+    )
+    dependency_agent = Agent(
+        model=dependency_model,
+        followup_model=dependency_followup,
+        db=InMemoryDb(),
+        dependencies={"docs_context": aresolve if async_mode else resolve},
+        pre_hooks=[check_resolved],
+        **options,
+    )
+    hook_agent = Agent(
+        model=hook_model,
+        followup_model=hook_followup,
+        db=InMemoryDb(),
+        pre_hooks=[attach],
+        **options,
+    )
+    assert dependency_agent.add_dependencies_to_context is False
+    for question in ("first", "second"):
+        dependency_result = await _execute(
+            dependency_agent,
+            async_mode=async_mode,
+            stream=stream,
+            input=question,
+            session_id="test-session",
+        )
+        hook_result = await _execute(
+            hook_agent,
+            async_mode=async_mode,
+            stream=stream,
+            input=question,
+            session_id="test-session",
+        )
+        assert dependency_result.followups == hook_result.followups == ["Next?"]
+    assert calls == [("first", []), ("second", ["first"])]
+    assert dependency_model.calls == hook_model.calls
+    assert dependency_followup.calls == hook_followup.calls
+    assert len(dependency_model.calls) == len(dependency_followup.calls) == 2
+    assert callable(dependency_agent.dependencies["docs_context"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_dependency_input_is_not_retrieved_again_on_model_retry(async_mode, stream):
+    calls = []
+
+    def resolve(run_input, session):
+        calls.append((run_input.input_content, session.session_id))
+        return "retrieved evidence"
+
+    async def aresolve(run_input, session):
+        return resolve(run_input, session)
+
+    model = RecordingModel(fail_first=True)
+    agent = Agent(
+        model=model,
+        dependencies={"evidence": aresolve if async_mode else resolve},
+        instructions="Evidence: {evidence}",
+        retries=1,
+        delay_between_retries=0,
+        telemetry=False,
+    )
+    response = await _execute(agent, async_mode=async_mode, stream=stream, input="question", session_id="s")
+    assert response.content == "ok"
+    assert calls == [("question", "s")]
+    assert len(model.calls) == 2
+    assert model.calls[0] == model.calls[1]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("by_id", [False, True])
+async def test_continued_dependency_receives_original_input_and_session(async_mode, stream, by_id):
+    calls = []
+
+    def resolve(run_input, session):
+        calls.append((run_input.input_content, session.session_id))
+        return "resolved"
+
+    async def aresolve(run_input, session):
+        return resolve(run_input, session)
+
+    agent = Agent(model=RecordingModel(), db=InMemoryDb(), telemetry=False)
+    original = await _execute(agent, async_mode=async_mode, stream=False, input="original", session_id="s")
+    kwargs = {"run_id": original.run_id} if by_id else {"run_response": original}
+    result = await _execute(
+        agent,
+        async_mode=async_mode,
+        stream=stream,
+        continuing=True,
+        session_id="s",
+        input="extra instruction",
+        dependencies={"evidence": aresolve if async_mode else resolve},
+        **kwargs,
+    )
+    assert result.content == "ok"
+    assert calls == [("original", "s")]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_dependency_inputs_are_run_local():
+    import asyncio
+
+    entered = []
+    both_entered = asyncio.Event()
+
+    async def resolve(run_input, session):
+        entered.append(run_input.input_content)
+        if len(entered) == 2:
+            both_entered.set()
+        await asyncio.wait_for(both_entered.wait(), timeout=2)
+        return f"{session.session_id}:{run_input.input_content}"
+
+    agent = Agent(model=RecordingModel(), dependencies={"x": resolve}, instructions="X={x}", telemetry=False)
+    first, second = await asyncio.gather(agent.arun("first", session_id="one"), agent.arun("second", session_id="two"))
+    assert "X=one:first" in _system_content(first)
+    assert "X=two:second" in _system_content(second)

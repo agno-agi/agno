@@ -78,16 +78,12 @@ async def grep_docs(query: str, prefix: str = "/") -> str:
         return tool_error(exc)
 
 
-async def attach_docs_context(run_input, run_context, session) -> None:
+async def get_docs_context(run_input) -> str:
     """The application controls the query, retrieval timing and prompt placement."""
-    question = run_input.input_content
-    evidence = "No text question supplied."
+    question = run_input.input_content if run_input is not None else None
     if isinstance(question, str) and question.strip():
-        evidence = await search_docs(question.strip())
-    run_context.dependencies = {
-        **(run_context.dependencies or {}),
-        "docs_context": evidence,
-    }
+        return await search_docs(question.strip())
+    return "No text question supplied."
 
 
 tools = [search_docs, read_docs, grep_docs]
@@ -96,7 +92,7 @@ agent = Agent(
     name="Docs",
     model=OpenAIResponses(id="gpt-5.6-luna", store=False, timeout=60),
     db=db,
-    pre_hooks=[attach_docs_context],
+    dependencies={"docs_context": get_docs_context},
     tools=tools,
     instructions=(
         "Answer from documentation and cite returned URLs beside claims. "

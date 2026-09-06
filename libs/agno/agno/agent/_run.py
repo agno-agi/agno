@@ -139,7 +139,13 @@ _CANCEL_BYPASS_EVENT_TYPES = (
 # ---------------------------------------------------------------------------
 
 
-def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+def resolve_run_dependencies(
+    agent: Agent,
+    run_context: RunContext,
+    *,
+    run_input: Optional[RunInput] = None,
+    session: Optional[AgentSession] = None,
+) -> None:
     from inspect import iscoroutine, iscoroutinefunction, signature
 
     # Dependencies should already be resolved in run() method
@@ -162,6 +168,10 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
                     kwargs["agent"] = agent
                 if "run_context" in sig.parameters:
                     kwargs["run_context"] = run_context
+                if "run_input" in sig.parameters:
+                    kwargs["run_input"] = run_input
+                if "session" in sig.parameters:
+                    kwargs["session"] = session
 
                 # Run the function
                 result = value(**kwargs)
@@ -176,7 +186,13 @@ def resolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
             run_context.dependencies[key] = value
 
 
-async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> None:
+async def aresolve_run_dependencies(
+    agent: Agent,
+    run_context: RunContext,
+    *,
+    run_input: Optional[RunInput] = None,
+    session: Optional[AgentSession] = None,
+) -> None:
     from inspect import iscoroutine, signature
 
     log_debug("Resolving context (async)")
@@ -197,6 +213,10 @@ async def aresolve_run_dependencies(agent: Agent, run_context: RunContext) -> No
                 kwargs["agent"] = agent
             if "run_context" in sig.parameters:
                 kwargs["run_context"] = run_context
+            if "run_input" in sig.parameters:
+                kwargs["run_input"] = run_input
+            if "session" in sig.parameters:
+                kwargs["session"] = session
 
             # Run the function
             result = value(**kwargs)
@@ -437,7 +457,9 @@ def _run(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -840,7 +862,9 @@ def _run_stream(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 raise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -1566,7 +1590,9 @@ async def _arun(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    await aresolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -2323,7 +2349,9 @@ async def _arun_stream(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    await aresolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=agent_session
+                    )
 
                 await araise_if_cancelled(run_response.run_id)  # type: ignore
 
@@ -3498,7 +3526,12 @@ def continue_run_dispatch(
 
     # Resolve dependencies
     if run_context.dependencies is not None:
-        resolve_run_dependencies(agent, run_context=run_context)
+        resolve_run_dependencies(
+            agent,
+            run_context=run_context,
+            run_input=_stored_run.input if isinstance(_stored_run, RunOutput) else None,
+            session=agent_session,
+        )
 
     # Run can be continued from previous run response or from passed run_response context
     if run_response is not None:
@@ -3977,7 +4010,9 @@ def _continue_run_stream(
             try:
                 # 1. Resolve dependencies
                 if run_context.dependencies is not None:
-                    resolve_run_dependencies(agent, run_context=run_context)
+                    resolve_run_dependencies(
+                        agent, run_context=run_context, run_input=run_response.input, session=session
+                    )
 
                 # Start the Run by yielding a RunContinued event
                 if stream_events:
@@ -4803,7 +4838,15 @@ async def _acontinue_run(
 
                 # 2. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    dependency_run = run_response or next(
+                        (r for r in agent_session.runs or [] if r.run_id == run_id), None
+                    )
+                    await aresolve_run_dependencies(
+                        agent,
+                        run_context=run_context,
+                        run_input=dependency_run.input if isinstance(dependency_run, RunOutput) else None,
+                        session=agent_session,
+                    )
 
                 # 3. Update metadata and session state
                 update_metadata(agent, session=agent_session)
@@ -5328,7 +5371,15 @@ async def _acontinue_run_stream(
 
                 # 3. Resolve dependencies
                 if run_context.dependencies is not None:
-                    await aresolve_run_dependencies(agent, run_context=run_context)
+                    dependency_run = run_response or next(
+                        (r for r in agent_session.runs or [] if r.run_id == run_id), None
+                    )
+                    await aresolve_run_dependencies(
+                        agent,
+                        run_context=run_context,
+                        run_input=dependency_run.input if isinstance(dependency_run, RunOutput) else None,
+                        session=agent_session,
+                    )
 
                 # 4. Prepare run response
                 if run_response is not None:

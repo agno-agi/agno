@@ -1,6 +1,10 @@
 # Public documentation pages
 
-`public_pages.py` uses one PostgreSQL database for the Knowledge catalog, quota-bounded FileSystem, vectors, sessions, durable jobs and shared public request counters. It demonstrates application-owned retrieval through a visible pre-hook, explicit search/read/grep tools, native MCP and a typed protected sync workflow.
+`public_pages.py` uses one PostgreSQL database for the Knowledge catalog, quota-bounded FileSystem, vectors, sessions, durable jobs and shared public request counters. It demonstrates application-owned retrieval through an explicit callable dependency, explicit search/read/grep tools, native MCP and a typed protected sync workflow.
+
+The `docs_context` dependency is an async function that receives `run_input`, calls the application's `search_docs` function and returns evidence. Agno awaits it before pre-hooks and prompt construction. The application chooses the query and places the result through `{docs_context}` in its instructions. `add_dependencies_to_context` already defaults to `False`; it stays unset so dependencies are not additionally appended to the user message. Callables can also request `session` for previous-turn retrieval policy, plus `agent` and `run_context`.
+
+Dependency resolution keeps its existing lifecycle: a successful value is reused on a model retry, while a fresh ordinary run resolves the configured callable again. It does not emit pre-hook events. On continuation, `run_input` refers to the original stored input (or `None` if it was not stored), not additional continuation instructions. Use a pre-hook when retrieval must run after another hook changes the input or when hook lifecycle events are needed. This cookbook change does not change the separate Docs Agent application's pre-hook or retrieval policy.
 
 ## Setup
 
