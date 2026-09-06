@@ -266,41 +266,86 @@ class Knowledge(RemoteKnowledge):
         self, path: str, *, revision: Optional[str] = None, offset: int = 0, max_chars: int = 12000
     ) -> PageRead:
         """Read published Markdown; continuation offsets count Unicode code points."""
-        return self._pages().read(path, revision=revision, offset=offset, max_chars=max_chars)
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
+
+        try:
+            return self._pages().read(path, revision=revision, offset=offset, max_chars=max_chars)
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
 
     async def aread_page(
         self, path: str, *, revision: Optional[str] = None, offset: int = 0, max_chars: int = 12000
     ) -> PageRead:
         """Read published Markdown on bounded workers."""
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
         from agno.knowledge.page._coordinator import READ_WORKERS
 
-        return await READ_WORKERS.run(
-            self._pages().read, path, revision=revision, offset=offset, max_chars=max_chars, seconds=2
-        )
+        try:
+            return await READ_WORKERS.run(
+                self._pages().read, path, revision=revision, offset=offset, max_chars=max_chars, seconds=2
+            )
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
 
     def grep_pages(self, query: str, *, prefix: str = "/", ignore_case: bool = False, limit: int = 20) -> GrepResult:
         """Find literal text within a bounded scan; incomplete results cannot establish absence."""
-        return self._pages().grep(query, prefix=prefix, ignore_case=ignore_case, limit=limit)
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
+
+        try:
+            return self._pages().grep(query, prefix=prefix, ignore_case=ignore_case, limit=limit)
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
 
     async def agrep_pages(
         self, query: str, *, prefix: str = "/", ignore_case: bool = False, limit: int = 20
     ) -> GrepResult:
         """Find literal text without blocking the event loop."""
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
         from agno.knowledge.page._coordinator import READ_WORKERS
 
-        return await READ_WORKERS.run(
-            self._pages().grep, query, prefix=prefix, ignore_case=ignore_case, limit=limit, seconds=2
-        )
+        try:
+            return await READ_WORKERS.run(
+                self._pages().grep, query, prefix=prefix, ignore_case=ignore_case, limit=limit, seconds=2
+            )
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
 
     def list_pages(self, *, prefix: str = "/", cursor: Optional[str] = None, limit: int = 100) -> PageList:
         """List navigation metadata with a namespace-revision-bound cursor."""
-        return self._pages().list(prefix=prefix, cursor=cursor, limit=limit)
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
+
+        try:
+            return self._pages().list(prefix=prefix, cursor=cursor, limit=limit)
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
 
     async def alist_pages(self, *, prefix: str = "/", cursor: Optional[str] = None, limit: int = 100) -> PageList:
         """List navigation metadata on bounded workers."""
+        from sqlalchemy.exc import DBAPIError
+        from sqlalchemy.exc import TimeoutError as PoolTimeout
+
+        from agno.knowledge.page import PageError
         from agno.knowledge.page._coordinator import READ_WORKERS
 
-        return await READ_WORKERS.run(self._pages().list, prefix=prefix, cursor=cursor, limit=limit, seconds=2)
+        try:
+            return await READ_WORKERS.run(self._pages().list, prefix=prefix, cursor=cursor, limit=limit, seconds=2)
+        except (TimeoutError, asyncio.TimeoutError, PoolTimeout, DBAPIError) as exc:
+            raise PageError() from exc
 
     # ==========================================
     # PUBLIC API - INSERT METHODS

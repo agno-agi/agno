@@ -3,10 +3,12 @@
 from contextlib import contextmanager
 from contextvars import ContextVar
 from threading import Lock
+from time import monotonic
 from weakref import WeakSet
 
 from sqlalchemy import create_engine, event
 from sqlalchemy.engine import Engine
+from sqlalchemy.exc import TimeoutError as PoolTimeout
 from sqlalchemy.pool import QueuePool
 from sqlalchemy.util.queue import Queue
 
@@ -16,6 +18,7 @@ _connecting: ContextVar[bool] = ContextVar("agno_bounded_connect", default=False
 _configured: WeakSet = WeakSet()
 _configuration_lock = Lock()
 _checkout_budget: ContextVar = ContextVar("agno_checkout_budget", default=None)
+_optional_checkout: ContextVar = ContextVar("agno_optional_checkout", default=None)
 
 
 class ConnectionUnavailable(TimeoutError):
@@ -27,6 +30,9 @@ class _BudgetQueue(Queue):
         budget = _checkout_budget.get()
         if block and budget is not None:
             remaining = budget.remaining()
+            optional_deadline = _optional_checkout.get()
+            if optional_deadline is not None:
+                remaining = min(remaining, max(0, optional_deadline - monotonic()))
             timeout = remaining if timeout is None else min(timeout, remaining)
         return super().get(block, timeout)
 
@@ -42,6 +48,19 @@ def optional_connection(budget: WorkBudget):
     A new connection's transport handshake cannot honor a subsecond SQL deadline.
     Callers can instead execute optional work serially on their existing snapshot.
     """
+    token = _optional_checkout.set(monotonic() + 0.025)
+    try:
+        with primary_connection(budget):
+            yield
+    except PoolTimeout as exc:
+        raise ConnectionUnavailable("optional_connection_unavailable") from exc
+    finally:
+        _optional_checkout.reset(token)
+
+
+@contextmanager
+def primary_connection(budget: WorkBudget):
+    """Limit pool checkout to this operation's deadline without changing shared state."""
     token = _checkout_budget.set(budget)
     try:
         budget.remaining()
@@ -78,7 +97,7 @@ def bounded_engine(source: Engine, *, capacity: int) -> Engine:
     original_pool = source.pool
 
     def create(connection_record):
-        if _checkout_budget.get() is not None:
+        if _optional_checkout.get() is not None:
             raise ConnectionUnavailable("optional_connection_unavailable")
         token = _connecting.set(True)
         try:

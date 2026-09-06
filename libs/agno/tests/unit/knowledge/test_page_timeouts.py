@@ -66,3 +66,21 @@ async def test_public_page_search_normalizes_async_timeout(monkeypatch):
     monkeypatch.setattr(Knowledge, "_pages", lambda self: self)
     with pytest.raises(SearchUnavailable):
         await Knowledge().asearch_pages("question")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("method,args", [("aread_page", ("/page",)), ("agrep_pages", ("text",)), ("alist_pages", ())])
+async def test_all_async_page_boundaries_normalize_capacity(monkeypatch, method, args):
+    import agno.knowledge.page._coordinator as pages
+    from agno.knowledge.page import PageError
+
+    async def expired(*args, **kwargs):
+        raise asyncio.TimeoutError("worker_capacity")
+
+    class Operations:
+        read = grep = list = lambda *args: None
+
+    monkeypatch.setattr(pages.READ_WORKERS, "run", expired)
+    monkeypatch.setattr(Knowledge, "_pages", lambda self: Operations())
+    with pytest.raises(PageError, match="page_unavailable"):
+        await getattr(Knowledge(), method)(*args)

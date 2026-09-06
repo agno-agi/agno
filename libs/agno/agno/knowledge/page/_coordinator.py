@@ -14,7 +14,7 @@ from collections import Counter, deque
 from concurrent.futures import ThreadPoolExecutor, wait
 from contextlib import closing, contextmanager, nullcontext
 from threading import BoundedSemaphore
-from typing import Any, Callable, Dict, List, Optional, Tuple, cast
+from typing import TYPE_CHECKING, Any, Callable, Dict, List, Optional, Tuple, cast
 from uuid import uuid4
 
 from sqlalchemy import (
@@ -33,8 +33,9 @@ from sqlalchemy import (
     text,
     update,
 )
-from sqlalchemy.dialects.postgresql import insert
+from sqlalchemy.dialects.postgresql import dialect, insert
 from sqlalchemy.exc import DBAPIError
+from typing_extensions import TypeGuard
 
 from agno.db.postgres import PostgresDb
 from agno.db.schemas.knowledge import KnowledgeRow
@@ -86,6 +87,18 @@ def _identifier(value: Optional[str]) -> str:
     return '"' + value + '"'
 
 
+if TYPE_CHECKING:
+    from agno.knowledge.embedder.openai import OpenAIEmbedder
+
+
+def _is_openai_embedder(embedder: Any) -> TypeGuard[OpenAIEmbedder]:
+    try:
+        from agno.knowledge.embedder.openai import OpenAIEmbedder
+    except ImportError:
+        return False
+    return isinstance(embedder, OpenAIEmbedder)
+
+
 class PageCoordinator:
     def __init__(self, knowledge: Any):
         self.knowledge = knowledge
@@ -131,10 +144,8 @@ class PageCoordinator:
             raise ValueError("page storage tables must be distinct")
         if self.vector.dimensions is None or not 1 <= self.vector.dimensions <= 2000:
             raise ValueError("page storage requires 1-2000 embedding dimensions for HNSW")
-        from agno.knowledge.embedder.openai import OpenAIEmbedder
-
         if (
-            not isinstance(self.vector.embedder, OpenAIEmbedder)
+            not _is_openai_embedder(self.vector.embedder)
             and "timeout" not in inspect.signature(self.vector.embedder.get_embedding).parameters
         ):
             raise ValueError(
@@ -245,13 +256,20 @@ class PageCoordinator:
 
     def _search_indexes(self):
         namespace_literal = str(
-            literal(self.namespace).compile(dialect=self.engine.dialect, compile_kwargs={"literal_binds": True})
+            literal(self.namespace).compile(dialect=dialect(paramstyle="named"), compile_kwargs={"literal_binds": True})
+        )
+        index = self.vector.vector_index
+        build_options = (
+            f" WITH (m={int(index.m)}, ef_construction={int(index.ef_construction)})" if isinstance(index, HNSW) else ""
         )
         for suffix, definition in (
             ("page_gin", "USING gin (_agno_page_tsv)"),
             (
                 "page_hnsw_" + self.namespace,
-                "USING hnsw (embedding vector_cosine_ops) WHERE (meta_data->>'namespace') = " + namespace_literal,
+                "USING hnsw (embedding vector_cosine_ops)"
+                + build_options
+                + " WHERE (meta_data->>'namespace') = "
+                + namespace_literal,
             ),
         ):
             yield (
@@ -302,7 +320,7 @@ class PageCoordinator:
             row = (
                 conn.execute(
                     text(
-                        "SELECT pg_get_indexdef(i.indexrelid) AS definition, i.indisvalid AND i.indisready AS valid "
+                        "SELECT pg_get_indexdef(i.indexrelid) AS definition, c.reloptions, i.indisvalid AND i.indisready AS valid "
                         "FROM pg_index i JOIN pg_class c ON c.oid=i.indexrelid "
                         "JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname=:schema AND c.relname=:name"
                     ),
@@ -313,8 +331,22 @@ class PageCoordinator:
             )
             if row is None or not row["valid"]:
                 return False
-            if self._normalized_definition(definition) not in self._normalized_definition(row["definition"]):
+            # Compare build settings separately: PostgreSQL can reorder reloptions.
+            expected = re.sub(r" WITH \([^)]*\)", "", definition, flags=re.I)
+            actual = re.sub(r" WITH \([^)]*\)", "", row["definition"], flags=re.I)
+            if self._normalized_definition(expected) not in self._normalized_definition(actual):
                 raise ValueError("incompatible_page_search_index")
+            if "USING hnsw" in definition and isinstance(self.vector.vector_index, HNSW):
+                options = dict(option.split("=", 1) for option in row["reloptions"] or [])
+                index = self.vector.vector_index
+                if (
+                    int(options.get("m", 16)) != index.m
+                    or int(options.get("ef_construction", 64)) != index.ef_construction
+                ):
+                    raise ValueError(
+                        f"incompatible_page_search_index: rebuild {schema}.{name} with "
+                        f"m={index.m}, ef_construction={index.ef_construction} before setup"
+                    )
         return True
 
     @property
@@ -334,11 +366,13 @@ class PageCoordinator:
 
     @contextmanager
     def _snapshot(self, budget: Optional[WorkBudget] = None, *, snapshot: Optional[str] = None):
-        from agno.db.postgres._bounded import optional_connection
+        from agno.db.postgres._bounded import optional_connection, primary_connection
 
         self._ready()
         with (
-            optional_connection(budget or WorkBudget(2)) if snapshot is not None else nullcontext(),
+            optional_connection(budget or WorkBudget(2))
+            if snapshot is not None
+            else primary_connection(budget or WorkBudget(2)),
             self.engine.connect().execution_options(
                 isolation_level="REPEATABLE READ", postgresql_readonly=True
             ) as conn,
@@ -466,9 +500,7 @@ class PageCoordinator:
         embedder = self.vector.embedder
         # OpenAI-compatible clients support per-call transport deadlines without
         # mutating the shared embedder or its configured credentials.
-        from agno.knowledge.embedder.openai import OpenAIEmbedder
-
-        if isinstance(embedder, OpenAIEmbedder):
+        if _is_openai_embedder(embedder):
             embeddings: List[List[float]] = []
             for start in range(0, len(contents), min(100, max(1, embedder.batch_size))):
                 client = embedder.client.with_options(timeout=min(30, budget.remaining()), max_retries=0)
@@ -746,6 +778,7 @@ class PageCoordinator:
         budget: WorkBudget,
         reindex: bool,
         prepared: Optional[Dict[str, Any]] = None,
+        source_url: Optional[str] = None,
     ) -> bool:
         self._pending_publication = None
         if prepared is None:
@@ -830,7 +863,7 @@ class PageCoordinator:
             conn.execute(
                 update(self.binding)
                 .where(self.binding.c.namespace == self.namespace)
-                .values(revision=self.binding.c.revision + 1)
+                .values(revision=self.binding.c.revision + 1, **({"source": source_url} if source_url else {}))
             )
             self._pending_publication = {"page": page, "publication_id": publication_id}
         self._pending_publication = None
@@ -1049,9 +1082,7 @@ class PageCoordinator:
                 queries.append(alternative.strip())
         vectors = []
         partial = False
-        from agno.knowledge.embedder.openai import OpenAIEmbedder
-
-        if isinstance(self.vector.embedder, OpenAIEmbedder):
+        if _is_openai_embedder(self.vector.embedder):
             try:
                 vectors = list(zip(queries, self._embeddings(queries, budget)))
             except Exception as exc:
@@ -1327,9 +1358,6 @@ class PageCoordinator:
                     )
                     if binding["source"] not in (None, source.url):
                         raise ValueError("filesystem namespace is bound to another documentation source")
-                    conn.execute(
-                        update(self.binding).where(self.binding.c.namespace == self.namespace).values(source=source.url)
-                    )
                     self._source_attempt(conn, source, "processing")
                 pages = source.discover()
                 if validate_discovery is not None:
@@ -1358,7 +1386,16 @@ class PageCoordinator:
                                 raise fetch_error
                             assert isinstance(content, str)
                             updated += int(
-                                self._publish(conn, page, content, fingerprint, budget, reindex, prepared=prepared)
+                                self._publish(
+                                    conn,
+                                    page,
+                                    content,
+                                    fingerprint,
+                                    budget,
+                                    reindex,
+                                    prepared=prepared,
+                                    source_url=source.url,
+                                )
                             )
                         except Exception as exc:
                             log_warning(f"Page sync failed ({type(exc).__name__})")

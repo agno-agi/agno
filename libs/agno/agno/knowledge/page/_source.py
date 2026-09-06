@@ -134,7 +134,7 @@ class PageSource:
                                 body.extend(chunk)
                             return body.decode("utf-8", errors="strict")
                 raise SyncFailed()
-            except (httpx.TimeoutException, httpx.HTTPStatusError) as exc:
+            except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError, httpx.HTTPStatusError) as exc:
                 if (
                     isinstance(exc, httpx.HTTPStatusError)
                     and exc.response.status_code != 429
@@ -146,7 +146,8 @@ class PageSource:
                 delay = min(0.25 * 2**attempt, self.budget.remaining())
                 if self.budget.cancelled.wait(delay):
                     self.budget.remaining()
-                deadline = time.monotonic() + min(30, self.budget.remaining())
+                if time.monotonic() >= deadline:
+                    raise SyncFailed() from exc
         raise SyncFailed()
 
     def discover(self) -> Dict[str, SourcePage]:
@@ -205,7 +206,9 @@ class PageSource:
                     page = SourcePage(path, fetch_url, entry.title, citation)
                     if path in collisions:
                         raise ValueError("page_path_collision")
-                    if path in pages and pages[path] != page:
+                    if path in pages and pages[path].url == page.url:
+                        continue
+                    if path in pages:
                         collisions.add(path)
                         del pages[path]
                         raise ValueError("page_path_collision")

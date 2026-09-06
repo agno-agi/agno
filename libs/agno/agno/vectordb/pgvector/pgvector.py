@@ -554,7 +554,12 @@ class PgVector(VectorDb):
         """
         # Embed before the delete below: clearing the old chunks first would destroy
         # retrievable content if the embedder then fails.
+        for document in documents:
+            if not document.embedding:
+                document.embedding = None
         embed_before_replace(documents, self.embedder)
+        if any(not document.embedding for document in documents):
+            raise EmbeddingError("Embedding failed before replacing content")
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -591,7 +596,7 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                record = self._get_document_record(doc, filters, content_hash, user_id)
+                                record = self._get_document_record(doc, filters, content_hash, user_id, prepared=True)
                                 # Use the generated record ID (which includes content_hash) for deduplication
                                 batch_records_dict[record["id"]] = record
                             except EmbeddingError:
@@ -658,8 +663,11 @@ class PgVector(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         content_hash: str = "",
         user_id: Optional[str] = None,
+        *,
+        prepared: bool = False,
     ) -> Dict[str, Any]:
-        doc.embed(embedder=self.embedder)
+        if not prepared or not doc.embedding:
+            doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
         # Include content_hash in ID to ensure uniqueness across different content hashes
         # This allows the same URL/content to be inserted with different descriptions
@@ -686,13 +694,17 @@ class PgVector(VectorDb):
             record["user_id"] = user_id
         return record
 
-    async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
+    async def _async_embed_documents(self, batch_docs: List[Document], *, prepared: bool = False) -> None:
         """
         Embed a batch of documents using either batch embedding or individual embedding.
 
         Args:
             batch_docs: List of documents to embed
         """
+        if prepared:
+            batch_docs = [doc for doc in batch_docs if not doc.embedding]
+        if not batch_docs:
+            return
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -749,7 +761,12 @@ class PgVector(VectorDb):
         """
         # Embed before the delete below: clearing the old chunks first would destroy
         # retrievable content if the embedder then fails.
+        for document in documents:
+            if not document.embedding:
+                document.embedding = None
         await aembed_before_replace(documents, self.embedder)
+        if any(not document.embedding for document in documents):
+            raise EmbeddingError("Embedding failed before replacing content")
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -783,7 +800,7 @@ class PgVector(VectorDb):
                     log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Embed all documents in the batch
-                        await self._async_embed_documents(batch_docs)
+                        await self._async_embed_documents(batch_docs, prepared=True)
                         # An unembedded chunk would be rejected by the store and take the
                         # whole batch down with it, including the chunks that did embed.
                         batch_docs = retrievable_documents(batch_docs)
