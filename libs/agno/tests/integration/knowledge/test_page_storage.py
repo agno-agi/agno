@@ -1714,3 +1714,82 @@ def test_legacy_default_hnsw_index_requires_explicit_operator_rebuild(corpus):
             conn.execute(text("SELECT reloptions FROM pg_class WHERE relname=:name"), {"name": name}).scalar() is None
         )
     assert knowledge.read_page("/agent").text.startswith("# Agent")
+
+
+@pytest.mark.asyncio
+async def test_page_filesystem_public_reads_are_lazy_scoped_and_async_equivalent(corpus, monkeypatch):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge, _, site = corpus
+    site["https://docs.example.com/llms.txt"] += "\n- [Scoped](https://docs.example.com/scope/a.md)"
+    site["https://docs.example.com/scope/a.md"] = "# Scoped\n\nneedle\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    listing, reading, grepping = knowledge.list_pages, knowledge.read_page, knowledge.grep_pages
+    calls = []
+
+    def list_pages(**kwargs):
+        calls.append(("list", kwargs))
+        return listing(**kwargs)
+
+    def read_page(path, **kwargs):
+        calls.append(("read", path))
+        return reading(path, **kwargs)
+
+    def grep_pages(*args, **kwargs):
+        calls.append(("grep", kwargs))
+        return grepping(*args, **kwargs)
+
+    monkeypatch.setattr(knowledge, "list_pages", list_pages)
+    monkeypatch.setattr(knowledge, "read_page", read_page)
+    monkeypatch.setattr(knowledge, "grep_pages", grep_pages)
+    files = PageFileSystem(knowledge=knowledge)
+    sync = files.run_command("cat /agent")
+    assert "Use Agent with tools" in sync
+    assert calls == [("list", {"limit": 1}), ("read", "/agent.md")]
+    calls.clear()
+    assert await files.arun_command("cat /agent") == sync
+    assert calls == [("list", {"limit": 1}), ("read", "/agent.md")]
+    calls.clear()
+    assert files.run_command("ls /scope") == "a.md"
+    lists = [kwargs for kind, kwargs in calls if kind == "list"]
+    assert lists == [
+        {"limit": 1},
+        {"prefix": "/scope/", "cursor": None, "limit": 200},
+        {"prefix": "/scope.md", "limit": 1},
+    ]
+    assert not any(kind == "read" for kind, _ in calls)
+    calls.clear()
+    assert files.run_command("rg -l needle /") == "[1 matching lines in 1 files]\n/scope/a.md"
+    assert calls == [("list", {"limit": 1}), ("grep", {"prefix": "/", "ignore_case": False, "limit": 100})]
+
+
+def test_page_filesystem_real_publication_invalidates_cached_and_continued_reads(corpus, monkeypatch):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge, _, site = corpus
+    url = "https://docs.example.com/agent.md"
+    site[url] = "# Old\n" + "old text\n" * 4000
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    files = PageFileSystem(knowledge=knowledge)
+    assert "old text" in files.get_corpus()["/agent.md"]
+    old_snapshot = files.get_corpus()
+    site[url] = "# New\n\nNew body\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    with pytest.raises(PageChanged):
+        old_snapshot["/agent.md"]
+    assert "New body" in files.run_command("cat /agent")
+    site[url] = "# Long\n" + "old text\n" * 4000
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    original = knowledge.read_page
+
+    def refresh_after_first_read(path, **kwargs):
+        result = original(path, **kwargs)
+        if result.next_offset is not None and kwargs.get("offset", 0) == 0:
+            site[url] = "# Refreshed\n\nNew body\n"
+            knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+        return result
+
+    monkeypatch.setattr(knowledge, "read_page", refresh_after_first_read)
+    with pytest.raises(PageChanged):
+        files.run_command("cat /agent")
+    assert "New body" in files.run_command("cat /agent")

@@ -139,3 +139,28 @@ Add `--check` to validate the configuration without starting the server.
 Successful public Team runs retain native member tool results, including member
 failure details when the leader recovers. Failed top-level runs use the same
 sanitized errors and output bounds as public Agents.
+
+### Read-only page commands
+
+`PageFileSystem(knowledge=knowledge)` provides explicit `run_command` and
+`arun_command` methods for `ls`, `tree`, `find`, `cat`, `head`, `tail`, `wc`,
+`rg` and `grep`. Install `agno[pages]`; regex is optional outside this adapter.
+After publishing the demo corpus:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_filesystem.py 'cat /introduction'
+```
+
+Commands cannot execute processes, expand shell expressions or write files.
+Direct reads use the requested page; directory listings fetch scoped metadata;
+literal grep uses bounded Knowledge scans. Cache bodies belong to one adapter
+instance and remain subject to publication checks. Command workers retain their
+capacity through cancellation until work exits. Output defaults to 30,000
+characters plus a continuation notice. Constructor limits also bound regex time,
+command lifetime, cache bytes/entries, command read volume and catalog entries.
+An unavailable publication raises `PageError`; the application owns its wording.
+
+The adapter does not register tools or change retrieval, prompts or citations.
+Keep an instance alongside the configured Knowledge and wrap it with the desired
+tool name and description. `get_corpus`/`aget_corpus` expose metadata snapshots
+for offline evaluation; subsequent mapping reads are synchronous.

@@ -71,3 +71,15 @@
 **Result:** Constructor wiring and CLI import passed. Live sync/chat/MCP-client modes were not run. Disposable PostgreSQL publication and paired product composition tests cover deterministic operation separately.
 
 ---
+
+### page_filesystem.py
+
+**Status:** PASS
+
+**Description:** Ran `--help` and the asynchronous `cat /agent` cookbook entrypoint
+in the isolated `.venvs/demo` environment. A deterministic embedder and source
+published a real disposable PostgreSQL corpus, then the harness supplied that
+Knowledge instance to the example.
+
+**Result:** Returned the published Markdown and header through `arun_command`.
+No live provider, production database, deployment or release was used.
