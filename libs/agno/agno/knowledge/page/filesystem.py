@@ -101,17 +101,17 @@ class PageFileSystem:
         Mapping access is synchronous. Async callers should use arun_command
         instead of iterating or loading this mapping on the event loop.
         """
-        corpus = PageCorpus(self)
+        corpus = PageCorpus(self, prefix=prefix)
         if not lazy:
-            corpus._pages = corpus._list(prefix)
+            corpus._pages = corpus._list(corpus.prefix)
         return corpus
 
     async def aget_corpus(self, *, prefix: str = "/") -> PageCorpus:
         """Fetch a metadata snapshot off the event loop; later mapping access is sync."""
 
         def listing(*, budget: WorkBudget) -> PageCorpus:
-            corpus = PageCorpus(self, budget=budget)
-            corpus._pages = corpus._list(prefix)
+            corpus = PageCorpus(self, budget=budget, prefix=prefix)
+            corpus._pages = corpus._list(corpus.prefix)
             return corpus
 
         try:
@@ -129,7 +129,9 @@ class PageCorpus(Mapping[str, str]):
         pages: Optional[dict[str, Page]] = None,
         *,
         budget: Optional[WorkBudget] = None,
+        prefix: str = "/",
     ):
+        self.prefix = self.canonical_prefix(prefix)
         self.filesystem = filesystem
         self._pages = pages
         self._selected: dict[str, Page] = {}
@@ -138,6 +140,22 @@ class PageCorpus(Mapping[str, str]):
         self._read_chars = 0
         self._budget = budget or WorkBudget(filesystem.command_seconds)
 
+    @staticmethod
+    def canonical_prefix(path: str) -> str:
+        from agno.knowledge.page._source import page_prefix
+
+        if path != "/" and path.endswith("/"):
+            return page_prefix(path[:-1]) + "/"
+        return page_prefix(path)
+
+    def _scoped_prefix(self, prefix: str) -> Optional[str]:
+        prefix = self.canonical_prefix(prefix)
+        if prefix.startswith(self.prefix):
+            return prefix
+        if self.prefix.startswith(prefix):
+            return self.prefix
+        return None
+
     def _check(self) -> None:
         try:
             self._budget.remaining()
@@ -145,6 +163,10 @@ class PageCorpus(Mapping[str, str]):
             raise PageError() from exc
 
     def _list(self, prefix: str) -> dict[str, Page]:
+        scoped = self._scoped_prefix(prefix)
+        if scoped is None:
+            return {}
+        prefix = scoped
         for _ in range(2):
             pages: dict[str, Page] = {}
             cursor = None
@@ -153,7 +175,7 @@ class PageCorpus(Mapping[str, str]):
                 result = self.filesystem.knowledge.list_pages(prefix=prefix, cursor=cursor, limit=200)
                 if result.restart_required:
                     break
-                pages.update((page.path, page) for page in result.pages)
+                pages.update((page.path, page) for page in result.pages if page.path.startswith(prefix))
                 if len(pages) > self.filesystem.max_catalog_entries:
                     raise PageError()
                 cursor = result.next_cursor
@@ -164,7 +186,7 @@ class PageCorpus(Mapping[str, str]):
     @property
     def pages(self) -> dict[str, Page]:
         if self._pages is None:
-            self._pages = self._list("/")
+            self._pages = self._list(self.prefix)
             self.loaded.clear()
             self._selected.clear()
         return self._pages
@@ -173,17 +195,22 @@ class PageCorpus(Mapping[str, str]):
         self._check()
         if self._pages is not None:
             return bool(self._pages)
-        return bool(self.filesystem.knowledge.list_pages(limit=1).pages)
+        kwargs = {} if self.prefix == "/" else {"prefix": self.prefix}
+        return bool(self.filesystem.knowledge.list_pages(limit=1, **kwargs).pages)
 
     def paths_under(self, prefix: str) -> list[str]:
+        scoped = self._scoped_prefix(prefix)
+        if scoped is None:
+            return []
+        prefix = scoped
         if self._pages is not None or prefix == "/":
             return [path for path in self.pages if path.startswith(prefix)]
         if prefix not in self._prefixes:
-            scoped = {path: page for path, page in self._list(prefix).items() if path.startswith(prefix)}
-            self._selected.update(scoped)
-            for path in scoped:
+            scoped_pages = self._list(prefix)
+            self._selected.update(scoped_pages)
+            for path in scoped_pages:
                 self.loaded.pop(path, None)
-            self._prefixes[prefix] = list(scoped)
+            self._prefixes[prefix] = list(scoped_pages)
         return self._prefixes[prefix]
 
     def __iter__(self) -> Iterator[str]:
@@ -191,6 +218,10 @@ class PageCorpus(Mapping[str, str]):
 
     def has_directory(self, prefix: str) -> bool:
         self._check()
+        scoped = self._scoped_prefix(prefix)
+        if scoped is None:
+            return False
+        prefix = scoped
         if self._pages is not None:
             return any(path.startswith(prefix) for path in self._pages)
         if prefix in self._prefixes:
@@ -209,6 +240,8 @@ class PageCorpus(Mapping[str, str]):
             return False
         # Public page APIs return canonical paths even when the caller uses URL encoding.
         path = page_path(path)
+        if not path.startswith(self.prefix):
+            return False
         if self._pages is not None:
             return path in self._pages
         if path in self._selected:
@@ -217,12 +250,15 @@ class PageCorpus(Mapping[str, str]):
         return any(page.path == path for page in result.pages)
 
     def __contains__(self, path: object) -> bool:
-        if self._pages is not None:
-            return path in self._pages
-        if isinstance(path, str) and path in self._selected:
-            return True
         if not isinstance(path, str) or not path.endswith(".md"):
             return False
+        path = self.canonical_prefix(path)
+        if not path.startswith(self.prefix):
+            return False
+        if self._pages is not None:
+            return path in self._pages
+        if path in self._selected:
+            return True
         try:
             self[path]
             return True
@@ -230,7 +266,12 @@ class PageCorpus(Mapping[str, str]):
             return False
 
     def __getitem__(self, path: str) -> str:
+        from agno.knowledge.page._source import page_path
+
         self._check()
+        path = page_path(path)
+        if not path.startswith(self.prefix):
+            raise KeyError(path)
         page = self._pages[path] if self._pages is not None else self._selected.get(path)
         if path in self.loaded:
             return self.loaded[path]
@@ -264,6 +305,8 @@ class PageCorpus(Mapping[str, str]):
                         revision = result.revision
                 body = "".join(parts)
         except PageNotFound:
+            if page is not None or revision is not None:
+                raise  # A selected publication disappeared; retain the typed storage error.
             raise KeyError(path) from None
         if cached is not None:
             self._read_chars += len(body)
@@ -281,7 +324,10 @@ class PageCorpus(Mapping[str, str]):
 
     def grep(self, query: str, *, prefix: str, ignore_case: bool) -> GrepResult:
         self._check()
-        return self.filesystem.knowledge.grep_pages(query, prefix=prefix, ignore_case=ignore_case, limit=100)
+        scoped = self._scoped_prefix(prefix)
+        if scoped is None:
+            return GrepResult()
+        return self.filesystem.knowledge.grep_pages(query, prefix=scoped, ignore_case=ignore_case, limit=100)
 
     @property
     def stamp(self) -> str:

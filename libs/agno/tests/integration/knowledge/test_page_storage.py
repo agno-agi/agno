@@ -1819,3 +1819,128 @@ async def test_page_filesystem_encoded_file_listing_uses_canonical_metadata(
     files = PageFileSystem(knowledge=knowledge)
     output = await files.arun_command(command) if async_command else files.run_command(command)
     assert output == "/Getting%20Started.md"
+
+
+def _publish_filesystem_pages(corpus, documents):
+    knowledge, _, site = corpus
+    site["https://docs.example.com/llms.txt"] = "\n".join(
+        f"- [Page](https://docs.example.com{path})" for path in documents
+    )
+    site.update(("https://docs.example.com" + path, body) for path, body in documents.items())
+    assert knowledge.sync_pages(url="https://docs.example.com/llms.txt").status == "completed"
+    return knowledge
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("target", ["/concepts/agent", "/concepts/agent.md"])
+async def test_page_filesystem_exact_search_cannot_be_starved_by_sibling(corpus, monkeypatch, async_mode, target):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge = _publish_filesystem_pages(
+        corpus,
+        {
+            "/concepts/agent-intro.md": "needle sibling\n" * 110,
+            "/concepts/agent.md": "needle requested\n",
+            "/concepts/agent/child.md": "needle child\n",
+        },
+    )
+    original = knowledge.list_pages
+
+    def scoped_listing(**kwargs):
+        assert kwargs == {"limit": 1} or kwargs["prefix"].startswith("/concepts/agent")
+        return original(**kwargs)
+
+    monkeypatch.setattr(knowledge, "list_pages", scoped_listing)
+    files = PageFileSystem(knowledge=knowledge)
+    command = "rg needle " + target
+    result = await files.arun_command(command) if async_mode else files.run_command(command)
+    assert "/concepts/agent.md:1:needle requested" in result
+    assert "sibling" not in result
+    assert ("needle child" in result) == (not target.endswith(".md"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["lazy", "eager", "async"])
+async def test_page_filesystem_canonical_paths_and_scope_cover_all_access(corpus, mode):
+    from agno.knowledge.page import PageFileSystem
+    from agno.knowledge.page._commands import run_command
+
+    knowledge = _publish_filesystem_pages(
+        corpus,
+        {
+            "/Getting%20Started/a%20b.md": "needle requested\n",
+            "/Getting%20Started/index.md": "needle index\n",
+            "/Getting%20Started-sibling.md": "needle sibling\n",
+            "/outside.md": "needle outside\n",
+        },
+    )
+    files = PageFileSystem(knowledge=knowledge)
+    prefix = "/Getting%20Started/"
+    mapping = (
+        await files.aget_corpus(prefix=prefix)
+        if mode == "async"
+        else files.get_corpus(lazy=mode == "lazy", prefix=prefix)
+    )
+    assert mapping["/Getting%20Started/a%20b.md"] == "needle requested\n"
+    assert "/Getting%20Started/a%20b.md" in mapping
+    assert "/outside.md" not in mapping and mapping.get("/outside.md") is None
+    assert set(mapping) == {"/Getting Started/a b.md", "/Getting Started/index.md"}
+    for command in ("ls", "find", "tree", "rg needle", 'rg "needl[e]"'):
+        result = run_command(command + " /Getting%20Started", mapping)
+        assert "a b.md" in result
+        assert "outside" not in result and "sibling" not in result
+    for command in ("cat", "head", "tail", "wc", "rg needle", 'rg "needl[e]"'):
+        result = run_command(command + " /Getting%20Started/a%20b", mapping)
+        assert "a b.md" in result and "no such" not in result
+    assert "needle index" in run_command("cat /Getting%20Started", mapping)
+    assert "needle outside" not in run_command("cat /outside /Getting%20Started/a%20b", mapping)
+    for command in ("rg needle /", 'rg "needl[e]" /'):
+        result = run_command(command, mapping)
+        assert "needle requested" in result and "outside" not in result and "sibling" not in result
+    # A bare prefix keeps public page API prefix semantics, including sibling names.
+    assert "/Getting Started-sibling.md" in files.get_corpus(prefix="/Getting%20Started")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("command", ["cat", "head", "tail", "wc"])
+async def test_page_filesystem_invalid_targets_do_not_abort_later_reads(corpus, async_mode, command):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge = _publish_filesystem_pages(corpus, {"/valid.md": "needle requested\n"})
+    files = PageFileSystem(knowledge=knowledge)
+    query = command + " /scope/../valid /scope/./valid /valid#heading /valid?query /valid"
+    result = await files.arun_command(query) if async_mode else files.run_command(query)
+    assert result.count("invalid page path") == 4
+    assert "/valid.md" in result
+    if command != "wc":
+        assert "needle requested" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("direct", [False, True])
+async def test_page_filesystem_unpublished_selected_page_retains_typed_error(corpus, monkeypatch, async_mode, direct):
+    from agno.knowledge.page import PageFileSystem, PageNotFound
+
+    documents = {"/scope/a.md": "needle\n" * 4000, "/scope/b.md": "needle\n"}
+    knowledge = _publish_filesystem_pages(corpus, documents)
+    original = knowledge.read_page
+    refreshed = False
+
+    def unpublish(path, **kwargs):
+        nonlocal refreshed
+        if path == "/scope/a.md" and not refreshed and (not direct or kwargs.get("offset", 0) > 0):
+            refreshed = True
+            _publish_filesystem_pages(corpus, {"/scope/b.md": documents["/scope/b.md"]})
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(knowledge, "read_page", unpublish)
+    files = PageFileSystem(knowledge=knowledge)
+    command = "cat /scope/a" if direct else 'rg "needl[e]" /scope'
+    with pytest.raises(PageNotFound):
+        if async_mode:
+            await files.arun_command(command)
+        else:
+            files.run_command(command)

@@ -55,8 +55,21 @@ def _norm(path: str) -> str:
     return "/" + path.strip().strip("/")
 
 
-def _resolve_file(path: str, files: Mapping[str, str]) -> str:
+def _canonical(path: str, files: Mapping[str, str]) -> str:
+    from agno.fs.errors import InvalidPathError
+
     clean = _norm(path)
+    normalize = getattr(files, "canonical_prefix", None)
+    try:
+        return normalize(clean) if callable(normalize) else clean
+    except (ValueError, InvalidPathError):
+        raise CommandError(
+            f"{path}: invalid page path. Use an absolute page path without dot segments, query or fragment."
+        ) from None
+
+
+def _resolve_file(path: str, files: Mapping[str, str]) -> str:
+    clean = _canonical(path, files)
     for candidate in (clean, f"{clean}.md", f"{clean}/index.md"):
         if candidate in files:
             return candidate
@@ -64,7 +77,7 @@ def _resolve_file(path: str, files: Mapping[str, str]) -> str:
 
 
 def _files_under(directory: str, files: Mapping[str, str]) -> list[str]:
-    clean = _norm(directory)
+    clean = _canonical(directory, files)
     prefix = "/" if clean == "/" else f"{clean}/"
     paths_under = getattr(files, "paths_under", None)
     if callable(paths_under):
@@ -78,7 +91,7 @@ def _is_dir(path: str, files: Mapping[str, str]) -> bool:
 
 
 def _dir_entries(directory: str, files: Mapping[str, str]) -> list[str]:
-    clean = _norm(directory)
+    clean = _canonical(directory, files)
     prefix = "/" if clean == "/" else f"{clean}/"
     entries = set()
     for path in _files_under(directory, files):
@@ -170,8 +183,9 @@ def _cmd_tree(args: list[str], files: Mapping[str, str]) -> str:
         raise CommandError(f"{root}: no such directory")
     lines = [root]
     seen_dirs = set()
+    canonical_root = _canonical(root, files)
     for path in paths:
-        relative = path[1:] if root == "/" else path[len(root) + 1 :]
+        relative = path[1:] if canonical_root == "/" else path[len(canonical_root) + 1 :]
         parts = relative.split("/")
         for level, part in enumerate(parts):
             if level + 1 > depth:
@@ -312,7 +326,7 @@ RG_LONG_FLAGS = {
 def _rg_targets(roots: list[str], files: Mapping[str, str]) -> list[str]:
     targets: list[str] = []
     for root in roots:
-        clean = _norm(root)
+        clean = _canonical(root, files)
         found = False
         for candidate in (clean, f"{clean}.md"):
             if candidate in files:
@@ -416,43 +430,38 @@ def _cmd_rg(args: list[str], files: Mapping[str, str]) -> str:
         and not after
         and len(roots) == 1
     ):
-        clean = _norm(roots[0])
-        selected = None
+        clean = _canonical(roots[0], files)
         if clean == "/":
             prefix = "/"
         elif clean.endswith(".md") or any(candidate in files for candidate in (clean, f"{clean}.md")):
-            # An extensionless target can select both a file and its same-name
-            # directory. Keep that union, and exact .md selection, unchanged.
-            selected = set(_rg_targets(roots, files))
-            prefix = clean
+            # Public grep uses a prefix limit. Scan only resolved targets below so
+            # similarly named siblings cannot consume an exact file's match budget.
+            prefix = None
         else:
             prefix = clean + "/"
             if not files.has_directory(prefix):
                 raise CommandError(f"rg: {roots[0]}: no such file or directory")
-        result = files.grep(positional[0], prefix=prefix, ignore_case="i" in flags)
-        matches = [
-            match
-            for match in result.matches
-            if (match.path in selected if selected is not None else match.path.startswith(prefix))
-        ]
-        if not matches and result.complete:
-            return f"rg: no matches for {positional[0]!r}"
-        count = len({match.path for match in matches})
-        summary = f"[{len(matches)} matching lines in {count} files]"
-        if not result.complete:
-            summary = (
-                f"[stopped at {result.stop_reason}: {len(matches)} matching lines "
-                f"in {count} files so far; narrow the path]"
-            )
-        if "l" in flags:
-            entries = list(dict.fromkeys(m.path for m in matches))
-        elif "c" in flags:
-            from collections import Counter
+        if prefix is not None:
+            result = files.grep(positional[0], prefix=prefix, ignore_case="i" in flags)
+            matches = [match for match in result.matches if match.path.startswith(prefix)]
+            if not matches and result.complete:
+                return f"rg: no matches for {positional[0]!r}"
+            count = len({match.path for match in matches})
+            summary = f"[{len(matches)} matching lines in {count} files]"
+            if not result.complete:
+                summary = (
+                    f"[stopped at {result.stop_reason}: {len(matches)} matching lines "
+                    f"in {count} files so far; narrow the path]"
+                )
+            if "l" in flags:
+                entries = list(dict.fromkeys(m.path for m in matches))
+            elif "c" in flags:
+                from collections import Counter
 
-            entries = [f"{path}:{count}" for path, count in Counter(m.path for m in matches).items()]
-        else:
-            entries = [f"{m.path}:{m.line_number}:{m.text}" for m in matches]
-        return "\n".join([summary, *entries])
+                entries = [f"{path}:{count}" for path, count in Counter(m.path for m in matches).items()]
+            else:
+                entries = [f"{m.path}:{m.line_number}:{m.text}" for m in matches]
+            return "\n".join([summary, *entries])
 
     targets = _rg_targets(roots, files)
     files_only, count_only = "l" in flags, "c" in flags
