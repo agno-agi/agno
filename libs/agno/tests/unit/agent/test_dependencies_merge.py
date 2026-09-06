@@ -382,3 +382,72 @@ async def test_concurrent_dependency_inputs_are_run_local():
     first, second = await asyncio.gather(agent.arun("first", session_id="one"), agent.arun("second", session_id="two"))
     assert "X=one:first" in _system_content(first)
     assert "X=two:second" in _system_content(second)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+async def test_continuation_dependencies_follow_persisted_state(tmp_path, async_mode, stream):
+    from agno.db.sqlite import SqliteDb
+
+    path = str(tmp_path / "agent.db")
+    original_agent = Agent(id="persistent", model=RecordingModel(), db=SqliteDb(db_file=path), telemetry=False)
+    original = original_agent.run(
+        "original", session_id="session", session_state={"published": "old"}, metadata={"tag": "original"}
+    )
+    calls = []
+
+    def dependency(run_input, session, run_context):
+        calls.append(run_input.input_content)
+        assert session.session_id == run_context.session_id == "session"
+        assert run_context.session_state["published"] == "old"
+        assert run_context.metadata["tag"] == "override"
+        return "evidence"
+
+    fresh = Agent(id="persistent", model=RecordingModel(), db=SqliteDb(db_file=path), telemetry=False)
+    result = await _execute(
+        fresh,
+        async_mode=async_mode,
+        stream=stream,
+        continuing=True,
+        run_id=original.run_id,
+        session_id="session",
+        input="supplement",
+        metadata={"tag": "override"},
+        dependencies={"evidence": dependency},
+    )
+    assert result.content == "ok" and calls == ["original"]
+    stored = Agent(id="persistent", db=SqliteDb(db_file=path), telemetry=False).get_session(session_id="session")
+    assert len(stored.runs) == 2
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("cancelled", [False, True])
+async def test_invalid_continuation_does_not_resolve_dependencies(async_mode, stream, cancelled):
+    from agno.exceptions import RunNotContinuableError, RunNotFoundError
+    from agno.run.base import RunStatus
+
+    calls = []
+
+    def dependency():
+        calls.append(1)
+        return "side effect"
+
+    agent = Agent(model=RecordingModel(), db=InMemoryDb(), telemetry=False)
+    kwargs = {"run_id": "missing", "session_id": "session"}
+    if cancelled:
+        original = agent.run("original", session_id="session")
+        original.status = RunStatus.cancelled
+        kwargs = {"run_response": original}
+    with pytest.raises(RunNotContinuableError if cancelled else RunNotFoundError):
+        await _execute(
+            agent,
+            async_mode=async_mode,
+            stream=stream,
+            continuing=True,
+            dependencies={"evidence": dependency},
+            **kwargs,
+        )
+    assert calls == []
