@@ -1025,7 +1025,8 @@ async def test_nested_guardrail_preserves_explicit_skip(database_factory, async_
 
 
 @pytest.mark.parametrize("later_error", ["runtime", "guardrail"])
-def test_native_workflow_agent_logs_failure_after_error_frame(database_factory, capsys, later_error):
+@pytest.mark.parametrize("message", ["answer composition failed", "tool rejected"])
+def test_native_workflow_agent_logs_failure_after_error_frame(database_factory, caplog, later_error, message):
     from fastapi.testclient import TestClient
 
     from agno.exceptions import InputCheckError, OutputCheckError
@@ -1035,7 +1036,7 @@ def test_native_workflow_agent_logs_failure_after_error_frame(database_factory, 
         raise InputCheckError("tool rejected")
 
     def fail_answer():
-        raise (RuntimeError if later_error == "runtime" else OutputCheckError)("answer composition failed")
+        raise (RuntimeError if later_error == "runtime" else OutputCheckError)(message)
 
     workflow = Workflow(
         id="review",
@@ -1055,4 +1056,75 @@ def test_native_workflow_agent_logs_failure_after_error_frame(database_factory, 
     ]
     assert len(errors) == 1 and errors[0]["run_id"]
     assert load_run(database_factory, errors[0]["run_id"]).status == RunStatus.error
-    assert "answer composition failed" in capsys.readouterr().err
+    records = [record for record in caplog.records if record.getMessage().startswith("Workflow review")]
+    assert len(records) == 1
+    assert "review" in records[0].getMessage() and errors[0]["run_id"] in records[0].getMessage()
+    assert records[0].exc_info is not None
+    assert message in records[0].getMessage()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("error_kind", ["input", "output", "runtime"])
+@pytest.mark.parametrize("show_step_details", [False, True])
+async def test_console_prints_step_failure_without_printer_error(
+    database_factory, async_mode, error_kind, show_step_details
+):
+    from io import StringIO
+
+    from rich.console import Console
+
+    from agno.exceptions import InputCheckError, OutputCheckError
+
+    def reject(step_input):
+        raise {"input": InputCheckError, "output": OutputCheckError, "runtime": RuntimeError}[error_kind](
+            "original rejection reason"
+        )
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        steps=[Step(name="reject", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    output = StringIO()
+    kwargs = dict(
+        stream=True,
+        console=Console(file=output, width=120, color_system=None),
+        session_id="session",
+        run_id="print-run",
+        show_step_details=show_step_details,
+    )
+    if async_mode:
+        await workflow.aprint_response("go", **kwargs)
+    else:
+        workflow.print_response("go", **kwargs)
+    printed = output.getvalue()
+    assert "original rejection reason" in printed
+    assert "has no attribute" not in printed
+    assert "Completed in" not in printed
+    assert "(Streaming...)" not in printed
+    assert load_run(database_factory, "print-run").status == RunStatus.error
+
+
+@pytest.mark.parametrize("error_kind", ["input", "output", "runtime"])
+def test_native_sse_does_not_log_reported_exception_again(database_factory, capsys, caplog, error_kind):
+    from fastapi.testclient import TestClient
+
+    from agno.exceptions import InputCheckError, OutputCheckError
+    from agno.os import AgentOS
+
+    def reject(step_input):
+        raise {"input": InputCheckError, "output": OutputCheckError, "runtime": RuntimeError}[error_kind]("blocked")
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        steps=[Step(name="reject", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    with TestClient(AgentOS(workflows=[workflow], telemetry=False).get_app()) as client:
+        response = client.post("/workflows/review/runs", data={"message": "go", "stream": "true"})
+    assert response.text.count('"event":"WorkflowError"') == 1
+    assert "Traceback" not in capsys.readouterr().err
+    assert not any(record.getMessage().startswith("Workflow review") for record in caplog.records)

@@ -1013,7 +1013,7 @@ async def workflow_response_streamer(
     auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
-    workflow_error_emitted = False
+    emitted_error: Optional[WorkflowErrorEvent] = None
     try:
         # Pass background_tasks if provided
         if background_tasks is not None:
@@ -1039,7 +1039,7 @@ async def workflow_response_streamer(
 
         async for run_response_chunk in run_response:
             if isinstance(run_response_chunk, WorkflowErrorEvent) and run_response_chunk.workflow_id == workflow.id:
-                workflow_error_emitted = True
+                emitted_error = run_response_chunk
             yield format_sse_event(run_response_chunk)  # type: ignore
 
         # If the workflow paused, yield WorkflowPausedEvent as the new clean
@@ -1075,34 +1075,30 @@ async def workflow_response_streamer(
                 run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
 
-    except (InputCheckError, OutputCheckError) as e:
-        if workflow_error_emitted:
-            # A WorkflowAgent may raise again while composing its answer after
-            # the tool's error frame. Keep that exception visible to operators.
-            import traceback
-
-            traceback.print_exc()
-            return
-        error_response = WorkflowErrorEvent(
-            error=str(e),
-            error_type=e.type,
-            error_id=e.error_id,
-            additional_data=e.additional_data,
-        )
-        yield format_sse_event(error_response)
-
     except asyncio.CancelledError:
         return
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
-        if workflow_error_emitted:
+        if emitted_error is not None:
+            # Streaming failures re-raise after their terminal event. Log a
+            # different failure (such as answer composition) without repeating
+            # the reported rejection or adding another terminal frame.
+            if (
+                emitted_error.error != str(e)
+                or emitted_error.error_type != getattr(e, "type", None)
+                or emitted_error.error_id != getattr(e, "error_id", None)
+            ):
+                log_error(
+                    f"Workflow {workflow.id}, run {emitted_error.run_id} failed after its error event: {e}",
+                    exc_info=True,
+                )
             return
+        if not isinstance(e, (InputCheckError, OutputCheckError)):
+            log_error(f"Workflow {workflow.id} stream failed: {e}", exc_info=True)
         error_response = WorkflowErrorEvent(
             error=str(e),
-            error_type=e.type if hasattr(e, "type") else None,
-            error_id=e.error_id if hasattr(e, "error_id") else None,
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
+            additional_data=getattr(e, "additional_data", None),
         )
         yield format_sse_event(error_response)
         return
