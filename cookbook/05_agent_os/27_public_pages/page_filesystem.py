@@ -18,6 +18,7 @@ def main() -> None:
 
     from public_pages import knowledge
 
+    knowledge.setup()
     page_files = PageFileSystem(knowledge=knowledge, max_output_chars=30_000)
 
     # Applications retain their tool name, description, error wording and prompts.

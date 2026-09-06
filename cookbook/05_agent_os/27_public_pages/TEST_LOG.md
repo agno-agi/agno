@@ -76,10 +76,12 @@
 
 **Status:** PASS
 
-**Description:** Ran `--help` and the asynchronous `cat /agent` cookbook entrypoint
-in the isolated `.venvs/demo` environment. A deterministic embedder and source
-published a real disposable PostgreSQL corpus, then the harness supplied that
-Knowledge instance to the example.
+**Description:** Published a deterministic corpus in a disposable PostgreSQL database,
+then ran the documented script in three fresh `.venvs/demo/bin/python` processes
+with `PAGE_DEMO_DB_URL` selecting that database. Invocations were `cat /agent`,
+`rg Standalone /agent`, and `ls /`. Each process imports its own Knowledge instance
+and calls setup; no preinitialized instance is injected into the example.
 
-**Result:** Returned the published Markdown and header through `arun_command`.
-No live provider, production database, deployment or release was used.
+**Result:** PASS for all three standalone commands. The previous script fails
+in the same environment with the missing `Knowledge.setup()` error. No live
+provider, production database, deployment or release was used.
