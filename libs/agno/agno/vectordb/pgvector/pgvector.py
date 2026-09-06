@@ -558,8 +558,9 @@ class PgVector(VectorDb):
             if not document.embedding:
                 document.embedding = None
         embed_before_replace(documents, self.embedder)
-        if any(not document.embedding for document in documents):
-            raise EmbeddingError("Embedding failed before replacing content")
+        # Empty results retain generic partial ingestion: write the usable chunks
+        # without asking the embedder again. Raised failures above still precede deletion.
+        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -765,8 +766,9 @@ class PgVector(VectorDb):
             if not document.embedding:
                 document.embedding = None
         await aembed_before_replace(documents, self.embedder)
-        if any(not document.embedding for document in documents):
-            raise EmbeddingError("Embedding failed before replacing content")
+        # Empty results retain generic partial ingestion: write the usable chunks
+        # without asking the embedder again. Raised failures above still precede deletion.
+        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):

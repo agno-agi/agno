@@ -1605,3 +1605,112 @@ def test_recycled_primary_connection_and_optional_fallback(corpus):
     finally:
         event.remove(engine, "connect", record_connect)
         event.remove(engine, "checkin", age_connection)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("batch", [False, True])
+@pytest.mark.parametrize("replacement", [False, True])
+async def test_generic_upsert_preserves_partial_embeddings_without_reembedding(engine, async_mode, batch, replacement):
+    from agno.knowledge.document import Document
+
+    class PartialEmbedder(RecordingEmbedder):
+        def get_embedding_and_usage(self, text):
+            self.calls.append(text)
+            if self.fail:
+                raise RuntimeError("provider failed")
+            return ([] if text == "unusable" else [1.0, 0.5, 0.2]), {"text": text}
+
+        async def async_get_embedding_and_usage(self, text):
+            return self.get_embedding_and_usage(text)
+
+        async def async_get_embeddings_batch_and_usage(self, texts):
+            pairs = [self.get_embedding_and_usage(value) for value in texts]
+            return [pair[0] for pair in pairs], [pair[1] for pair in pairs]
+
+    embedder = PartialEmbedder()
+    embedder.enable_batch = batch
+    vector = PgVector(db=PostgresDb(db_engine=engine), table_name="partial_" + uuid4().hex[:8], embedder=embedder)
+    vector.create()
+    if replacement:
+        vector.upsert("generation", [Document(content="old")])
+    embedder.calls.clear()
+    documents = [Document(content="usable"), Document(content="unusable")]
+    if async_mode:
+        await vector.async_upsert("generation", documents)
+    else:
+        vector.upsert("generation", documents)
+    assert embedder.calls == ["usable", "unusable"]
+    assert documents[1].embedding == []  # Ingestion can still account for the shortfall.
+    with engine.connect() as conn:
+        rows = conn.execute(vector.table.select()).all()
+    assert [row.content for row in rows] == ["usable"]
+    assert rows[0].usage == {"text": "usable"}
+    embedder.fail = True
+    with pytest.raises(RuntimeError, match="provider failed"):
+        if async_mode:
+            await vector.async_upsert("generation", [Document(content="replacement")])
+        else:
+            vector.upsert("generation", [Document(content="replacement")])
+    with engine.connect() as conn:
+        assert [row.content for row in conn.execute(vector.table.select())] == ["usable"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_generic_knowledge_tracks_partial_embedding_ingestion(engine, async_mode):
+    from agno.knowledge.document import Document
+    from agno.knowledge.reader.base import Reader
+
+    class PartialEmbedder(RecordingEmbedder):
+        def get_embedding_and_usage(self, text):
+            self.calls.append(text)
+            return ([] if text == "unusable" else [1.0, 0.5, 0.2]), None
+
+        async def async_get_embedding_and_usage(self, text):
+            return self.get_embedding_and_usage(text)
+
+    class SplitReader(Reader):
+        def read(self, *args, **kwargs):
+            return [Document(content="usable"), Document(content="unusable")]
+
+        async def async_read(self, *args, **kwargs):
+            return self.read()
+
+    name = "partial_knowledge_" + uuid4().hex[:8]
+    embedder = PartialEmbedder()
+    db = PostgresDb(db_engine=engine)
+    vector = PgVector(db=db, table_name=name, embedder=embedder)
+    vector.create()
+    knowledge = Knowledge(content_db=db, vector_db=vector)
+    if async_mode:
+        await knowledge.ainsert(name=name, text_content="source document", reader=SplitReader())
+    else:
+        knowledge.insert(name=name, text_content="source document", reader=SplitReader())
+    contents, _ = knowledge.get_content()
+    content = next(item for item in contents if item.name == name)
+    assert content.status.value == "partial"
+    assert "1 of 2 chunks" in content.status_message
+    assert embedder.calls == ["usable", "unusable"]
+    with engine.connect() as conn:
+        assert [row.content for row in conn.execute(vector.table.select())] == ["usable"]
+
+
+def test_legacy_default_hnsw_index_requires_explicit_operator_rebuild(corpus):
+    import re
+
+    knowledge, _, _ = corpus
+    assert knowledge.sync_pages(url="https://docs.example.com/llms.txt").updated == 1
+    coordinator = knowledge._pages()
+    schema, name, table, definition = list(coordinator._search_indexes())[1]
+    legacy = re.sub(r" WITH \([^)]*\)", "", definition)
+    with knowledge._page_engine.begin() as conn:
+        conn.execute(text(f'DROP INDEX "{schema}"."{name}"'))
+        conn.execute(text(f'CREATE INDEX "{name}" ON {table} {legacy}'))
+    with pytest.raises(ValueError, match="rebuild .*ef_construction=200"):
+        knowledge.setup()
+    with knowledge._page_engine.connect() as conn:
+        assert (
+            conn.execute(text("SELECT reloptions FROM pg_class WHERE relname=:name"), {"name": name}).scalar() is None
+        )
+    assert knowledge.read_page("/agent").text.startswith("# Agent")
