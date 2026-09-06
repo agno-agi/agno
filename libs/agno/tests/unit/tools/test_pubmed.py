@@ -4,6 +4,7 @@ from unittest.mock import MagicMock, patch
 
 import httpx
 import pytest
+from defusedxml.common import EntitiesForbidden
 
 from agno.tools.pubmed import PubmedTools
 
@@ -12,6 +13,27 @@ ESEARCH_XML = b"""<?xml version="1.0"?>
 
 EFETCH_XML = b"""<?xml version="1.0"?>
 <PubmedArticleSet></PubmedArticleSet>"""
+
+
+@pytest.mark.parametrize("endpoint", ["esearch", "efetch"])
+def test_pubmed_rejects_xml_entities(endpoint):
+    payload = b'<!DOCTYPE result [<!ENTITY item "111">]><result><Id>&item;</Id></result>'
+    response = httpx.Response(200, content=payload, request=httpx.Request("GET", "https://example.com"))
+    tools = PubmedTools()
+    with patch("agno.tools.pubmed.httpx.get", return_value=response), pytest.raises(EntitiesForbidden):
+        if endpoint == "esearch":
+            tools.fetch_pubmed_ids("test query", 1, "user@example.com")
+        else:
+            tools.fetch_details(["111"])
+
+
+def test_pubmed_accepts_document_type_without_entity_expansion():
+    payload = b'<!DOCTYPE result SYSTEM "https://example.com/unused.dtd"><result><Id>111</Id></result>'
+    response = httpx.Response(200, content=payload, request=httpx.Request("GET", "https://example.com"))
+    tools = PubmedTools()
+    with patch("agno.tools.pubmed.httpx.get", return_value=response):
+        assert tools.fetch_pubmed_ids("test query", 1, "user@example.com") == ["111"]
+        assert tools.fetch_details(["111"]).tag == "result"
 
 
 @pytest.fixture
