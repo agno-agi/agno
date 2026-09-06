@@ -202,13 +202,17 @@ class PageCorpus(Mapping[str, str]):
         return len(self.pages)
 
     def _metadata_contains(self, path: str) -> bool:
+        from agno.knowledge.page._source import page_path
+
         self._check()
+        if not path.endswith(".md"):
+            return False
+        # Public page APIs return canonical paths even when the caller uses URL encoding.
+        path = page_path(path)
         if self._pages is not None:
             return path in self._pages
         if path in self._selected:
             return True
-        if not path.endswith(".md"):
-            return False
         result = self.filesystem.knowledge.list_pages(prefix=path, limit=1)
         return any(page.path == path for page in result.pages)
 

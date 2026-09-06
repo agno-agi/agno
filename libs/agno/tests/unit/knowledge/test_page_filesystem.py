@@ -234,3 +234,22 @@ def test_listing_never_reads_page_bodies_even_for_same_name_files(command, expec
 
     fs = PageFileSystem(knowledge=SimpleNamespace(list_pages=listing, read_page=read), max_read_chars=1)
     assert fs.run_command(command) == expected
+
+
+@pytest.mark.parametrize("snapshot", [False, True])
+def test_encoded_metadata_existence_uses_canonical_paths(snapshot):
+    from agno.knowledge.page._source import page_prefix
+
+    metadata = page("/Getting Started.md")
+    calls = []
+
+    def listing(**kwargs):
+        calls.append(kwargs)
+        prefix = page_prefix(kwargs.get("prefix", "/"))
+        return PageList(pages=(metadata,) if metadata.path.startswith(prefix) else ())
+
+    fs = PageFileSystem(knowledge=SimpleNamespace(list_pages=listing))
+    corpus = fs.get_corpus(lazy=not snapshot)
+    calls.clear()
+    assert corpus._metadata_contains("/Getting%20Started.md")
+    assert calls == ([] if snapshot else [{"prefix": "/Getting Started.md", "limit": 1}])

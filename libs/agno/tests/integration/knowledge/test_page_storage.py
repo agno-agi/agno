@@ -1793,3 +1793,29 @@ def test_page_filesystem_real_publication_invalidates_cached_and_continued_reads
     with pytest.raises(PageChanged):
         files.run_command("cat /agent")
     assert "New body" in files.run_command("cat /agent")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_command", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    ["ls /Getting%20Started", "ls /Getting%20Started.md", "tree /Getting%20Started", "tree /Getting%20Started.md"],
+)
+async def test_page_filesystem_encoded_file_listing_uses_canonical_metadata(
+    corpus, monkeypatch, command, async_command
+):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge, _, site = corpus
+    site["https://docs.example.com/llms.txt"] = "- [Getting Started](https://docs.example.com/Getting%20Started.md)"
+    site["https://docs.example.com/Getting%20Started.md"] = "# Getting Started\n\nPublished body.\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    assert knowledge.list_pages().pages[0].path == "/Getting Started.md"
+
+    def no_body_reads(*args, **kwargs):
+        pytest.fail("file listing must use metadata only")
+
+    monkeypatch.setattr(knowledge, "read_page", no_body_reads)
+    files = PageFileSystem(knowledge=knowledge)
+    output = await files.arun_command(command) if async_command else files.run_command(command)
+    assert output == "/Getting%20Started.md"
