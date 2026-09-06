@@ -51,3 +51,23 @@
 **Validation scope:** That executable used explicit instructions/pre-hook/tools and existing URL configuration. Product recording-model tests independently check prompt, multi-turn/tool-loop evidence and follow-up suggestions. Earlier automatic-reference/Team/derived-URL example results are preserved separately and do not validate this example.
 
 ---
+
+### public_team.py
+
+**Status:** PASS
+
+**Description:** Ran `public_team.py --check` with the demo environment and candidate Agno. Selected Team binding and app construction succeeded without provider calls.
+
+**Result:** Configuration validated. Server/provider execution was not run; deterministic native HTTP Team tests cover the protocol separately.
+
+---
+
+### public_pages.py
+
+**Status:** PASS
+
+**Description:** Ran `public_pages.py --help` in an isolated demo environment using the candidate framework and declared MCP 2.x/FastMCP 4.x dependencies. The initially inherited demo environment had incompatible MCP 1.x; it was left unchanged.
+
+**Result:** Constructor wiring and CLI import passed. Live sync/chat/MCP-client modes were not run. Disposable PostgreSQL publication and paired product composition tests cover deterministic operation separately.
+
+---

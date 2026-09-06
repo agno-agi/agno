@@ -6,6 +6,7 @@ import asyncio
 import inspect
 import json
 import re
+import zlib
 from ipaddress import IPv6Address, ip_address, ip_network
 from pathlib import PurePath
 from typing import Any
@@ -23,7 +24,7 @@ from agno.os.public import _client_id
 from agno.utils.bounded import BoundedWorkers
 from agno.utils.log import log_warning
 
-ROUTE = re.compile(r"^/(agents|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
+ROUTE = re.compile(r"^/(agents|teams|workflows)/([^/]+)/runs(?:/([^/]+)(/cancel)?)?$")
 IDENTITY_WORKERS = BoundedWorkers(8, "public-identity")
 
 
@@ -45,7 +46,7 @@ class PublicMiddleware:
         self.app, self.surface, self.agent_os = app, surface, agent_os
         self.active_runs = self.active_mcp = 0
         self.selected = {
-            kind: {component.id for component in getattr(surface, kind)} for kind in ("agents", "workflows")
+            kind: {component.id for component in getattr(surface, kind)} for kind in ("agents", "teams", "workflows")
         }
         self.registered = {
             kind: {component.id for component in getattr(agent_os, kind) or []} for kind in self.selected
@@ -182,7 +183,8 @@ class PublicMiddleware:
         capacity = None
         identity_token = None
         mcp = False
-        public_agent_run = False
+        public_run = False
+        decoder = None
 
         async def error(status: int, code: str, headers=None):
             await JSONResponse(
@@ -192,7 +194,7 @@ class PublicMiddleware:
             )(scope, receive, send)
 
         async def bounded_send(message):
-            nonlocal started, output_bytes, is_sse, stream_buffer, error_status, error_headers, response_start
+            nonlocal started, output_bytes, is_sse, stream_buffer, error_status, error_headers, response_start, decoder
             if message["type"] == "http.response.start":
                 status = message["status"]
                 if status >= 400:
@@ -209,6 +211,14 @@ class PublicMiddleware:
                 if not is_sse:
                     # Validate the complete bounded body before committing success
                     # headers, so overflow can still return a valid error response.
+                    encoding = next(
+                        (v.lower() for k, v in message.get("headers", []) if k.lower() == b"content-encoding"),
+                        b"identity",
+                    )
+                    if encoding == b"gzip":
+                        decoder = zlib.decompressobj(16 + zlib.MAX_WBITS)
+                    elif encoding != b"identity":
+                        raise Rejected(503, "unsupported_response_encoding")
                     response_start = message
                     return
                 started = True
@@ -225,8 +235,15 @@ class PublicMiddleware:
                     response_buffer.extend(body)
                     if message.get("more_body", False):
                         return
-                    if public_agent_run:
-                        payload = json.loads(response_buffer)
+                    logical_body = bytes(response_buffer)
+                    if decoder is not None:
+                        logical_body = decoder.decompress(logical_body, self.surface.max_output_bytes + 1)
+                        if len(logical_body) > self.surface.max_output_bytes or decoder.unconsumed_tail:
+                            raise Rejected(503, "output_limit")
+                        if not decoder.eof or decoder.unused_data:
+                            raise Rejected(503, "invalid_response_encoding")
+                    if public_run:
+                        payload = json.loads(logical_body)
                         if isinstance(payload, dict) and payload.get("status") == "ERROR":
                             # Native runs encode model failures in HTTP 200 JSON.
                             # Replace the entire failed run so nested diagnostics
@@ -251,6 +268,7 @@ class PublicMiddleware:
                             event = {}
                         if isinstance(event, dict) and event.get("event") in (
                             "RunError",
+                            "TeamRunError",
                             "WorkflowRunError",
                         ):
                             frame = (
@@ -310,7 +328,7 @@ class PublicMiddleware:
                 await WORKERS.run(ready, seconds=3)
                 await JSONResponse({"status": "ok", "database": "ok", "request_limits": "ok"})(scope, receive, send)
                 return
-            if path == "/agents" and method == "GET":
+            if path in ("/agents", "/teams") and method == "GET":
                 await JSONResponse(
                     [
                         {"id": item.id, "name": item.name, "description": (item.description or "")[:2048]}
@@ -379,7 +397,7 @@ class PublicMiddleware:
                     raise Rejected(400, "mcp_batch_not_supported")
             else:
                 await self._validate_form(scope, body, workflow=workflow, cancel=bool(cancellation))
-                public_agent_run = component_kind == "agents" and not cancellation
+                public_run = component_kind in ("agents", "teams") and not cancellation
             delivered = False
 
             async def replay():
@@ -407,13 +425,16 @@ class PublicMiddleware:
             if not started:
                 await error(status, code)
             elif is_sse:
+                event_name = "TeamRunError" if component_kind == "teams" else "RunError"
                 await send(
                     {
                         "type": "http.response.body",
-                        "body": b"event: RunError\ndata: "
+                        "body": b"event: "
+                        + event_name.encode()
+                        + b"\ndata: "
                         + json.dumps(
                             {
-                                "event": "RunError",
+                                "event": event_name,
                                 "content": "Run unavailable",
                                 "error_code": code,
                                 "correlation_id": correlation,

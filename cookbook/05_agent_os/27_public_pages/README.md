@@ -121,3 +121,21 @@ matching the safe error behavior of streaming Agent runs. Successful responses
 retain their content. Authenticated sync operators retain workflow diagnostics.
 
 Actual execution evidence is in [TEST_LOG.md](TEST_LOG.md).
+
+`FileSystem(db=db)` and `PgVector(db=db)` borrow the configured database engine.
+Use `FileSystem(backend=...)` for an explicit filesystem backend; Knowledge's
+content database, page store and vector store remain independently configured.
+
+`public_team.py` shows `PublicSurface(teams=[team])`: only the selected Team's
+reduced roster, run and cancel routes are public. Member routes remain private.
+Use the same database prerequisites and `OPENAI_API_KEY`, then run:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_team.py
+```
+
+Add `--check` to validate the configuration without starting the server.
+
+Successful public Team runs retain native member tool results, including member
+failure details when the leader recovers. Failed top-level runs use the same
+sanitized errors and output bounds as public Agents.

@@ -274,3 +274,28 @@ def test_scoped_service_credentials_and_native_mcp(engine):
             )
             assert result.status_code == 200 and "resolved-client" in result.text
     public.limiter.engine.dispose()
+
+
+def test_selected_agents_and_teams_share_run_and_cancel_limits(engine):
+    from agno.team import Team
+
+    db = PostgresDb(db_engine=engine)
+    agent = Agent(id="same")
+    team = Team(id="same", members=[agent])
+    public = PublicSurface(agents=[agent], teams=[team], limits={"run": RateLimit(1, 1), "cancel": RateLimit(1, 1)})
+    app = AgentOS(
+        id="shared-" + uuid4().hex[:8],
+        db=db,
+        agents=[agent],
+        teams=[team],
+        public=public,
+        telemetry=False,
+        auto_provision_dbs=False,
+    ).get_app()
+    with TestClient(app) as client:
+        assert client.post("/teams/same/runs", data={"message": "hi", "user_id": "spoof"}).status_code == 400
+        assert client.post("/agents/same/runs", data={"message": "hi", "user_id": "spoof"}).status_code == 429
+        run_id = str(uuid4())
+        response = client.post(f"/teams/same/runs/{run_id}/cancel")
+        assert response.status_code in (200, 404), response.text
+        assert client.post(f"/agents/same/runs/{run_id}/cancel").status_code == 429

@@ -33,6 +33,13 @@ class FileUploadLimits:
 
 @dataclass
 class PublicSurface:
+    """Explicitly select components for bounded public execution.
+
+    Successful runs retain native output, including Team member tool results and
+    failure details when the leader recovers. Selecting a Team does not expose
+    independent member routes. Failed top-level runs use sanitized public errors.
+    """
+
     agents: List[Any] = field(default_factory=list)
     workflows: List[Any] = field(default_factory=list)
     mcp: bool = False
@@ -44,6 +51,7 @@ class PublicSurface:
     max_run_seconds: float = 240
     max_output_bytes: int = 1024 * 1024
     max_active_runs: int = 8
+    teams: List[Any] = field(default_factory=list)
     _limiter: Optional[PublicLimiter] = field(default=None, init=False, repr=False)
 
     @property
@@ -55,6 +63,7 @@ class PublicSurface:
     def _bind(self, agent_os: Any) -> None:
         from agno.agent import Agent
         from agno.db.postgres import PostgresDb
+        from agno.team import Team
         from agno.workflow import Workflow
 
         if not isinstance(agent_os.db, PostgresDb):
@@ -65,7 +74,7 @@ class PublicSurface:
         if min(self.max_body_bytes, self.max_run_seconds, self.max_output_bytes, self.max_active_runs) <= 0:
             raise ValueError("PublicSurface request bounds must be positive")
         self.namespace = namespace
-        for field_name, kind in (("agents", Agent), ("workflows", Workflow)):
+        for field_name, kind in (("agents", Agent), ("workflows", Workflow), ("teams", Team)):
             registered = getattr(agent_os, field_name)
             selected: List[Any] = []
             by_id: Dict[Optional[str], Any] = {}
