@@ -1549,3 +1549,59 @@ async def test_upsert_embeds_missing_documents_once_before_replacement(engine, a
             vector.upsert("generation", [Document(content="replacement")])
     with engine.connect() as conn:
         assert len(conn.execute(vector.table.select()).all()) == 3
+
+
+def test_concurrent_first_sync_failure_allows_corrected_source(corpus, monkeypatch):
+    from concurrent.futures import ThreadPoolExecutor
+    from threading import Event
+
+    from agno.knowledge.page import SyncFailed
+
+    knowledge, _, site = corpus
+    entered, release = Event(), Event()
+
+    def fetch(self, url, maximum):
+        if url.endswith("typo.txt"):
+            entered.set()
+            assert release.wait(5)
+            raise RuntimeError("unpublished source typo")
+        return site[url]
+
+    monkeypatch.setattr(PageSource, "fetch", fetch)
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        first = pool.submit(knowledge.sync_pages, url="https://docs.example.com/typo.txt")
+        assert entered.wait(5)
+        second = pool.submit(knowledge.sync_pages, url="https://docs.example.com/llms.txt")
+        release.set()
+        with pytest.raises(SyncFailed):
+            first.result(timeout=5)
+        assert second.result(timeout=5).updated == 1
+    assert knowledge.read_page("/agent").text == site["https://docs.example.com/agent.md"]
+
+
+def test_recycled_primary_connection_and_optional_fallback(corpus):
+    from sqlalchemy import event
+
+    knowledge, _, _ = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    engine = knowledge._page_engine
+    established = []
+
+    def record_connect(connection, record):
+        established.append(1)
+
+    def age_connection(connection, record):
+        # Exercise SQLAlchemy's actual recycle branch on the next checkout.
+        record.starttime = 0
+
+    event.listen(engine, "connect", record_connect)
+    event.listen(engine, "checkin", age_connection)
+    try:
+        for _ in range(3):
+            result = knowledge.search_pages("Agent", alternatives=["tools"])
+            assert result.results and not result.partial
+        assert len(established) >= 2
+        assert engine.pool.checkedout() == 0
+    finally:
+        event.remove(engine, "connect", record_connect)
+        event.remove(engine, "checkin", age_connection)
