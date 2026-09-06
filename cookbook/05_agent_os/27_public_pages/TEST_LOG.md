@@ -85,3 +85,16 @@ and calls setup; no preinitialized instance is injected into the example.
 **Result:** PASS for all three standalone commands. The previous script fails
 in the same environment with the missing `Knowledge.setup()` error. No live
 provider, production database, deployment or release was used.
+
+### page_filesystem.py explicit tools
+
+**Status:** PASS
+
+**Description:** Reran standalone cat, rg and ls in fresh demo-environment
+processes after replacing the handwritten wrapper with `page_files.tools()` and
+adding optional `--ask` Agent execution. The default CLI constructs the Agent
+and toolkit but reads directly, without a provider call.
+
+**Result:** All three commands returned the expected published content. Separate
+deterministic Agent-loop tests cover sync/async tool selection, schemas, custom
+descriptions and page-error results. The live-provider `--ask` mode was not run.

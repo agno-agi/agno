@@ -160,7 +160,26 @@ characters plus a continuation notice. Constructor limits also bound regex time,
 command lifetime, cache bytes/entries, command read volume and catalog entries.
 An unavailable publication raises `PageError`; the application owns its wording.
 
-The adapter does not register tools or change retrieval, prompts or citations.
-Keep an instance alongside the configured Knowledge and wrap it with the desired
-tool name and description. `get_corpus`/`aget_corpus` expose metadata snapshots
-for offline evaluation; subsequent mapping reads are synchronous.
+Expose a command tool explicitly with `tools()`. Agno selects its sync or async
+implementation for the run, and page errors become readable tool results:
+
+```python
+knowledge.setup()  # Once during application startup.
+page_files = PageFileSystem(knowledge=knowledge)
+agent = Agent(tools=[page_files.tools()])
+```
+
+Customize the model-visible name and description without a wrapper:
+
+```python
+agent = Agent(tools=[page_files.tools(
+    tool_name="query_docs_filesystem",
+    description="Read or search the published docs using ls, cat or rg.",
+)])
+```
+
+Direct `run_command`/`arun_command` calls still raise `PageError`. Applications
+can retain custom wrappers for their own error wording or tracing. Creating the
+toolkit does not initialize storage, retrieve context or add prompt instructions.
+`get_corpus`/`aget_corpus` expose command-local metadata snapshots for offline
+evaluation; subsequent mapping reads are synchronous.

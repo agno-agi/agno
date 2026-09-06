@@ -1944,3 +1944,38 @@ async def test_page_filesystem_unpublished_selected_page_retains_typed_error(cor
             await files.arun_command(command)
         else:
             files.run_command(command)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_page_filesystem_tool_reads_published_pages_and_preserves_revision_errors(
+    corpus, monkeypatch, async_mode
+):
+    import json
+
+    from agno.knowledge.page import PageFileSystem
+    from agno.tools.function import FunctionCall
+
+    knowledge, _, _ = corpus
+    assert knowledge.sync_pages(url="https://docs.example.com/llms.txt").updated == 1
+    files = PageFileSystem(knowledge=knowledge)
+    toolkit = files.tools(tool_name="query_docs_filesystem", description="Read published docs.")
+    functions = toolkit.get_async_functions() if async_mode else toolkit.get_functions()
+    function = functions["query_docs_filesystem"]
+    function.process_entrypoint()
+    call = FunctionCall(function=function, arguments={"command": "cat /agent"})
+    result = await call.aexecute() if async_mode else call.execute()
+    assert result.status == "success" and "# Agent" in result.result
+
+    def changed(*args, **kwargs):
+        raise PageChanged(current_revision="new-publication")
+
+    monkeypatch.setattr(knowledge, "read_page", changed)
+    call = FunctionCall(function=function, arguments={"command": "cat /agent"})
+    result = await call.aexecute() if async_mode else call.execute()
+    assert result.status == "success"
+    assert json.loads(result.result) == {
+        "schema_version": 1,
+        "error": "page_changed",
+        "current_revision": "new-publication",
+    }

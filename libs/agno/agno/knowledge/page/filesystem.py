@@ -14,12 +14,13 @@ from agno.utils.bounded import BoundedWorkers, WorkBudget
 
 if TYPE_CHECKING:
     from agno.knowledge.knowledge import Knowledge
+    from agno.tools.toolkit import Toolkit
 
 _COMMAND_WORKERS = BoundedWorkers(8, "page-filesystem")
 
 
 class PageFileSystem:
-    """Explicit read-only command adapter; no tool registration or prompt insertion.
+    """Read-only command adapter with opt-in tools and no prompt insertion.
 
     Commands use public Knowledge page APIs. Each command gets a fresh metadata
     snapshot, and cached bodies are validated against current publication before
@@ -94,6 +95,50 @@ class PageFileSystem:
             return await _COMMAND_WORKERS.run(self._run, command, seconds=self.command_seconds)
         except TimeoutError as exc:
             raise PageError() from exc
+
+    def tools(self, *, tool_name: str = "query_pages", description: Optional[str] = None) -> Toolkit:
+        """Build one read-only command tool for ``Agent(tools=[files.tools()])``.
+
+        Sync and async runs select their corresponding command implementation.
+        The tool returns readable page errors; direct command methods still raise
+        PageError. Applications retain setup, retrieval timing and instructions.
+        """
+        from agno.knowledge.page._commands import USAGE
+        from agno.knowledge.page.types import tool_error
+        from agno.tools.toolkit import Toolkit
+
+        if not tool_name or not tool_name.strip():
+            raise ValueError("tool_name must not be empty")
+
+        def query_pages(command: str) -> str:
+            try:
+                return self.run_command(command)
+            except PageError as exc:
+                return tool_error(exc)
+
+        async def aquery_pages(command: str) -> str:
+            try:
+                return await self.arun_command(command)
+            except PageError as exc:
+                return tool_error(exc)
+
+        query_pages.__name__ = tool_name
+        toolkit = Toolkit(name="page_filesystem", tools=[query_pages], async_tools=[(aquery_pages, tool_name)])
+        tool_description = (
+            description
+            if description is not None
+            else (
+                "Browse, read or search published documentation pages as Markdown files. "
+                "Commands are emulated against indexed pages; they cannot execute a shell or write files. "
+                "Incomplete searches do not establish absence. "
+                f"Output is bounded to {self.max_output_chars} characters plus a continuation notice.\n\n"
+                + USAGE
+                + '\nExamples: cat /agents/overview; ls /agents; rg -C 2 "tool_call_limit" /agents.'
+            )
+        )
+        for function in (toolkit.functions[tool_name], toolkit.async_functions[tool_name]):
+            function.description = tool_description
+        return toolkit
 
     def get_corpus(self, *, lazy: bool = False, prefix: str = "/") -> PageCorpus:
         """Get a bounded command-local page mapping, optionally scoped to a prefix.
