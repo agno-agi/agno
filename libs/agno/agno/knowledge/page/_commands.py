@@ -68,9 +68,18 @@ def _canonical(path: str, files: Mapping[str, str]) -> str:
         ) from None
 
 
+def _file_candidates(clean: str, *, index: bool = False) -> tuple[str, ...]:
+    if clean == "/":
+        return ("/index.md",) if index else ()
+    if clean.endswith(".md"):
+        return (clean,)
+    candidates = (clean, f"{clean}.md")
+    return (*candidates, f"{clean}/index.md") if index else candidates
+
+
 def _resolve_file(path: str, files: Mapping[str, str]) -> str:
     clean = _canonical(path, files)
-    for candidate in (clean, f"{clean}.md", f"{clean}/index.md"):
+    for candidate in _file_candidates(clean, index=True):
         if candidate in files:
             return candidate
     raise CommandError(f"{path}: no such file. Use ls/tree to explore, or rg to search.")
@@ -78,6 +87,8 @@ def _resolve_file(path: str, files: Mapping[str, str]) -> str:
 
 def _files_under(directory: str, files: Mapping[str, str]) -> list[str]:
     clean = _canonical(directory, files)
+    if clean.endswith(".md"):
+        return []
     prefix = "/" if clean == "/" else f"{clean}/"
     paths_under = getattr(files, "paths_under", None)
     if callable(paths_under):
@@ -161,7 +172,7 @@ def _cmd_ls(args: list[str], files: Mapping[str, str]) -> str:
         lines: list[str] = []
         if _is_dir(clean, files):
             lines.extend(_dir_entries(clean, files))
-        for candidate in (clean, f"{clean}.md"):
+        for candidate in _file_candidates(clean):
             if _has_file(candidate, files) and candidate not in lines:
                 lines.append(candidate)
         if not lines:
@@ -177,7 +188,7 @@ def _cmd_tree(args: list[str], files: Mapping[str, str]) -> str:
     root = _norm(rest[0]) if rest else "/"
     paths = _files_under(root, files)
     if not paths:
-        for candidate in (root, f"{root}.md"):
+        for candidate in _file_candidates(root):
             if _has_file(candidate, files):
                 return candidate
         raise CommandError(f"{root}: no such directory")
@@ -328,7 +339,7 @@ def _rg_targets(roots: list[str], files: Mapping[str, str]) -> list[str]:
     for root in roots:
         clean = _canonical(root, files)
         found = False
-        for candidate in (clean, f"{clean}.md"):
+        for candidate in _file_candidates(clean):
             if candidate in files:
                 targets.append(candidate)
                 found = True
@@ -431,36 +442,55 @@ def _cmd_rg(args: list[str], files: Mapping[str, str]) -> str:
         and len(roots) == 1
     ):
         clean = _canonical(roots[0], files)
+        exact = None
         if clean == "/":
             prefix = "/"
-        elif clean.endswith(".md") or any(candidate in files for candidate in (clean, f"{clean}.md")):
-            # Public grep uses a prefix limit. Scan only resolved targets below so
-            # similarly named siblings cannot consume an exact file's match budget.
+        elif clean.endswith(".md"):
+            # An explicit file never expands into a same-name directory.
             prefix = None
         else:
-            prefix = clean + "/"
-            if not files.has_directory(prefix):
+            exact = next((candidate for candidate in _file_candidates(clean) if candidate in files), None)
+            prefix = clean + "/" if files.has_directory(clean + "/") else None
+            if prefix is None and exact is None:
                 raise CommandError(f"rg: {roots[0]}: no such file or directory")
         if prefix is not None:
             result = files.grep(positional[0], prefix=prefix, ignore_case="i" in flags)
-            matches = [match for match in result.matches if match.path.startswith(prefix)]
-            if not matches and result.complete:
+            matches = [(m.path, m.line_number, m.text) for m in result.matches if m.path.startswith(prefix)]
+            complete, stop_reason = result.complete, result.stop_reason
+            if exact is not None:
+                # Keep the exact page outside the directory prefix so similarly named
+                # siblings cannot consume its match budget. Only this page is loaded.
+                exact_matches = []
+                for number, line in enumerate(files[exact].splitlines(), 1):
+                    if time.monotonic() > deadline:
+                        complete, stop_reason = False, "deadline"
+                        break
+                    if rx.search(line, timeout=min(match_timeout, max(0.001, deadline - time.monotonic()))):
+                        exact_matches.append((exact, number, line))
+                        if len(exact_matches) >= 100:
+                            complete, stop_reason = False, "limit"
+                            break
+                matches = sorted([*exact_matches, *matches])
+                if len(matches) > 100:
+                    matches = matches[:100]
+                    complete, stop_reason = False, "limit"
+            if not matches and complete:
                 return f"rg: no matches for {positional[0]!r}"
-            count = len({match.path for match in matches})
+            count = len({path for path, _, _ in matches})
             summary = f"[{len(matches)} matching lines in {count} files]"
-            if not result.complete:
+            if not complete:
                 summary = (
-                    f"[stopped at {result.stop_reason}: {len(matches)} matching lines "
+                    f"[stopped at {stop_reason}: {len(matches)} matching lines "
                     f"in {count} files so far; narrow the path]"
                 )
             if "l" in flags:
-                entries = list(dict.fromkeys(m.path for m in matches))
+                entries = list(dict.fromkeys(path for path, _, _ in matches))
             elif "c" in flags:
                 from collections import Counter
 
-                entries = [f"{path}:{count}" for path, count in Counter(m.path for m in matches).items()]
+                entries = [f"{path}:{count}" for path, count in Counter(path for path, _, _ in matches).items()]
             else:
-                entries = [f"{m.path}:{m.line_number}:{m.text}" for m in matches]
+                entries = [f"{path}:{number}:{text}" for path, number, text in matches]
             return "\n".join([summary, *entries])
 
     targets = _rg_targets(roots, files)

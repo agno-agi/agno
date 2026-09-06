@@ -1979,3 +1979,61 @@ async def test_page_filesystem_tool_reads_published_pages_and_preserves_revision
         "error": "page_changed",
         "current_revision": "new-publication",
     }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_page_filesystem_section_search_and_explicit_files_bound_database_access(corpus, monkeypatch, async_mode):
+    from agno.knowledge.page import PageFileSystem
+
+    documents = {f"/agents/child-{i:03}.md": "ordinary child\n" for i in range(250)}
+    documents.update(
+        {
+            "/agents.md": "needle overview\n",
+            "/agents/child-249.md": "needle child\n",
+            "/agents-other.md": "needle sibling\n" * 110,
+            "/index.md": "root index\n",
+        }
+    )
+    knowledge = _publish_filesystem_pages(corpus, documents)
+    original_list, original_read, original_grep = knowledge.list_pages, knowledge.read_page, knowledge.grep_pages
+    calls = []
+
+    def listing(**kwargs):
+        # Directory existence and exact-file metadata may each need one record;
+        # no command here should enumerate any of the 250 children.
+        assert kwargs.get("limit") == 1
+        calls.append(("list", kwargs.get("prefix")))
+        return original_list(**kwargs)
+
+    def read(path, **kwargs):
+        assert path in ("/agents.md", "/index.md")
+        calls.append(("read", path))
+        return original_read(path, **kwargs)
+
+    def grep(query, **kwargs):
+        assert kwargs["prefix"] == "/agents/" and kwargs["limit"] == 100
+        calls.append(("grep", query))
+        return original_grep(query, **kwargs)
+
+    monkeypatch.setattr(knowledge, "list_pages", listing)
+    monkeypatch.setattr(knowledge, "read_page", read)
+    monkeypatch.setattr(knowledge, "grep_pages", grep)
+
+    for command, expected in (
+        ("rg absent /agents", "rg: no matches for 'absent'"),
+        (
+            "rg needle /agents",
+            "[2 matching lines in 2 files]\n/agents.md:1:needle overview\n/agents/child-249.md:1:needle child",
+        ),
+        ("ls /agents.md", "/agents.md"),
+        ("rg absent /agents.md", "rg: no matches for 'absent'"),
+        ("cat / /agents.md", "==> /index.md <==\nroot index\n\n\n==> /agents.md <==\nneedle overview\n"),
+    ):
+        calls.clear()
+        files = PageFileSystem(knowledge=knowledge)
+        result = await files.arun_command(command) if async_mode else files.run_command(command)
+        assert result == expected
+        assert sum(kind == "grep" for kind, _ in calls) == int(command.endswith(" /agents"))
+        if command.endswith(".md") and not command.startswith("cat"):
+            assert ("list", "/agents/") not in calls

@@ -276,3 +276,139 @@ def test_explicit_md_file_does_not_expand_into_same_name_directory(monkeypatch, 
         pages, "get_docs_knowledge", lambda: SimpleNamespace(list_pages=listing, read_page=read, grep_pages=grep)
     )
     assert run_command(command, pages.get_corpus(lazy=True)) == run_command(command, source)
+
+
+@pytest.mark.parametrize("command", ["cat /", "head /", "tail /", "wc /", "cat / /a", "wc / /a"])
+@pytest.mark.parametrize("has_index", [False, True])
+def test_root_read_alias_uses_index_and_preserves_later_targets(command, has_index):
+    from agno.knowledge.page import PageNotFound
+    from agno.knowledge.page._commands import run_command
+
+    source = {"/a.md": "valid later page\n"}
+    if has_index:
+        source["/index.md"] = "root index\n"
+    reads = []
+
+    def listing(**kwargs):
+        assert kwargs == {"limit": 1}
+        return SimpleNamespace(pages=[object()])
+
+    def read(path, **kwargs):
+        reads.append(path)
+        assert path in ("/index.md", "/a.md")
+        if path not in source:
+            raise PageNotFound()
+        return SimpleNamespace(text=source[path], next_offset=None, revision="r")
+
+    files = PageFileSystem(knowledge=SimpleNamespace(list_pages=listing, read_page=read))
+    output = files.run_command(command)
+    assert output == run_command(command, source)
+    assert "ValueError" not in output
+    assert reads[0] == "/index.md"
+    if "/a" in command:
+        assert "/a.md" in output
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "ls /agents.md",
+        "tree /agents.md",
+        "find /agents.md",
+        "rg absent /agents.md",
+        "rg -C 1 absent /agents.md",
+        "cat /agents.md",
+    ],
+)
+def test_explicit_file_never_probes_redundant_aliases_or_directory(command):
+    from test_page_filesystem import page
+
+    from agno.knowledge.page import PageList
+    from agno.knowledge.page._commands import run_command
+
+    metadata = page("/agents.md")
+    reads = []
+
+    def listing(**kwargs):
+        assert kwargs == {"limit": 1} or kwargs == {"prefix": "/agents.md", "limit": 1}
+        return PageList(pages=(metadata,))
+
+    def read(path, **kwargs):
+        assert path == "/agents.md"
+        reads.append(path)
+        return SimpleNamespace(text="body", next_offset=None, revision="one")
+
+    files = PageFileSystem(knowledge=SimpleNamespace(list_pages=listing, read_page=read))
+    assert files.run_command(command) == run_command(command, {"/agents.md": "body"})
+    assert len(reads) == (1 if command.startswith(("rg", "cat")) else 0)
+
+
+@pytest.mark.parametrize("flag", ["", "-l", "-c", "-i", "-F"])
+@pytest.mark.parametrize("complete,reason", [(True, None), (False, "deadline"), (False, "limit")])
+def test_literal_file_and_directory_search_keeps_bounded_grep(flag, complete, reason):
+    from agno.knowledge.page import GrepMatch, GrepResult
+
+    calls = []
+
+    def listing(**kwargs):
+        assert kwargs in ({"limit": 1}, {"prefix": "/agents/", "limit": 1})
+        return SimpleNamespace(pages=[SimpleNamespace(path="/agents/child.md")])
+
+    def read(path, **kwargs):
+        assert path == "/agents.md"
+        calls.append("read")
+        return SimpleNamespace(text="needle file\n", next_offset=None, revision="r")
+
+    def grep(query, **kwargs):
+        assert kwargs == {"prefix": "/agents/", "ignore_case": flag == "-i", "limit": 100}
+        calls.append("grep")
+        return GrepResult(
+            matches=(
+                GrepMatch(
+                    path="/agents/child.md",
+                    url="https://example.com/child",
+                    revision="r",
+                    line_number=1,
+                    text="needle child",
+                ),
+            ),
+            complete=complete,
+            stop_reason=reason,
+        )
+
+    files = PageFileSystem(knowledge=SimpleNamespace(list_pages=listing, read_page=read, grep_pages=grep))
+    output = files.run_command(f"rg {flag} needle /agents")
+    assert "/agents.md" in output and "/agents/child.md" in output
+    assert (
+        "[2 matching lines in 2 files]" if complete else f"[stopped at {reason}: 2 matching lines in 2 files so far;"
+    ) in output
+    assert calls == ["read", "grep"]
+
+
+def test_literal_file_and_directory_results_share_the_match_bound():
+    from agno.knowledge.page import GrepMatch, GrepResult
+
+    def grep(*args, **kwargs):
+        return GrepResult(
+            matches=tuple(
+                GrepMatch(
+                    path="/agents/child.md",
+                    url="https://example.com/child",
+                    revision="r",
+                    line_number=i,
+                    text="needle child",
+                )
+                for i in range(1, 101)
+            ),
+            complete=False,
+            stop_reason="limit",
+        )
+
+    knowledge = SimpleNamespace(
+        list_pages=lambda **kwargs: SimpleNamespace(pages=[SimpleNamespace(path="/agents/child.md")]),
+        read_page=lambda *args, **kwargs: SimpleNamespace(text="needle file\n" * 110, next_offset=None, revision="r"),
+        grep_pages=grep,
+    )
+    output = PageFileSystem(knowledge=knowledge).run_command("rg needle /agents")
+    assert output.startswith("[stopped at limit: 100 matching lines in 1 files so far;")
+    assert len(output.splitlines()) == 101
