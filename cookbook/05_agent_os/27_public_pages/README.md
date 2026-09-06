@@ -104,9 +104,9 @@ All `Knowledge` constructor arguments are keyword-only. `content_db` is preferre
 `contents_db` remains a supported keyword and read/write alias without warnings.
 Both names share the existing dataclass field; serialization and
 `dataclasses.replace(..., contents_db=...)` retain its legacy spelling. Distinct
-objects supplied under both keywords are rejected. See the
-[constructor migration note](../../../libs/agno/CHANGELOG.md) for the intentional
-positional-call break. Other Knowledge configurations retain their behavior.
+objects supplied under both keywords are rejected. Positional constructor calls
+must be updated to use keyword arguments. Other Knowledge configurations retain
+their behavior.
 Page storage supports synchronous PostgreSQL adapters in one logical database;
 custom embedders must enforce a timeout or use the supported OpenAI embedder.
 
