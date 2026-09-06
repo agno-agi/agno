@@ -965,3 +965,94 @@ async def test_nested_ordinary_errors_keep_configured_retries(async_mode):
         else:
             list(workflow.run("go", stream=True))
     assert len(calls) == 3
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("policy", [OnError.skip, OnError.fail, OnError.pause])
+@pytest.mark.parametrize("check_type", ["input", "output"])
+async def test_nested_guardrail_preserves_explicit_skip(database_factory, async_mode, stream, policy, check_type):
+    from agno.exceptions import InputCheckError, OutputCheckError
+
+    calls = []
+
+    def effect(step_input):
+        calls.append("child")
+        return StepOutput(content="done")
+
+    def reject(step_input):
+        raise (InputCheckError if check_type == "input" else OutputCheckError)("blocked")
+
+    def next_step(step_input):
+        calls.append("next")
+        return StepOutput(content="continued")
+
+    child = Workflow(
+        id="inner",
+        telemetry=False,
+        steps=[
+            Step(name="effect", executor=effect),
+            Step(name="reject", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail)),
+        ],
+    )
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        steps=[
+            Step(name="child", workflow=child, skip_on_failure=True, human_review=HumanReview(on_error=policy)),
+            Step(name="next", executor=next_step),
+        ],
+    )
+    if async_mode:
+        result = workflow.arun("go", run_id="skip-run", session_id="session", stream=stream, stream_events=stream)
+        if stream:
+            async for _ in result:
+                pass
+        else:
+            await result
+    else:
+        result = workflow.run("go", run_id="skip-run", session_id="session", stream=stream, stream_events=stream)
+        if stream:
+            list(result)
+    saved = load_run(database_factory, "skip-run")
+    assert saved.status == RunStatus.completed
+    assert calls == ["child", "next"]
+    assert saved.step_results[0].success is False
+    assert saved.step_results[0].content == "Step child failed but skipped"
+    assert saved.step_results[0].error == "blocked"
+
+
+@pytest.mark.parametrize("later_error", ["runtime", "guardrail"])
+def test_native_workflow_agent_logs_failure_after_error_frame(database_factory, capsys, later_error):
+    from fastapi.testclient import TestClient
+
+    from agno.exceptions import InputCheckError, OutputCheckError
+    from agno.os import AgentOS
+
+    def reject(step_input):
+        raise InputCheckError("tool rejected")
+
+    def fail_answer():
+        raise (RuntimeError if later_error == "runtime" else OutputCheckError)("answer composition failed")
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        agent=recording_workflow_agent([], fail_answer),
+        steps=[Step(name="reject", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    with TestClient(AgentOS(workflows=[workflow], telemetry=False).get_app()) as client:
+        response = client.post(
+            "/workflows/review/runs", data={"message": "go", "session_id": "session", "stream": "true"}
+        )
+    errors = [
+        json.loads(line[6:])
+        for line in response.text.splitlines()
+        if line.startswith("data: ") and json.loads(line[6:]).get("event") == "WorkflowError"
+    ]
+    assert len(errors) == 1 and errors[0]["run_id"]
+    assert load_run(database_factory, errors[0]["run_id"]).status == RunStatus.error
+    assert "answer composition failed" in capsys.readouterr().err

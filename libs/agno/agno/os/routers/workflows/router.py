@@ -1077,6 +1077,11 @@ async def workflow_response_streamer(
 
     except (InputCheckError, OutputCheckError) as e:
         if workflow_error_emitted:
+            # A WorkflowAgent may raise again while composing its answer after
+            # the tool's error frame. Keep that exception visible to operators.
+            import traceback
+
+            traceback.print_exc()
             return
         error_response = WorkflowErrorEvent(
             error=str(e),
@@ -1089,11 +1094,11 @@ async def workflow_response_streamer(
     except asyncio.CancelledError:
         return
     except Exception as e:
-        if workflow_error_emitted:
-            return
         import traceback
 
         traceback.print_exc()
+        if workflow_error_emitted:
+            return
         error_response = WorkflowErrorEvent(
             error=str(e),
             error_type=e.type if hasattr(e, "type") else None,
