@@ -1013,6 +1013,7 @@ async def workflow_response_streamer(
     auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
+    workflow_error_emitted = False
     try:
         # Pass background_tasks if provided
         if background_tasks is not None:
@@ -1037,6 +1038,8 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
+            if isinstance(run_response_chunk, WorkflowErrorEvent) and run_response_chunk.workflow_id == workflow.id:
+                workflow_error_emitted = True
             yield format_sse_event(run_response_chunk)  # type: ignore
 
         # If the workflow paused, yield WorkflowPausedEvent as the new clean
@@ -1073,6 +1076,8 @@ async def workflow_response_streamer(
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
 
     except (InputCheckError, OutputCheckError) as e:
+        if workflow_error_emitted:
+            return
         error_response = WorkflowErrorEvent(
             error=str(e),
             error_type=e.type,
@@ -1084,6 +1089,8 @@ async def workflow_response_streamer(
     except asyncio.CancelledError:
         return
     except Exception as e:
+        if workflow_error_emitted:
+            return
         import traceback
 
         traceback.print_exc()

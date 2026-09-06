@@ -2403,6 +2403,9 @@ class Workflow:
                 workflow_name=self.name,
                 session_id=run.session_id,
                 error=str(error),
+                error_type=getattr(error, "type", None),
+                error_id=getattr(error, "error_id", None),
+                additional_data=getattr(error, "additional_data", None),
             )
         )
         return [self._handle_event(event, run) for event in events]
@@ -6040,30 +6043,28 @@ class Workflow:
             # Workflow was executed by the tool
             reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-
-                # Update the last run directly with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+            executed_run = reloaded_session.get_run(run_context.run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
+                # Update the executed run directly with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                self._persist_session_and_run(session=reloaded_session, run=last_run)
+                self._persist_session_and_run(session=reloaded_session, run=executed_run)
 
-                # Return the last run directly (WRO2 from inner workflow)
-                return last_run
+                # Return the executed run directly (WRO2 from inner workflow)
+                return executed_run
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
                 # Return a placeholder error response
                 return WorkflowRunOutput(
-                    run_id=str(uuid4()),
+                    run_id=run_context.run_id or str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
                     user_id=session.user_id,
@@ -6467,34 +6468,33 @@ class Workflow:
             else:
                 reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-                log_debug(f"Retrieved latest workflow run: {last_run.run_id}")
-                log_debug(f"Total workflow runs in session: {len(reloaded_session.runs)}")
+            executed_run = reloaded_session.get_run(run_context.run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
+                log_debug(f"Retrieved executed workflow run: {executed_run.run_id}")
+                log_debug(f"Total workflow runs in session: {len(reloaded_session.runs or [])}")
 
-                # Update the last run with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+                # Update the executed run with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                await self._apersist_session_and_run(session=reloaded_session, run=last_run)
+                await self._apersist_session_and_run(session=reloaded_session, run=executed_run)
 
                 log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
-                # Return the last run directly (WRO2 from inner workflow)
-                return last_run
+                # Return the executed run directly (WRO2 from inner workflow)
+                return executed_run
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
                 # Return a placeholder error response
                 return WorkflowRunOutput(
-                    run_id=str(uuid4()),
+                    run_id=run_context.run_id or str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
                     user_id=session.user_id,

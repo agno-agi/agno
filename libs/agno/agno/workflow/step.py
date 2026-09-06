@@ -13,7 +13,7 @@ from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
-from agno.exceptions import RunCancelledException
+from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.metrics import RunMetrics
@@ -1285,6 +1285,10 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # A nested workflow's guardrail rejection is terminal. Replaying
+                # the child would repeat earlier side effects without changing it.
+                if self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError)):
+                    raise
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
@@ -1681,6 +1685,10 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # A nested workflow's guardrail rejection is terminal. Replaying
+                # the child would repeat earlier side effects without changing it.
+                if self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError)):
+                    raise
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
@@ -1981,6 +1989,10 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # A nested workflow's guardrail rejection is terminal. Replaying
+                # the child would repeat earlier side effects without changing it.
+                if self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError)):
+                    raise
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
@@ -2368,6 +2380,10 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # A nested workflow's guardrail rejection is terminal. Replaying
+                # the child would repeat earlier side effects without changing it.
+                if self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError)):
+                    raise
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 

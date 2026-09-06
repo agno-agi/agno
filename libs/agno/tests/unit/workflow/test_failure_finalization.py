@@ -767,3 +767,201 @@ def test_structured_event_keeps_json_safe_content_alias():
     assert serialized["content"] == serialized["step_output"]["content"] == {"created": "2026-09-06"}
     restored = StepOutputEvent.from_dict(serialized)
     assert restored.content == {"created": "2026-09-06"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_nonstream_workflow_agent_returns_its_own_run(database_factory, async_mode):
+    from agno.exceptions import InputCheckError
+    from agno.models.message import Message
+    from agno.models.openai import OpenAIResponses
+    from agno.run.agent import RunOutput
+    from agno.tools.function import FunctionCall
+    from agno.workflow.agent import WorkflowAgent
+
+    def reject(step_input):
+        raise InputCheckError("blocked")
+
+    def another_run():
+        Workflow(
+            id="review", db=database_factory(), telemetry=False, steps=[Step(name="other", executor=successful_step)]
+        ).run("other", run_id="other-run", session_id="session")
+
+    def response(results):
+        another_run()
+        return RunOutput(
+            run_id="agent-response",
+            content="Rejected",
+            messages=[
+                Message(
+                    role="assistant",
+                    tool_calls=[
+                        {
+                            "id": "call-1",
+                            "type": "function",
+                            "function": {"name": "run_workflow", "arguments": '{"query":"go"}'},
+                        }
+                    ],
+                ),
+                *results,
+            ],
+        )
+
+    class NonstreamAgent(WorkflowAgent):
+        def run(self, **kwargs):
+            results = []
+            call = FunctionCall(function=self.tools[0], arguments={"query": "go"}, call_id="call-1")
+            list(self.model.run_function_call(call, results))
+            return response(results)
+
+        async def arun(self, **kwargs):
+            results = []
+            call = FunctionCall(function=self.tools[0], arguments={"query": "go"}, call_id="call-1")
+            async for _ in self.model.arun_function_calls([call], results):
+                pass
+            return response(results)
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        agent=NonstreamAgent(model=OpenAIResponses(id="unused")),
+        steps=[Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    if async_mode:
+        result = await workflow.arun("go", session_id="session", run_id="my-run")
+    else:
+        result = workflow.run("go", session_id="session", run_id="my-run")
+    assert result.run_id == "my-run" and result.status == RunStatus.error
+    saved = load_run(database_factory, "my-run")
+    assert saved.workflow_agent_run.parent_run_id == "my-run"
+    other = load_run(database_factory, "other-run")
+    assert other.status == RunStatus.completed and other.workflow_agent_run is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.parametrize("check_type", ["input", "output"])
+async def test_nested_guardrail_does_not_repeat_child_side_effects(database_factory, async_mode, stream, check_type):
+    from agno.exceptions import InputCheckError, OutputCheckError
+
+    error_type = InputCheckError if check_type == "input" else OutputCheckError
+    calls = []
+
+    def effect(step_input):
+        calls.append("effect")
+        return StepOutput(content="done")
+
+    def reject(step_input):
+        raise error_type("blocked")
+
+    inner = Workflow(
+        id="inner",
+        db=database_factory(),
+        telemetry=False,
+        steps=[
+            Step(name="effect", executor=effect),
+            Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail)),
+        ],
+    )
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        steps=[Step(name="child", workflow=inner, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    with pytest.raises(error_type):
+        if async_mode:
+            result = workflow.arun("go", session_id="session", stream=stream, stream_events=stream)
+            if stream:
+                async for _ in result:
+                    pass
+            else:
+                await result
+        else:
+            result = workflow.run("go", session_id="session", stream=stream, stream_events=stream)
+            if stream:
+                list(result)
+    assert calls == ["effect"]
+
+
+@pytest.mark.parametrize("error_kind", ["input", "output", "runtime"])
+@pytest.mark.parametrize("background", [False, True])
+def test_native_sse_has_one_identified_workflow_error(database_factory, event_stream, error_kind, background):
+    from fastapi.testclient import TestClient
+
+    from agno.exceptions import InputCheckError, OutputCheckError
+    from agno.os import AgentOS
+
+    def reject(step_input):
+        raise {"input": InputCheckError, "output": OutputCheckError, "runtime": RuntimeError}[error_kind]("blocked")
+
+    workflow = Workflow(
+        id="review",
+        db=database_factory(),
+        telemetry=False,
+        store_events=True,
+        steps=[Step(name="guardrail", executor=reject, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    with TestClient(AgentOS(workflows=[workflow], telemetry=False).get_app()) as client:
+        response = client.post(
+            "/workflows/review/runs",
+            data={"message": "go", "session_id": "session", "stream": "true", "background": str(background).lower()},
+        )
+        assert response.status_code == 200
+        frames = [json.loads(line[6:]) for line in response.text.splitlines() if line.startswith("data: ")]
+        errors = [frame for frame in frames if frame.get("event") == "WorkflowError"]
+        assert len(errors) == 1 and errors[0].get("run_id")
+        if error_kind != "runtime":
+            assert errors[0]["error_type"] == f"{error_kind}_check_error"
+        saved = load_run(database_factory, errors[0]["run_id"])
+        assert saved.status == RunStatus.error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("inner_error", [False, True])
+async def test_sse_fallback_retains_errors_not_emitted_by_root(inner_error):
+    from types import SimpleNamespace
+
+    from agno.exceptions import InputCheckError
+    from agno.os.routers.workflows.router import workflow_response_streamer
+    from agno.run.workflow import WorkflowErrorEvent
+
+    async def broken(**kwargs):
+        if inner_error:
+            yield WorkflowErrorEvent(run_id="child-run", workflow_id="child", error="child failed")
+        raise InputCheckError("root blocked")
+
+    source = SimpleNamespace(id="root", arun=broken)
+    events = [event async for event in workflow_response_streamer(source, "go")]
+    frames = [json.loads(line[6:]) for event in events for line in event.splitlines() if line.startswith("data: ")]
+    assert len(frames) == (2 if inner_error else 1)
+    assert frames[-1]["error"] == "root blocked"
+    assert frames[-1]["error_type"] == "input_check_error"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_nested_ordinary_errors_keep_configured_retries(async_mode):
+    calls = []
+
+    def fail(step_input):
+        calls.append(1)
+        raise RuntimeError("temporary")
+
+    child = Workflow(
+        telemetry=False,
+        steps=[Step(name="fail", executor=fail, max_retries=0, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    workflow = Workflow(
+        telemetry=False,
+        steps=[Step(name="child", workflow=child, max_retries=2, human_review=HumanReview(on_error=OnError.fail))],
+    )
+    with pytest.raises(RuntimeError):
+        if async_mode:
+            async for _ in workflow.arun("go", stream=True):
+                pass
+        else:
+            list(workflow.run("go", stream=True))
+    assert len(calls) == 3
