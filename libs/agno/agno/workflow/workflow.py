@@ -227,6 +227,33 @@ def _step_on_error(step: Union[Step, Condition]) -> Union[OnError, str]:
     return hr.on_error
 
 
+def _check_failed_step(step: Any, output: StepOutput, run: WorkflowRunOutput, outputs: list) -> None:
+    """Honor explicit failure policy while retaining the executor's structured report."""
+    if (
+        not output.success
+        and isinstance(step, (Step, Condition))
+        and _step_on_error(step) == OnError.fail
+        and not getattr(step, "skip_on_failure", False)
+    ):
+        run.step_results = list(outputs)
+        raise RuntimeError(output.error or f"Step {output.step_name} reported failure")
+
+
+def _record_failed_step(step: Any, error: Exception, run: WorkflowRunOutput, outputs: list) -> None:
+    """Keep exhausted exception diagnostics alongside already completed steps."""
+    if not outputs or not isinstance(outputs[-1], StepOutput) or outputs[-1].step_id != getattr(step, "step_id", None):
+        outputs.append(
+            StepOutput(
+                step_name=getattr(step, "name", None),
+                step_id=getattr(step, "step_id", None),
+                success=False,
+                error=str(error),
+                content=str(error),
+            )
+        )
+    run.step_results = list(outputs)
+
+
 def _find_inner_step_by_executor(
     step: WorkflowStep,
     executor_id: Optional[str] = None,
@@ -2979,7 +3006,7 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error
                             )
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                             raise
 
                     # Check if executor (agent/team) is paused for tool-level HITL
@@ -3042,6 +3069,7 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -3396,6 +3424,7 @@ class Workflow:
                                         return
 
                                 collected_step_outputs.append(step_output)
+                                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                                 # Update the workflow-level previous_step_outputs dictionary
                                 previous_step_outputs[step_name] = step_output
@@ -3510,9 +3539,12 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                             )
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(
+                                step, step_error_exception, workflow_run_response, collected_step_outputs
+                            )
                             raise step_error_exception
 
                     # Post-execution output review check
@@ -4027,7 +4059,7 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error
                             )
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                             raise
 
                     # Check if executor (agent/team) is paused for tool-level HITL
@@ -4088,6 +4120,7 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -4188,6 +4221,7 @@ class Workflow:
                 logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 raise e
 
         # Stop timer on error
@@ -4476,6 +4510,7 @@ class Workflow:
                                         return
 
                                 collected_step_outputs.append(step_output)
+                                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                                 # Update the workflow-level previous_step_outputs dictionary
                                 previous_step_outputs[step_name] = step_output
@@ -4594,9 +4629,12 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                             )
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(
+                                step, step_error_exception, workflow_run_response, collected_step_outputs
+                            )
                             raise step_error_exception
 
                     # Post-execution output review check
