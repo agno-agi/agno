@@ -16,6 +16,17 @@ except ImportError:
     raise ImportError("The `python-pptx` package is not installed. Please install it via `pip install python-pptx`.")
 
 
+def _collect_shape_text(shapes) -> List[str]:
+    """Recursively collect non-empty text from shapes, descending into GroupShapes."""
+    texts: List[str] = []
+    for shape in shapes:
+        if hasattr(shape, "shapes"):  # GroupShape — recurse into children
+            texts.extend(_collect_shape_text(shape.shapes))
+        elif hasattr(shape, "text") and shape.text.strip():
+            texts.append(shape.text.strip())
+    return texts
+
+
 class PPTXReader(Reader):
     """Reader for PPTX files"""
 
@@ -60,11 +71,7 @@ class PPTXReader(Reader):
             for slide_number, slide in enumerate(presentation.slides, 1):
                 slide_text = f"Slide {slide_number}:\n"
 
-                # Extract text from shapes that contain text
-                text_content = []
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text.strip():
-                        text_content.append(shape.text.strip())
+                text_content = _collect_shape_text(slide.shapes)
 
                 if text_content:
                     slide_text += "\n".join(text_content)
