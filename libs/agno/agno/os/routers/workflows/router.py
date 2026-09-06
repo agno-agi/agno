@@ -2293,6 +2293,7 @@ def get_workflow_router(
                 media_type="text/event-stream",
             )
         else:
+            run_response = None
             try:
                 # Ownership already verified above; acontinue_run loads the run
                 # via {session_id, run_id} which we've proven the caller owns.
@@ -2302,21 +2303,6 @@ def get_workflow_router(
                     step_requirements=parsed_requirements,
                     stream=False,
                     background_tasks=background_tasks,
-                )
-                # Status-only stream sync (deliberate scope): a non-stream
-                # continue has no events to publish, but a formerly-queued/
-                # streamed run's stream view must stop saying PAUSED once the
-                # continue settles - only_if_tracked leaves never-streamed
-                # runs alone.
-                # Stream close + paused-ticket settle as one
-                # cancellation-proof unit (see the streaming twin)
-                await afinalize_continue_stream(
-                    workflow,
-                    run_id,
-                    session_id,
-                    queue_worker=getattr(request.app.state, "queue_worker", None),
-                    only_if_tracked=True,
-                    final_status=getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             # Same typed mapping as the agents continue endpoint: a
@@ -2330,6 +2316,32 @@ def get_workflow_router(
                 raise HTTPException(status_code=409, detail=str(e))
             except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
+            finally:
+                if run_response is not None:
+                    await afinalize_continue_stream(
+                        workflow,
+                        run_id,
+                        session_id,
+                        queue_worker=getattr(request.app.state, "queue_worker", None),
+                        only_if_tracked=True,
+                        final_status=run_response.status,
+                    )
+                else:
+                    # Execution may persist ERROR and then raise. Synchronize that
+                    # outcome without closing a racing request's still-running run
+                    # or masking the original exception if the database is down.
+                    with contextlib.suppress(Exception):
+                        failed_session = await workflow.aget_session(session_id=session_id)
+                        failed_run = failed_session.get_run(run_id) if failed_session else None
+                        if failed_run and failed_run.status in (RunStatus.error, RunStatus.cancelled):
+                            await afinalize_continue_stream(
+                                workflow,
+                                run_id,
+                                session_id,
+                                queue_worker=getattr(request.app.state, "queue_worker", None),
+                                only_if_tracked=True,
+                                final_status=failed_run.status,
+                            )
 
     @router.post(
         "/workflows/{workflow_id}/runs/{run_id}/cancel",

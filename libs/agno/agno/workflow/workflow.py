@@ -227,6 +227,15 @@ def _step_on_error(step: Union[Step, Condition]) -> Union[OnError, str]:
     return hr.on_error
 
 
+class _StepOutputFailure(RuntimeError):
+    """An explicit failed output whose report must survive stream termination."""
+
+    def __init__(self, step: Step, output: StepOutput):
+        super().__init__(output.error or f"Step {output.step_name} reported failure")
+        self.step = step
+        self.output = output
+
+
 def _check_failed_step(step: Any, output: StepOutput, run: WorkflowRunOutput, outputs: list) -> None:
     """Honor a Step's explicit failure policy and retain its structured report.
 
@@ -241,7 +250,7 @@ def _check_failed_step(step: Any, output: StepOutput, run: WorkflowRunOutput, ou
         and not getattr(step, "skip_on_failure", False)
     ):
         run.step_results = list(outputs)
-        raise RuntimeError(output.error or f"Step {output.step_name} reported failure")
+        raise _StepOutputFailure(step, output)
 
 
 def _record_failed_step(step: Any, error: Exception, run: WorkflowRunOutput, outputs: list) -> None:
@@ -2360,6 +2369,41 @@ class Workflow:
             run_index=run_index,
         )
 
+    def _error_events(self, error: Exception, run: WorkflowRunOutput) -> List[WorkflowRunOutputEvent]:
+        """Register failure reports and the terminal event before error persistence."""
+        from agno.run.workflow import WorkflowErrorEvent
+
+        events: List[WorkflowRunOutputEvent] = []
+        if isinstance(error, _StepOutputFailure):
+            step_index = (
+                next((index for index, step in enumerate(self.steps) if step is error.step), None)
+                if isinstance(self.steps, list)
+                else None
+            )
+            events.append(self._transform_step_output_to_event(error.output, run, step_index=step_index))
+            events.append(
+                StepErrorEvent(
+                    run_id=run.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=run.session_id,
+                    step_name=error.output.step_name,
+                    step_index=step_index,
+                    step_id=error.step.step_id,
+                    error=str(error),
+                )
+            )
+        events.append(
+            WorkflowErrorEvent(
+                run_id=run.run_id or "",
+                workflow_id=self.id,
+                workflow_name=self.name,
+                session_id=run.session_id,
+                error=str(error),
+            )
+        )
+        return [self._handle_event(event, run) for event in events]
+
     def _persist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Persist an errored streaming run and finish its terminal bookkeeping.
 
@@ -3282,24 +3326,12 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session.session_id,
-                    error=str(e),
-                )
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                error_events = self._error_events(e, workflow_run_response)
                 self._persist_errored_run_stream(session=session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         else:
@@ -3754,25 +3786,13 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session.session_id,
-                    error=str(e),
-                )
-
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                workflow_run_response.step_results = list(collected_step_outputs)
+                error_events = self._error_events(e, workflow_run_response)
                 self._persist_errored_run_stream(session=session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         # Yield workflow completed event
@@ -4356,24 +4376,12 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session_id,
-                    error=str(e),
-                )
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                error_events = self._error_events(e, workflow_run_response)
                 await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         else:
@@ -4857,25 +4865,13 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session_id,
-                    error=str(e),
-                )
-
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                workflow_run_response.step_results = list(collected_step_outputs)
+                error_events = self._error_events(e, workflow_run_response)
                 await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         # Yield workflow completed event
@@ -7483,6 +7479,7 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
         finally:
@@ -8548,21 +8545,12 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
-            from agno.run.workflow import WorkflowErrorEvent
-
-            error_event = self._handle_event(
-                WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session.session_id,
-                    error=str(e),
-                ),
-                workflow_run_response,
-            )
+            error_events = self._error_events(e, workflow_run_response)
             self._persist_errored_run_stream(session=session, run=workflow_run_response)
-            yield error_event
+            for error_event in error_events:
+                yield error_event
             raise e
         finally:
             cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -9546,6 +9534,7 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
         finally:
@@ -10321,21 +10310,12 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
-            from agno.run.workflow import WorkflowErrorEvent
-
-            error_event = self._handle_event(
-                WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session.session_id,
-                    error=str(e),
-                ),
-                workflow_run_response,
-            )
+            error_events = self._error_events(e, workflow_run_response)
             await self._apersist_errored_run_stream(session=session, run=workflow_run_response)
-            yield error_event
+            for error_event in error_events:
+                yield error_event
             raise e
 
         # Yield workflow completed event
