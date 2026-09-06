@@ -1,5 +1,19 @@
 # Public pages test log
 
+### public_pages.py — default planner configuration (2026-09-06)
+
+**Status:** PASS
+
+**Description:** Removed the optional planner overrides while retaining explicit `HNSW(ef_search=200)`. Ran the executable with `--help` in `.venvs/demo`, then loaded it with `runpy` and checked that `knowledge.page_search` is unset, its resolved planner configuration uses the framework defaults, HNSW breadth remains 200, and the database is shared as configured.
+
+**Result:** Demo CLI/configuration checks, required `scripts/format.sh` and `scripts/validate.sh`, and all four existing PostgreSQL planner-default/override/restoration cases passed. The PostgreSQL tests used a disposable database. No live model calls, source sync, HTTP serving or MCP run was repeated for this cookbook-only configuration change; earlier live results below apply to their recorded executable versions.
+
+**Commands:** `PYTHONPATH=libs/agno .venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_pages.py --help`; `.venv/bin/python -m pytest -q libs/agno/tests/integration/knowledge/test_page_storage.py::test_search_tuning_honors_hnsw_and_operator_defaults_without_leaking` with the isolated local database URL configured.
+
+**Executable SHA-256:** `cc03e7dff96a8334d11b6a73fcccf663c29b57dfa2f934046501a48fee571c6d`
+
+---
+
 ### public_pages.py — explicit search configuration and lifecycle fixes
 
 **Status:** PASS

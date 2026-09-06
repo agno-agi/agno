@@ -54,7 +54,7 @@ Reads return `revision` and `next_offset`; preserve both for consistent Unicode-
 
 `search_pages` and `asearch_pages` accept the keyword-only `max_output_bytes` option, defaulting to 24,000 with an allowed integer range of 24,000–32,000. It bounds the UTF-8 serialized search result, including framework metadata; ranking and query limits stay the same. An adapter that removes framework fields can explicitly request `await knowledge.asearch_pages(query, max_output_bytes=32_000)` before applying its own smaller output limit. The tools in this example return the framework JSON directly, so they keep the default. This option does not change read/list/grep limits or add a model-controlled tool parameter. More retained evidence can increase rendering work and model tokens; the allowance is not a latency optimization.
 
-## Explicit search tuning
+## Optional search tuning
 
 `PgVector(vector_index=HNSW(ef_search=200))` controls the HNSW search breadth used
 by page search. Page search honors the existing HNSW setting; it has no separate
@@ -71,10 +71,12 @@ setting. Parallel alternative queries use zero PostgreSQL parallel workers to
 bound nested parallelism. They reuse existing pooled connections; cold optional
 queries can run on the parent's snapshot instead of opening another connection.
 
-This example explicitly retains the documentation workload's original
-`ef_search=200` and index preference, together with the later parallel-planner
-tuning (zero setup/tuple costs and minimum table scan, four workers for serial
-queries). These choices require measurement on the deployment's corpus and load.
+The example keeps `HNSW(ef_search=200)` explicit and omits `page_search`, using
+the framework defaults described above. No planner-cost or scan-preference
+overrides are needed to run it. Applications can optionally supply
+`PageSearchConfig` to tune index preference, parallel costs, scan thresholds and
+worker counts after measuring their own corpus and load. Docs Agent's deployment
+tuning belongs in that application's configuration.
 `min_parallel_table_scan_size` uses PostgreSQL blocks, normally 8 KiB. The typed
 configuration accepts no arbitrary SQL or deadline overrides.
 

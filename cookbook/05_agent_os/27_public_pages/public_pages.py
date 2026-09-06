@@ -13,7 +13,7 @@ from agno.db.postgres import PostgresDb
 from agno.fs import FileSystem
 from agno.knowledge.embedder.openai import OpenAIEmbedder
 from agno.knowledge.knowledge import Knowledge
-from agno.knowledge.page import PageError, PageSearchConfig, tool_error
+from agno.knowledge.page import PageError, tool_error
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, MCPConfig, QueueConfig
 from agno.os.public import PublicSurface
@@ -46,13 +46,6 @@ knowledge = Knowledge(
             dimensions=1536,
             client_params={"timeout": 20, "max_retries": 0},
         ),
-    ),
-    page_search=PageSearchConfig(
-        enable_seqscan=False,
-        parallel_setup_cost=0,
-        parallel_tuple_cost=0,
-        max_parallel_workers_per_gather=4,
-        min_parallel_table_scan_size=0,
     ),
 )
 index_url = getenv("PAGE_DEMO_INDEX_URL", "https://docs.agno.com/llms.txt")
