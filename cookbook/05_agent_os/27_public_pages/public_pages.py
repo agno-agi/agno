@@ -32,13 +32,13 @@ db = PostgresDb(
 knowledge = Knowledge(
     content_db=db,
     page_store=FileSystem(
-        db,
+        db=db,
         namespace="public-page-demo",
         max_file_bytes=4 * 1024 * 1024,
         max_namespace_bytes=256 * 1024 * 1024,
     ),
     vector_db=PgVector(
-        db_engine=db.db_engine,
+        db=db,
         table_name="demo_page_vectors",
         vector_index=HNSW(ef_search=200),
         embedder=OpenAIEmbedder(

@@ -2,7 +2,7 @@ import asyncio
 import re
 from hashlib import md5
 from math import sqrt
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.utils.string import generate_id
 
@@ -45,6 +45,9 @@ from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
 from agno.vectordb.search import SearchType
 
+if TYPE_CHECKING:
+    from agno.db.postgres import PostgresDb
+
 
 class PgVector(VectorDb):
     """
@@ -74,6 +77,8 @@ class PgVector(VectorDb):
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
+        *,
+        db: Optional["PostgresDb"] = None,
     ):
         """
         Initialize the PgVector instance.
@@ -85,6 +90,8 @@ class PgVector(VectorDb):
             description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): Database connection URL.
             db_engine (Optional[Engine]): SQLAlchemy database engine.
+            db (Optional[PostgresDb]): Borrow a synchronous PostgreSQL database's engine.
+                Cannot be combined with db_url or db_engine; does not transfer ownership.
             embedder (Optional[Embedder]): Embedder instance for creating embeddings.
             search_type (SearchType): Type of search to perform.
             vector_index (Union[Ivfflat, HNSW]): Vector index configuration.
@@ -101,8 +108,20 @@ class PgVector(VectorDb):
         if not table_name:
             raise ValueError("Table name must be provided.")
 
+        if db is not None:
+            from agno.db.postgres import PostgresDb
+
+            if db_url is not None or db_engine is not None:
+                raise ValueError("Provide db alone, without db_url or db_engine")
+            if (
+                not isinstance(db, PostgresDb)
+                or not isinstance(db.db_engine, Engine)
+                or db.db_engine.dialect.name != "postgresql"
+            ):
+                raise ValueError("db requires a synchronous PostgresDb; use db_engine for a direct engine")
+            db_engine = db.db_engine
         if db_engine is None and db_url is None:
-            raise ValueError("Either 'db_url' or 'db_engine' must be provided.")
+            raise ValueError("Provide db, db_url, or db_engine")
 
         if id is None:
             base_seed = db_url or str(db_engine.url)  # type: ignore
