@@ -481,8 +481,9 @@ def _get_delegate_task_function(
 
         _initialize_member(team, member_agent)
 
-        # If team has send_media_to_model=False, ensure member agent also has it set to False
-        # This allows tools to access files while preventing models from receiving them
+        # Temporarily propagate send_media_to_model=False from the team to the member.
+        # Save and restore so the member's own setting is not permanently mutated.
+        _orig_send_media_dt = member_agent.send_media_to_model
         if not team.send_media_to_model:
             member_agent.send_media_to_model = False
 
@@ -813,6 +814,10 @@ def _get_delegate_task_function(
                 member_session_state_copy,  # type: ignore
             )
             raise
+        finally:
+            # Restore the member's original send_media_to_model so the mutation
+            # from the team does not outlive this delegation.
+            member_agent.send_media_to_model = _orig_send_media_dt
 
         # Check if the member run is paused (HITL)
         if member_agent_run_response is not None and member_agent_run_response.is_paused:
