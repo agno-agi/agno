@@ -12,6 +12,7 @@ from agno.utils.log import log_debug, log_error
 
 try:
     from pptx import Presentation  # type: ignore
+    from pptx.shapes.group import GroupShape  # type: ignore
 except ImportError:
     raise ImportError("The `python-pptx` package is not installed. Please install it via `pip install python-pptx`.")
 
@@ -60,10 +61,14 @@ class PPTXReader(Reader):
             for slide_number, slide in enumerate(presentation.slides, 1):
                 slide_text = f"Slide {slide_number}:\n"
 
-                # Extract text from shapes that contain text
+                # Traverse nested groups while preserving the slide's shape order.
                 text_content = []
-                for shape in slide.shapes:
-                    if hasattr(shape, "text") and shape.text.strip():
+                shapes = list(slide.shapes)[::-1]
+                while shapes:
+                    shape = shapes.pop()
+                    if isinstance(shape, GroupShape):
+                        shapes.extend(list(shape.shapes)[::-1])
+                    elif hasattr(shape, "text") and shape.text.strip():
                         text_content.append(shape.text.strip())
 
                 if text_content:

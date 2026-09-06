@@ -4,7 +4,11 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 
 import pytest
+from pptx import Presentation
+from pptx.enum.shapes import MSO_SHAPE
+from pptx.util import Inches
 
+from agno.knowledge.chunking.document import DocumentChunking
 from agno.knowledge.document.base import Document
 from agno.knowledge.reader.pptx_reader import PPTXReader
 
@@ -271,3 +275,62 @@ def test_pptx_reader_default_chunk_size():
     assert reader.chunk_size == 5000
     assert reader.chunking_strategy.chunk_size == 5000
     assert isinstance(reader.chunking_strategy, DocumentChunking)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("async_mode", "path_input", "chunk"),
+    [
+        (async_mode, path_input, chunk)
+        for async_mode in (False, True)
+        for path_input in (False, True)
+        for chunk in (False, True)
+    ],
+)
+async def test_pptx_reader_preserves_text_in_grouped_shapes(async_mode, path_input, chunk, tmp_path):
+    presentation = Presentation()
+    slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    before = slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1))
+    before.text = "Before group"
+    grouped = slide.shapes.add_textbox(Inches(1), Inches(2), Inches(6), Inches(1))
+    grouped.text = "Grouped text"
+    blank = slide.shapes.add_textbox(Inches(1), Inches(3), Inches(6), Inches(1))
+    blank.text = "  "
+    nested = slide.shapes.add_textbox(Inches(1), Inches(4), Inches(6), Inches(1))
+    nested.text = "중첩 그룹"
+    nested_group = slide.shapes.add_group_shape([nested])
+    slide.shapes.add_group_shape([grouped, blank, nested_group])
+    after = slide.shapes.add_textbox(Inches(1), Inches(5), Inches(6), Inches(1))
+    after.text = "After group"
+    slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(6), Inches(1), Inches(1))
+
+    grouped_only_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    grouped_only = grouped_only_slide.shapes.add_textbox(Inches(1), Inches(1), Inches(6), Inches(1))
+    grouped_only.text = "Grouped only"
+    grouped_only_slide.shapes.add_group_shape([grouped_only])
+
+    empty_slide = presentation.slides.add_slide(presentation.slide_layouts[6])
+    empty_slide.shapes.add_group_shape()
+    empty_slide.shapes.add_shape(MSO_SHAPE.RECTANGLE, Inches(1), Inches(1), Inches(1), Inches(1))
+
+    stream = BytesIO()
+    presentation.save(stream)
+    payload = stream.getvalue()
+    path = tmp_path / "grouped.pptx"
+    path.write_bytes(payload)
+    source = path if path_input else BytesIO(payload)
+    expected_content = (
+        "Slide 1:\nBefore group\nGrouped text\n중첩 그룹\nAfter group"
+        "\n\nSlide 2:\nGrouped only\n\nSlide 3:\n(No text content)"
+    )
+
+    reader = PPTXReader(chunk=chunk, chunk_size=50)
+    documents = await reader.async_read(source, name="grouped") if async_mode else reader.read(source, name="grouped")
+
+    expected_documents = (
+        DocumentChunking(chunk_size=50).chunk(Document(name="grouped", id="expected", content=expected_content))
+        if chunk
+        else [Document(name="grouped", id="expected", content=expected_content)]
+    )
+    assert [document.content for document in documents] == [document.content for document in expected_documents]
+    assert all(document.name == "grouped" and document.id for document in documents)
