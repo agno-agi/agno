@@ -102,7 +102,13 @@ def _find_paused_run(
             continue
         for req in run.requirements or []:
             if req.tool_execution and req.tool_execution.tool_call_id in incoming_call_ids:
-                return run
+                # The resume flow writes the user's answers into this run's
+                # requirements before continuing it. History run objects are
+                # shared between session reads, so the resume works on a copy
+                # of its own.
+                from copy import deepcopy
+
+                return deepcopy(run)
 
     return None
 

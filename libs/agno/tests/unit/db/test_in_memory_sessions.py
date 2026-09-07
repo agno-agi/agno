@@ -277,21 +277,30 @@ class TestSessionRowAndRuns:
         roundtrip = db.get_session("s1", session_type=SessionType.AGENT)
         assert roundtrip.runs and roundtrip.runs[0].run_id == "r1"
 
-    def test_upsert_return_carries_stored_runs(self):
+    def test_upsert_return_carries_the_incoming_runs_not_the_stored_history(self):
+        """The write-path return matches the SQL adapters: the caller gets its
+        own runs back by reference, never a rebuild of the stored history --
+        which kept every save O(session length). The stored runs stay put."""
         db = InMemoryDb()
         db.upsert_session(_agent_session("s1"))
         db.upsert_run({"run_id": "r1", "content": "one"}, session_id="s1")
 
         result = db.upsert_session(_agent_session("s1"), deserialize=False)
-        assert [r["run_id"] for r in result["runs"]] == ["r1"]
+        assert result["runs"] == []
+
+        raw = db.get_session("s1", deserialize=False)
+        assert [r["run_id"] for r in raw["runs"]] == ["r1"]
 
     def test_stored_runs_are_isolated_from_the_returned_copy(self):
         db = InMemoryDb()
         db.upsert_session(_agent_session("s1"))
         db.upsert_run({"run_id": "r1", "content": "one"}, session_id="s1")
 
-        result = db.upsert_session(_agent_session("s1"), deserialize=False)
-        result["runs"][0]["content"] = "mutated by caller"
+        incoming = _agent_session("s1")
+        result = db.upsert_session(incoming, deserialize=False)
+        result["session_data"] = {"poisoned": True}
+        result["runs"].append({"run_id": "bogus"})
 
         raw = db.get_session("s1", deserialize=False)
-        assert raw["runs"][0]["content"] == "one"
+        assert (raw.get("session_data") or {}).get("poisoned") is None
+        assert [r["run_id"] for r in raw["runs"]] == ["r1"]

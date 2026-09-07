@@ -41,7 +41,7 @@ def make_workflow_agent_workflow(monkeypatch, executed: dict, mode: str = "persi
 
     async def _aload_or_create_session(session_id=None, user_id=None, session_state=None):
         sessions.setdefault(session_id, FakeSession(session_id))
-        return sessions[session_id], (session_state or {})
+        return sessions[session_id], (session_state or {}), None
 
     async def asave_session(session=None, **kw):
         pass
@@ -57,7 +57,7 @@ def make_workflow_agent_workflow(monkeypatch, executed: dict, mode: str = "persi
     async def fake_execute_workflow_agent(user_input=None, execution_input=None, run_context=None, **kwargs):
         executed["run_context_run_id"] = run_context.run_id if run_context else None
         run_id = run_context.run_id if mode == "persist_same_id" else "divergent-id"
-        session, _ = await _aload_or_create_session(session_id="s1")
+        session, _, _ = await _aload_or_create_session(session_id="s1")
         real_run = WorkflowRunOutput(
             run_id=run_id, workflow_id=wf.id, session_id="s1", status=RunStatus.completed, content="answer"
         )
@@ -132,7 +132,7 @@ async def test_background_workflow_agent_run_visible_while_executing(monkeypatch
     async def hanging_then_real_execute(user_input=None, execution_input=None, run_context=None, **kwargs):
         executed["run_context_run_id"] = run_context.run_id if run_context else None
         await release.wait()
-        session, _ = await wf._aload_or_create_session(session_id="s1")
+        session, _, _ = await wf._aload_or_create_session(session_id="s1")
         real_run = WorkflowRunOutput(
             run_id=run_context.run_id,
             workflow_id=wf.id,

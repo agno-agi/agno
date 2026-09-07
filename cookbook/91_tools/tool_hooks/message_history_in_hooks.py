@@ -37,7 +37,7 @@ def get_weather(city: str) -> str:
 
 
 agent = Agent(
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[get_weather],
     instructions=["Use the tools to help the user."],
 )

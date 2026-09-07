@@ -25,48 +25,20 @@ uv pip install -U openai ddgs agno
 
 ### 4. Run basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/deepinfra/basic_stream.py
+python cookbook/90_models/deepinfra/basic.py
 ```
 
-- Streaming off
-
-```shell
-python cookbook/92_models/deepinfra/basic.py
-```
-
-### 5. Run Async Agent
-
-- Streaming on
-
-```shell
-python cookbook/92_models/deepinfra/async_basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/deepinfra/async_basic.py
-```
-
-### 6. Run Agent with Tools
+### 5. Run Agent with Tools
 
 - DuckDuckGo Search
 
 ```shell
-python cookbook/92_models/deepinfra/tool_use.py
-```
-
-- Async DuckDuckGo Search
-
-```shell
-python cookbook/92_models/deepinfra/async_tool_use.py
+python cookbook/90_models/deepinfra/tool_use.py
 ```
 
 ### 6. Run Agent that returns JSON output defined by the response model
 
 ```shell
-python cookbook/92_models/deepinfra/json_output.py
+python cookbook/90_models/deepinfra/json_output.py
 ```

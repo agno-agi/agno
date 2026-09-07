@@ -61,7 +61,7 @@ async def demo_read_only():
     print("=" * 60)
 
     gmail = GmailContextProvider(
-        model=OpenAIResponses(id="gpt-5.4-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
         read=True,
         write=False,
     )
@@ -96,7 +96,7 @@ async def demo_read_write():
     print("=" * 60)
 
     gmail = GmailContextProvider(
-        model=OpenAIResponses(id="gpt-5.4-mini"),
+        model=OpenAIResponses(id="gpt-5.6-luna"),
         read=True,
         write=True,
     )

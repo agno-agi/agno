@@ -22,6 +22,24 @@ from agno.os import AgentOS  # noqa: E402
 from agno.os.mcp import build_mcp_server  # noqa: E402
 
 
+def _bind_agent_session(agent, component_id, session_id, run_id):
+    """Feed the run-ownership gate a matching agent session so it passes for real -- the
+    gate logic still runs; rejection is covered in test_mcp_exposed_components.py."""
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    sess = AgentSession(
+        session_id=session_id,
+        agent_id=component_id,
+        runs=[RunOutput(run_id=run_id, agent_id=component_id, session_id=session_id)],
+    )
+
+    async def _fake_aget_session(session_id=None, user_id=None, **kw):
+        return sess
+
+    agent.aget_session = _fake_aget_session
+
+
 def _config_payload(result):
     structured = result.structured_content or {}
     return structured.get("result", structured)
@@ -229,6 +247,7 @@ async def test_continue_run_resolves_the_stamped_version(monkeypatch):
         return stamped_run
 
     base_agent.aget_run_output = fake_aget_run_output  # type: ignore[method-assign]
+    _bind_agent_session(base_agent, "preview-agent", "s-1", "run-1")
 
     continued_on = []
     stamped_agent = Agent(id="preview-agent", name="Preview Agent v7")
@@ -295,6 +314,7 @@ async def test_continue_run_without_a_stamp_keeps_base_resolution(monkeypatch):
 
     agent.aget_run_output = fake_aget_run_output  # type: ignore[method-assign]
     agent.acontinue_run = fake_acontinue_run  # type: ignore[method-assign]
+    _bind_agent_session(agent, "plain-agent", "s-1", "run-1")
     os = AgentOS(agents=[agent], mcp_server=True)
 
     calls = []
@@ -317,18 +337,26 @@ async def test_cancel_run_reaches_draft_only_components(tmp_path, monkeypatch):
     cancel route's parameters): a draft-only preview run must stay cancellable."""
     from fastmcp import Client as MCPClient
 
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
     db = _draft_only_db(tmp_path)
+    # A draft-only preview run started over REST is persisted in the shared db; seed it
+    # so the run-ownership binding can locate it (the binding runs for real -- the draft
+    # component still resolves via strict=False/published_only=False).
+    db.upsert_session(AgentSession(session_id="s-9", agent_id="draft-bot"))
+    db.upsert_run(RunOutput(run_id="run-9", agent_id="draft-bot", session_id="s-9"), session_id="s-9")
     os = AgentOS(agents=[], db=db, mcp_server=True)
 
     cancelled = []
 
-    async def fake_cancel(component, run_id):
+    async def fake_cancel(component, run_id, auth_token=None):
         cancelled.append((component.id, run_id))
 
     monkeypatch.setattr(mcp_mod.run_service, "cancel_component_run", fake_cancel)
 
     async with MCPClient(build_mcp_server(os)) as client:
-        result = await client.call_tool("cancel_run", {"run_id": "run-9", "agent_id": "draft-bot"})
+        result = await client.call_tool("cancel_run", {"run_id": "run-9", "session_id": "s-9", "agent_id": "draft-bot"})
 
     assert cancelled == [("draft-bot", "run-9")]
     assert "cancellation requested" in str(result.content)

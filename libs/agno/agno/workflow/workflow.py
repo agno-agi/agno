@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from fastapi import WebSocket
 
     from agno.os.managers import WebSocketHandler
+    from agno.tools.component import ComponentTool
 else:
     # fastapi only ships with the "os" extra. Binding WebSocket loosely keeps
     # the websocket annotations resolvable by get_type_hints() -- and with
@@ -224,6 +225,38 @@ def _step_on_error(step: Union[Step, Condition]) -> Union[OnError, str]:
     if hr is None:
         return "fail"
     return hr.on_error
+
+
+def _check_failed_step(step: Any, output: StepOutput, run: WorkflowRunOutput, outputs: list) -> None:
+    """Honor a Step's explicit failure policy and retain its structured report.
+
+    Composite success flags also summarize tolerated child failures. Their own
+    exception policies decide whether execution aborts; do not reinterpret the
+    aggregate flag as a new exception at the workflow boundary.
+    """
+    if (
+        not output.success
+        and isinstance(step, Step)
+        and _step_on_error(step) == OnError.fail
+        and not getattr(step, "skip_on_failure", False)
+    ):
+        run.step_results = list(outputs)
+        raise RuntimeError(output.error or f"Step {output.step_name} reported failure")
+
+
+def _record_failed_step(step: Any, error: Exception, run: WorkflowRunOutput, outputs: list) -> None:
+    """Keep exhausted exception diagnostics alongside already completed steps."""
+    if not outputs or not isinstance(outputs[-1], StepOutput) or outputs[-1].step_id != getattr(step, "step_id", None):
+        outputs.append(
+            StepOutput(
+                step_name=getattr(step, "name", None),
+                step_id=getattr(step, "step_id", None),
+                success=False,
+                error=str(error),
+                content=str(error),
+            )
+        )
+    run.step_results = list(outputs)
 
 
 def _find_inner_step_by_executor(
@@ -733,6 +766,32 @@ class Workflow:
                 "History won't be persisted. Add a database to persist runs across executions. "
             )
 
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this workflow as a tool with its own model-facing name, description,
+        title, and behaviour annotations.
+
+        Returns a declarative :class:`~agno.tools.component.ComponentTool` marker
+        for surfaces that turn components into tools -- today the AgentOS MCP server:
+        ``MCPConfig(tools=[brief.as_tool(name="ask_brief", description=...)])``. Every
+        override is optional; the tool name must be a valid tool identifier (start
+        with a letter or underscore, then letters/digits/hyphens/underscores). The
+        workflow id remains the continue_run handle and the scope segment.
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
+
     def set_id(self) -> None:
         if self.id is None:
             self.id = generate_id_from_name(self.name)
@@ -745,13 +804,20 @@ class Workflow:
         *,
         dependencies: Optional[Dict[str, Any]] = None,
         metadata: Optional[Dict[str, Any]] = None,
+        session_metadata: Optional[Dict[str, Any]] = None,
         add_dependencies_to_context: Optional[bool] = None,
         add_session_state_to_context: Optional[bool] = None,
     ) -> Dict[str, Any]:
         """Resolve run-level params: call-site > self.<field> > None.
 
+        ``session_metadata`` is the session-stored metadata read by the dispatch
+        function; it sits between workflow defaults and call-site values in the
+        metadata merge (self < session < call-site).
+
         Returns a dict of resolved values ready to pass to RunContext().
         """
+        from copy import deepcopy
+
         from agno.utils.merge_dict import merge_dictionaries
 
         # dependencies: merge run level with self.dependencies (run level wins on conflicts)
@@ -764,15 +830,18 @@ class Workflow:
         elif self.dependencies is not None:
             resolved_dependencies = self.dependencies.copy()
 
-        # metadata: merge call-site with self.metadata (self wins on conflicts)
+        # metadata: layered merge, call-site wins (self < session < call-site),
+        # matching how Agent resolves. Each layer is deep-copied before it is
+        # merged, so no nested dict in the result aliases a source dict — in
+        # particular self.metadata, whose nested dicts must never be mutated by
+        # an in-run write to run_context.metadata (merge_dictionaries recurses
+        # in place).
         resolved_metadata: Optional[Dict[str, Any]] = None
-        if metadata is not None and self.metadata is not None:
-            resolved_metadata = metadata.copy()
-            merge_dictionaries(resolved_metadata, self.metadata)
-        elif metadata is not None:
-            resolved_metadata = metadata.copy()
-        elif self.metadata is not None:
-            resolved_metadata = self.metadata.copy()
+        for layer in (self.metadata, session_metadata, metadata):
+            if layer is not None:
+                if resolved_metadata is None:
+                    resolved_metadata = {}
+                merge_dictionaries(resolved_metadata, deepcopy(layer))
 
         return {
             "dependencies": resolved_dependencies,
@@ -1632,10 +1701,10 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            from copy import deepcopy
+
             session_data = {}
             if self.session_state is not None:
-                from copy import deepcopy
-
                 session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
@@ -1643,7 +1712,8 @@ class Workflow:
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                # Copy so the session record never aliases the shared Workflow's dict
+                metadata=deepcopy(self.metadata),
                 created_at=int(time()),
             )
 
@@ -1675,10 +1745,10 @@ class Workflow:
         if workflow_session is None:
             # Creating new session if none found
             log_debug(f"Creating new WorkflowSession: {session_id}")
+            from copy import deepcopy
+
             session_data = {}
             if self.session_state is not None:
-                from copy import deepcopy
-
                 session_data["session_state"] = deepcopy(self.session_state)
             workflow_session = WorkflowSession(
                 session_id=session_id,
@@ -1686,7 +1756,8 @@ class Workflow:
                 user_id=user_id,
                 workflow_data=self._get_workflow_data(),
                 session_data=session_data,
-                metadata=self.metadata,
+                # Copy so the session record never aliases the shared Workflow's dict
+                metadata=deepcopy(self.metadata),
                 created_at=int(time()),
             )
 
@@ -2336,17 +2407,23 @@ class Workflow:
             log_debug(f"Failed to mark run as completed in buffer: {buffer_err}")
 
     def _update_metadata(self, session: WorkflowSession):
-        """Update the extra_data in the session"""
-        from agno.utils.merge_dict import merge_dictionaries
+        """Merge the workflow's metadata into the session's metadata.
 
-        # Read metadata from the database
-        if session.metadata is not None:
-            # If metadata is set in the workflow, update the database metadata with the workflow's metadata
-            if self.metadata is not None:
-                # Updates workflow's session metadata in place
-                merge_dictionaries(session.metadata, self.metadata)
-            # Update the current metadata with the metadata from the database which is updated in place
-            self.metadata = session.metadata
+        Workflow metadata provides defaults; the session's own stored values win
+        on conflict, matching _resolve_run_params (self < session), so a value
+        set on the session is not overwritten by a workflow default and persists
+        across runs. Only the session is updated; the shared Workflow instance
+        is never mutated.
+        """
+        if session.metadata is not None and self.metadata is not None:
+            from copy import deepcopy
+
+            from agno.utils.merge_dict import merge_dictionaries
+
+            merged = deepcopy(self.metadata)
+            merge_dictionaries(merged, session.metadata)
+            session.metadata.clear()
+            session.metadata.update(merged)
 
     def _load_session_state(self, session: WorkflowSession, session_state: Dict[str, Any]):
         """Load and return the stored session_state from the database, optionally merging it with the given one"""
@@ -2934,7 +3011,7 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error
                             )
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                             raise
 
                     # Check if executor (agent/team) is paused for tool-level HITL
@@ -2997,6 +3074,7 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -3351,6 +3429,7 @@ class Workflow:
                                         return
 
                                 collected_step_outputs.append(step_output)
+                                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                                 # Update the workflow-level previous_step_outputs dictionary
                                 previous_step_outputs[step_name] = step_output
@@ -3465,9 +3544,12 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                             )
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(
+                                step, step_error_exception, workflow_run_response, collected_step_outputs
+                            )
                             raise step_error_exception
 
                     # Post-execution output review check
@@ -3777,24 +3859,31 @@ class Workflow:
 
     async def _aload_or_create_session(
         self, session_id: str, user_id: Optional[str], session_state: Optional[Dict[str, Any]]
-    ) -> Tuple[WorkflowSession, Dict[str, Any]]:
+    ) -> Tuple[WorkflowSession, Dict[str, Any], Optional[Dict[str, Any]]]:
         """Load or create session from database, update metadata, and prepare session state.
 
         Returns:
-            Tuple of (workflow_session, prepared_session_state)
+            Tuple of (workflow_session, prepared_session_state, session_metadata),
+            where session_metadata is a snapshot of the session-stored metadata
+            taken before _update_metadata merges self.metadata into the session.
         """
+        from copy import deepcopy
+
         # Read existing session from database
         if self._has_async_db():
             workflow_session = await self.aread_or_create_session(session_id=session_id, user_id=user_id)
         else:
             workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
+        # so the session layer keeps the session's own values (self < session < call-site).
+        session_metadata = deepcopy(workflow_session.metadata)
         self._update_metadata(session=workflow_session)
 
         # Update session state from DB
         _session_state = session_state if session_state is not None else {}
         _session_state = self._load_session_state(session=workflow_session, session_state=_session_state)
 
-        return workflow_session, _session_state
+        return workflow_session, _session_state, session_metadata
 
     async def _aexecute(
         self,
@@ -3812,8 +3901,10 @@ class Workflow:
         from inspect import isasyncgenfunction, iscoroutinefunction, isgeneratorfunction
 
         await aregister_run(run_context.run_id)
-        # Read existing session from database
-        workflow_session, run_context.session_state = await self._aload_or_create_session(
+        # Read existing session from database. run_context is already resolved at this
+        # point, so the session-metadata snapshot cannot reach this run's metadata here;
+        # arun() pre-reads the session for that when the DB is sync.
+        workflow_session, run_context.session_state, _ = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
@@ -3973,7 +4064,7 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error
                             )
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                             raise
 
                     # Check if executor (agent/team) is paused for tool-level HITL
@@ -4034,6 +4125,7 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -4134,6 +4226,7 @@ class Workflow:
                 logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 raise e
 
         # Stop timer on error
@@ -4171,8 +4264,10 @@ class Workflow:
 
         await aregister_run(run_context.run_id)
 
-        # Read existing session from database
-        workflow_session, run_context.session_state = await self._aload_or_create_session(
+        # Read existing session from database. run_context is already resolved at this
+        # point, so the session-metadata snapshot cannot reach this run's metadata here;
+        # arun() pre-reads the session for that when the DB is sync.
+        workflow_session, run_context.session_state, _ = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=run_context.session_state
         )
 
@@ -4420,6 +4515,7 @@ class Workflow:
                                         return
 
                                 collected_step_outputs.append(step_output)
+                                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                                 # Update the workflow-level previous_step_outputs dictionary
                                 previous_step_outputs[step_name] = step_output
@@ -4538,9 +4634,12 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                             )
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(
+                                step, step_error_exception, workflow_run_response, collected_step_outputs
+                            )
                             raise step_error_exception
 
                     # Post-execution output review check
@@ -4836,7 +4935,7 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
+        workflow_session, session_state, session_metadata = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -4844,6 +4943,7 @@ class Workflow:
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -5037,7 +5137,7 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
+        workflow_session, session_state, session_metadata = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -5045,6 +5145,7 @@ class Workflow:
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -5315,7 +5416,7 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
-        workflow_session, session_state = await self._aload_or_create_session(
+        workflow_session, session_state, _ = await self._aload_or_create_session(
             session_id=session_id, user_id=user_id, session_state=session_state
         )
 
@@ -6003,7 +6104,10 @@ class Workflow:
         session_state: Optional[Dict[str, Any]],
     ) -> Tuple[WorkflowSession, Dict[str, Any]]:
         """Helper to load or create session for workflow agent execution"""
-        return await self._aload_or_create_session(session_id=session_id, user_id=user_id, session_state=session_state)
+        workflow_session, _session_state, _ = await self._aload_or_create_session(
+            session_id=session_id, user_id=user_id, session_state=session_state
+        )
+        return workflow_session, _session_state
 
     def _aexecute_workflow_agent(
         self,
@@ -6971,6 +7075,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -7051,6 +7156,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -7144,6 +7250,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -7244,13 +7351,13 @@ class Workflow:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         # Pause workflow and let user decide to retry or skip
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(i, step_error)
 
                         # Store the paused state
                         workflow_run_response.status = RunStatus.paused
@@ -7272,7 +7379,7 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error
                         )
                     else:
-                        # Default behavior: re-raise the exception
+                        _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                         raise
 
                 # Check if executor (agent/team) is paused for tool-level HITL
@@ -7336,6 +7443,7 @@ class Workflow:
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
+                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                 shared_images.extend(step_output.images or [])
                 shared_videos.extend(step_output.videos or [])
@@ -7824,6 +7932,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -8224,6 +8333,7 @@ class Workflow:
                                     return
 
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
 
                             step_output_event = self._transform_step_output_to_event(
@@ -8286,12 +8396,14 @@ class Workflow:
 
                 # Handle step execution error based on on_error policy
                 if step_error_occurred and step_error_exception is not None:
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                            i, step_error_exception
+                        )
 
                         workflow_run_response.status = RunStatus.paused
                         workflow_run_response.error_requirements = [error_requirement]
@@ -8322,8 +8434,10 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                         )
                         collected_step_outputs.append(step_output)
+                        _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                         previous_step_outputs[step_name] = step_output
                     else:
+                        _record_failed_step(step, step_error_exception, workflow_run_response, collected_step_outputs)
                         raise step_error_exception
 
                 # Post-execution output review check
@@ -8435,6 +8549,20 @@ class Workflow:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
+            from agno.run.workflow import WorkflowErrorEvent
+
+            error_event = self._handle_event(
+                WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                ),
+                workflow_run_response,
+            )
+            self._persist_errored_run_stream(session=session, run=workflow_run_response)
+            yield error_event
             raise e
         finally:
             cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -9011,6 +9139,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -9093,6 +9222,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -9184,6 +9314,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -9276,12 +9407,12 @@ class Workflow:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(i, step_error)
 
                         workflow_run_response.status = RunStatus.paused
                         workflow_run_response.error_requirements = [error_requirement]
@@ -9300,6 +9431,7 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error
                         )
                     else:
+                        _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                         raise
 
                 # Check if executor (agent/team) is paused for tool-level HITL
@@ -9363,6 +9495,7 @@ class Workflow:
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
+                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                 shared_images.extend(step_output.images or [])
                 shared_videos.extend(step_output.videos or [])
@@ -9564,6 +9697,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -9965,6 +10099,7 @@ class Workflow:
                                     return
 
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
 
                             step_output_event = self._transform_step_output_to_event(
@@ -10027,12 +10162,14 @@ class Workflow:
 
                 # Handle step execution error based on on_error policy
                 if step_error_occurred and step_error_exception is not None:
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                            i, step_error_exception
+                        )
 
                         workflow_run_response.status = RunStatus.paused
                         workflow_run_response.error_requirements = [error_requirement]
@@ -10063,8 +10200,10 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                         )
                         collected_step_outputs.append(step_output)
+                        _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                         previous_step_outputs[step_name] = step_output
                     else:
+                        _record_failed_step(step, step_error_exception, workflow_run_response, collected_step_outputs)
                         raise step_error_exception
 
                 # Post-execution output review check
@@ -10183,6 +10322,20 @@ class Workflow:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
             workflow_run_response.content = f"Workflow execution failed: {e}"
+            from agno.run.workflow import WorkflowErrorEvent
+
+            error_event = self._handle_event(
+                WorkflowErrorEvent(
+                    run_id=workflow_run_response.run_id or "",
+                    workflow_id=self.id,
+                    workflow_name=self.name,
+                    session_id=session.session_id,
+                    error=str(e),
+                ),
+                workflow_run_response,
+            )
+            await self._apersist_errored_run_stream(session=session, run=workflow_run_response)
+            yield error_event
             raise e
 
         # Yield workflow completed event
@@ -10461,7 +10614,12 @@ class Workflow:
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
         # Read existing session from database
+        from copy import deepcopy
+
         workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+        # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
+        # so the session layer keeps the session's own values (self < session < call-site).
+        session_metadata = deepcopy(workflow_session.metadata)
         self._update_metadata(session=workflow_session)
 
         # Initialize session state. Get it from DB if relevant.
@@ -10513,6 +10671,7 @@ class Workflow:
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )
@@ -10747,10 +10906,25 @@ class Workflow:
         self.initialize_workflow()
         session_id, user_id = self._initialize_session(session_id=session_id, user_id=user_id)
 
+        # Pre-read the session so session-stored metadata is visible in the resolved
+        # run params. Only possible with a sync DB: arun() is not async, and with an
+        # async DB the session is read inside _aexecute/_aexecute_stream AFTER params
+        # are resolved, so session metadata cannot reach this run's resolved params.
+        session_metadata: Optional[Dict[str, Any]] = None
+        if self.db is not None and not self._has_async_db():
+            from copy import deepcopy
+
+            workflow_session = self.read_or_create_session(session_id=session_id, user_id=user_id)
+            # Snapshot BEFORE _update_metadata merges self.metadata into the session dict,
+            # so the session layer keeps the session's own values (self < session < call-site).
+            session_metadata = deepcopy(workflow_session.metadata)
+            self._update_metadata(session=workflow_session)
+
         # Resolve run-level params using shared helper (deep merge, call-site > self.<field> > None)
         resolved = self._resolve_run_params(
             dependencies=dependencies,
             metadata=metadata,
+            session_metadata=session_metadata,
             add_dependencies_to_context=add_dependencies_to_context,
             add_session_state_to_context=add_session_state_to_context,
         )

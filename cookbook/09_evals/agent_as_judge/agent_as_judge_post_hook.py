@@ -27,7 +27,7 @@ sync_agent_as_judge_eval = AgentAsJudgeEval(
 )
 
 sync_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide professional and well-reasoned answers.",
     post_hooks=[sync_agent_as_judge_eval],
     db=sync_db,
@@ -48,7 +48,7 @@ async_agent_as_judge_eval = AgentAsJudgeEval(
 )
 
 async_agent = Agent(
-    model=OpenAIChat(id="gpt-4o"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Provide professional and well-reasoned answers.",
     post_hooks=[async_agent_as_judge_eval],
     db=async_db,

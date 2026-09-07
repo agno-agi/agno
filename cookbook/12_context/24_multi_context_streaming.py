@@ -75,14 +75,14 @@ arch_wiki = WikiContextProvider(
     id="arch",
     name="Architecture Wiki",
     backend=FileSystemBackend(path=ARCH_PATH),
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 ops_wiki = WikiContextProvider(
     id="ops",
     name="Operations Wiki",
     backend=FileSystemBackend(path=OPS_PATH),
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # Parent agent with BOTH context providers as tools

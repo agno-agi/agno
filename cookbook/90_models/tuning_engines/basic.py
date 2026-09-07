@@ -7,7 +7,7 @@ from agno.models.tuning_engines import TuningEngines
 
 agent = Agent(
     model=TuningEngines(
-        id=getenv("TUNING_ENGINES_MODEL", "gpt-4o"),
+        id=getenv("TUNING_ENGINES_MODEL", "gpt-5.6-luna"),
     ),
     markdown=True,
 )

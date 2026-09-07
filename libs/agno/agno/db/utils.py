@@ -99,6 +99,70 @@ def detect_session_type(record: Dict[str, Any]) -> str:
     return "agent"
 
 
+def deserialize_history_run(run_dict: Dict[str, Any]) -> Optional[Any]:
+    """One stored run dict as a run object, mirroring AgentSession.from_dict's
+    per-run dispatch (a dict matching neither shape is skipped there too)."""
+    from agno.run.agent import RunOutput
+    from agno.run.team import TeamRunOutput
+
+    if "agent_id" in run_dict:
+        return RunOutput.from_dict(run_dict)
+    if "team_id" in run_dict:
+        return TeamRunOutput.from_dict(run_dict)
+    return None
+
+
+class SessionRunObjectCache:
+    """Deserialized history-run objects for one db adapter, keyed per run by
+    the raw JSON text of its row.
+
+    Rebuilding every historical run from its row on every read made per-turn
+    conversation cost grow with session length. An adapter that can read the
+    run column as text builds each run object once and shares it across
+    reads: the validity token is (hash, length) of the text, so ANY write to
+    the run -- from this process or another one -- changes the text and
+    misses the cache. Shared objects are immutable by contract (every library
+    path that changes a historical run copies it first) and nothing ever
+    serializes them back to the store; the rows stay canonical.
+
+    Sessions are pruned least-recently-read beyond ``max_sessions``, and a
+    read replaces the session's entry map wholesale, so deleted runs do not
+    linger.
+
+    The token must never be persisted or shared between processes: ``hash`` is
+    randomized per process, so the same text yields different tokens in
+    different processes (and after a restart). It is only meaningful within the
+    lifetime of one adapter instance, which is the only place it is used.
+    """
+
+    def __init__(self, max_sessions: int = 64):
+        from collections import OrderedDict
+
+        self._per_session: "OrderedDict[str, Dict[str, Tuple[Tuple[int, int], Any]]]" = OrderedDict()
+        self._max_sessions = max_sessions
+
+    def runs_from_rows(self, session_id: str, rows: Sequence[Tuple[str, str]]) -> List[Any]:
+        """The run objects for ``rows`` of (run_id, raw run_data text), in order."""
+        cache = self._per_session.pop(session_id, None) or {}
+        fresh: Dict[str, Tuple[Tuple[int, int], Any]] = {}
+        objects: List[Any] = []
+        for run_id, text in rows:
+            token = (hash(text), len(text))
+            entry = cache.get(run_id)
+            if entry is None or entry[0] != token:
+                entry = (token, deserialize_history_run(json.loads(text)))
+            fresh[run_id] = entry
+            if entry[1] is not None:
+                objects.append(entry[1])
+        self._per_session[session_id] = fresh
+        while len(self._per_session) > self._max_sessions:
+            self._per_session.popitem(last=False)
+        return objects
+
+    def drop_session(self, session_id: str) -> None:
+        self._per_session.pop(session_id, None)
+
+
 def deserialize_session_by_type(record: Dict[str, Any]) -> "Session":
     """Deserialize a raw session dict into the correct Session subclass based on detected type.
 

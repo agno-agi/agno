@@ -52,7 +52,7 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 agent = Agent(
     id="my-agent",
     name="My Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     db=db,
 )
 
@@ -116,14 +116,14 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 researcher = Agent(
     id="researcher-agent",
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Research and gather information",
 )
 
 writer = Agent(
     id="writer-agent",
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Write content based on research",
 )
 
@@ -131,7 +131,7 @@ writer = Agent(
 team = Team(
     id="content-team",
     name="Content Creation Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[researcher, writer],
     description="A team that researches and creates content",
     db=db,
@@ -182,14 +182,14 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 research_agent = Agent(
     id="research-agent",
     name="Research Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Extract key insights from data",
 )
 
 content_agent = Agent(
     id="content-agent",
     name="Content Agent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Create content based on research",
 )
 
@@ -261,7 +261,7 @@ class OutputSchema(BaseModel):
 registry = Registry(
     name="My Registry",
     tools=[DuckDuckGoTools(), my_custom_tool],
-    models=[OpenAIChat(id="gpt-4o-mini")],
+    models=[OpenAIChat(id="gpt-5.6-luna")],
     schemas=[InputSchema, OutputSchema],
 )
 ```
@@ -314,14 +314,14 @@ from agno.team import Team
 db = SqliteDb(db_file="tmp/auto_registry.db", id="auto-registry-db")
 
 researcher = Agent(id="researcher", model=OpenAIResponses(id="gpt-5.4"), db=db)
-writer = Agent(id="writer", model=OpenAIResponses(id="gpt-5.4-mini"))
+writer = Agent(id="writer", model=OpenAIResponses(id="gpt-5.6-luna"))
 team = Team(id="content-team", members=[researcher, writer])
 
 # No registry passed; components are discovered from the team members
 agent_os = AgentOS(teams=[team])
 
 print([f"{m.provider}:{m.id}" for m in agent_os.registry.models])
-# -> ['OpenAI:gpt-5.4', 'OpenAI:gpt-5.4-mini']
+# -> ['OpenAI:gpt-5.4', 'OpenAI:gpt-5.6-luna']
 ```
 
 Details:

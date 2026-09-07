@@ -11,6 +11,9 @@ Required Setup:
    - GOOGLE_CLIENT_SECRET
    - GOOGLE_PROJECT_ID
 4. First run opens a browser for consent; token is cached in token.json
+5. On headless servers pass auth=AuthConfig(interactive=False) (or set
+   GOOGLE_OAUTH_NONINTERACTIVE=1): expired credentials then raise a clear error
+   instead of blocking on a browser that never opens
 
 **Option B — Service Account (headless, for servers):**
 1. Create a service account in Google Cloud Console
