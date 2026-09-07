@@ -161,15 +161,16 @@ every allow/deny with its jti reference. No console errors.
 
 **Test mode:** LIVE (real gpt-5.5 runs via OpenAIResponses)
 
-**Description:** The user directory with NO authentication or authorization -- a
-plain roster. Drives real, unauthenticated runs through a `TestClient` (a form
-`user_id`, no Authorization header) and checks the directory populates from them,
-then shows the `disabled` flag is advisory without auth.
+**Description:** The `AgentOS(db=db, user_isolation=True, user_directory=True)`
+shape -- a user directory and per-user isolation with NO auth at all. Drives real,
+unauthenticated runs through a `TestClient` (a form `user_id`, no Authorization
+header) and checks the directory auto-provisions from them, then shows the
+`disabled` flag is advisory without a verified identity.
 
 **Result:** Boot logged the expected one-line warning that the disabled kill
-switch is advisory. Directory started empty; a no-token run as `chegizkhan`
-auto-registered him (`get` False -> True), and `subotai` registered on his run
-too, leaving a two-person roster. After `set_disabled("chegizkhan", True)`, his
-next no-token run still returned ALLOWED (200) -- confirming the flag is advisory,
-not enforced, without a verified identity. Points to managed_users.py for the
+switch and isolation are advisory. Directory started empty; a no-token run as
+`chegizkhan` auto-registered him (`get` False -> True), and `subotai` registered
+on his run too, leaving a two-person roster. After `set_disabled("chegizkhan",
+True)`, his next no-token run still returned ALLOWED (200) -- confirming the flag
+is advisory, not enforced, without auth. Points to managed_users.py for the
 enforced kill switch.

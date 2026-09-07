@@ -1,25 +1,29 @@
 """
 Directory without auth - the user directory is just a roster, no login required
 
-managed_users.py showed the directory with authentication: a verified token, a real
-kill switch. This shows the OTHER end - NO auth at all. The directory is simply a
-list of people, and a run's user_id registers whoever it names. No JWT, no keys, no
-identity provider. This is the "just let me see it work" path for local dev and demos.
+managed_users.py showed the directory with a real kill switch, backed by verified
+tokens. This shows the OTHER end - NO auth at all. The whole config is:
 
-The point Ashpreet made: a user directory is data, not a security boundary. So if a
-run comes in with user_id "chegizkhan", that person should just show up in the
-directory - even with no auth configured.
+    AgentOS(db=db, user_isolation=True, user_directory=True)
+
+That is it. No JWT, no keys, no identity provider. A run comes in with a user_id and
+that person just shows up in the directory, and their data is scoped to them. This is
+the "just let me see it work" path for local dev and demos.
+
+The idea: a user directory is data (who exists), not a login. So if a run comes in as
+"chegizkhan", chegizkhan should just appear. user_isolation is the same - it scopes a
+run's own data by its user_id.
 
 What you get without auth:
-- A roster. Every run's user_id lands in the directory (auto_provision), so you can
-  SEE everyone who has shown up, with their metadata.
+- A roster. Every run's user_id lands in the directory (user_directory=True turns on
+  auto-provision), so you can SEE everyone who has shown up.
+- Per-user data. user_isolation=True scopes each run's data by its user_id.
 
 What you do NOT get without auth (read this):
-- Enforcement. With no verified identity the user_id is whatever the caller types,
-  so the `disabled` flag is ADVISORY here, not a kill switch - a caller could dodge
-  it by sending a different id. Disable becomes a real revocation only once you add
-  AgentOS(authentication=True) (verify who) or authorization=True (verify + enforce).
-  See managed_users.py for the enforced version.
+- Enforcement. With no verified identity the user_id is whatever the caller types, so
+  both the `disabled` flag AND isolation are ADVISORY here, not a boundary - a caller
+  could dodge them by sending a different id. They become real the moment you add
+  AgentOS(authorization=True) with a verification key. See managed_users.py.
 
 Run it:
     pip install "agno[roles]"
@@ -33,14 +37,8 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz.user_store import ManagedUserStore
-from agno.os.config import UserDirectoryConfig
 
 os.makedirs("tmp", exist_ok=True)
-
-# The directory: just people, no passwords, no roles required. auto_provision=True means a
-# user we have never seen is created from the run's user_id on their first request.
-users = ManagedUserStore(db_url="sqlite:///tmp/directory_no_auth.db")
 
 db = SqliteDb(db_file="tmp/directory_no_auth_agentos.db")
 scout_agent = Agent(
@@ -50,16 +48,23 @@ scout_agent = Agent(
     db=db,
 )
 
-# No authentication, no authorization. Just a db and a directory. The directory is seeded and
-# an unauthenticated run's user_id registers the person - a working roster with zero auth setup.
-# (AgentOS logs a one-line warning at boot that the disabled kill switch is advisory here.)
+# The whole thing. No authentication, no authorization - just a db, isolation, and a
+# directory. user_directory=True builds the store from the OS db with auto-provision on, so
+# an unauthenticated run's user_id registers the person. AgentOS logs one line at boot noting
+# the disabled kill switch and isolation are advisory here (no verified identity).
 agent_os = AgentOS(
     id="directory-no-auth-os",
     description="A user directory with no auth at all",
     agents=[scout_agent],
-    user_directory=UserDirectoryConfig(store=users, auto_provision=True),
+    db=db,
+    user_isolation=True,
+    user_directory=True,
 )
 app = agent_os.get_app()
+
+# user_directory=True built the store for us; grab the handle to read the roster and to
+# demonstrate the (advisory) disabled flag below.
+users = agent_os.user_directory.store
 
 
 if __name__ == "__main__":
@@ -122,16 +127,16 @@ if __name__ == "__main__":
         "    -> WITHOUT auth the disabled flag is ADVISORY: the id is self-asserted, so it is"
     )
     print(
-        "       not enforced here. Add AgentOS(authentication=True) to make disable a real"
+        "       not enforced here. Add AgentOS(authorization=True) with a key to make disable"
     )
-    print("       revocation - see managed_users.py.")
+    print("       (and isolation) real - see managed_users.py.")
 
     print("=" * 80)
     print(
         "the point: a user directory is data, not a login. with no auth it is a roster that"
     )
     print(
-        "fills in from run user_ids - enough to demo the feature. enforcement (the disabled"
+        "fills in from run user_ids, and isolation scopes each run by its user_id - enough to"
     )
-    print("kill switch) is what authentication/authorization add on top.")
+    print("demo the features. enforcement is what authorization adds on top.")
     print("=" * 80)

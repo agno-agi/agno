@@ -25,7 +25,7 @@ it runs offline against a simulated issuer.
 |---|---|
 | `managed_roles.py` | Start here. Roles defined in scope terms, persisted to your DB, changed at runtime with no re-login |
 | `managed_users.py` | The credential-less user directory and the disabled-user kill switch that outlives a valid token |
-| `directory_without_auth.py` | The same directory with NO auth at all: a plain roster that fills in from run user_ids (disabled is advisory here) |
+| `directory_without_auth.py` | `AgentOS(db=db, user_isolation=True, user_directory=True)` with NO auth: a roster + per-user isolation that key off the run's user_id (advisory without auth) |
 | `managed_roles_sessions.py` | Roles protecting real data: who may delete a chat session |
 | `managed_roles_audit.py` | The audit trail — who changed what, plus every allow/deny decision |
 | `manage_users_and_roles.py` | Serve the `/authz` user and role management API for a frontend |

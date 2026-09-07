@@ -292,9 +292,9 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
-        authentication: bool = False,
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
+        user_isolation: bool = False,
         user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
@@ -363,6 +363,11 @@ class AgentOS:
             auto_provision_dbs: Whether to automatically provision databases
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
+            user_isolation: Opt in to per-user data isolation (each caller sees only their own
+                sessions/memories). Enforced under authorization=True; advisory without auth.
+            user_directory: A credential-less user directory (roster + disabled kill switch).
+                ``True`` builds a ManagedUserStore from the OS db with auto-provision on; pass a
+                UserDirectoryConfig for control.
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
@@ -455,13 +460,14 @@ class AgentOS:
         # user-registered here.
 
         # RBAC. Authentication (verify WHO the caller is) is separable from authorization (decide
-        # what they may DO). authentication=True runs the auth middleware in verify-only mode: a
-        # valid token is required and the identity is populated, but no scopes/roles are enforced.
-        # So the user directory and per-user isolation -- which need identity, not access rules --
-        # work without opting into the whole authorization layer. authorization=True implies it.
-        self.authentication = authentication
+        # what they may DO).
         self.authorization = authorization
         self.authorization_config = authorization_config
+        # Per-user data isolation is a top-level opt-in (each caller sees only their own
+        # sessions/memories). It ENFORCES under a verified identity (authorization=True); without
+        # auth it is advisory -- the user_id is self-asserted, so it scopes a run's own writes but
+        # is not a boundary. Kept as a peer of the directory: both key off identity, not roles.
+        self.user_isolation = user_isolation
         # The credential-less user directory is a PEER of authorization (who the users are +
         # the disabled kill-switch), configured separately from authorization_config.
         # ``user_directory=True`` (or ``store=True`` on the config) is a shorthand: AgentOS
@@ -1609,18 +1615,18 @@ class AgentOS:
                 "(every route is served unauthenticated). Set authorization=True, or drop the "
                 "config if you intended an open instance."
             )
-        if not (self.authentication or self.authorization) and self.user_directory is not None:
-            # A directory with no auth is a valid, intentional shape: it is a roster (who exists,
-            # roles, metadata), and a run's user_id registers that person even without a token --
-            # the no-IdP path for local/demo/cookbook use. What it is NOT, without a verified
-            # identity, is a security boundary: the caller asserts their own user_id, so the
-            # `disabled` flag is advisory here, not an enforced kill-switch. Warn (don't raise) so
-            # an operator who expected revocation to bite knows to add authentication.
+        if not self.authorization and (self.user_directory is not None or self.user_isolation):
+            # A user directory or per-user isolation without authorization is a valid, intentional
+            # shape for local/demo use: a run's user_id registers the person (a roster fills in) and
+            # scopes that run's own data. What it is NOT, without a verified identity, is a security
+            # boundary -- the caller asserts their own user_id, so the directory's `disabled` flag and
+            # isolation are ADVISORY here, not enforced. Warn (don't raise) so an operator who expected
+            # enforcement knows to add authorization.
             log_warning(
-                "AgentOS(user_directory=...) is configured without authentication or authorization. "
-                "The directory works as a roster (a run's user_id registers the person, roles apply), "
-                "but the disabled kill-switch is ADVISORY here -- the caller's user_id is self-asserted. "
-                "Add AgentOS(authentication=True) to verify identity and make disable a real revocation."
+                "AgentOS is configured with a user directory / per-user isolation but no authorization. "
+                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
+                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
+                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -1643,11 +1649,11 @@ class AgentOS:
         if service_account_verifier is not None:
             fastapi_app.state.service_account_verifier = service_account_verifier
 
-        auth_configured = bool(self.authentication or self.authorization or jwt_env_configured or security_key)
+        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
-            effective_key = None if (self.authentication or self.authorization or jwt_env_configured) else security_key
+            effective_key = None if (self.authorization or jwt_env_configured) else security_key
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
         elif self.user_directory is not None:
             # No auth middleware is installed (that path seeds the directory onto app.state as a
@@ -1784,6 +1790,10 @@ class AgentOS:
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
         )
+        # The top-level user_isolation flag is the primary spelling; OR it with the legacy
+        # AuthorizationConfig(user_isolation=...) so either turns per-user scoping on.
+        if self.user_isolation:
+            middleware_kwargs["user_isolation"] = True
         middleware_kwargs["security_key"] = security_key
         algorithm = middleware_kwargs["algorithm"]
         verification_keys = middleware_kwargs["verification_keys"]
@@ -1800,9 +1810,9 @@ class AgentOS:
         # with no way to verify a JWT: otherwise every JWT and anonymous request would fall
         # through unauthenticated, silently serving an OPEN instance. AuthMiddleware enforces
         # the same invariant as a backstop for the manual add_middleware path.
-        if (self.authentication or self.authorization) and not jwt_configured:
+        if self.authorization and not jwt_configured:
             raise ValueError(
-                "AgentOS(authentication=True / authorization=True) requires a JWT verification key: set "
+                "AgentOS(authorization=True) requires a JWT verification key: set "
                 "JWT_VERIFICATION_KEY or JWT_JWKS_FILE (or pass verification_keys / jwks_file via "
                 "authorization_config). Without one, tokens cannot be verified so no identity is established "
                 "and RBAC is not enforced. For service-account-only enforcement, use a db without either flag."
@@ -1982,7 +1992,10 @@ class AgentOS:
         if not user_directory:  # None or False
             return None
         if user_directory is True:
-            user_directory = UserDirectoryConfig(store=True)
+            # The bare ``True`` shorthand is the "just give me a working directory" path, so it
+            # defaults auto_provision on: a run's user_id registers the person with zero extra
+            # config. Pass an explicit UserDirectoryConfig to opt out (auto_provision=False).
+            user_directory = UserDirectoryConfig(store=True, auto_provision=True)
         if getattr(user_directory, "store", None) is True:
             if self.db is None:
                 raise ValueError(
