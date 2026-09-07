@@ -1,10 +1,11 @@
 import asyncio
+import base64
 import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from mcp import StdioServerParameters
-from mcp.types import CallToolResult, TextContent
+from mcp.types import AudioContent, CallToolResult, TextContent
 
 from agno.tools.function import Function, FunctionCall, ToolResult
 from agno.tools.mcp import MCPTools
@@ -1100,6 +1101,36 @@ async def test_mcp_tool_result_preserves_structured_content():
 
     assert result.content == "hello"
     assert result.metadata["structured_content"] == {"id": "u1", "name": "Ada"}
+
+
+@pytest.mark.asyncio
+async def test_mcp_tool_result_preserves_audio_content():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    audio_bytes = b"audio-bytes"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[
+                AudioContent(
+                    data=base64.b64encode(audio_bytes).decode(),
+                    mimeType="audio/wav",
+                )
+            ],
+            is_error=False,
+        )
+    )
+
+    entrypoint = get_entrypoint_for_tool(mock_tool, session)
+    result = await entrypoint()
+
+    assert result.content == "Audio has been generated and added to the response."
+    assert result.audios is not None
+    assert len(result.audios) == 1
+    assert result.audios[0].content == audio_bytes
+    assert result.audios[0].mime_type == "audio/wav"
 
 
 @pytest.mark.asyncio

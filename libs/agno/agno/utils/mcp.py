@@ -7,13 +7,13 @@ from agno.utils.log import log_debug, log_error, log_exception
 
 try:
     from mcp.shared.exceptions import MCPError
-    from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
+    from mcp.types import AudioContent, CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
 except ModuleNotFoundError:
     raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
-from agno.media import Image
+from agno.media import Audio, Image
 from agno.tools.function import ToolResult
 
 
@@ -193,6 +193,7 @@ def get_entrypoint_for_tool(
             # Process the result content
             response_str = ""
             images = []
+            audios = []
 
             for content_item in result.content:
                 if isinstance(content_item, TextContent):
@@ -255,10 +256,28 @@ def get_entrypoint_for_tool(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
                         content=image_data,
-                        mime_type=getattr(content_item, "mime_type", "image/png"),
+                        mime_type=getattr(content_item, "mime_type", None),
                     )
                     images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
+                elif isinstance(content_item, AudioContent):
+                    # Handle standard MCP AudioContent
+                    audio_data = getattr(content_item, "data", None)
+
+                    if audio_data and isinstance(audio_data, str):
+                        try:
+                            audio_artifact = Audio.from_base64(
+                                base64_content=audio_data,
+                                id=str(uuid4()),
+                                mime_type=getattr(content_item, "mime_type", None),
+                            )
+                            audios.append(audio_artifact)
+                            response_str += "Audio has been generated and added to the response.\n"
+                        except Exception as e:
+                            log_debug(f"Failed to decode base64 audio data: {e}")
+                    else:
+                        log_debug("MCP AudioContent did not contain valid base64 audio data")
+
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
                     response_str += f"[Embedded resource: {content_item.resource.model_dump_json(by_alias=True)}]\n"
@@ -273,6 +292,7 @@ def get_entrypoint_for_tool(
                 content=response_str.strip(),
                 metadata=_build_mcp_metadata(result),
                 images=images if images else None,
+                audios=audios if audios else None,
             )
 
         # Execute the MCP tool call
