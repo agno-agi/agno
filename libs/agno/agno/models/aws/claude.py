@@ -1,3 +1,4 @@
+import asyncio
 from dataclasses import dataclass
 from os import getenv
 from typing import Any, Dict, List, Optional, Type, Union
@@ -160,7 +161,12 @@ class Claude(AnthropicClaude):
         # Close the previous client before creating a new one to avoid leaking
         # connection pools when session-based credential refresh forces recreation.
         if self.session and self.async_client is not None and not self.async_client.is_closed():
-            self.async_client.close()
+            # close() is a coroutine on the async SDK client, but this method is sync:
+            # schedule it on the running loop, or drive it to completion on a fresh one.
+            try:
+                asyncio.get_running_loop().create_task(self.async_client.close())
+            except RuntimeError:
+                asyncio.run(self.async_client.close())
 
         # Use a local variable so concurrent callers on the same model
         # instance cannot overwrite each other's client via self.async_client.
