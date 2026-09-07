@@ -30,7 +30,6 @@ from agno.models.openai import OpenAIResponses
 # Compaction
 # ---------------------------------------------------------------------------
 compaction = Compaction(
-    compact_at_runs=4,
     # Adds read_file, list_files and search_content, scoped to this session's
     # archive - one session can never read another's history.
     searchable=True,
@@ -53,7 +52,6 @@ agent = Agent(
     db=db,
     session_id="compaction_searchable",
     add_history_to_context=True,
-    num_history_runs=100,
     compaction=compaction,
 )
 
@@ -72,7 +70,7 @@ if __name__ == "__main__":
         "hash is 'b7f2ae91c4'."
     )
 
-    # 2. Bury it under enough unrelated turns to push it past the threshold.
+    # 2. Bury it under unrelated turns, then fold explicitly.
     for question in [
         "What is a blue-green deployment?",
         "How does a canary release differ from that?",
@@ -81,6 +79,10 @@ if __name__ == "__main__":
         "What belongs in a post-deploy checklist?",
     ]:
         agent.print_response(question)
+
+    # Fold now: a demo never reaches compact_at_tokens, and the point here is what
+    # happens AFTER the planted fact has been summarized away.
+    agent.compact(session_id=agent.session_id)
 
     # 3. Ask for the buried fact. It is no longer in context, so the agent has
     #    to find it in the archive. Asking for the build hash makes that

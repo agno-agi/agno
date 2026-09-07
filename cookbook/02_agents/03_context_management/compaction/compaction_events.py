@@ -40,9 +40,10 @@ agent = Agent(
     db=db,
     session_id="compaction_events",
     add_history_to_context=True,
-    num_history_runs=100,
-    # Low thresholds so a short demo actually triggers a compaction.
-    compaction=Compaction(compact_at_runs=4, keep_last_runs=2),
+    # A low token threshold so a short demo trips the AUTOMATIC path - the manual
+    # agent.compact() folds just as well but emits no run events, and events are
+    # what this example is about.
+    compaction=Compaction(compact_at_tokens=2_000, keep_last_runs=1),
 )
 
 

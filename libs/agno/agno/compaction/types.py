@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from enum import Enum
 from time import time
 from typing import Any, Dict, Optional
 
@@ -10,6 +11,55 @@ from typing import Any, Dict, Optional
 # "tool-results" prefix result offloading uses, so one database backs both
 # without either being able to read the other's files.
 ARCHIVE_NAMESPACE_PREFIX = "history"
+
+
+class CompactionStatus(str, Enum):
+    """Why a compaction attempt ended the way it did.
+
+    A manual compaction can decline for reasons that are not failures, so a bare None cannot
+    tell a caller what happened. These are the outcomes an API or UI needs to distinguish.
+    """
+
+    # The fold happened.
+    COMPACTED = "compacted"
+    # Compaction is not configured on this agent.
+    NOT_ENABLED = "not_enabled"
+    # The session has no stored history yet.
+    NO_HISTORY = "no_history"
+    # keep_last_runs / keep_last_messages covers the whole conversation, so there is no
+    # history in front of the kept tail to fold.
+    NOTHING_TO_FOLD = "nothing_to_fold"
+    # A previous fold already covers everything up to the only safe cut point.
+    ALREADY_COMPACTED = "already_compacted"
+    # Folding this span would cost more in summary than it reclaims.
+    NOT_WORTH_IT = "not_worth_it"
+    # The summarizer returned nothing.
+    SUMMARY_FAILED = "summary_failed"
+
+
+@dataclass
+class CompactionResult:
+    """The outcome of an explicit ``agent.compact()`` call.
+
+    Returned instead of a bare record so a caller - an API route, a UI - can tell a decline
+    apart from a failure, and show the reason without parsing a log line.
+    """
+
+    status: CompactionStatus
+    message: str
+    record: Optional["CompactionRecord"] = None
+
+    @property
+    def compacted(self) -> bool:
+        return self.status == CompactionStatus.COMPACTED
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "status": self.status.value,
+            "message": self.message,
+            "compacted": self.compacted,
+            "record": self.record.to_dict() if self.record is not None else None,
+        }
 
 
 @dataclass

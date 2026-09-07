@@ -29,14 +29,14 @@ db = PostgresDb(db_url=db_url)
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-compaction = Compaction(compact_at_runs=4, keep_last_runs=1)
+# Low token threshold so a short demo trips the automatic path; the default is 150k.
+compaction = Compaction(compact_at_tokens=3_000, keep_last_runs=1)
 
 agent = Agent(
     model=Claude(id="claude-sonnet-4-5"),
     db=db,
     session_id="compaction_anthropic",
     add_history_to_context=True,
-    num_history_runs=100,
     compaction=compaction,
     instructions=[
         "Answer thoroughly - long answers grow the context, which is the point here."

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any, List, Optional
+from typing import TYPE_CHECKING, Any, List, Optional, Tuple
 from uuid import uuid4
 
 from agno.compaction._cut import choose_boundary, choose_watermark, is_offload_envelope
@@ -15,7 +15,7 @@ from agno.compaction.prompts import (
     ARCHIVE_LOOKUP_INSTRUCTION,
     DEFAULT_COMPACTION_PROMPT,
 )
-from agno.compaction.types import CompactionRecord, CompactionStats
+from agno.compaction.types import CompactionRecord, CompactionStats, CompactionStatus
 from agno.models.base import Model
 from agno.models.message import Message
 from agno.utils.log import log_error, log_info, log_warning
@@ -62,11 +62,13 @@ class Compaction:
 
     # -- when to compact ------------------------------------------------
     # Compact when the context is at least this many tokens.
-    compact_at_tokens: Optional[int] = None
-    # Compact when the history holds at least this many runs.
-    compact_at_runs: Optional[int] = 20
-    # Compact when the history holds at least this many messages.
-    compact_at_messages: Optional[int] = None
+    #
+    # Size is the only automatic trigger. A run or message count says nothing about how much
+    # context is actually in play - twenty short exchanges and twenty research turns differ by
+    # orders of magnitude - so counting them trips on conversations far too small to fold and
+    # stays quiet on ones that overflow. Call agent.compact() to fold at a moment of your own
+    # choosing regardless of size.
+    compact_at_tokens: Optional[int] = 150_000
 
     # -- what to keep ---------------------------------------------------
     # Recent runs kept verbatim. Ignored when keep_last_messages is set.
@@ -105,10 +107,8 @@ class Compaction:
     def __post_init__(self) -> None:
         if self.id is None:
             self.id = f"compaction_{uuid4().hex[:8]}"
-        for name in ("compact_at_tokens", "compact_at_runs", "compact_at_messages"):
-            value = getattr(self, name)
-            if value is not None and value <= 0:
-                raise ValueError(f"{name} must be a positive integer, got {value}")
+        if self.compact_at_tokens is not None and self.compact_at_tokens <= 0:
+            raise ValueError(f"compact_at_tokens must be a positive integer, got {self.compact_at_tokens}")
         for name in ("keep_last_runs", "keep_last_messages"):
             value = getattr(self, name)
             if value is not None and value < 0:
@@ -116,10 +116,8 @@ class Compaction:
         if self.keep_last_runs is not None and self.keep_last_messages is not None:
             log_warning("keep_last_runs and keep_last_messages cannot both be set. Using keep_last_messages.")
             self.keep_last_runs = None
-        if not any(v is not None for v in (self.compact_at_tokens, self.compact_at_runs, self.compact_at_messages)):
-            raise ValueError(
-                "Compaction needs at least one threshold: compact_at_tokens, compact_at_runs, or compact_at_messages."
-            )
+        # compact_at_tokens=None is legal: it disables the automatic trigger and leaves
+        # agent.compact() as the only way to fold, which is a coherent way to run this.
 
     # -- thresholds -----------------------------------------------------
 
@@ -157,25 +155,9 @@ class Compaction:
     ) -> bool:
         """Whether the history has grown enough to compact.
 
-        Cheapest signal first: counting runs and messages is free, measuring
-        tokens may not be.
+        Size is the only automatic trigger, so this is one measurement. Whether the fold is
+        worth doing is a separate question, decided by the ratio guard once a boundary exists.
         """
-        if self.compact_at_runs is not None:
-            # Runs *currently in context*, not runs in the session. The session
-            # count only ever grows, so comparing against it would leave the
-            # threshold tripped forever and recompact on every subsequent run.
-            # A user message opens a run, and compaction replaces the earlier
-            # ones with a single summary, so this count falls back after a
-            # compaction exactly as the context it measures does.
-            runs_in_context = sum(1 for m in messages if m.role == "user")
-            if runs_in_context >= self.compact_at_runs:
-                log_info(f"Compaction: runs in context {runs_in_context} >= {self.compact_at_runs}")
-                return True
-
-        if self.compact_at_messages is not None and len(messages) >= self.compact_at_messages:
-            log_info(f"Compaction: message count {len(messages)} >= {self.compact_at_messages}")
-            return True
-
         if self.compact_at_tokens is not None:
             tokens = self._measured_tokens(messages, last_input_tokens, model, tools)
             if tokens is not None and tokens >= self.compact_at_tokens:
@@ -487,26 +469,52 @@ class Compaction:
         compactions that never happen - which is what a bare "should_compact"
         does, since it cannot see the pair-safe boundary or the size floor.
         """
+        boundary, _, _ = self.plan_with_reason(messages, previous)
+        return boundary
+
+    def plan_with_reason(
+        self, messages: List[Message], previous: Optional[CompactionRecord] = None
+    ) -> Tuple[Optional[int], "CompactionStatus", str]:
+        """``plan``, plus why it decided that.
+
+        An explicit caller - an API route, a UI - has to tell a decline apart from a failure and
+        show the reason. Deriving that from the log line would mean two descriptions of one
+        decision, free to drift; this is the single source both use.
+        """
+        from agno.compaction.types import CompactionStatus
+
         already = self._resolved_boundary(messages, previous)
         boundary = self.boundary_for(messages, min_index=already)
         if boundary is None or boundary <= already:
             kept = "keep_last_messages" if self.keep_last_messages is not None else "keep_last_runs"
             size = self.keep_last_messages if self.keep_last_messages is not None else self.keep_last_runs
             if previous is None:
-                log_info(
-                    f"Compaction: threshold reached but nothing to fold yet - {kept}={size} covers the "
-                    f"whole conversation, so there is no history before the kept tail. Lower {kept} to "
-                    "fold sooner."
+                reason = (
+                    f"Nothing to fold yet - {kept}={size} covers the whole conversation, so there is "
+                    f"no history before the kept tail. Lower {kept} to fold sooner."
                 )
-            else:
-                log_info(
-                    "Compaction: threshold reached but no safe cut past the previous fold yet - the "
-                    "conversation has not grown enough since then."
-                )
-            return None
+                log_info(f"Compaction: threshold reached but {reason[0].lower()}{reason[1:]}")
+                return None, CompactionStatus.NOTHING_TO_FOLD, reason
+            reason = "No safe cut past the previous fold yet - the conversation has not grown enough since then."
+            log_info(f"Compaction: threshold reached but {reason[0].lower()}{reason[1:]}")
+            return None, CompactionStatus.ALREADY_COMPACTED, reason
         if not self._worth_compacting(messages[already:boundary], messages[boundary:]):
-            return None
-        return boundary
+            # Carry the numbers, not just the verdict: "not worth it" with no figures leaves a
+            # caller unable to tell a fold that missed by a hair from one that was never close,
+            # and the ratio is the one thing that says which lever to reach for.
+            fold_tokens = estimate_tokens([m for m in messages[already:boundary] if not is_offload_envelope(m)])
+            keep_tokens = max(estimate_tokens([m for m in messages[boundary:] if not is_offload_envelope(m)]), 1)
+            kept = "keep_last_messages" if self.keep_last_messages is not None else "keep_last_runs"
+            size = self.keep_last_messages if self.keep_last_messages is not None else self.keep_last_runs
+            return (
+                None,
+                CompactionStatus.NOT_WORTH_IT,
+                f"This fold would replace {fold_tokens} tokens against a {keep_tokens}-token tail "
+                f"(ratio {fold_tokens / keep_tokens:.2f}, needs {self.min_fold_ratio}), so the "
+                f"context would not shrink. Continue the conversation, or lower {kept}={size} or "
+                f"min_fold_ratio to fold sooner.",
+            )
+        return boundary, CompactionStatus.COMPACTED, "Ready to compact."
 
     def compact(
         self,

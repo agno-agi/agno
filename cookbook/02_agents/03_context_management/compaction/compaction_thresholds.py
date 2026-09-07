@@ -4,10 +4,14 @@ Compaction Thresholds
 
 Tuning when compaction fires and how much it keeps.
 
-Any threshold left unset is not evaluated, and the first one to trip wins:
-- `compact_at_tokens` - context size, measured from what the provider reported
-- `compact_at_runs` - runs currently in context
-- `compact_at_messages` - messages currently in context
+Size is the only automatic trigger. `compact_at_tokens` is measured from what the
+provider reported for the last run, so it costs nothing to evaluate. A run or message
+count is deliberately not offered: twenty short exchanges and twenty research turns
+differ by orders of magnitude, so counting them fires on conversations far too small
+to fold and stays quiet on ones that overflow.
+
+Set `compact_at_tokens=None` to turn the automatic trigger off entirely and fold only
+when you call `agent.compact()`.
 
 A cheaper model can do the summarizing, which is usually the right call: the
 work is mechanical and the main model never sees the transcript being condensed.
@@ -26,7 +30,7 @@ compaction = Compaction(
     model=OpenAIResponses(id="gpt-5-mini"),
     compact_at_tokens=1_000,
     # Keep the last two turns verbatim; everything older folds into the summary.
-    keep_last_runs=2,
+    keep_last_runs=1,
 )
 
 # ---------------------------------------------------------------------------

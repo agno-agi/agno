@@ -10,8 +10,9 @@ turns are kept verbatim.
 model are shortened - the session still stores every message, which the run at
 the bottom demonstrates.
 
-The defaults (compact at 20 runs, keep the last 5) suit a long-lived session.
-This example lowers them so a short demo actually triggers a compaction.
+Compaction triggers automatically at `compact_at_tokens` (150k by default), which a short
+demo never reaches. So this example calls `agent.compact()` directly - the same fold the
+automatic path performs, at a moment of your choosing.
 """
 
 from agno.agent import Agent
@@ -33,11 +34,9 @@ agent = Agent(
     db=db,
     session_id="compaction_demo",
     add_history_to_context=True,
-    # Without a window, history is capped at 3 runs and compaction never sees
-    # enough of the conversation to be worth doing.
-    num_history_runs=100,
-    # `compaction=True` uses the defaults; these are lowered to fit the demo.
-    compaction=Compaction(compact_at_runs=5, keep_last_runs=2),
+    # `compaction=True` would use the defaults. keep_last_runs is lowered so the fold
+    # below has history in front of the tail to work with at demo scale.
+    compaction=Compaction(keep_last_runs=2),
 )
 
 # ---------------------------------------------------------------------------
@@ -52,20 +51,22 @@ if __name__ == "__main__":
         "Do I need a rail pass?",
         "What about getting a pocket wifi?",
         "Which airport should I fly into?",
-        "Remind me what my budget was.",
     ]
 
     for question in questions:
         agent.print_response(question)
-        run = agent.get_last_run_output(session_id="compaction_demo")
 
-        # `run.compaction` reports what compaction did on this run, if anything.
-        if run is not None and run.compaction is not None:
-            r = run.compaction
-            print(
-                f"\n[compacted {r.messages_compacted} messages: "
-                f"{r.tokens_before} -> {r.tokens_after} tokens, archived={r.archived}]"
-            )
+    # Fold now, rather than waiting for the context to reach compact_at_tokens.
+    # Returns the record, or None when there was nothing worth folding.
+    record = agent.compact(session_id="compaction_demo")
+    if record is not None:
+        print(
+            f"\n[compacted {record.messages_compacted} messages: "
+            f"{record.tokens_before} -> {record.tokens_after} tokens]"
+        )
+
+    # The next run sends the summary in place of the folded turns.
+    agent.print_response("Remind me what my budget was.")
 
     # The summary shortens the request, never the record: every message the
     # session stored is still there.

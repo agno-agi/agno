@@ -208,6 +208,22 @@ def set_compaction(agent: Agent) -> None:
     if isinstance(agent.compaction, Compaction) and agent.compaction.model is None:
         agent.compaction.model = agent.model
 
+    # A replay window at or below the kept tail cannot express a working compaction: the tail
+    # would not fit inside what the planner may read, so the boundary anchor could never be
+    # found again and every summary would be dropped on the next run. The planner widens its
+    # own read to keep that from happening - say so, because silently ignoring a number the
+    # user set is worse than the misconfiguration it works around.
+    if isinstance(agent.compaction, Compaction) and not getattr(agent, "_num_history_runs_defaulted", False):
+        keep = agent.compaction.keep_last_runs
+        window = agent.num_history_runs
+        if keep is not None and window is not None and window <= keep:
+            log_warning(
+                f"num_history_runs={window} is not larger than compaction's keep_last_runs={keep}, "
+                f"so there would be no history in front of the kept tail to fold. Compaction will "
+                f"read {keep + 1} runs instead; num_history_runs still governs what the model "
+                f"replays. Set keep_last_runs below num_history_runs to silence this."
+            )
+
 
 def set_result_store(agent: Agent) -> None:
     """Resolve ``agent.offload_tool_results`` into the store the run uses.

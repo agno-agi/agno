@@ -39,7 +39,8 @@ db = PostgresDb(db_url=db_url)
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-compaction = Compaction(compact_at_runs=4, keep_last_runs=1)
+# Low token threshold so a short demo trips the automatic path; the default is 150k.
+compaction = Compaction(compact_at_tokens=3_000, keep_last_runs=1)
 
 agent = Agent(
     model=Claude(
@@ -49,7 +50,6 @@ agent = Agent(
     session_id="compaction_anthropic_thinking",
     tools=[CalculatorTools()],
     add_history_to_context=True,
-    num_history_runs=100,
     compaction=compaction,
     instructions=[
         "Use the calculator for arithmetic rather than doing it in your head.",

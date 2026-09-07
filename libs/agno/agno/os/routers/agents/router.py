@@ -1,7 +1,7 @@
 import asyncio
 import contextlib
 import json
-from typing import TYPE_CHECKING, Any, AsyncGenerator, List, Literal, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, AsyncGenerator, Dict, List, Literal, Optional, Union, cast
 from uuid import uuid4
 
 from fastapi import (
@@ -1783,6 +1783,102 @@ def get_agent_router(
             raise HTTPException(status_code=400, detail=str(e))
 
         return {"session_id": new_session_id, "forked_from_session_id": session_id}
+
+    @router.post(
+        "/agents/{agent_id}/sessions/{session_id}/compact",
+        tags=["Agents"],
+        operation_id="compact_agent_session",
+        summary="Compact Agent Session",
+        description=(
+            "Fold this session's older history into a summary now, without waiting for the "
+            "context to reach ``compact_at_tokens``. The stored transcript is never modified - "
+            "compaction shortens what is sent to the model, not the record.\n\n"
+            "A compaction can legitimately decline, which is reported rather than raised. Check "
+            "``compacted``, and show ``message`` to the user:\n"
+            "- ``compacted`` - the fold happened; ``record`` carries the token counts\n"
+            "- ``not_worth_it`` - the span is too small to pay for the summary replacing it, so "
+            "folding would leave the context bigger\n"
+            "- ``nothing_to_fold`` - the kept tail covers the whole conversation\n"
+            "- ``already_compacted`` - a previous fold already covers everything up to the only "
+            "safe cut point\n"
+            "- ``no_history`` - the session has no stored history yet\n"
+            "- ``not_enabled`` - compaction is not configured on this agent\n"
+            "- ``summary_failed`` - the summarizer returned nothing"
+        ),
+        responses={
+            200: {
+                "description": "Compaction attempted; see status for the outcome",
+                "content": {
+                    "application/json": {
+                        "examples": {
+                            "compacted": {
+                                "summary": "The fold happened",
+                                "value": {
+                                    "status": "compacted",
+                                    "message": "Compacted 18 messages (15864 -> 3981 tokens).",
+                                    "compacted": True,
+                                    "record": {
+                                        "messages_compacted": 18,
+                                        "tokens_before": 15864,
+                                        "tokens_after": 3981,
+                                    },
+                                },
+                            },
+                            "declined": {
+                                "summary": "Declined - folding would not help",
+                                "value": {
+                                    "status": "not_worth_it",
+                                    "message": (
+                                        "This fold would cost more in summary than it reclaims, so "
+                                        "the context would not shrink. Lower min_fold_ratio or "
+                                        "keep_last_runs to fold sooner."
+                                    ),
+                                    "compacted": False,
+                                    "record": None,
+                                },
+                            },
+                        }
+                    }
+                },
+            },
+            404: {"description": "Agent not found", "model": NotFoundResponse},
+        },
+        dependencies=[Depends(require_resource_access("agents", "run", "agent_id"))],
+    )
+    async def compact_agent_session(
+        agent_id: str,
+        session_id: str,
+        request: Request,
+        user_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        if hasattr(request.state, "user_id") and request.state.user_id is not None:
+            user_id = request.state.user_id
+
+        try:
+            agent = get_agent_by_id(
+                agent_id=agent_id,
+                agents=os.agents,
+                db=os.db,
+                registry=os.registry,
+                create_fresh=True,
+                user_id=get_scoped_user_id(request),
+                strict=False,
+                published_only=False,
+            )
+        except HTTPException:
+            raise
+        except Exception as e:
+            log_error(f"Error resolving agent '{agent_id}': {e}")
+            raise HTTPException(status_code=500, detail="Internal server error")
+        if agent is None:
+            raise HTTPException(status_code=404, detail="Agent not found")
+
+        # Scope the session read to the caller, so one user cannot compact another's session.
+        scoped_user_id = get_scoped_user_id(request)
+        effective_user_id = scoped_user_id or user_id
+
+        result = await agent.acompact(session_id=session_id, user_id=effective_user_id)  # type: ignore[union-attr]
+        return result.to_dict()
 
     @router.get(
         "/agents",

@@ -1,9 +1,10 @@
+import logging
 import tempfile
 from pathlib import Path
 
 import pytest
 
-from agno.compaction import Compaction, CompactionRecord
+from agno.compaction import Compaction, CompactionRecord, CompactionStatus
 from agno.compaction.archive import render_messages
 from agno.models.message import Message
 
@@ -58,9 +59,15 @@ def _db():
 # --- configuration -------------------------------------------------------
 
 
-def test_requires_at_least_one_threshold():
-    with pytest.raises(ValueError, match="at least one threshold"):
-        Compaction(compact_at_runs=None)
+def test_no_token_threshold_is_legal():
+    """compact_at_tokens=None disables the automatic trigger.
+
+    Manual-only is a coherent way to run compaction - agent.compact() at a moment of the
+    caller's choosing - so this must not raise.
+    """
+    c = Compaction(compact_at_tokens=None)
+    assert c.compact_at_tokens is None
+    assert c.should_compact(_transcript(runs=50)) is False
 
 
 def test_rejects_non_positive_threshold():
@@ -69,7 +76,7 @@ def test_rejects_non_positive_threshold():
 
 
 def test_keep_last_messages_wins_over_runs():
-    c = Compaction(compact_at_runs=5, keep_last_runs=3, keep_last_messages=10)
+    c = Compaction(keep_last_runs=3, keep_last_messages=10)
     assert c.keep_last_runs is None
     assert c.keep_last_messages == 10
 
@@ -77,34 +84,264 @@ def test_keep_last_messages_wins_over_runs():
 # --- triggers ------------------------------------------------------------
 
 
-def test_triggers_on_runs_in_context():
-    """Runs are counted in the live context, not in the session.
+def test_size_is_the_only_automatic_trigger():
+    """A run or message count says nothing about how much context is in play.
 
-    A session count only grows, so it would stay tripped forever and
-    recompact on every run after the first.
+    Twenty short exchanges and twenty research turns differ by orders of magnitude, so counting
+    them fires on conversations far too small to fold and stays quiet on ones that overflow.
     """
-    c = Compaction(compact_at_runs=3)
-    assert c.should_compact(_transcript(runs=3)) is True
-    assert c.should_compact(_transcript(runs=2)) is False
-
-
-def test_triggers_on_message_count():
-    c = Compaction(compact_at_runs=None, compact_at_messages=5)
-    assert c.should_compact(_transcript(runs=3)) is True
-    assert c.should_compact(_transcript(runs=1)) is False
+    c = Compaction(compact_at_tokens=1_000)
+    assert c.should_compact(_transcript(runs=50), last_input_tokens=200) is False
+    assert c.should_compact(_transcript(runs=2), last_input_tokens=5_000) is True
 
 
 def test_prefers_reported_tokens_over_counting():
     """The provider's own number is used when available, with no model call."""
-    c = Compaction(compact_at_runs=None, compact_at_tokens=1000)
+    c = Compaction(compact_at_tokens=1000)
     assert c.should_compact(_transcript(), last_input_tokens=2000, model=None) is True
     assert c.should_compact(_transcript(), last_input_tokens=500, model=None) is False
 
 
 def test_no_threshold_met_without_signal():
     """A token threshold with nothing to measure must not fire."""
-    c = Compaction(compact_at_runs=None, compact_at_tokens=1000)
+    c = Compaction(compact_at_tokens=1000)
     assert c.should_compact(_transcript(), last_input_tokens=None, model=None) is False
+
+
+def test_replay_window_below_the_tail_warns(caplog):
+    """Widening a number the user set must not be silent.
+
+    num_history_runs at or below keep_last_runs cannot express a working compaction - the tail
+    would not fit in what the planner may read, so no anchor could ever resolve. The planner
+    widens its own read to avoid dropping every summary, and says so: quietly ignoring a
+    setting is worse than the misconfiguration it works around.
+    """
+    from agno.agent import Agent, _init
+
+    for window, keep in ((3, 5), (5, 5)):
+        caplog.clear()
+        agent = Agent(num_history_runs=window, compaction=Compaction(keep_last_runs=keep))
+        with caplog.at_level(logging.WARNING, logger="agno"):
+            _init.set_compaction(agent)
+        assert any("keep_last_runs" in r.message for r in caplog.records), (window, keep)
+        # The replay setting itself is untouched; only the planner reads wider.
+        assert agent.num_history_runs == window
+
+
+def test_workable_replay_window_is_not_warned_about(caplog):
+    """A window larger than the tail is a normal configuration, not a mistake."""
+    from agno.agent import Agent, _init
+
+    agent = Agent(num_history_runs=20, compaction=Compaction(keep_last_runs=5))
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        _init.set_compaction(agent)
+
+    assert not [r for r in caplog.records if "keep_last_runs" in r.message]
+
+
+def test_defaults_the_user_did_not_choose_are_not_warned_about(caplog):
+    """compaction=True collides two framework defaults - that is not the user's mistake."""
+    from agno.agent import Agent, _init
+
+    agent = Agent(compaction=True)
+    with caplog.at_level(logging.WARNING, logger="agno"):
+        _init.set_compaction(agent)
+
+    assert not [r for r in caplog.records if "keep_last_runs" in r.message]
+
+
+def test_compaction_is_not_starved_by_the_default_history_window():
+    """num_history_runs defaults to 3, which would leave compaction nothing to fold.
+
+    Compaction folds what sits in FRONT of the kept tail. A 3-run window with keep_last_runs=5
+    has no front, so compaction could never fire under the one-flag setup - and an anchor
+    outside the window cannot resolve, dropping the summary along with the turns it replaced.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _compaction_history_runs
+
+    agent = Agent(compaction=Compaction(keep_last_runs=5))
+
+    assert agent.num_history_runs == 3  # the replay default is unchanged
+    assert _compaction_history_runs(agent) > 5  # but the planner sees past it
+
+
+def test_explicit_history_window_is_respected_but_never_strands_the_anchor():
+    """An explicit window is the user's call on replay - until it would lose data.
+
+    Below the kept tail the boundary anchor falls outside the window and stops resolving, which
+    discards the summary silently. The window is raised just enough to prevent that.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _compaction_history_runs
+
+    roomy = Agent(num_history_runs=50, compaction=Compaction(keep_last_runs=5))
+    assert _compaction_history_runs(roomy) == 50
+
+    too_small = Agent(num_history_runs=2, compaction=Compaction(keep_last_runs=5))
+    assert _compaction_history_runs(too_small) > 5
+
+
+def test_history_window_untouched_without_compaction():
+    """The widening is compaction's business only."""
+    from agno.agent import Agent
+    from agno.agent._messages import _compaction_history_runs
+
+    assert _compaction_history_runs(Agent()) == 3
+
+
+def test_manual_compact_folds_without_the_size_trigger():
+    """agent.compact() folds now, whatever the context size.
+
+    The explicit counterpart to the automatic path: a caller asking to compact has supplied the
+    judgement compact_at_tokens exists to make, so only that threshold is bypassed.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _history_for_compaction, compact_now
+    from agno.run.agent import RunOutput
+    from agno.session.agent import AgentSession
+
+    runs = []
+    for i in range(12):
+        run = RunOutput(run_id=f"r{i}", session_id="s1", content=f"a{i}")
+        run.messages = [
+            Message(role="user", content=f"question {i} " * 40, id=f"u{i}"),
+            Message(role="assistant", content=f"answer {i} " * 400, id=f"a{i}"),
+        ]
+        runs.append(run)
+    session = AgentSession(session_id="s1", runs=runs)
+
+    # compact_at_tokens far above this conversation: the automatic path would never fire.
+    compaction = Compaction(compact_at_tokens=10_000_000, keep_last_runs=3, archive=False, model=_StubModel())
+    agent = Agent(compaction=compaction)
+
+    result = compact_now(agent, session, _history_for_compaction(agent, session))
+
+    assert result.compacted
+    assert result.record is not None
+    assert result.record.tokens_after < result.record.tokens_before
+    # The anchor is the first message of the kept tail - 3 runs back.
+    assert result.record.first_kept_message_id == "u9"
+
+
+def test_manual_compact_still_honours_the_ratio_guard():
+    """Only the size trigger is bypassed.
+
+    The ratio answers a different question - whether a summary can pay for itself at all - so
+    an explicit call must not override it: doing so would make the context bigger. The decline
+    is reported as a status a caller can show, not raised and not silent.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import compact_now
+    from agno.session.agent import AgentSession
+
+    # Enough turns that a boundary exists - otherwise this declines as NOTHING_TO_FOLD and
+    # never reaches the ratio check it is meant to exercise. Short turns, so the fold is small.
+    history = [
+        m
+        for i in range(4)
+        for m in (
+            Message(role="user", content=f"q{i}", id=f"u{i}"),
+            Message(role="assistant", content=f"a{i}", id=f"a{i}"),
+        )
+    ]
+    compaction = Compaction(keep_last_runs=2, archive=False, model=_StubModel())
+    agent = Agent(compaction=compaction)
+
+    result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
+
+    assert not result.compacted
+    assert result.record is None
+    assert result.status is CompactionStatus.NOT_WORTH_IT
+    assert "would not shrink" in result.message or "reclaims" in result.message
+
+
+def test_not_worth_it_message_carries_the_numbers():
+    """The verdict alone is not actionable.
+
+    "not worth it" with no figures leaves a caller unable to tell a fold that missed by a
+    hair from one that was never close - and the ratio is what says which lever to reach for.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import compact_now
+    from agno.session.agent import AgentSession
+
+    # 4 turns with keep_last_runs=2 puts the fold and the tail at the same size: ratio 1.00.
+    history = [
+        m
+        for i in range(4)
+        for m in (
+            Message(role="user", content="q " * 15, id=f"u{i}"),
+            Message(role="assistant", content="a " * 600, id=f"a{i}"),
+        )
+    ]
+    agent = Agent(compaction=Compaction(keep_last_runs=2, archive=False, model=_StubModel()))
+
+    result = compact_now(agent, AgentSession(session_id="s1", runs=[]), history)
+
+    assert result.status is CompactionStatus.NOT_WORTH_IT
+    assert "ratio 1.00" in result.message
+    assert "needs 2.0" in result.message
+    # The usual fix is more conversation, so it is named before the config knobs.
+    assert result.message.index("Continue") < result.message.index("keep_last_runs")
+
+
+def test_compaction_result_serializes_for_an_api():
+    """The route returns result.to_dict() verbatim, so this IS the API contract."""
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    declined = CompactionResult(status=CompactionStatus.NOT_WORTH_IT, message="too small").to_dict()
+
+    assert declined == {
+        "status": "not_worth_it",
+        "message": "too small",
+        "compacted": False,
+        "record": None,
+    }
+
+
+def test_declines_are_reported_not_raised():
+    """A decline is a normal outcome an API returns 200 for, with a reason to display.
+
+    Raising would make a legitimate "folding would not help here" indistinguishable from a
+    failure, and force every caller to catch it.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import compact_now
+    from agno.session.agent import AgentSession
+
+    agent = Agent(compaction=Compaction(keep_last_runs=2, archive=False, model=_StubModel()))
+    session = AgentSession(session_id="s1", runs=[])
+
+    for history, expected in (
+        ([], CompactionStatus.NO_HISTORY),
+        (
+            [
+                m
+                for i in range(4)
+                for m in (
+                    Message(role="user", content=f"q{i}", id=f"u{i}"),
+                    Message(role="assistant", content=f"a{i}", id=f"a{i}"),
+                )
+            ],
+            CompactionStatus.NOT_WORTH_IT,
+        ),
+    ):
+        result = compact_now(agent, session, history)
+        assert result.status is expected
+        assert result.message  # always something a UI can show
+        assert not result.compacted
+
+
+def test_compaction_not_enabled_is_a_status_not_a_crash():
+    from agno.agent import Agent
+    from agno.agent._messages import compact_now
+    from agno.session.agent import AgentSession
+
+    result = compact_now(Agent(), AgentSession(session_id="s1", runs=[]), [Message(role="user", content="x")])
+
+    assert result.status is CompactionStatus.NOT_ENABLED
+    assert not result.compacted
 
 
 # --- boundary safety -----------------------------------------------------
@@ -114,7 +351,7 @@ def test_boundary_never_splits_a_tool_batch():
     """The kept tail must never begin with an unanswered tool result."""
     messages = _transcript(runs=3)
     for keep in range(len(messages) + 1):
-        c = Compaction(compact_at_runs=2, keep_last_messages=keep)
+        c = Compaction(keep_last_messages=keep)
         boundary = c.boundary_for(messages)
         tail = messages[boundary:]
         if tail:
@@ -128,7 +365,7 @@ def test_boundary_never_splits_a_tool_batch():
 
 def test_boundary_keeps_requested_runs():
     messages = _transcript(runs=3)
-    c = Compaction(compact_at_runs=2, keep_last_runs=1)
+    c = Compaction(keep_last_runs=1)
     tail = messages[c.boundary_for(messages) :]
     assert tail[0].role == "user"
     assert tail[0].content == "question 2"
@@ -137,7 +374,7 @@ def test_boundary_keeps_requested_runs():
 def test_keeping_everything_compacts_nothing():
     """No safe cut is None, not 0: there is nothing to fold, so the pass aborts."""
     messages = _transcript(runs=2)
-    c = Compaction(compact_at_runs=1, keep_last_runs=99)
+    c = Compaction(keep_last_runs=99)
     assert c.boundary_for(messages) is None
 
 
@@ -147,7 +384,7 @@ def test_keeping_everything_compacts_nothing():
 def test_apply_record_replaces_head_with_summary():
     messages = _transcript(runs=3)
     record = _record(messages, 4, summary="Earlier: discussed 0 and 1.")
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
     from agno.compaction.prompts import SUMMARY_PREFIX
 
     out = c.apply_record(messages, record)
@@ -167,7 +404,7 @@ def test_summary_is_injected_into_the_view_only():
 
     messages = _transcript()
     original = list(messages)
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
 
     view = c.apply_record(messages, _record(messages, 3, summary="earlier turns"))
 
@@ -193,7 +430,7 @@ def test_kept_messages_lose_provider_side_conversation_state():
         Message(role="user", content="q1"),
         Message(role="assistant", content="a1", provider_data={"response_id": "resp_123", "other": "keep"}),
     ]
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
 
     kept = c.apply_record(messages, _record(messages, 2, summary="s"))
 
@@ -226,7 +463,7 @@ def test_only_the_chaining_key_is_stripped_not_the_exchange():
         Message(role="assistant", content="a1"),
     ]
 
-    tail = Compaction(compact_at_runs=2).apply_record(messages, _record(messages, 2, summary="s"))[1:]
+    tail = Compaction().apply_record(messages, _record(messages, 2, summary="s"))[1:]
 
     # The exchange survives intact - only the chaining key is gone.
     assert any(m.role == "tool" for m in tail)
@@ -250,7 +487,7 @@ def test_tool_exchanges_survive_when_there_is_no_server_state():
         Message(role="tool", tool_call_id="call_1", tool_name="search", content="data"),
     ]
 
-    tail = Compaction(compact_at_runs=2).apply_record(messages, _record(messages, 2, summary="s"))[1:]
+    tail = Compaction().apply_record(messages, _record(messages, 2, summary="s"))[1:]
 
     assert any(m.role == "tool" for m in tail)
     assert any(m.tool_calls for m in tail)
@@ -265,11 +502,9 @@ def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
     messages = _transcript()
     archived = _record(messages, 3, summary="s", archived=True)
 
-    searchable = Compaction(compact_at_runs=2, searchable=True).apply_record(messages, archived)[0]
-    not_searchable = Compaction(compact_at_runs=2).apply_record(messages, archived)[0]
-    no_archive = Compaction(compact_at_runs=2, searchable=True).apply_record(
-        messages, _record(messages, 3, summary="s")
-    )[0]
+    searchable = Compaction(searchable=True).apply_record(messages, archived)[0]
+    not_searchable = Compaction().apply_record(messages, archived)[0]
+    no_archive = Compaction(searchable=True).apply_record(messages, _record(messages, 3, summary="s"))[0]
 
     assert "searchable" in searchable.content
     assert "search it rather than relying" in searchable.content
@@ -279,7 +514,7 @@ def test_summary_points_at_the_archive_only_when_the_agent_can_read_it():
 
 def test_summarizer_is_told_to_flag_gaps_only_when_archived():
     """A summary should declare what it dropped only if that is recoverable."""
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
 
     archived = c._summary_messages(_transcript(), None, archived=True)[0].content
     plain = c._summary_messages(_transcript(), None, archived=False)[0].content
@@ -305,7 +540,7 @@ def test_second_compaction_only_covers_what_is_new():
     """
     messages = _transcript(runs=4)
     # min_fold_ratio=0: this exercises the boundary, not the size floor.
-    c = Compaction(compact_at_runs=2, keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
+    c = Compaction(keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
     previous = _record(messages, 2, summary="earlier")
 
     record = c.compact(messages, session_id="s", db=None, previous=previous)
@@ -321,7 +556,7 @@ def test_second_compaction_only_covers_what_is_new():
 
 def test_no_new_span_does_not_recompact():
     messages = _transcript(runs=2)
-    c = Compaction(compact_at_runs=2, keep_last_runs=1)
+    c = Compaction(keep_last_runs=1)
     boundary = c.boundary_for(messages)
     previous = _record(messages, boundary, summary="s")
 
@@ -331,7 +566,7 @@ def test_no_new_span_does_not_recompact():
 def test_skips_a_fold_that_cannot_pay_for_its_summary():
     """Folding barely more than is kept leaves the context bigger, not smaller."""
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_messages=1, model=_StubModel())
 
     assert c.compact(tiny, session_id="s", db=None) is None
 
@@ -342,7 +577,7 @@ def test_fold_ratio_can_be_disabled():
         Message(role="assistant", content="hello"),
         Message(role="user", content="more"),
     ]
-    c = Compaction(compact_at_runs=2, keep_last_messages=1, min_fold_ratio=0, model=_StubModel())
+    c = Compaction(keep_last_messages=1, min_fold_ratio=0, model=_StubModel())
 
     assert c.compact(messages, session_id="s", db=None) is not None
 
@@ -353,7 +588,7 @@ def test_large_fold_against_a_small_tail_clears_the_ratio():
         Message(role="assistant", content="y" * 5_000),
         Message(role="user", content="tiny"),
     ]
-    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_messages=1, model=_StubModel())
 
     assert c.compact(big, session_id="s", db=None) is not None
 
@@ -366,7 +601,7 @@ def test_plan_refuses_what_compact_would_refuse():
     CompactionStarted for compactions that then never happen.
     """
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(compact_at_runs=2, keep_last_messages=0, model=_StubModel())
+    c = Compaction(keep_last_messages=0, model=_StubModel())
 
     assert c.plan(tiny) is None
     assert c.compact(tiny, session_id="s", db=None) is None
@@ -378,7 +613,7 @@ def test_plan_agrees_with_compact_when_worthwhile():
         Message(role="assistant", content="y" * 5_000),
         Message(role="user", content="tiny"),
     ]
-    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_messages=1, model=_StubModel())
 
     boundary = c.plan(big)
     record = c.compact(big, session_id="s", db=None)
@@ -425,7 +660,7 @@ def test_unresolvable_anchor_fails_open():
     messages = _transcript()
     stale = CompactionRecord(messages_compacted=4, summary="s", first_kept_message_id="not-in-this-list")
 
-    view = Compaction(compact_at_runs=2).apply_record(messages, stale)
+    view = Compaction().apply_record(messages, stale)
 
     assert [m.id for m in view] == [m.id for m in messages]
     assert not any(isinstance(m.content, str) and m.content.startswith(SUMMARY_PREFIX) for m in view)
@@ -447,7 +682,7 @@ def test_tool_results_before_the_watermark_are_elided():
     ]
     record = CompactionRecord(messages_compacted=0, summary="", elision_watermark_message_id=messages[3].id)
 
-    view = Compaction(compact_at_runs=2).apply_record(messages, record)
+    view = Compaction().apply_record(messages, record)
 
     elided = next(m for m in view if m.role == "tool")
     assert elided.content == ELISION_PLACEHOLDER.format(n_chars=5_000)
@@ -465,7 +700,7 @@ def test_boundary_never_anchors_on_a_message_that_will_not_persist():
         Message(role="user", content="q2"),
     ]
 
-    boundary = Compaction(compact_at_runs=2, keep_last_messages=2).boundary_for(messages)
+    boundary = Compaction(keep_last_messages=2).boundary_for(messages)
 
     assert boundary is None or not messages[boundary].temporary
 
@@ -485,7 +720,7 @@ def test_envelopes_do_not_count_against_the_fold_ratio():
     folded = [Message(role="user", content="q " * 300), Message(role="assistant", content="a " * 300)]
     tail = [envelope, Message(role="user", content="tiny")]
 
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
 
     assert c._worth_compacting(folded, tail) is True
 
@@ -577,7 +812,7 @@ def test_provider_reported_tokens_win_over_counting():
         def count_tokens(self, *args, **kwargs):
             raise AssertionError("count_tokens must not be called when a report exists")
 
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
 
     assert c._measured_tokens(_transcript(), 1234, ExplodingModel()) == 1234
 
@@ -591,13 +826,13 @@ def test_token_counting_failure_is_not_fatal():
         def count_tokens(self, *args, **kwargs):
             raise RuntimeError("provider said no")
 
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
 
     assert c._measured_tokens(_transcript(), None, FailingModel()) is None
 
 
 def test_no_model_and_no_report_measures_nothing():
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
 
     assert c._measured_tokens(_transcript(), None, None) is None
 
@@ -610,8 +845,8 @@ def test_keep_last_runs_names_an_exact_position():
     messages = _transcript(runs=4)
     user_indexes = [i for i, m in enumerate(messages) if m.role == "user"]
 
-    assert Compaction(compact_at_runs=2, keep_last_runs=1)._keep_from_index(messages) == user_indexes[-1]
-    assert Compaction(compact_at_runs=2, keep_last_runs=3)._keep_from_index(messages) == user_indexes[-3]
+    assert Compaction(keep_last_runs=1)._keep_from_index(messages) == user_indexes[-1]
+    assert Compaction(keep_last_runs=3)._keep_from_index(messages) == user_indexes[-3]
 
 
 def test_tail_covering_everything_means_nothing_to_fold():
@@ -619,7 +854,7 @@ def test_tail_covering_everything_means_nothing_to_fold():
     downstream as a real fold and produces a ratio that collapses toward zero."""
     messages = _transcript(runs=2)
 
-    c = Compaction(compact_at_runs=2, keep_last_runs=5)
+    c = Compaction(keep_last_runs=5)
 
     assert c._keep_from_index(messages) is None
     assert c.boundary_for(messages) is None
@@ -634,7 +869,7 @@ def test_oversized_transcripts_are_trimmed_oldest_first():
 
     messages = [Message(role="user", content="x" * 40_000) for _ in range(6)]
 
-    trimmed = Compaction(compact_at_runs=2)._trim_for_summary(messages)
+    trimmed = Compaction()._trim_for_summary(messages)
 
     assert len(trimmed) < len(messages)
     # The newest survive; the oldest are dropped.
@@ -646,7 +881,7 @@ def test_a_single_oversized_message_still_gets_summarized():
     """Never return an empty transcript: one message over budget is still the input."""
     messages = [Message(role="user", content="x" * 500_000)]
 
-    assert Compaction(compact_at_runs=2)._trim_for_summary(messages) == messages
+    assert Compaction()._trim_for_summary(messages) == messages
 
 
 # --- previous-record resolution ---------------------------------------------
@@ -676,9 +911,9 @@ def test_lookup_is_promised_only_when_the_agent_can_act_on_it():
     archived = CompactionRecord(messages_compacted=2, summary="s", archived=True)
     unarchived = CompactionRecord(messages_compacted=2, summary="s", archived=False)
 
-    assert Compaction(compact_at_runs=2, searchable=True)._archive_instruction(archived)
-    assert Compaction(compact_at_runs=2, searchable=True)._archive_instruction(unarchived) is None
-    assert Compaction(compact_at_runs=2)._archive_instruction(archived) is None
+    assert Compaction(searchable=True)._archive_instruction(archived)
+    assert Compaction(searchable=True)._archive_instruction(unarchived) is None
+    assert Compaction()._archive_instruction(archived) is None
 
 
 # --- async parity -----------------------------------------------------------
@@ -693,7 +928,7 @@ async def test_acompact_matches_compact():
             return self.response(messages, **kwargs)
 
     messages = _transcript(runs=4)
-    kwargs = dict(compact_at_runs=2, keep_last_runs=1, min_fold_ratio=0)
+    kwargs = dict(keep_last_runs=1, min_fold_ratio=0)
 
     sync = Compaction(**kwargs, model=_AsyncStub()).compact(messages, session_id="s", db=None)
     asyn = await Compaction(**kwargs, model=_AsyncStub()).acompact(messages, session_id="s", db=None)
@@ -706,7 +941,7 @@ async def test_acompact_matches_compact():
 @pytest.mark.asyncio
 async def test_acompact_declines_where_compact_declines():
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(compact_at_runs=2, keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_messages=1, model=_StubModel())
 
     assert await c.acompact(tiny, session_id="s", db=None) is None
 
@@ -778,7 +1013,7 @@ def test_completed_event_carries_what_happened():
 def test_archive_roundtrip():
     """A record round-trips through the table with its transcript."""
     db = _db()
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
     archive = c.archive_for("session-a", db)
     record = CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c1", run_id="r1")
 
@@ -791,7 +1026,7 @@ def test_archive_roundtrip():
 def test_archive_is_isolated_per_session():
     """One session must never be able to read another's history."""
     db = _db()
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
     c.archive_for("session-a", db).write(
         CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c1"),
         [Message(role="assistant", content="secret KR-9912")],
@@ -804,7 +1039,7 @@ def test_archive_is_isolated_per_session():
 def test_resumed_run_resolves_the_fold_that_run_saw():
     """A fork must not inherit a fold that summarizes its own future."""
     db = _db()
-    c = Compaction(compact_at_runs=2)
+    c = Compaction()
     archive = c.archive_for("s", db)
     for cid, run_id, summary, at in (("c1", "r1", "early", 100), ("c2", "r3", "late", 200)):
         record = CompactionRecord(
@@ -824,12 +1059,12 @@ def test_archive_degrades_when_db_cannot_store_records():
     class UnsupportedDb:
         pass
 
-    assert Compaction(compact_at_runs=2).archive_for("s", UnsupportedDb()) is None
-    assert Compaction(compact_at_runs=2).archive_for("s", None) is None
+    assert Compaction().archive_for("s", UnsupportedDb()) is None
+    assert Compaction().archive_for("s", None) is None
 
 
 def test_archive_off_returns_no_store():
-    assert Compaction(compact_at_runs=2, archive=False).archive_for("s", _db()) is None
+    assert Compaction(archive=False).archive_for("s", _db()) is None
 
 
 def test_render_includes_roles_and_tool_names():
@@ -853,7 +1088,7 @@ def test_render_clips_huge_tool_results():
 
 def test_searchable_exposes_read_only_tools():
     """Once something is archived, the read-only surface is attached."""
-    c = Compaction(compact_at_runs=2, searchable=True)
+    c = Compaction(searchable=True)
     db = _db()
     c.archive_for("s", db).write(
         CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c9"),
@@ -871,7 +1106,7 @@ def test_no_tools_until_something_is_archived():
     Attaching the tools on turn one only invites a pointless lookup before
     any compaction has happened.
     """
-    assert Compaction(compact_at_runs=2, searchable=True).tools_for("s", _db()) is None
+    assert Compaction(searchable=True).tools_for("s", _db()) is None
 
 
 def test_searchable_tools_reach_the_agent():
@@ -889,7 +1124,7 @@ def test_searchable_tools_reach_the_agent():
     from agno.session import AgentSession
 
     db = _db()
-    compaction = Compaction(compact_at_runs=2, searchable=True)
+    compaction = Compaction(searchable=True)
     compaction.archive_for("s", db).write(
         CompactionRecord(messages_compacted=1, summary="s", first_kept_message_id="m1", id="c8"),
         [Message(role="user", content="archived")],
@@ -917,7 +1152,7 @@ def test_archive_tools_absent_when_not_searchable():
     agent = Agent(
         model=OpenAIResponses(id="gpt-4o-mini"),
         db=_db(),
-        compaction=Compaction(compact_at_runs=2),
+        compaction=Compaction(),
     )
     tools = get_tools(
         agent,
@@ -931,4 +1166,4 @@ def test_archive_tools_absent_when_not_searchable():
 
 
 def test_not_searchable_by_default():
-    assert Compaction(compact_at_runs=2).tools_for("s", _db()) is None
+    assert Compaction().tools_for("s", _db()) is None

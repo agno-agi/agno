@@ -38,7 +38,8 @@ db = PostgresDb(db_url=db_url)
 # Create Agent
 # ---------------------------------------------------------------------------
 compaction = Compaction(
-    compact_at_runs=4,
+    # Low enough that a short demo trips the automatic path; the default is 150k.
+    compact_at_tokens=3_000,
     keep_last_runs=1,
     # On by default. Old tool results become "[tool result elided: N chars]" in
     # the request - no summarizer call, and often more reclaimed than the fold.
@@ -51,7 +52,6 @@ agent = Agent(
     session_id="compaction_with_tools",
     tools=[CalculatorTools()],
     add_history_to_context=True,
-    num_history_runs=100,
     compaction=compaction,
     instructions=[
         "Use the calculator for arithmetic rather than doing it in your head."

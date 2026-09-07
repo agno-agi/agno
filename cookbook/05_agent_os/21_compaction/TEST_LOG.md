@@ -1,5 +1,10 @@
 # Test Log -- 21_compaction
 
+> Note: entries below predate the removal of `compact_at_runs` / `compact_at_messages`.
+> Compaction now triggers on `compact_at_tokens` only, or on an explicit `agent.compact()`.
+> The configurations quoted here no longer construct; the observations still stand.
+
+
 **Tested:** 2026-09-03
 **Environment:** .venvs/demo/bin/python
 

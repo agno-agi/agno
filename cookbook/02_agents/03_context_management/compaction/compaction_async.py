@@ -22,14 +22,15 @@ db = PostgresDb(db_url=db_url)
 # ---------------------------------------------------------------------------
 # Create Agent
 # ---------------------------------------------------------------------------
-compaction = Compaction(compact_at_runs=4, keep_last_runs=2)
+# A fold has to be at least min_fold_ratio (2x) the tail it keeps, so a short demo
+# keeps a 1-turn tail; at keep_last_runs=2 these few turns would not clear the bar.
+compaction = Compaction(keep_last_runs=1)
 
 agent = Agent(
     model=OpenAIResponses(id="gpt-5.6-luna"),
     db=db,
     session_id="compaction_async",
     add_history_to_context=True,
-    num_history_runs=100,
     compaction=compaction,
 )
 
@@ -48,7 +49,14 @@ async def main() -> None:
     for question in questions:
         await agent.aprint_response(question)
 
-    print(f"\nCompactions: {compaction.stats.compactions}")
+    # The async counterpart of agent.compact().
+    record = await agent.acompact(session_id=agent.session_id)
+    if record is not None:
+        print(
+            f"\nCompacted {record.messages_compacted} messages: {record.tokens_before} -> {record.tokens_after} tokens"
+        )
+
+    print(f"Compactions: {compaction.stats.compactions}")
 
 
 if __name__ == "__main__":

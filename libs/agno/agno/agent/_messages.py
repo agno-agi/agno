@@ -134,6 +134,160 @@ def _compaction_events(run_response: Optional[RunOutput], record: Any, started: 
     ]
 
 
+# Headroom over compact_at_tokens for the planner's own window. The planner must see enough
+# history to find a foldable span BEFORE the trigger fires, plus the tail it will keep; a window
+# sized exactly at the trigger would leave nothing in front of the tail to fold.
+_PLANNER_WINDOW_MAX_RUNS = 500
+
+
+def _compaction_history_runs(agent: "Agent") -> Optional[int]:
+    """How many runs the compaction planner may read, or None for no extra limit.
+
+    num_history_runs governs how much history a RUN replays and defaults to 3. Compaction folds
+    what sits in FRONT of the kept tail, so a 3-run window leaves it nothing to fold and it never
+    fires - and worse, an anchor outside that window cannot resolve, which drops the summary
+    silently along with the turns it replaced.
+
+    So the planner reads its own window. Bounded, not unlimited: capped so a long session costs
+    no more than a short one.
+    """
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None:
+        return agent.num_history_runs
+
+    explicit = agent.num_history_runs if not getattr(agent, "_num_history_runs_defaulted", False) else None
+    if explicit is not None:
+        # An explicit window is the user's call on replay, but it must not silently disable
+        # compaction or strand an anchor. Keep whichever is larger.
+        keep = compaction.keep_last_runs or 0
+        return max(explicit, keep + 1) if keep else explicit
+    return _PLANNER_WINDOW_MAX_RUNS
+
+
+def _history_for_compaction(agent: "Agent", session: AgentSession) -> List[Message]:
+    """The history a manual compaction folds.
+
+    Deliberately not limited by ``num_history_runs``: that setting governs how much history a
+    RUN replays, and applying it here would let it silently cap what compaction can ever see -
+    the same starvation the automatic path guards against.
+    """
+    skip_role = agent.system_message_role if agent.system_message_role not in ["user", "assistant", "tool"] else None
+    return session.get_messages(
+        limit=agent.num_history_messages,
+        skip_roles=[skip_role] if skip_role else None,
+        agent_id=agent.id if agent.team_id is not None else None,
+    )
+
+
+def _compaction_result(new_record: Any) -> Any:
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    return CompactionResult(
+        status=CompactionStatus.COMPACTED,
+        message=(
+            f"Compacted {new_record.messages_compacted} messages "
+            f"({new_record.tokens_before} -> {new_record.tokens_after} tokens)."
+        ),
+        record=new_record,
+    )
+
+
+def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+    """Fold ``history`` now, without waiting for the size trigger.
+
+    The explicit counterpart to the automatic path: same boundary, same guards, same archive.
+    Only ``compact_at_tokens`` is bypassed - a caller asking to compact has supplied the
+    judgement that threshold exists to make.
+
+    Every other guard still applies, and a decline is reported rather than raised. The ratio
+    guard in particular is not a preference: a summary costs a few hundred tokens whatever it
+    replaces, so folding a smaller span leaves the context BIGGER while spending a model call
+    and discarding the prompt-cache prefix. Declining is the correct outcome, and the returned
+    status says so in terms a UI can show.
+    """
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None:
+        return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this agent.")
+    if not history:
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="This session has no stored history yet.")
+
+    record = _stored_compaction(agent, session)
+    boundary, status, reason = compaction.plan_with_reason(history, record)
+    if boundary is None:
+        return CompactionResult(status=status, message=reason)
+
+    log_info("Compacting conversation history")
+    inputs = _compaction_inputs(agent, session)
+    new_record = compaction.compact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        previous=record,
+        tokens_before=inputs["last_input_tokens"],
+    )
+    if new_record is None:
+        return CompactionResult(
+            status=CompactionStatus.SUMMARY_FAILED,
+            message="The summarizer returned nothing, so history was left unchanged.",
+        )
+    _log_compaction(new_record, inputs)
+    return _compaction_result(new_record)
+
+
+async def acompact_now(agent: "Agent", session: AgentSession, history: List[Message]) -> Any:
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    compaction = getattr(agent, "compaction", None)
+    if compaction is None:
+        return CompactionResult(status=CompactionStatus.NOT_ENABLED, message="Compaction is not enabled on this agent.")
+    if not history:
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="This session has no stored history yet.")
+
+    record = _stored_compaction(agent, session)
+    boundary, status, reason = compaction.plan_with_reason(history, record)
+    if boundary is None:
+        return CompactionResult(status=status, message=reason)
+
+    log_info("Compacting conversation history")
+    inputs = _compaction_inputs(agent, session)
+    new_record = await compaction.acompact(
+        history,
+        session_id=session.session_id,
+        db=agent.db,
+        previous=record,
+        tokens_before=inputs["last_input_tokens"],
+    )
+    if new_record is None:
+        return CompactionResult(
+            status=CompactionStatus.SUMMARY_FAILED,
+            message="The summarizer returned nothing, so history was left unchanged.",
+        )
+    _log_compaction(new_record, inputs)
+    return _compaction_result(new_record)
+
+
+def compact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
+    from agno.agent import _session
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    session = _session.get_session(agent, session_id=session_id, user_id=user_id)
+    if session is None or not isinstance(session, AgentSession):
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
+    return compact_now(agent, session, _history_for_compaction(agent, session))
+
+
+async def acompact_session(agent: "Agent", session_id: Optional[str] = None, user_id: Optional[str] = None) -> Any:
+    from agno.agent import _session
+    from agno.compaction.types import CompactionResult, CompactionStatus
+
+    session = await _session.aget_session(agent, session_id=session_id, user_id=user_id)
+    if session is None or not isinstance(session, AgentSession):
+        return CompactionResult(status=CompactionStatus.NO_HISTORY, message="No such session.")
+    return await acompact_now(agent, session, _history_for_compaction(agent, session))
+
+
 def apply_compaction(
     agent: "Agent",
     session: AgentSession,
@@ -1388,7 +1542,7 @@ def get_run_messages(
         )
 
         history: List[Message] = session.get_messages(
-            last_n_runs=agent.num_history_runs,
+            last_n_runs=_compaction_history_runs(agent),
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
@@ -1598,7 +1752,7 @@ async def aget_run_messages(
         )
 
         history: List[Message] = session.get_messages(
-            last_n_runs=agent.num_history_runs,
+            last_n_runs=_compaction_history_runs(agent),
             limit=agent.num_history_messages,
             skip_roles=[skip_role] if skip_role else None,
             agent_id=agent.id if agent.team_id is not None else None,
