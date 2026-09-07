@@ -40,6 +40,7 @@ from agno.os.schema import (
     McpInfo,
     Model,
     NotFoundResponse,
+    QueueCapabilities,
     TeamSummaryResponse,
     UnauthenticatedResponse,
     ValidationErrorResponse,
@@ -204,6 +205,10 @@ def get_base_router(
             teams=team_summaries,
             workflows=workflow_summaries,
             traces=os._get_traces_config(),
+            queue=QueueCapabilities(
+                durable=bool(os.queue is not None and os.queue.durable),
+                queue_per_session=bool(os.queue is not None and os.queue.durable and os.queue.queue_per_session),
+            ),
             interfaces=[
                 InterfaceResponse(type=interface.type, version=interface.version, route=interface.prefix)
                 for interface in os.interfaces

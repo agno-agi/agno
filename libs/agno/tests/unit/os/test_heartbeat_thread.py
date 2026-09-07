@@ -254,7 +254,7 @@ class TestPollLoopStartsLast:
             def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
                 return []
 
-            def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None):
+            def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None, queue_per_session=False):
                 observed.append(any(t.name.startswith("agno-heartbeat-") for t in threading.enumerate()))
                 return None
 
@@ -300,7 +300,7 @@ class TestUnclonableAsyncStoreFallsBackLoudly:
             async def sweep_exhausted_jobs(self, lock_grace_seconds=60, limit=20):
                 return []
 
-            async def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None):
+            async def claim_job(self, worker_id, lock_grace_seconds=60, deployment_id=None, queue_per_session=False):
                 return None
 
             async def heartbeat_jobs(self, worker_id, job_ids):
