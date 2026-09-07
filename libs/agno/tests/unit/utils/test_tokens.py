@@ -444,3 +444,177 @@ async def test_model_acount_tokens_with_schema():
 
     # Schema should add tokens
     assert tokens_with_schema > tokens_no_schema
+
+
+# =============================================================================
+# Tokenizer selection
+# =============================================================================
+# count_text_tokens() falls back to OpenAI's encoding for any model id it does not
+# recognise. That fallback is an estimate, and token-based thresholds such as
+# CompressionManager's compress_token_limit are evaluated against it, so which
+# tokenizer a model resolves to is asserted here rather than left implicit.
+
+# Provider defaults whose token counts are estimates because no tokenizer for the family
+# can be loaded locally. Each entry is a deliberate choice, not an oversight: a newly added
+# provider fails test_provider_default_ids_have_a_known_tokenizer until it is mapped in
+# HF_TOKENIZER_PATTERNS or listed here.
+ESTIMATED_PROVIDER_DEFAULTS = {
+    # Anthropic and Google families. Claude, Gemini and Bedrock override Model.count_tokens()
+    # with a provider API call, so their real counts do not come from this path.
+    "claude-sonnet-4-5-20250929": "no offline Anthropic tokenizer",
+    "claude-sonnet-4-5": "no offline Anthropic tokenizer",
+    "claude-sonnet-4@20250514": "no offline Anthropic tokenizer",
+    "claude-opus-5": "no offline Anthropic tokenizer",
+    "global.anthropic.claude-sonnet-4-5-20250929-v1:0": "no offline Anthropic tokenizer",
+    "gemini-3.7-flash": "no offline Gemini tokenizer",
+    # Families with no publicly downloadable tokenizer
+    "mistral-large-latest": "no offline Mistral tokenizer",
+    "mistral.mistral-small-2402-v1:0": "no offline Mistral tokenizer",
+    "deepseek-v4-flash": "no offline DeepSeek tokenizer",
+    "qwen-plus": "no offline Qwen tokenizer",
+    "qwen2.5-7b-instruct-1m": "no offline Qwen tokenizer",
+    "qwen3:0.6b-q4_K_M": "no offline Qwen tokenizer",
+    "Qwen/QwQ-32B": "no offline Qwen tokenizer",
+    "grok-4-1-fast-non-reasoning-latest": "no offline xAI tokenizer",
+    "grok-4.1-fast-non-reasoning": "no offline xAI tokenizer",
+    "kimi-k3": "no offline Moonshot tokenizer",
+    "MiniMax-M3": "no offline MiniMax tokenizer",
+    "MiniMaxAI/MiniMax-M2.7": "no offline MiniMax tokenizer",
+    "internlm2.5-latest": "no offline InternLM tokenizer",
+    "mimo-v2.5-pro": "no offline Xiaomi tokenizer",
+    "mercury-2": "no offline Inception tokenizer",
+    "sonar": "no offline Perplexity tokenizer",
+    "v0-1.0-md": "no offline Vercel tokenizer",
+    "ibm/granite-20b-code-instruct": "no offline Granite tokenizer",
+    "Llama-4-Maverick-17B-128E-Instruct-FP8": "no offline Llama-4 tokenizer",
+    "gpt-oss:20b": "Ollama tag syntax is not a tiktoken model id",
+    # Placeholders: the real model id is supplied at runtime
+    "not-provided": "placeholder id",
+    "not-set": "placeholder id",
+    "trustedrouter/zdr": "router alias, resolved upstream",
+}
+
+
+def _provider_default_model_ids():
+    """Default `id` of every Model subclass under agno/models, read statically.
+
+    Parsed rather than imported so the check does not require every provider SDK.
+    """
+    import ast
+    from pathlib import Path
+
+    import agno.models
+
+    root = Path(agno.models.__file__).parent
+    defaults = {}
+    for path in sorted(root.rglob("*.py")):
+        if path.name == "__init__.py":
+            continue
+        try:
+            tree = ast.parse(path.read_text())
+        except SyntaxError:  # pragma: no cover - a provider module that cannot be parsed
+            continue
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ClassDef):
+                continue
+            for stmt in node.body:
+                if (
+                    isinstance(stmt, ast.AnnAssign)
+                    and getattr(stmt.target, "id", None) == "id"
+                    and isinstance(stmt.value, ast.Constant)
+                    and isinstance(stmt.value.value, str)
+                ):
+                    defaults[stmt.value.value] = f"{path.relative_to(root)}::{node.name}"
+    return defaults
+
+
+def _tiktoken_installed() -> bool:
+    try:
+        import tiktoken  # noqa: F401
+
+        return True
+    except ImportError:
+        return False
+
+
+@pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
+def test_provider_default_ids_have_a_known_tokenizer():
+    """Every provider's default model id resolves to a known tokenizer, or is a listed estimate."""
+    from agno.utils.tokens import TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE, resolve_tokenizer_source
+
+    unlisted = {
+        model_id: where
+        for model_id, where in _provider_default_model_ids().items()
+        if resolve_tokenizer_source(model_id) == TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE
+        and model_id not in ESTIMATED_PROVIDER_DEFAULTS
+    }
+    assert not unlisted, (
+        "These provider defaults silently fall back to OpenAI's encoding. Map the family in "
+        f"HF_TOKENIZER_PATTERNS, or add it to ESTIMATED_PROVIDER_DEFAULTS with a reason: {unlisted}"
+    )
+
+
+@pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
+def test_estimated_provider_defaults_has_no_stale_entries():
+    """The estimate list does not outlive the ids it excuses."""
+    from agno.utils.tokens import TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE, resolve_tokenizer_source
+
+    defaults = _provider_default_model_ids()
+    stale = {
+        model_id: ("no longer a provider default" if model_id not in defaults else "now has a real tokenizer")
+        for model_id in ESTIMATED_PROVIDER_DEFAULTS
+        if model_id not in defaults or resolve_tokenizer_source(model_id) != TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE
+    }
+    assert not stale, f"Remove these from ESTIMATED_PROVIDER_DEFAULTS: {stale}"
+
+
+def test_cohere_default_model_maps_to_the_cohere_tokenizer():
+    """Cohere's own default id is command-a-*, which the command-r-only pattern used to miss."""
+    from agno.utils.tokens import _match_hf_tokenizer_repo
+
+    assert _match_hf_tokenizer_repo("command-a-03-2025") == "Xenova/c4ai-command-r-v01-tokenizer"
+    assert _match_hf_tokenizer_repo("command-r-plus") == "Xenova/c4ai-command-r-v01-tokenizer"
+
+
+def test_unknown_family_matches_no_hf_tokenizer():
+    from agno.utils.tokens import _match_hf_tokenizer_repo
+
+    assert _match_hf_tokenizer_repo("mistral-large-latest") is None
+
+
+@pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
+@pytest.mark.parametrize(
+    "model_id, expected_encoding",
+    [
+        ("openai/gpt-4", "cl100k_base"),
+        ("openai/gpt-4.1", "o200k_base"),
+        ("openai/gpt-oss-120b", "o200k_harmony"),
+        ("accounts/fireworks/models/gpt-oss-120b", "o200k_harmony"),
+    ],
+)
+def test_namespaced_model_ids_resolve_to_the_real_encoding(model_id, expected_encoding):
+    """Provider-namespaced ids are tried without their namespace before falling back."""
+    from agno.utils.tokens import TOKENIZER_SOURCE_TIKTOKEN_EXACT, _get_tiktoken_encoding, resolve_tokenizer_source
+
+    assert resolve_tokenizer_source(model_id) == TOKENIZER_SOURCE_TIKTOKEN_EXACT
+    assert _get_tiktoken_encoding(model_id).name == expected_encoding
+
+
+@pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
+def test_estimated_count_warns_once_per_model_id(monkeypatch):
+    """An estimated count is announced, and not repeated for the same model."""
+    from agno.utils import tokens as tokens_module
+
+    warnings = []
+    monkeypatch.setattr(tokens_module, "log_warning", lambda message: warnings.append(message))
+    tokens_module._warn_estimated_token_count.cache_clear()
+    tokens_module._get_tiktoken_encoding.cache_clear()
+
+    tokens_module._select_tokenizer("some-unmapped-model-v1")
+    tokens_module._select_tokenizer("some-unmapped-model-v1")
+
+    assert len(warnings) == 1
+    assert "some-unmapped-model-v1" in warnings[0]
+
+    tokens_module._select_tokenizer("gpt-4o")
+    assert len(warnings) == 1, "an exactly matched model must not be reported as an estimate"

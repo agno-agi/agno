@@ -18,43 +18,103 @@ DEFAULT_IMAGE_WIDTH = 1024
 DEFAULT_IMAGE_HEIGHT = 1024
 
 
+# Tokenizer sources, most to least faithful.
+#
+# "huggingface"      the model family's own tokenizer
+# "tiktoken-exact"   tiktoken recognised the model id, so the encoding is the model's own
+# "tiktoken-estimate" no tokenizer for this family; OpenAI's o200k_base is used as an estimate
+# "none"             no tokenizer library available; character-based estimation
+TOKENIZER_SOURCE_HUGGINGFACE = "huggingface"
+TOKENIZER_SOURCE_TIKTOKEN = "tiktoken"
+TOKENIZER_SOURCE_TIKTOKEN_EXACT = "tiktoken-exact"
+TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE = "tiktoken-estimate"
+TOKENIZER_SOURCE_NONE = "none"
+
+# Encoding used when a model id matches no known family. It is OpenAI's, so counts for
+# non-OpenAI families are estimates: token counts can differ substantially from the real
+# tokenizer, especially on non-Latin scripts.
+ESTIMATE_ENCODING = "o200k_base"
+
+# Model families with a tokenizer we can load locally, matched on substrings of the model id.
+# Adding a family is a data change here; keep the most specific patterns first.
+HF_TOKENIZER_PATTERNS: Tuple[Tuple[Tuple[str, ...], str], ...] = (
+    # Llama-3 models use a different tokenizer than Llama-2
+    (("llama-3", "llama3"), "Xenova/llama-3-tokenizer"),
+    # Llama-2 models and Replicate models (LiteLLM uses llama tokenizer for replicate)
+    (("llama-2", "llama2", "replicate"), "hf-internal-testing/llama-tokenizer"),
+    # Cohere Command models, including command-a and the plain command-* ids
+    (("command-r", "command-a", "command"), "Xenova/c4ai-command-r-v01-tokenizer"),
+)
+
+
+def _match_hf_tokenizer_repo(model_id: str) -> Optional[str]:
+    """Return the HuggingFace tokenizer repo for a model id, or None if no family matches."""
+    model_id = model_id.lower()
+    for patterns, repo in HF_TOKENIZER_PATTERNS:
+        if any(pattern in model_id for pattern in patterns):
+            return repo
+    return None
+
+
+def _tiktoken_candidates(model_id: str) -> Tuple[str, ...]:
+    """Model id spellings to try against tiktoken, most to least specific.
+
+    Providers namespace ids ("openai/gpt-4.1", "accounts/fireworks/models/gpt-oss-120b"),
+    which tiktoken does not recognise, so the bare model name is tried as well.
+    """
+    model_id = model_id.lower()
+    candidates = [model_id]
+    if "/" in model_id:
+        tail = model_id.rsplit("/", 1)[1]
+        if tail and tail not in candidates:
+            candidates.append(tail)
+    return tuple(candidates)
+
+
 # Different models use different encodings
 @lru_cache(maxsize=16)
 def _get_tiktoken_encoding(model_id: str):
-    model_id = model_id.lower()
     try:
         import tiktoken
 
-        try:
-            # Use model-specific encoding
-            return tiktoken.encoding_for_model(model_id)
-        except KeyError:
-            return tiktoken.get_encoding("o200k_base")
+        for candidate in _tiktoken_candidates(model_id):
+            try:
+                # Use model-specific encoding
+                return tiktoken.encoding_for_model(candidate)
+            except KeyError:
+                continue
+        return tiktoken.get_encoding(ESTIMATE_ENCODING)
     except ImportError as e:
         log_warning(f"tiktoken not installed. Please install it using `pip install tiktoken`.: {str(e)}")
         return None
 
 
 @lru_cache(maxsize=16)
+def _is_exact_tiktoken_model(model_id: str) -> bool:
+    """Whether tiktoken recognises this model id, as opposed to falling back to an estimate."""
+    try:
+        import tiktoken
+    except ImportError:
+        return False
+
+    for candidate in _tiktoken_candidates(model_id):
+        try:
+            tiktoken.encoding_for_model(candidate)
+            return True
+        except KeyError:
+            continue
+    return False
+
+
+@lru_cache(maxsize=16)
 def _get_hf_tokenizer(model_id: str):
+    repo = _match_hf_tokenizer_repo(model_id)
+    if repo is None:
+        return None
     try:
         from tokenizers import Tokenizer
 
-        model_id = model_id.lower()
-
-        # Llama-3 models use a different tokenizer than Llama-2
-        if "llama-3" in model_id or "llama3" in model_id:
-            return Tokenizer.from_pretrained("Xenova/llama-3-tokenizer")
-
-        # Llama-2 models and Replicate models (LiteLLM uses llama tokenizer for replicate)
-        if "llama-2" in model_id or "llama2" in model_id or "replicate" in model_id:
-            return Tokenizer.from_pretrained("hf-internal-testing/llama-tokenizer")
-
-        # Cohere command-r models have their own tokenizer
-        if "command-r" in model_id:
-            return Tokenizer.from_pretrained("Xenova/c4ai-command-r-v01-tokenizer")
-
-        return None
+        return Tokenizer.from_pretrained(repo)
     except ImportError as e:
         log_warning(f"tokenizers not installed. Please install it using `pip install tokenizers`.: {str(e)}")
         return None
@@ -62,19 +122,49 @@ def _get_hf_tokenizer(model_id: str):
         return None
 
 
+@lru_cache(maxsize=64)
+def _warn_estimated_token_count(model_id: str) -> None:
+    """Warn once per model id that its token counts are estimated with a foreign tokenizer."""
+    log_warning(
+        f"No tokenizer available for '{model_id}'; counting tokens with OpenAI's {ESTIMATE_ENCODING} "
+        f"as an estimate. Counts can differ substantially from this model's real tokenizer, "
+        f"especially on non-Latin scripts, so any token-based threshold (for example "
+        f"CompressionManager's compress_token_limit) is approximate for this model."
+    )
+
+
+def resolve_tokenizer_source(model_id: str) -> str:
+    """Report which tokenizer count_text_tokens() would use for a model id.
+
+    Returns one of the TOKENIZER_SOURCE_* constants. Exposed so callers, and the test suite,
+    can tell an exact count from an estimate without triggering a tokenizer download.
+    """
+    if _match_hf_tokenizer_repo(model_id) is not None:
+        return TOKENIZER_SOURCE_HUGGINGFACE
+    if _is_exact_tiktoken_model(model_id):
+        return TOKENIZER_SOURCE_TIKTOKEN_EXACT
+    try:
+        import tiktoken  # noqa: F401
+    except ImportError:
+        return TOKENIZER_SOURCE_NONE
+    return TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE
+
+
 def _select_tokenizer(model_id: str) -> Tuple[str, Any]:
     # Priority 1: HuggingFace tokenizers for models with specific tokenizers
     hf_tokenizer = _get_hf_tokenizer(model_id)
     if hf_tokenizer is not None:
-        return ("huggingface", hf_tokenizer)
+        return (TOKENIZER_SOURCE_HUGGINGFACE, hf_tokenizer)
 
-    # Priority 2: tiktoken for OpenAI models
+    # Priority 2: tiktoken. Exact for OpenAI model ids, an estimate for everything else.
     tiktoken_enc = _get_tiktoken_encoding(model_id)
     if tiktoken_enc is not None:
-        return ("tiktoken", tiktoken_enc)
+        if not _is_exact_tiktoken_model(model_id):
+            _warn_estimated_token_count(model_id)
+        return (TOKENIZER_SOURCE_TIKTOKEN, tiktoken_enc)
 
     # Fallback: No tokenizer available, will use character-based estimation
-    return ("none", None)
+    return (TOKENIZER_SOURCE_NONE, None)
 
 
 # =============================================================================
@@ -404,9 +494,9 @@ def count_text_tokens(text: str, model_id: str = "gpt-4o") -> int:
     if not text:
         return 0
     tokenizer_type, tokenizer = _select_tokenizer(model_id)
-    if tokenizer_type == "huggingface":
+    if tokenizer_type == TOKENIZER_SOURCE_HUGGINGFACE:
         return len(tokenizer.encode(text).ids)
-    elif tokenizer_type == "tiktoken":
+    elif tokenizer_type == TOKENIZER_SOURCE_TIKTOKEN:
         # disallowed_special=() allows all special tokens to be encoded
         return len(tokenizer.encode(text, disallowed_special=()))
     else:
