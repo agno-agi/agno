@@ -39,7 +39,9 @@ db = PostgresDb(db_url=db_url)
 # ---------------------------------------------------------------------------
 compaction = Compaction(
     # Low enough that a short demo trips the automatic path; the default is 150k.
-    compact_at_tokens=3_000,
+    # Tool-calling turns are short - a calculation and a paragraph, not an essay -
+    # so this sits well under what a prose-heavy agent would need.
+    compact_at_tokens=1_000,
     keep_last_runs=1,
     # On by default. Old tool results become "[tool result elided: N chars]" in
     # the request - no summarizer call, and often more reclaimed than the fold.
