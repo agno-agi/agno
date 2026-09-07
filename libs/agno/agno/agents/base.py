@@ -2,7 +2,7 @@ import asyncio
 import json
 from dataclasses import dataclass
 from time import time
-from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
+from typing import TYPE_CHECKING, Any, AsyncIterator, Dict, Iterator, List, Optional, Sequence, Union
 from uuid import uuid4
 
 from agno.db.base import AsyncBaseDb, BaseDb, SessionType
@@ -25,6 +25,9 @@ from agno.run.base import RunStatus
 from agno.session.agent import AgentSession
 from agno.utils.events import error_type_of
 from agno.utils.log import log_exception, log_warning
+
+if TYPE_CHECKING:
+    from agno.tools.component import ComponentTool
 
 
 @dataclass
@@ -63,6 +66,28 @@ class BaseExternalAgent:
     def get_id(self) -> str:
         """Return the agent ID, guaranteed non-None after __post_init__."""
         return self.id or ""
+
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this external-framework agent as a tool with its own model-facing
+        name, description, title, and behaviour annotations, for surfaces that turn
+        components into tools -- today the AgentOS MCP server: ``MCPConfig(tools=[adapter.as_tool(name=...,
+        description=...)])``. Every override is optional; the adapter ``id`` remains
+        the run/scope handle.
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     # ---------------------------------------------------------------------------
     # Public async API (satisfies AgentProtocol protocol)

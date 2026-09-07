@@ -40,7 +40,7 @@ agent_os = AgentOS(
     description="AgentOS with its built-in MCP OAuth authorization server.",
     db=db,
     agents=[oauth_agent],
-    mcp_server=True,
+    mcp=True,
     mcp_auth=AgentOSBuiltinAuth.from_env(),
 )
 app = agent_os.get_app()

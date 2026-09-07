@@ -2,8 +2,10 @@ import asyncio
 import base64
 import hashlib
 import json
+import threading
 import time
-from os import getenv
+from concurrent.futures import ThreadPoolExecutor
+from os import cpu_count, getenv
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -48,6 +50,7 @@ class AtomicMailTools(Toolkit):
         all: bool = False,
         timeout: int = 30,
         pow_timeout: Optional[float] = 300.0,
+        pow_workers: Optional[int] = None,
         **kwargs,
     ):
         """Initialize AtomicMail tools.
@@ -66,10 +69,19 @@ class AtomicMailTools(Toolkit):
                 otherwise unbounded and driven by a server-set difficulty. A solve that
                 exceeds it fails with an `error` result instead of hanging. Set to `None`
                 to wait indefinitely.
+            pow_workers: Threads searching the proof-of-work nonce space in parallel.
+                Defaults to `min(4, cpu_count())`; `1` searches sequentially.
         """
         self.auth_url = auth_url.rstrip("/")
         self.api_url = api_url.rstrip("/")
         self.pow_timeout = pow_timeout
+        self.pow_workers = pow_workers or min(4, cpu_count() or 1)
+        # The resolved JMAP context (capability token, account and inbox mailbox ids) is
+        # reused across tool calls until the token nears expiry or the stored api_key
+        # changes: every call otherwise repeats the whole proof-of-work handshake for
+        # one JMAP request.
+        self.__jmap_context: Optional[Dict[str, Any]] = None
+        self.__jmap_context_expiry = 0.0
         self.credentials_path = self._resolve_credentials_path(credentials_dir)
 
         tools: List[Any] = []
@@ -148,33 +160,58 @@ class AtomicMailTools(Toolkit):
         return True
 
     @classmethod
-    def _solve_pow(cls, challenge: str, difficulty: int, max_seconds: Optional[float] = None) -> Dict[str, str]:
+    def _solve_pow(
+        cls, challenge: str, difficulty: int, max_seconds: Optional[float] = None, workers: int = 1
+    ) -> Dict[str, str]:
         """Grind nonces until the scrypt digest has `difficulty` leading zero bits.
 
         `difficulty` comes from the (unverified) challenge JWT, so the loop is bounded
         by `max_seconds` of wall-clock time to keep a misconfigured or implausibly high
         difficulty from hanging the caller forever. `None` waits indefinitely.
+
+        `hashlib.scrypt` releases the GIL, so `workers` threads each search an
+        interleaved slice of the nonce space (`start, start + workers, ...`); the first
+        valid digest wins and the others stop. `workers=1` is the plain sequential search
+        (nonces 0, 1, 2, ...).
         """
         deadline = None if max_seconds is None else time.monotonic() + max_seconds
-        nonce = 0
-        while True:
-            digest = hashlib.scrypt(
-                f"{challenge}:{nonce}".encode(),
-                salt=POW_SCRYPT_SALT.encode(),
-                n=POW_SCRYPT_N,
-                r=POW_SCRYPT_R,
-                p=POW_SCRYPT_P,
-                dklen=POW_HASH_BYTES,
-            )
-            if cls._has_leading_zero_bits(digest, difficulty):
-                return {"powHex": digest.hex(), "nonce": str(nonce)}
-            nonce += 1
-            if deadline is not None and time.monotonic() > deadline:
-                raise ValueError(
-                    f"AtomicMail proof-of-work did not converge within {max_seconds:g}s "
-                    f"(difficulty={difficulty}, tried {nonce} nonces). The challenge may be "
-                    "misconfigured or its difficulty implausibly high."
+        stop = threading.Event()
+        solved: Dict[str, str] = {}
+
+        def search(start: int) -> None:
+            nonce = start
+            while not stop.is_set():
+                digest = hashlib.scrypt(
+                    f"{challenge}:{nonce}".encode(),
+                    salt=POW_SCRYPT_SALT.encode(),
+                    n=POW_SCRYPT_N,
+                    r=POW_SCRYPT_R,
+                    p=POW_SCRYPT_P,
+                    dklen=POW_HASH_BYTES,
                 )
+                if cls._has_leading_zero_bits(digest, difficulty):
+                    # Two workers finishing valid hashes at once both write here; either
+                    # pair is a genuine proof, and `stop` bounds it to hashes already in flight.
+                    solved.update(powHex=digest.hex(), nonce=str(nonce))
+                    stop.set()
+                    return
+                nonce += workers
+                if deadline is not None and time.monotonic() > deadline:
+                    stop.set()
+                    raise ValueError(
+                        f"AtomicMail proof-of-work did not converge within {max_seconds:g}s "
+                        f"(difficulty={difficulty}, tried {nonce} nonces). The challenge may be "
+                        "misconfigured or its difficulty implausibly high."
+                    )
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            futures = [pool.submit(search, start) for start in range(workers)]
+        # Every worker has finished. A worker can cross the deadline while another is
+        # mid-way through the winning hash, so a solution wins over a timeout.
+        if not solved:
+            for future in futures:
+                future.result()  # re-raises the worker's timeout
+        return solved
 
     @staticmethod
     def _bearer_token(response: httpx.Response) -> str:
@@ -235,6 +272,7 @@ class AtomicMailTools(Toolkit):
         if not mailbox_ids:
             raise ValueError("AtomicMail account has no inbox mailbox.")
         return {
+            "api_key": credentials["api_key"],
             "capability_jwt": auth["capability_jwt"],
             "api_url": session["apiUrl"],
             "account_id": account_id,
@@ -319,7 +357,9 @@ class AtomicMailTools(Toolkit):
                 "Email/query",
                 {
                     "accountId": context["account_id"],
-                    "filter": {"inMailbox": context["inbox_mailbox_id"]},
+                    # send_email files outgoing mail in this same mailbox with `$draft` set,
+                    # so without this exclusion sent mail reads back as received.
+                    "filter": {"inMailbox": context["inbox_mailbox_id"], "notKeyword": "$draft"},
                     "sort": [{"property": "receivedAt", "isAscending": False}],
                     "limit": capped_limit,
                 },
@@ -330,7 +370,7 @@ class AtomicMailTools(Toolkit):
                 {
                     "accountId": context["account_id"],
                     "#ids": {"resultOf": "q0", "name": "Email/query", "path": "/ids"},
-                    "properties": ["id", "threadId", "receivedAt", "from", "to", "subject", "preview"],
+                    "properties": ["id", "threadId", "receivedAt", "from", "to", "subject", "preview", "keywords"],
                 },
                 "g0",
             ],
@@ -339,9 +379,15 @@ class AtomicMailTools(Toolkit):
 
     @staticmethod
     def _parse_list_inbox_result(result: Dict[str, Any], inbox: str) -> Dict[str, Any]:
-        emails: List[Dict[str, Any]] = next(
-            (payload["list"] for name, payload, _ in result["methodResponses"] if name == "Email/get"), []
-        )
+        responses = {name: payload for name, payload, _ in result["methodResponses"]}
+        # A rejected query (e.g. `unsupportedFilter`) comes back as ["error", ...] entries
+        # with no Email/get list; that is an error, not an empty inbox.
+        if "Email/get" not in responses:
+            return {"error": "AtomicMail rejected the inbox query", "details": result["methodResponses"]}
+        emails: List[Dict[str, Any]] = responses["Email/get"]["list"]
+        # Belt-and-braces on the query's `notKeyword` filter: a `$draft` message in the
+        # inbox is our own outgoing mail from send_email, never something received.
+        emails = [email for email in emails if "$draft" not in (email.get("keywords") or {})]
         return {
             "inbox": inbox,
             "count": len(emails),
@@ -401,6 +447,29 @@ class AtomicMailTools(Toolkit):
             return {"error": f"AtomicMail request failed: {e.response.status_code} {e.response.text}"}
         return {"error": f"AtomicMail request failed: {e}"}
 
+    # -- JMAP context cache, shared by the sync and async paths ----------------------
+
+    def _cached_jmap_context(self, credentials: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        # Keyed to the api_key it was minted from: credentials.json can be replaced by a
+        # forced re-registration, from this instance or another process sharing the dir.
+        if (
+            self.__jmap_context is not None
+            and self.__jmap_context["api_key"] == credentials["api_key"]
+            and time.monotonic() < self.__jmap_context_expiry
+        ):
+            return self.__jmap_context
+        return None
+
+    def _cache_jmap_context(self, context: Dict[str, Any]) -> None:
+        claims = self._decode_jwt_payload(context["capability_jwt"])
+        exp, iat = claims.get("exp"), claims.get("iat", time.time())
+        # Expire with the token: its `exp - iat` span, or `exp` against the local clock
+        # when it carries no `iat`. The 30s margin keeps a request that starts inside the
+        # window from outliving the token; without a numeric `exp` nothing is reused.
+        lifetime = exp - iat if isinstance(exp, (int, float)) and isinstance(iat, (int, float)) else 0
+        self.__jmap_context = context
+        self.__jmap_context_expiry = time.monotonic() + lifetime - 30
+
     # -- sync HTTP calls ---------------------------------------------------------
 
     def _authenticate(
@@ -416,7 +485,9 @@ class AtomicMailTools(Toolkit):
         challenge_response.raise_for_status()
         challenge_jwt = self._bearer_token(challenge_response)
         challenge_claims = self._decode_jwt_payload(challenge_jwt)
-        solved = self._solve_pow(challenge_claims["jti"], int(challenge_claims["difficulty"]), self.pow_timeout)
+        solved = self._solve_pow(
+            challenge_claims["jti"], int(challenge_claims["difficulty"]), self.pow_timeout, self.pow_workers
+        )
 
         session_response = client.post(
             f"{self.auth_url}/api/v1/session",
@@ -458,17 +529,22 @@ class AtomicMailTools(Toolkit):
     def _prepare_jmap_context(self, client: httpx.Client) -> Dict[str, Any]:
         """Authenticate with the stored API key and resolve the inbox's JMAP account/mailbox ids.
 
-        Re-runs the proof-of-work handshake on every call rather than caching the short-lived
-        (2 minute) capability token, trading a little latency for not having to track expiry.
+        The result is cached until the capability token nears expiry or the stored api_key
+        changes, so only the first call in that window pays for the proof-of-work handshake.
         """
         credentials = self._require_credentials()
+        cached = self._cached_jmap_context(credentials)
+        if cached is not None:
+            return cached
         auth = self._authenticate(client, api_key=credentials["api_key"])
         session = self._jmap_session(client, auth["capability_jwt"])
         account_id = self._extract_account_id(session)
         mailbox_result = self._jmap_call(
             client, auth["capability_jwt"], session["apiUrl"], *self._mailbox_query_call(account_id)
         )
-        return self._build_jmap_context(auth, session, account_id, mailbox_result, credentials)
+        context = self._build_jmap_context(auth, session, account_id, mailbox_result, credentials)
+        self._cache_jmap_context(context)
+        return context
 
     def _resolve_account_id(self, client: httpx.Client, capability_jwt: str) -> Optional[str]:
         """Best-effort JMAP account-id lookup for the registration result.
@@ -497,7 +573,11 @@ class AtomicMailTools(Toolkit):
         # Offload the CPU-bound scrypt grind to a worker thread so a multi-second
         # (server-difficulty-driven) solve does not block the event loop under agentos.
         solved = await asyncio.to_thread(
-            self._solve_pow, challenge_claims["jti"], int(challenge_claims["difficulty"]), self.pow_timeout
+            self._solve_pow,
+            challenge_claims["jti"],
+            int(challenge_claims["difficulty"]),
+            self.pow_timeout,
+            self.pow_workers,
         )
 
         session_response = await client.post(
@@ -545,13 +625,18 @@ class AtomicMailTools(Toolkit):
     async def _aprepare_jmap_context(self, client: httpx.AsyncClient) -> Dict[str, Any]:
         """Async counterpart of `_prepare_jmap_context`."""
         credentials = self._require_credentials()
+        cached = self._cached_jmap_context(credentials)
+        if cached is not None:
+            return cached
         auth = await self._aauthenticate(client, api_key=credentials["api_key"])
         session = await self._ajmap_session(client, auth["capability_jwt"])
         account_id = self._extract_account_id(session)
         mailbox_result = await self._ajmap_call(
             client, auth["capability_jwt"], session["apiUrl"], *self._mailbox_query_call(account_id)
         )
-        return self._build_jmap_context(auth, session, account_id, mailbox_result, credentials)
+        context = self._build_jmap_context(auth, session, account_id, mailbox_result, credentials)
+        self._cache_jmap_context(context)
+        return context
 
     async def _aresolve_account_id(self, client: httpx.AsyncClient, capability_jwt: str) -> Optional[str]:
         """Async counterpart of `_resolve_account_id`."""
@@ -675,7 +760,7 @@ class AtomicMailTools(Toolkit):
             return self._request_error(e)
 
     def list_inbox(self, limit: int = 20) -> Dict[str, Any]:
-        """List the most recent emails in the registered AtomicMail inbox.
+        """List the most recent emails received in the registered AtomicMail inbox.
 
         Args:
             limit: Maximum number of emails to return (default 20, capped at 100).
@@ -697,7 +782,7 @@ class AtomicMailTools(Toolkit):
             return self._request_error(e)
 
     async def alist_inbox(self, limit: int = 20) -> Dict[str, Any]:
-        """Asynchronously list the most recent emails in the registered AtomicMail inbox.
+        """Asynchronously list the most recent emails received in the registered AtomicMail inbox.
 
         Args:
             limit: Maximum number of emails to return (default 20, capped at 100).

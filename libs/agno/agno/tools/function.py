@@ -17,56 +17,34 @@ from typing import (
     Tuple,
     Type,
     TypeVar,
-    Union,
     get_args,
-    get_origin,
     get_type_hints,
 )
 
 from docstring_parser import parse
 from packaging.version import Version
-from pydantic import BaseModel, Field, validate_call
+from pydantic import BaseModel, Field, field_validator, validate_call
 
 from agno.exceptions import AgentRunException, RunCancelledException
 from agno.media import Audio, File, Image, Video
 from agno.run import RunContext
+from agno.tools.annotations import validate_tool_annotations
 from agno.utils.log import log_debug, log_exception, log_warning
+from agno.utils.schema import (
+    AGNO_INJECTED_PARAMS,
+    FRAMEWORK_INJECTED_PARAMS,
+    IDENTITY_INJECTED_PARAMS,
+    MEDIA_INJECTED_PARAMS,
+    annotation_binds,
+    annotation_reaches,
+    is_bare_media_typed,
+    is_framework_typed,
+    is_schema_excluded,
+    is_union,
+    unwrap_annotation,
+)
 
 T = TypeVar("T")
-
-# The media the caller attached to the run. Unlike the other injected names these
-# carry the call's input rather than framework plumbing, so they decide whether a
-# call can be cached at all (see _has_injected_media).
-MEDIA_INJECTED_PARAMS = ("images", "videos", "audios", "files")
-
-# Parameter names the framework fills in itself (see FunctionCall._build_entrypoint_args).
-# They are kept out of the model-facing schema, and a model-supplied value for one of
-# them is discarded in favour of the injected object.
-FRAMEWORK_INJECTED_PARAMS = ("agent", "team", "run_context", *MEDIA_INJECTED_PARAMS)
-
-# The `_agno_`-prefixed channels, used by wrappers whose tools may have arguments
-# legitimately named "agent", "team" or "run_context" (e.g. MCP tools).
-AGNO_INJECTED_PARAMS = ("_agno_agent", "_agno_team", "_agno_run_context")
-
-# The subset carrying the caller's identity or a live framework object. A schema may
-# claim a media name -- a wrapper can expose the wrapped tool's own `files` argument --
-# but never these: a model-supplied value here would choose whose data the tool reads.
-IDENTITY_INJECTED_PARAMS = ("agent", "team", "run_context", *AGNO_INJECTED_PARAMS)
-
-
-def _identity_injected_types() -> tuple:
-    """The identity-bearing types: a model-supplied value for a parameter of
-    one of these types would choose the framework object a tool receives.
-
-    An identity-typed parameter is hidden from the model and bound by
-    FunctionCall._build_entrypoint_args, whatever its name. Bare media
-    annotations are hidden too (_is_bare_media_typed) but are filled by the
-    reserved parameter names alone, never by type."""
-    from agno.agent.agent import Agent
-    from agno.team.team import Team
-
-    return (Agent, Team, RunContext)
-
 
 # What a cache entry holds. Bump this whenever the meaning of a stored value
 # changes: entries written under any other version are discarded unread, which
@@ -256,34 +234,6 @@ def _record_entrypoint_result(raw_results: List[Any], slot: int, result: Any) ->
     raw_results[slot] = snapshot
 
 
-def _unwrap_annotation(hint: Any) -> Any:
-    """The annotation a type alias stands for (PEP 695 ``type X = ...``), else
-    the annotation itself. get_type_hints leaves an alias unresolved.
-
-    Aliases chain (``type A = RunContext; type B = A``), so unwrapping repeats
-    to a fixpoint: any depth left unresolved is an identity annotation the model
-    can still fill. The seen list holds strong references, so a self-referential
-    alias terminates without relying on ids that a collected object could
-    reuse."""
-    seen: List[Any] = []
-    while True:
-        if isinstance(hint, types.GenericAlias) and hasattr(get_origin(hint), "__value__"):
-            # A subscripted generic alias (``Maybe[Weather]``) keeps what it was
-            # given only while it stays subscripted. Its __value__ is the body
-            # with the parameter still loose, so following it loses the Weather.
-            return hint
-        # A PEP 695 alias carries __value__; typing.NewType carries
-        # __supertype__ and is just as transparent to pydantic, which builds
-        # the supertype from a model-supplied dict either way.
-        unwrapped = getattr(hint, "__value__", None)
-        if unwrapped is None:
-            unwrapped = getattr(hint, "__supertype__", hint)
-        if unwrapped is hint or any(unwrapped is s for s in seen):
-            return hint
-        seen.append(hint)
-        hint = unwrapped
-
-
 def _mentions_base_model(hint: Any, seen: Optional[List[Any]] = None) -> bool:
     """True when the annotation is a BaseModel or holds one, at any depth.
 
@@ -294,7 +244,7 @@ def _mentions_base_model(hint: Any, seen: Optional[List[Any]] = None) -> bool:
 
     An alias may name itself (``type JSON = str | list[JSON]``), so the seen
     list stops the walk from following one round and round."""
-    hint = _unwrap_annotation(hint)
+    hint = unwrap_annotation(hint)
     if isinstance(hint, type):
         try:
             return issubclass(hint, BaseModel)
@@ -341,11 +291,6 @@ def _return_type_adapter(hint: Any) -> Any:
         return None
 
 
-def _is_union(hint: Any) -> bool:
-    origin = get_origin(hint)
-    return origin is Union or origin is getattr(types, "UnionType", None)
-
-
 def _union_names_type(hint: Any, wanted: tuple) -> bool:
     """True when the annotation is a union with a member among the wanted types,
     nested unions and type aliases included. Asks whether the type is mentioned
@@ -354,8 +299,8 @@ def _union_names_type(hint: Any, wanted: tuple) -> bool:
     Used to decide whether pydantic's validate_call can introspect the
     signature: one Agent/Team member anywhere in a union is enough to break it.
     """
-    hint = _unwrap_annotation(hint)
-    if not _is_union(hint):
+    hint = unwrap_annotation(hint)
+    if not is_union(hint):
         return False
     return any(_member_names_type(arg, wanted) for arg in get_args(hint) if arg is not type(None))
 
@@ -364,7 +309,7 @@ def _member_names_type(arg: Any, wanted: tuple) -> bool:
     """Whether one union member names a wanted type. The member is unwrapped first:
     a PEP 695 alias nested inside a union (``type C = RunContext; type M = C | None``)
     is a TypeAliasType, not a type, and would otherwise slip past both checks."""
-    arg = _unwrap_annotation(arg)
+    arg = unwrap_annotation(arg)
     return (isinstance(arg, type) and issubclass(arg, wanted)) or _union_names_type(arg, wanted)
 
 
@@ -377,8 +322,8 @@ def _union_is_only(hint: Any, wanted: tuple) -> bool:
     (owner: Union[str, Agent]) keeps a half the model can legitimately fill --
     the model can send a string, never a live Agent -- so it stays in the
     schema. Optional[Agent] has no such half."""
-    hint = _unwrap_annotation(hint)
-    if not _is_union(hint):
+    hint = unwrap_annotation(hint)
+    if not is_union(hint):
         return False
     members = [arg for arg in get_args(hint) if arg is not type(None)]
     if not members:
@@ -389,200 +334,8 @@ def _union_is_only(hint: Any, wanted: tuple) -> bool:
 def _member_is_only(arg: Any, wanted: tuple) -> bool:
     """Whether one union member is a wanted type, unwrapping a nested PEP 695 alias
     first for the same reason as _member_names_type."""
-    arg = _unwrap_annotation(arg)
+    arg = unwrap_annotation(arg)
     return (isinstance(arg, type) and issubclass(arg, wanted)) or _union_is_only(arg, wanted)
-
-
-def _is_framework_typed(hint: Any) -> bool:
-    """True when the framework owns the parameter: it is kept out of the
-    model-facing schema and filled by _build_entrypoint_args instead.
-
-    Excluded:
-      * a bare identity type (owner: Agent, ctx: RunContext);
-      * a union of identity types alone (Optional[Agent], RunContext | None),
-        which has no half a model could legitimately fill;
-      * ANY union naming RunContext (ctx: Union[str, RunContext]). RunContext is
-        the one identity type pydantic can build from a model-supplied dict --
-        validate_call is skipped for Agent/Team parameters but not for this one,
-        so an exposed union coerces {"user_id": ...} into a live RunContext and
-        hands the model the caller's identity.
-
-    Model-fillable:
-      * media inside a union (Optional[Image], Union[str, File]): media is
-        injected by parameter name alone, so hiding the union would leave it
-        unfillable by anything. A BARE media annotation (pic: Image) is hidden
-        all the same -- see _is_bare_media_typed;
-      * a union naming Agent or Team beside an ordinary type
-        (owner: Union[str, Agent]). The model can only ever send JSON, so such a
-        parameter receives a plain dict or string, never a live Agent."""
-    return _reaches_identity(hint)
-
-
-_ANNOTATION_DEPTH_CAP = 16
-
-
-def _reaches_identity(hint: Any, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
-    """Whether an annotation can deliver an identity object the model chose.
-
-    Walks the whole annotation -- containers, the container arms of a union,
-    and the fields of a dataclass or pydantic model -- because every one of
-    those is a place pydantic will happily build a RunContext out of a
-    model-supplied dict.
-
-    Two rules that look inconsistent and are not:
-
-      * ANY appearance of RunContext hides the parameter. It is the one
-        identity type pydantic constructs from JSON, so wherever it can be
-        reached, the model can choose the caller's identity.
-      * Agent and Team hide only when the annotation offers no half a model
-        could legitimately fill -- bare, or a union of identity alone.
-        ``owner: Union[str, Agent]`` stays the model's to fill, at the top
-        level and inside a list alike: validate_call is skipped for those
-        types, so the tool receives a plain dict or string, never a live
-        Agent, and hiding it would leave it fillable by nothing.
-
-    Media never reaches here as identity: it is injected by reserved name
-    alone, so hiding a media container would make it unfillable."""
-    if depth > _ANNOTATION_DEPTH_CAP:
-        return True  # Unreadable is not fillable; fail closed.
-    seen = [] if seen is None else seen
-    hint = _unwrap_annotation(hint)
-    if any(hint is s for s in seen):
-        return False
-    seen = seen + [hint]
-    # RunContext anywhere at all, however deeply wrapped.
-    if _annotation_reaches(hint, (RunContext,)):
-        return True
-    if isinstance(hint, type):
-        return _annotation_reaches(hint, _identity_injected_types())
-    if _is_union(hint):
-        # A union is the model's to fill as long as one arm is something the
-        # model can legitimately send. Only when every arm is identity -- bare
-        # Agent, Optional[Agent] -- is there nothing else it could mean.
-        arms = [arm for arm in get_args(hint) if arm is not type(None)]
-        return bool(arms) and all(_reaches_identity(arm, depth + 1, seen) for arm in arms)
-    return any(_reaches_identity(argument, depth + 1, seen) for argument in get_args(hint))
-
-
-def _annotation_binds(hint: Any, wanted: tuple, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
-    """Whether the framework can put one of these objects INTO this parameter.
-
-    Deliberately narrower than _annotation_reaches, and the pair is not a
-    contradiction: reaching decides what to keep from the model, binding
-    decides what can be handed over. A ``list[RunContext]`` reaches one -- so
-    it is not the model's to fill -- but it holds run contexts, it is not one,
-    and binding the object there would fail validation on every call.
-
-    Unwraps aliases and NewType, follows a TypeVar's bound and constraints, and
-    accepts a union with an arm that binds. A container or a structural wrapper
-    does not bind: nothing the framework has is that shape."""
-    if depth > _ANNOTATION_DEPTH_CAP:
-        return False
-    seen = [] if seen is None else seen
-    hint = _unwrap_annotation(hint)
-    if any(hint is s for s in seen):
-        return False
-    seen = seen + [hint]
-    if isinstance(hint, type):
-        return issubclass(hint, wanted)
-    if isinstance(hint, TypeVar):
-        bound = getattr(hint, "__bound__", None)
-        if bound is not None and _annotation_binds(bound, wanted, depth + 1, seen):
-            return True
-        return any(
-            _annotation_binds(constraint, wanted, depth + 1, seen)
-            for constraint in getattr(hint, "__constraints__", ()) or ()
-        )
-    if _is_union(hint):
-        return any(_annotation_binds(arm, wanted, depth + 1, seen) for arm in get_args(hint))
-    return False
-
-
-def _annotation_reaches(hint: Any, targets: tuple, depth: int = 0, seen: Optional[List[Any]] = None) -> bool:
-    """Whether any of these types can be reached anywhere inside an annotation.
-
-    A plain structural search, with none of _reaches_identity's asymmetry: it
-    walks containers, every arm of a union, a TypeVar's bound and constraints,
-    and the fields of any structural type -- dataclass, pydantic model,
-    TypedDict, NamedTuple -- resolving them with get_type_hints so an
-    annotation stored as a string under ``from __future__ import annotations``
-    is read rather than skipped.
-
-    Two things fail CLOSED, because a reference this cannot resolve is not one
-    to hand the model: a nesting depth no real signature reaches, and a class
-    whose own hints will not resolve."""
-    from dataclasses import is_dataclass
-
-    if depth > _ANNOTATION_DEPTH_CAP:
-        return True
-    seen = [] if seen is None else seen
-    hint = _unwrap_annotation(hint)
-    if any(hint is s for s in seen):
-        return False
-    seen = seen + [hint]
-
-    if isinstance(hint, TypeVar):
-        # A bound or a constraint is a promise about what will be substituted.
-        bound = getattr(hint, "__bound__", None)
-        if bound is not None and _annotation_reaches(bound, targets, depth + 1, seen):
-            return True
-        return any(
-            _annotation_reaches(constraint, targets, depth + 1, seen)
-            for constraint in getattr(hint, "__constraints__", ()) or ()
-        )
-
-    if isinstance(hint, type):
-        if issubclass(hint, targets):
-            return True
-        if issubclass(hint, _identity_injected_types()):
-            # A framework object is not a user wrapper to search inside. Its own
-            # hints do not resolve here (Agent names BaseDb), and descending
-            # would fail closed on every annotation that merely mentions one --
-            # which would hide `owner: Union[str, Agent]`, the shape the rules
-            # above exist to keep fillable.
-            return False
-        is_structural = (
-            isinstance(getattr(hint, "model_fields", None), dict)
-            or is_dataclass(hint)
-            or hasattr(hint, "__annotations__")
-            and (getattr(hint, "__total__", None) is not None or hasattr(hint, "_fields"))
-        )
-        if not is_structural:
-            return False
-        try:
-            field_hints = get_type_hints(hint)
-        except Exception:
-            return True  # Cannot read it, so cannot clear it.
-        return any(_annotation_reaches(field_hint, targets, depth + 1, seen) for field_hint in field_hints.values())
-
-    return any(_annotation_reaches(argument, targets, depth + 1, seen) for argument in get_args(hint))
-
-
-def _is_bare_media_typed(hint: Any) -> bool:
-    """True for a parameter annotated with a media type itself (pic: Image).
-
-    On the process_entrypoint path (Toolkit methods, @tool) such a parameter is
-    hidden from the model, as on v2.8.7: media is injected by the reserved
-    parameter names alone (images/videos/audios/files, see
-    FunctionCall._build_entrypoint_args), so the framework can never fill it,
-    and exposing it would let the model fabricate the object while its pydantic
-    schema is invalid under strict mode, failing the whole request rather than
-    one call. from_callable does NOT use this predicate -- v2.8.7 never hid
-    media on the plain-callable path, where the parameter is the model's to
-    fill. Media inside a union (Union[str, Image]) stays model-fillable on
-    both paths."""
-    hint = _unwrap_annotation(hint)
-    return isinstance(hint, type) and issubclass(hint, (Image, Video, Audio, File))
-
-
-def _is_schema_excluded(hint: Any) -> bool:
-    """True when process_entrypoint keeps the parameter out of the model-facing
-    schema: the identity types plus bare media types.
-
-    Exclusion only. Framework OWNERSHIP is _is_framework_typed, a strictly
-    smaller set: an owned parameter is bound by _build_entrypoint_args and a
-    value supplied for it is dropped, neither of which is true of media."""
-    return _is_framework_typed(hint) or _is_bare_media_typed(hint)
 
 
 _hidden_media_warned: Set[Tuple[str, str]] = set()
@@ -882,10 +635,10 @@ def _derive_entrypoint_schema(
                 # "return"; it is not an injectable parameter.
                 if param_name == "return":
                     continue
-                if _is_schema_excluded(hint):
+                if is_schema_excluded(hint):
                     del type_hints[param_name]
                     excluded_params.append(param_name)
-                    if _is_bare_media_typed(hint):
+                    if is_bare_media_typed(hint):
                         hidden_media_params.append(param_name)
         except Exception:
             pass
@@ -1241,13 +994,13 @@ def _compute_framework_params(entrypoint: Callable) -> Tuple[Set[str], bool]:
         # `ctx: RunContext` left ctx unclassified and model-facing -- the
         # parameter's own protection undone by an unrelated neighbour.
         try:
-            # Identity only, not _is_schema_excluded. A bare media parameter is
+            # Identity only, not is_schema_excluded. A bare media parameter is
             # hidden from the schema, but dropping a value supplied for it
             # displaces nothing: media is injected by reserved name alone, so the
             # caller's own media never lands there under any behaviour. Dropping
             # would only make the parameter unfillable by anything, which v2.8.7
             # did not do.
-            owned = _is_framework_typed(hint)
+            owned = is_framework_typed(hint)
         except Exception:
             owned = True  # Cannot classify it, so do not hand it to the model.
         if owned:
@@ -1391,6 +1144,11 @@ RUNTIME_ONLY_FIELDS = (
     # A code-declared trait that discovery reports; the live registry Function
     # owns it, not the persisted config.
     "has_side_effects",
+    # Presentation for people and clients, declared in code alongside the tool.
+    # Restored from the live Function so a reloaded component publishes the same
+    # title and behaviour hints a fresh one does.
+    "title",
+    "annotations",
 )
 
 
@@ -1403,16 +1161,21 @@ def isolated_runtime_value(value: Any) -> Any:
     ``UserInputField`` objects, so one run's input would be visible to every
     other component holding that tool, and to the registry itself.
 
-    Lists are rebuilt rather than deep-copied, so callables such as tool hooks
-    stay the same objects; only dataclass elements are copied, because those
-    are the ones written in place. No RUNTIME_ONLY_FIELDS entry holds a dict,
-    so lists are the only containers handled.
+    Containers are rebuilt one level deep rather than deep-copied, so callables
+    such as tool hooks stay the same objects; only dataclass elements are copied,
+    because those are the ones written in place. Both list and dict entries are
+    handled -- ``annotations`` is a dict, and sharing it would let one component's
+    edit change what every other component and the registry itself publish.
     """
     from copy import copy
     from dataclasses import is_dataclass
 
     if isinstance(value, list):
         return [copy(item) if is_dataclass(item) else item for item in value]
+    if isinstance(value, dict):
+        # Shallow is enough: annotation values are bools and strings, enforced by
+        # validate_tool_annotations at construction.
+        return dict(value)
     return value
 
 
@@ -1424,6 +1187,17 @@ class Function(BaseModel):
     name: str
     # A description of what the function does, used by the model to choose when and how to call the function.
     description: Optional[str] = None
+    # Human-facing display name, shown by clients that render tools to people (an MCP
+    # server, an assistant marketplace listing). Never sent to the model, which reads
+    # name/description/parameters: to_dict() serializes an explicit allowlist.
+    title: Optional[str] = None
+    # MCP behaviour hints (readOnlyHint, destructiveHint, idempotentHint, openWorldHint)
+    # published alongside the tool. Marketplace submission scans reject tools that carry
+    # none, and reviewers test the hints against what the tool actually does.
+    # readOnlyHint is the published form of has_side_effects below: set one, or keep the
+    # two consistent -- a tool that declares side effects and claims read-only is making
+    # opposite claims to agno's own discovery and to an MCP client.
+    annotations: Optional[Dict[str, Any]] = None
     # The parameters the functions accepts, described as a JSON Schema object.
     # To describe a function that accepts no parameters, provide the value {"type": "object", "properties": {}}.
     parameters: Dict[str, Any] = Field(
@@ -1513,6 +1287,14 @@ class Function(BaseModel):
     _videos: Optional[Sequence[Video]] = None
     _audios: Optional[Sequence[Audio]] = None
     _files: Optional[Sequence[File]] = None
+
+    @field_validator("annotations")
+    @classmethod
+    def _validate_annotations(cls, annotations: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+        # The MCP annotations model accepts unknown keys, so a misspelled hint would
+        # travel all the way to a client as "no such annotation". Reject it here, where
+        # the developer wrote it.
+        return validate_tool_annotations(annotations, "Function(annotations=...)")
 
     def to_dict(self) -> Dict[str, Any]:
         return self.model_dump(exclude_none=True, include=set(SERIALIZED_FIELDS))
@@ -1677,13 +1459,13 @@ class Function(BaseModel):
             # guard rejects a model-supplied value for them on this path too. See #6344.
             framework_typed_params: Set[str] = set()
             try:
-                # Identity only, not _is_schema_excluded: v2.8.7's from_callable never
+                # Identity only, not is_schema_excluded: v2.8.7's from_callable never
                 # hid media by type, so a bare media param on a plain callable stays
                 # the model's to fill (pydantic coerces the dict) -- unlike the
                 # process_entrypoint path, which hid it then and hides it now.
                 for _pname in sig.parameters:
                     _hint = type_hints.get(_pname)
-                    if _hint is not None and _is_framework_typed(_hint):
+                    if _hint is not None and is_framework_typed(_hint):
                         framework_typed_params.add(_pname)
             except Exception:
                 pass
@@ -1988,7 +1770,7 @@ class Function(BaseModel):
                 # list[Agent]]` to validate_call, which then failed to resolve
                 # Agent's own forward references and took registration of the
                 # whole tool down.
-                if _annotation_reaches(hint, framework_types):
+                if annotation_reaches(hint, framework_types):
                     return func
         except Exception:
             pass
@@ -2234,7 +2016,7 @@ class Function(BaseModel):
             return None
         if hint is None or hint is type(None):
             return None
-        return _unwrap_annotation(hint)
+        return unwrap_annotation(hint)
 
     def _save_to_cache(self, cache_file: str, result: Any):
         """Save result to cache."""
@@ -2445,7 +2227,7 @@ class FunctionCall(BaseModel):
         from inspect import signature
 
         sig = signature(self.function.entrypoint)  # type: ignore
-        entrypoint_args = {}
+        entrypoint_args: Dict[str, Any] = {}
 
         # Check if the entrypoint has an agent argument (by name)
         if "agent" in sig.parameters:
@@ -2484,7 +2266,7 @@ class FunctionCall(BaseModel):
         # cases like `my_agent: Agent`, `custom_team: Team` or `ctx: RunContext`.
         # See issue #6344.
         #
-        # Every identity annotation _is_framework_typed hides from the model-facing
+        # Every identity annotation is_framework_typed hides from the model-facing
         # schema is bound here, union spellings included (owner: Optional[Agent],
         # ctx: Union[str, RunContext]). A wielder without the object binds None --
         # a tool registered on a Team has no Agent, and a required `owner: Agent`
@@ -2512,9 +2294,9 @@ class FunctionCall(BaseModel):
                 # positional-only one cannot be passed by name either.
                 if param.kind in (Parameter.VAR_POSITIONAL, Parameter.VAR_KEYWORD, Parameter.POSITIONAL_ONLY):
                     continue
-                if not _is_framework_typed(hint):
+                if not is_framework_typed(hint):
                     continue
-                hint = _unwrap_annotation(hint)
+                hint = unwrap_annotation(hint)
                 # The same resolver that decided to hide it. Matching only a
                 # bare type or a direct union left the shapes the schema rule
                 # newly recognised -- a TypeVar bound to RunContext, an aliased
@@ -2527,7 +2309,7 @@ class FunctionCall(BaseModel):
                         ((Team,), self.function._team),
                         ((RunContext,), self.function._run_context),
                     )
-                    if _annotation_binds(hint, wanted)
+                    if annotation_binds(hint, wanted)
                 ]
                 if not matches:
                     continue
@@ -2548,7 +2330,7 @@ class FunctionCall(BaseModel):
         The reserved identity names, plus every name the framework claimed by
         ANNOTATION. Both paths that populate ``_framework_params``
         (``Function._resolve_framework_params`` and ``from_callable``) add a
-        typed parameter only when ``_is_framework_typed`` says it is
+        typed parameter only when ``is_framework_typed`` says it is
         identity-bearing, never for media, so anything there that is not a
         reserved name got there by being identity-typed.
 

@@ -13,11 +13,13 @@ from agno.knowledge.reader import ReaderFactory
 from agno.knowledge.reader.base import Reader
 from agno.knowledge.remote_content.s3 import S3Config
 from agno.knowledge.utils import (
+    get_agno_metadata,
     get_all_chunkers_info,
     get_content_types_to_readers_mapping,
     get_read_time_availability,
     get_readers_availability,
     get_unavailable_chunkers_info,
+    strip_agno_metadata,
 )
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import get_scoped_user_id
@@ -559,10 +561,14 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
         sort_order: Optional[SortOrder] = Query(default=SortOrder.DESC, description="Sort order (asc or desc)"),
         db_id: Optional[str] = Query(default=None, description="Database ID to use"),
         knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
+        parent_id: Optional[str] = Query(default=None, description="Only page rows of this site row (exact id match)"),
     ) -> PaginatedResponse[ContentResponseSchema]:
         knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
 
         if isinstance(knowledge, RemoteKnowledge):
+            if parent_id is not None:
+                # Silently returning the unfiltered base would look like a filtered result
+                raise HTTPException(status_code=501, detail="parent_id filtering is not supported for remote knowledge")
             auth_token = get_auth_token_from_request(request)
             headers = {"Authorization": f"Bearer {auth_token}"} if auth_token else None
             return await knowledge.get_content(
@@ -575,9 +581,23 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         # Non-admin callers see their own rows plus shared (NULL) ones.
         scoped_user_id = get_scoped_user_id(request)
-        contents, count = await knowledge.aget_content(
-            limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
-        )
+        if parent_id is not None:
+            # The contents db cannot filter on metadata, so fetch every row for this base
+            # and page in the route. Site sizes are bounded by the reader's page cap.
+            all_contents, _ = await knowledge.aget_content(
+                sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
+            )
+            matched = [
+                content for content in all_contents if get_agno_metadata(content.metadata, "parent_id") == parent_id
+            ]
+            count = len(matched)
+            page_number = page or 1
+            page_size = limit or 20
+            contents = matched[(page_number - 1) * page_size : page_number * page_size]
+        else:
+            contents, count = await knowledge.aget_content(
+                limit=limit, page=page, sort_by=sort_by, sort_order=sort_order, user_id=scoped_user_id
+            )
 
         return PaginatedResponse(
             data=[
@@ -705,7 +725,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             # Non-admins can read shared (unowned) content but not delete it.
             if scoped_user_id is not None and existing.user_id is None:
                 raise HTTPException(status_code=403, detail="Cannot delete shared content")
-            await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
+            removed = await knowledge.aremove_content_by_id(content_id=content_id, user_id=scoped_user_id)
+            if removed is False:
+                # The vector store refused the delete; the row is kept so a retry can
+                # still reach the vectors.
+                raise HTTPException(status_code=500, detail="Content was not fully removed; vector deletion failed")
 
         return ContentResponseSchema(
             id=content_id,
@@ -738,8 +762,108 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
 
         # Admins clear everything; a non-admin clears only their own rows, never shared ones.
         scoped_user_id = get_scoped_user_id(request)
-        await knowledge.aremove_all_content(user_id=scoped_user_id)
+        all_removed = await knowledge.aremove_all_content(user_id=scoped_user_id)
+        if all_removed is False:
+            raise HTTPException(status_code=500, detail="Some content was not fully removed; vector deletion failed")
         return "success"
+
+    @router.post(
+        "/knowledge/content/{content_id}/refresh",
+        response_model=ContentResponseSchema,
+        status_code=202,
+        operation_id="refresh_content",
+        summary="Refresh Content",
+        description=(
+            "Re-ingest a URL-sourced content row from its source. For a site row this refreshes "
+            "changed pages, retries failed ones, and removes pages that left the site."
+        ),
+        responses={
+            202: {"description": "Refresh started"},
+            400: {"description": "Content has no source URL", "model": BadRequestResponse},
+            404: {"description": "Content not found", "model": NotFoundResponse},
+        },
+    )
+    async def refresh_content(
+        request: Request,
+        background_tasks: BackgroundTasks,
+        content_id: str = Path(..., description="Content ID to refresh"),
+        db_id: Optional[str] = Query(default=None, description="Database ID to use"),
+        knowledge_id: Optional[str] = Query(default=None, description="Knowledge base ID to use"),
+    ) -> ContentResponseSchema:
+        knowledge = get_knowledge_instance(knowledge_instances, db_id, knowledge_id)
+        if isinstance(knowledge, RemoteKnowledge):
+            raise HTTPException(status_code=501, detail="Refresh is not supported for remote knowledge")
+
+        scoped_user_id = get_scoped_user_id(request)
+        existing = await knowledge.aget_content_by_id(content_id, user_id=scoped_user_id)
+        if existing is None:
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
+        if scoped_user_id is not None and existing.user_id is None:
+            raise HTTPException(status_code=403, detail="Cannot refresh shared content")
+
+        source_url = get_agno_metadata(existing.metadata, "source_url")
+        source_path = get_agno_metadata(existing.metadata, "source_path")
+        if (not isinstance(source_url, str) or not source_url) and isinstance(source_path, str) and source_path:
+            # A folder (or folder-file) row: re-ingest from its recorded path. The row id
+            # is reproducible from the same Content shape the original insert hashed.
+            for candidate_name in (None, existing.name):
+                candidate = Content(
+                    name=candidate_name,
+                    description=existing.description or None,
+                    path=source_path,
+                    metadata=dict(strip_agno_metadata(existing.metadata) or {}) or None,
+                    user_id=existing.user_id,
+                )
+                candidate.content_hash = knowledge._build_content_hash(candidate)
+                candidate.id = generate_id(candidate.content_hash)
+                if candidate.id == content_id:
+                    background_tasks.add_task(process_content, knowledge, candidate, None, None, None, None)
+                    return ContentResponseSchema(id=content_id, name=existing.name, status=ContentStatus.PROCESSING)
+            raise HTTPException(
+                status_code=400, detail="Content row cannot be matched back to its source; re-ingest the path instead"
+            )
+        if not isinstance(source_url, str) or not source_url:
+            raise HTTPException(status_code=400, detail="Content has no source URL to refresh from")
+
+        # Rebuild the exact Content the original insert built, so the refresh lands on the
+        # same row. The name is part of the row hash, so try the stored name and the
+        # auto-derived (None) form and keep whichever reproduces this id.
+        user_metadata = strip_agno_metadata(existing.metadata)
+        content: Optional[Content] = None
+        for candidate_name in (None, existing.name):
+            candidate = Content(
+                name=candidate_name,
+                description=existing.description or None,
+                url=source_url,
+                metadata=dict(user_metadata) if user_metadata else None,
+                user_id=existing.user_id,
+            )
+            candidate.content_hash = knowledge._build_content_hash(candidate)
+            candidate.id = generate_id(candidate.content_hash)
+            if candidate.id == content_id:
+                content = candidate
+                break
+        if content is None:
+            raise HTTPException(
+                status_code=400, detail="Content row cannot be matched back to its source; re-ingest the URL instead"
+            )
+
+        # A refresh must re-run the reader that built this row — refreshing an
+        # llms.txt site with the sitemap (or text) reader would rewrite and prune
+        # its pages. Rows record their reader at finalize; without a record, only
+        # the unambiguous sitemap kinds may be inferred.
+        reader_id = get_agno_metadata(existing.metadata, "reader_id")
+        if not isinstance(reader_id, str) or not reader_id:
+            source_type = get_agno_metadata(existing.metadata, "source_type")
+            if source_type in ("sitemap", "page"):
+                reader_id = "sitemap"
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Content row does not record which reader built it; re-ingest the URL instead",
+                )
+        background_tasks.add_task(process_content, knowledge, content, reader_id, None, None, None)
+        return ContentResponseSchema(id=content_id, name=existing.name, status=ContentStatus.PROCESSING)
 
     @router.get(
         "/knowledge/content/{content_id}/status",
@@ -763,7 +887,33 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
                                     "status": "completed",
                                     "status_message": "",
                                 },
-                            }
+                            },
+                            "partial": {
+                                "summary": "Example partially ingested content status",
+                                "value": {
+                                    "status": "partial",
+                                    "status_message": (
+                                        "7 of 10 chunks were embedded; 3 failed and are not retrievable. "
+                                        "Re-ingest this content to retry the missing chunks."
+                                    ),
+                                },
+                            },
+                            "failed": {
+                                "summary": "Example failed content status",
+                                "value": {
+                                    "status": "failed",
+                                    "status_message": (
+                                        'Embedding failed for "handbook.pdf" (0 of 12 chunks embedded). '
+                                        "Embedder: OpenAI text-embedding-3-small. "
+                                        "Reason: rate_limit (HTTP 429). "
+                                        "Provider said: Rate limit reached for text-embedding-3-small. "
+                                        "Retrying did not succeed after 4 attempts. "
+                                        "The embedding provider rate-limited this request; wait for the "
+                                        "limit to reset, or lower the embedder batch size. "
+                                        "Re-ingest /docs/handbook.pdf once the cause is resolved."
+                                    ),
+                                },
+                            },
                         }
                     }
                 },
@@ -788,11 +938,11 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             content_id=content_id, user_id=scoped_user_id
         )
 
-        # Handle the case where content is not found
+        # Missing or non-owned content is a 404, as this route documents and as the
+        # sibling single-content route returns; a 200 saying "failed" is indistinguishable
+        # from content that was found and genuinely failed to ingest.
         if knowledge_status is None:
-            return ContentStatusResponse(
-                id=content_id, status=ContentStatus.FAILED, status_message=status_message or "Content not found"
-            )
+            raise HTTPException(status_code=404, detail=f"Content not found: {content_id}")
 
         # Convert knowledge ContentStatus to schema ContentStatus (they have same values)
         if hasattr(knowledge_status, "value"):
@@ -805,10 +955,15 @@ def attach_routes(router: APIRouter, knowledge_instances: List[Union[Knowledge, 
             try:
                 status = ContentStatus(status_value.lower())
             except ValueError:
-                # Handle legacy or unknown statuses gracefully
-                if "failed" in status_value.lower():
+                # Handle legacy or unknown statuses gracefully. "partial" is checked
+                # before "failed"/"completed" so a compound legacy value such as
+                # "partially_failed" is not reported as a total failure.
+                lowered = status_value.lower()
+                if "partial" in lowered:
+                    status = ContentStatus.PARTIAL
+                elif "failed" in lowered:
                     status = ContentStatus.FAILED
-                elif "completed" in status_value.lower():
+                elif "completed" in lowered:
                     status = ContentStatus.COMPLETED
                 else:
                     status = ContentStatus.PROCESSING
