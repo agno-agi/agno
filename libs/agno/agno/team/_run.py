@@ -4303,6 +4303,9 @@ def arun_dispatch(  # type: ignore
     yield_run_output: bool = False,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
     background: bool = False,
+    # Raw TeamRunOutputEvent objects on the queue instead of SSE strings; only
+    # meaningful for background streaming (non-SSE transports such as AG-UI)
+    raw_events: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
     """Run the Team asynchronously and return the response."""
@@ -4340,9 +4343,6 @@ def arun_dispatch(  # type: ignore
         )
 
     background_tasks = kwargs.pop("background_tasks", None)
-    # Raw-event output for non-SSE transports (e.g. AG-UI); only meaningful
-    # for background streaming, popped here so it never leaks into model kwargs
-    raw_events = bool(kwargs.pop("raw_events", False))
     if background_tasks is not None:
         from fastapi import BackgroundTasks
 
@@ -9288,6 +9288,9 @@ def acontinue_run_dispatch(  # type: ignore
     debug_mode: Optional[bool] = None,
     yield_run_output: bool = False,
     background: bool = False,
+    # Raw event objects on the queue instead of SSE strings; only
+    # meaningful for background streaming (non-SSE transports such as AG-UI)
+    raw_events: bool = False,
     **kwargs: Any,
 ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
     """Continue a paused team run (async entry point).
@@ -9309,9 +9312,6 @@ def acontinue_run_dispatch(  # type: ignore
         raise ValueError("Session ID is required to continue a run from a run_id.")
 
     background_tasks = kwargs.pop("background_tasks", None)
-    # Raw-event output for non-SSE transports (e.g. AG-UI); only meaningful
-    # for background streaming, popped here so it never leaks into model kwargs
-    raw_events = bool(kwargs.pop("raw_events", False))
     if background_tasks is not None:
         from fastapi import BackgroundTasks
 

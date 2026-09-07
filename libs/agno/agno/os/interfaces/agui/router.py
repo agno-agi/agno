@@ -4,7 +4,7 @@ import copy
 import uuid
 from typing import Any, AsyncIterator, Dict, Optional, Union
 
-from agno.utils.log import log_error, log_warning
+from agno.utils.log import log_debug, log_error, log_warning
 
 try:
     from ag_ui.core import (
@@ -132,6 +132,7 @@ async def _build_reattach_response(
         resolved_run_id = await find_active_run_id(entity, thread_id=thread_id, user_id=user_id)
         if resolved_run_id is None:
             raise HTTPException(status_code=404, detail=f"No active run for thread {thread_id}")
+        log_debug(f"Reattach auto-resolved thread {thread_id} to run {resolved_run_id}")
         run_id = resolved_run_id
         resolved = True
 

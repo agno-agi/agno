@@ -472,8 +472,8 @@ class AgentSessionDetailSchema(BaseModel):
     chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
     active_run: Optional[dict] = Field(
         None,
-        description="In-progress run (run_id, status) whose event stream is still live — reattach to keep watching; "
-        "absent when nothing is running",
+        description="In-progress run (run_id, status, created_at) whose event stream is still live — reattach to "
+        "keep watching; absent when nothing is running",
     )
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")
@@ -516,8 +516,8 @@ class TeamSessionDetailSchema(BaseModel):
     chat_history: Optional[List[dict]] = Field(None, description="Complete chat history")
     active_run: Optional[dict] = Field(
         None,
-        description="In-progress run (run_id, status) whose event stream is still live — reattach to keep watching; "
-        "absent when nothing is running",
+        description="In-progress run (run_id, status, created_at) whose event stream is still live — reattach to "
+        "keep watching; absent when nothing is running",
     )
     created_at: Optional[datetime] = Field(None, description="Session creation timestamp")
     updated_at: Optional[datetime] = Field(None, description="Last update timestamp")

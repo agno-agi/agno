@@ -71,6 +71,7 @@ def test_detail_reports_live_running_run(monkeypatch):
     assert active_run is not None
     assert active_run["run_id"] == "r1"
     assert active_run["status"] == "RUNNING"
+    assert active_run["created_at"] is not None
 
 
 def test_detail_omits_active_run_when_all_completed(monkeypatch):

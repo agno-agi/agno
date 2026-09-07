@@ -12,6 +12,7 @@ from agno.os.event_streams.base import BaseEventStream
 from agno.os.event_streams.in_memory import InMemoryEventStream
 from agno.os.event_streams.redis import RedisEventStream
 from agno.run.base import RunStatus
+from agno.utils.log import log_debug
 
 _event_stream: Optional[BaseEventStream] = None
 # True once set_event_stream() has been called. The lazily-created in-memory
@@ -70,8 +71,12 @@ async def find_active_run(runs: Sequence[Any]) -> Optional[Any]:
         if getattr(run, "status", None) not in (RunStatus.pending, RunStatus.running):
             continue
         run_id = getattr(run, "run_id", None)
-        if run_id and await event_stream.get_run_status(run_id) is not None:
+        if not run_id:
+            continue
+        if await event_stream.get_run_status(run_id) is not None:
             return run
+        # The row outlived its producer (server restart, crashed run) — skip it
+        log_debug(f"Run {run_id} is {getattr(run, 'status', None)} in storage but unknown to the event stream")
     return None
 
 

@@ -66,6 +66,7 @@ async def _active_run_payload(session: Session) -> Optional[Dict[str, Any]]:
     return {
         "run_id": run.run_id,
         "status": run.status.value if hasattr(run.status, "value") else run.status,
+        "created_at": run.created_at,
     }
 
 
