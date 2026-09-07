@@ -1650,6 +1650,11 @@ class AgentOS:
             fastapi_app.state.service_account_verifier = service_account_verifier
 
         auth_configured = bool(self.authorization or jwt_env_configured or security_key)
+        # An OS with no auth configured is an OPEN instance: every route serves anonymous callers.
+        # Record it so the admin-gated directory/roles routers (require_admin) can be a no-op here
+        # too -- otherwise mounting get_users_router on the open-roster shape 401s every request
+        # while every other route is open. Add auth to protect that API.
+        fastapi_app.state.auth_open = not auth_configured
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.

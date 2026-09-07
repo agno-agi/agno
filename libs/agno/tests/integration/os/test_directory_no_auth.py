@@ -212,6 +212,28 @@ def test_no_auth_isolation_without_a_user_id_stays_unscoped_not_403(tmp_path):
     assert captured["scoped"] is None  # no id -> unscoped, no 403
 
 
+def test_users_router_is_open_on_a_no_auth_instance(tmp_path):
+    """Reported gap: mounting get_users_router on a no-auth OS 401'd every request because
+    require_admin needs a verified identity, while every other route on that OS was open. On an
+    open (no-auth) instance the admin gate is now a no-op, so the directory API is servable."""
+    from fastapi.testclient import TestClient
+
+    from agno.os.authz.role_router import get_users_router
+    from agno.os.authz.user_store import ManagedUserStore
+
+    store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
+    store.upsert("bob", name="Bob")
+    os_ = _os(tmp_path, user_directory=UserDirectoryConfig(store=store, auto_provision=True))
+    app = os_.get_app()
+    app.include_router(get_users_router(store))
+    assert getattr(app.state, "auth_open", False) is True
+
+    client = TestClient(app)
+    assert client.get("/users").status_code == 200  # was 401 before the open-instance no-op
+    assert client.post("/users", json={"id": "dave", "name": "Dave"}).status_code == 200
+    assert store.get("dave") is not None
+
+
 def test_role_store_still_requires_authorization(tmp_path):
     """Unchanged by the directory/isolation relaxation: a role_store (an authz plane) still needs
     authorization=True, because an unenforced plane would serve every route unauthenticated."""
