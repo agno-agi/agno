@@ -91,6 +91,66 @@ def test_gemini_invoke_wraps_generic_errors_with_exception_type():
             model.invoke(messages=[Message(role="user", content="Hello")], assistant_message=assistant_message)
 
 
+class _AiohttpLikeResponse:
+    """aiohttp.ClientResponse exposes the body through a coroutine method, not a property."""
+
+    async def text(self) -> str:  # pragma: no cover - never awaited by the code under test
+        return "unused"
+
+
+class _HttpxLikeResponse:
+    text = '{"error": {"code": 429, "message": "Resource exhausted", "status": "RESOURCE_EXHAUSTED"}}'
+
+
+def _invoke_with_api_error(error):
+    model = Gemini(api_key="test-key")
+    mock_client = MagicMock()
+    mock_client.models.generate_content.side_effect = error
+
+    with (
+        patch.object(model, "get_client", return_value=mock_client),
+        patch.object(model, "_format_messages", return_value=([], None)),
+        patch.object(model, "get_request_params", return_value={}),
+    ):
+        with pytest.raises(ModelProviderError) as exc_info:
+            model.invoke(messages=[Message(role="user", content="Hello")], assistant_message=Message(role="assistant"))
+    return exc_info.value
+
+
+def test_gemini_api_error_message_survives_an_aiohttp_response():
+    from google.genai.errors import ServerError
+
+    body = {
+        "error": {
+            "code": 504,
+            "message": "Deadline expired before operation could complete.",
+            "status": "DEADLINE_EXCEEDED",
+        }
+    }
+    error = _invoke_with_api_error(ServerError(504, body, _AiohttpLikeResponse()))
+
+    assert error.message == "Deadline expired before operation could complete."
+    assert error.status_code == 504
+
+
+def test_gemini_api_error_message_keeps_the_body_text_of_an_httpx_response():
+    from google.genai.errors import ClientError
+
+    body = {"error": {"code": 429, "message": "Resource exhausted", "status": "RESOURCE_EXHAUSTED"}}
+    error = _invoke_with_api_error(ClientError(429, body, _HttpxLikeResponse()))
+
+    assert error.message == _HttpxLikeResponse.text
+    assert error.status_code == 429
+
+
+def test_gemini_api_error_message_falls_back_to_str_without_a_body():
+    from google.genai.errors import ServerError
+
+    from agno.models.google.gemini import _api_error_message
+
+    assert _api_error_message(ServerError(503, {}, None)) == "503 None. {}"
+
+
 class TestFormatFileForMessage:
     def _make_model(self):
         model = Gemini(api_key="test-key")
