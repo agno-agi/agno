@@ -908,3 +908,51 @@ class TestIssuerPinning:
         config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256", issuer=self.GOOD)
         assert config.issuer == self.GOOD
         assert build_jwt_middleware_kwargs(config, authorization=True)["issuer"] == self.GOOD
+
+
+class TestCreateDevToken:
+    """``create_dev_token`` mints a signed JWT the real validator accepts, carrying the claims
+    ``auto_provision`` needs -- the honest local path (same pipeline as production, dev key)."""
+
+    def test_the_real_validator_accepts_it_with_its_claims(self):
+        from agno.os.auth import create_dev_token
+        from agno.os.middleware.jwt import JWTValidator
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, email="a@co", name="Alice", scopes=["agents:read"])
+        payload = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256").validate_token(tok)
+        assert payload["sub"] == "alice"
+        assert payload["email"] == "a@co" and payload["name"] == "Alice"
+        assert "agents:read" in payload["scopes"]
+
+    def test_audience_and_standard_claims_are_stamped(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, audience="os-1")
+        payload = pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"], audience="os-1")
+        assert payload["aud"] == "os-1" and payload["sub"] == "alice"
+        assert "exp" in payload and "iat" in payload and "jti" in payload
+
+    def test_a_wrong_key_does_not_verify(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET)
+        with pytest.raises(pyjwt.InvalidSignatureError):
+            pyjwt.decode(tok, "a-completely-different-secret-key-padding-xxxx", algorithms=["HS256"])
+
+    def test_expired_token_is_rejected(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, expires_in=-10)
+        with pytest.raises(pyjwt.ExpiredSignatureError):
+            pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"])
+
+    def test_exported_from_agno_os(self):
+        from agno.os import create_dev_token as exported
+
+        assert callable(exported)

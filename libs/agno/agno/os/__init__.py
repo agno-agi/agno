@@ -2,6 +2,7 @@ from typing import TYPE_CHECKING, Any
 
 from agno.job_queue import QueueConfig, RedisCoordination
 from agno.os.app import AgentOS
+from agno.os.auth import create_dev_token
 from agno.os.config import MCP_BUILTIN_TAGS, MCPBuiltinTag, MCPConfig, MCPServerConfig
 
 if TYPE_CHECKING:
@@ -15,6 +16,7 @@ __all__ = [
     "MCP_BUILTIN_TAGS",
     "QueueConfig",
     "RedisCoordination",
+    "create_dev_token",  # mint a local dev JWT so you can "be" any user without an IdP
 ]
 
 

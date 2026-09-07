@@ -33,13 +33,11 @@ Run it:
 """
 
 import os
-from datetime import UTC, datetime, timedelta
 
-import jwt
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
+from agno.os import AgentOS, create_dev_token
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig
@@ -114,15 +112,11 @@ if __name__ == "__main__":
     client = TestClient(app)
 
     def token(sub: str) -> str:
-        return jwt.encode(
-            {
-                "sub": sub,
-                "aud": OS_ID,
-                "scopes": [],
-                "exp": datetime.now(UTC) + timedelta(hours=24),
-            },
-            JWT_SECRET,
-            algorithm="HS256",
+        # create_dev_token (from agno.os) mints a local JWT so you can "be" any user without an
+        # IdP. It is the honest local path: the token runs the exact same verification / isolation
+        # pipeline as a production token, so what you see here is what you get in prod.
+        return create_dev_token(
+            sub, secret=JWT_SECRET, audience=OS_ID, expires_in=24 * 3600
         )
 
     def auth(sub: str) -> dict:

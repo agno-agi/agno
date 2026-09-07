@@ -111,6 +111,73 @@ def provision_user_with_default_role(
     return user
 
 
+def create_dev_token(
+    sub: str,
+    *,
+    secret: str,
+    scopes: Optional[List[str]] = None,
+    audience: Optional[str] = None,
+    email: Optional[str] = None,
+    name: Optional[str] = None,
+    expires_in: int = 3600,
+    algorithm: str = "HS256",
+    extra_claims: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Mint a signed JWT for LOCAL DEV / testing, so you can "be" any user without an IdP.
+
+    This is the honest local path: the token runs through the exact same verification,
+    provisioning and isolation pipeline as a production token, so what you see locally is what you
+    get in production. Sign it with the same key you put on
+    ``AuthorizationConfig(verification_keys=[secret])`` (HS256 by default).
+
+        secret = "dev-secret-at-least-256-bits-long-xxxxxxxxxxxxxxxx"
+        AgentOS(
+            db=db,
+            authorization=True,
+            authorization_config=AuthorizationConfig(verification_keys=[secret]),
+            user_directory=UserDirectoryConfig(store=True, auto_provision=True),
+        )
+        alice = create_dev_token("alice", secret=secret, email="alice@example.com", name="Alice")
+        client.get("/agents/x", headers={"Authorization": f"Bearer {alice}"})
+        # alice is authenticated -> her data is isolated AND she is auto-registered, for real.
+
+    NOT for production: there, tokens come from your IdP / control plane. This exists so a local
+    demo or test needs one line per user instead of an identity provider.
+
+    Args:
+        sub: the user id this token authenticates as (the JWT ``sub``).
+        secret: the signing key -- must match a value in ``verification_keys``.
+        scopes: optional scope strings (only meaningful on the scope plane; managed roles ignore them).
+        audience: the ``aud`` claim; set it to your ``os_id`` when ``verify_audience=True``.
+        email / name: written as claims so ``auto_provision`` can populate the directory row.
+        expires_in: token lifetime in seconds (default 1 hour).
+        algorithm: JWT algorithm (default HS256, the symmetric dev default).
+        extra_claims: any additional claims to stamp (e.g. a custom ``iss``).
+    """
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    import jwt as pyjwt
+
+    now = datetime.now(timezone.utc)
+    payload: Dict[str, Any] = {
+        "sub": sub,
+        "scopes": list(scopes or []),
+        "iat": now,
+        "exp": now + timedelta(seconds=expires_in),
+        "jti": uuid4().hex,
+    }
+    if audience is not None:
+        payload["aud"] = audience
+    if email is not None:
+        payload["email"] = email
+    if name is not None:
+        payload["name"] = name
+    if extra_claims:
+        payload.update(extra_claims)
+    return pyjwt.encode(payload, secret, algorithm=algorithm)
+
+
 def token_scopes_are_authoritative(app_or_request: Any) -> bool:
     """True when a scope plane actually enforces on this AgentOS -- i.e. the token's
     ``scopes`` claim carries authorization weight for access decisions.
