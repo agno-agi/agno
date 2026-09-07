@@ -1,21 +1,23 @@
 """No-auth identity middleware.
 
-When an OS runs with a user directory and/or per-user isolation but NO authentication, there is no
-verified token to key identity off. The directory and isolation still need SOMETHING, so this
-middleware reads the caller's self-asserted ``user_id`` from the request and:
+When an OS runs with per-user isolation but NO authentication, there is no verified token to key
+identity off. So this middleware reads the caller's self-asserted ``user_id`` from the request and
+enables per-user isolation SCOPING for it (when ``user_isolation`` is on), so this request's own
+reads are scoped as the authenticated path would.
 
-  * enables per-user isolation scoping for it (when ``user_isolation`` is on), so reads/writes get
-    scoped exactly as the authenticated path does, and
-  * provisions it into the directory (when ``auto_provision`` is on), so the roster fills in on any
-    endpoint, not just runs.
+It deliberately does NOT provision the directory. Scoping a request to a self-asserted id is
+read-only; writing a directory row is not, and doing it from any endpoint on an open instance would
+be an unauthenticated roster/audit-flooding primitive. No-auth provisioning is restricted to the run
+endpoints (``sync_directory_from_request`` there), where there is at least intent to use the system.
 
 This is ADVISORY, never enforced: the ``user_id`` is unverified (a caller could send any value), so
 it is a convenience for local/demo use, not a security boundary. Enforcement is a property of
-``AgentOS(authorization=True)`` with a verification key.
+``AgentOS(authorization=True)`` with a verification key. A self-asserted id may never claim a
+system-reserved principal (``sa:*`` / ``__scheduler__`` / ``__oauth__:``) -- those are refused.
 
 It reads only the query string, never the request body -- run POSTs carry ``user_id`` as a form
-field and are handled at the run endpoint (which also stamps the run's own data by that id). Only
-installed when no auth middleware is present (see AgentOS._add_auth_middleware / the no-auth branch).
+field and are handled at the run endpoint. Only installed when no auth middleware is present (see
+AgentOS._add_auth_middleware / the no-auth branch).
 """
 
 from typing import Awaitable, Callable
@@ -24,8 +26,6 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 from starlette.responses import Response
 from starlette.types import ASGIApp
-
-from agno.os.middleware.user_scope import sync_directory_from_request
 
 
 class NoAuthIdentityMiddleware(BaseHTTPMiddleware):
@@ -47,11 +47,14 @@ class NoAuthIdentityMiddleware(BaseHTTPMiddleware):
             # run into its history. Treat a reserved id as absent.
             if user_id and is_reserved_principal(user_id):
                 user_id = None
-            if user_id:
-                if self.user_isolation:
-                    # Mirror what the auth middleware sets so get_scoped_user_id scopes to this id.
-                    request.state.user_id = user_id
-                    request.state.user_isolation_enabled = True
-                # Fill the roster from any endpoint (no-op when no directory / auto_provision off).
-                sync_directory_from_request(request, user_id)
+            # Isolation SCOPING only -- deliberately NOT provisioning. Scoping this request's own
+            # reads to a self-asserted id is read-only; WRITING a directory row is not. On an open
+            # instance auto-provisioning from any endpoint would be an unauthenticated roster/audit
+            # flooding primitive (a GET ?user_id=<random> inserts a row + audit event per id). So
+            # no-auth provisioning is restricted to the run endpoints (sync_directory_from_request
+            # there), where there is at least intent to use the system.
+            if user_id and self.user_isolation:
+                # Mirror what the auth middleware sets so get_scoped_user_id scopes to this id.
+                request.state.user_id = user_id
+                request.state.user_isolation_enabled = True
         return await call_next(request)

@@ -120,29 +120,41 @@ def test_no_role_store_is_a_noop_no_grant_no_warn(monkeypatch):
 
 
 # ------------------------------------------------ no role == default role (decision-time fallback)
-def test_subject_with_no_role_is_treated_as_the_default_role():
-    """ "no role is equivalent to default role": a subject with no assigned role gets the default
-    (``is_default``) role's permissions at DECISION time, so it is never inert. Nothing is written
-    -- ``roles_of`` stays empty -- and ``disabled`` (not zero roles) remains the only lockout."""
-    roles = _roles()
+def test_no_role_default_applies_only_to_a_known_directory_user(tmp_path):
+    """ "no role is equivalent to default role" -- but ONLY for a known directory user. A provisioned
+    user with no assigned role gets the default (``is_default``) role's permissions at DECISION time
+    (never inert); an arbitrary authenticated ``sub`` that was never provisioned stays DENIED, so a
+    permissive default is not a floor for every valid token. Nothing is written (``roles_of`` empty);
+    ``disabled`` (not zero roles) remains the lockout. Requires the directory to share the store db."""
+    from agno.os.authz.user_store import ManagedUserStore
+
+    url = f"sqlite:///{tmp_path}/authz.db"
+    roles = ManagedRoleStore(db_url=url)
     roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
     roles.set_role_scopes("admin", ["agent_os:admin"])
+    users = ManagedUserStore(db_url=url)  # same db as the role store's engine
+    users.upsert("known", name="Known")  # a directory user with NO assigned role
     engine = roles._engine
 
-    assert roles.roles_of("stranger") == []  # no assignment at all
-    # ...yet allowed what the default 'viewer' grants, and denied what it does not
-    assert engine.check_scope("agents:x:read", subject="stranger") is True
-    assert engine.check_scope("agent_os:admin", subject="stranger") is False
-    # decision-time only: the fallback wrote nothing
-    assert roles.roles_of("stranger") == []
+    # known directory user, no role -> gets the default 'viewer', denied what it doesn't grant
+    assert roles.roles_of("known") == []
+    assert engine.check_scope("agents:x:read", subject="known") is True
+    assert engine.check_scope("agent_os:admin", subject="known") is False
+    # an UNKNOWN sub (a valid token never provisioned) -> denied, NOT handed the default
+    assert engine.check_scope("agents:x:read", subject="stranger") is False
+    assert roles.roles_of("known") == []  # decision-time only, nothing written
 
 
-def test_no_default_role_means_a_roleless_subject_is_denied():
-    """With no ``is_default`` role, a roleless subject falls through to denied -- the fallback never
-    invents access where no default was chosen."""
-    roles = _roles()
+def test_no_default_role_means_a_roleless_directory_user_is_denied(tmp_path):
+    """With no ``is_default`` role, even a known directory user with no role is denied -- the
+    fallback never invents access where no default was chosen."""
+    from agno.os.authz.user_store import ManagedUserStore
+
+    url = f"sqlite:///{tmp_path}/authz.db"
+    roles = ManagedRoleStore(db_url=url)
     roles.set_role_scopes("viewer", ["agents:*:read"])  # exists, but NOT flagged default
-    assert roles._engine.check_scope("agents:x:read", subject="stranger") is False
+    ManagedUserStore(db_url=url).upsert("known")
+    assert roles._engine.check_scope("agents:x:read", subject="known") is False
 
 
 def test_an_explicit_role_wins_over_the_default_fallback():

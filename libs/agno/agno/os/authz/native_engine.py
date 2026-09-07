@@ -151,17 +151,36 @@ class NativePolicyEngine(PolicyEngine):
                 stack.extend(self._db.get_authz_direct_roles(role))
             if not principals:
                 # No role of its own: a subject with no assigned role is treated as holding the
-                # default (``is_default``) role, so "no role" is equivalent to the default role's
-                # permissions. This only reaches here when the caller carries no token role either
-                # (``_enforce`` consults assignments only then), so it fires precisely for a subject
-                # with no role from any source. ``disabled`` -- not zero roles -- is the lockout.
-                # Decision-time only: nothing is written, so ``roles_of`` stays truthful.
+                # default (``is_default``) role -- BUT only when it is a known directory user. The
+                # default is a floor for people the operator ONBOARDED, never for an arbitrary
+                # authenticated ``sub``: a valid token for a subject that was never provisioned stays
+                # denied, not handed the default role's permissions (which could be admin). This only
+                # reaches here when the caller carries no token role either (``_enforce`` consults
+                # assignments only then). ``disabled`` -- not zero roles -- is the lockout. Decision-
+                # time only: nothing is written, so ``roles_of`` stays truthful. The directory must
+                # share the role store's db for this check to see it; on a split db it fails closed.
                 default = self._default_role()
-                if default is not None:
+                if default is not None and self._subject_in_directory(subject):
                     principals.add(default)
             return principals
 
         return memoize(("subject", id(self), subject), resolve)
+
+    def _subject_in_directory(self, subject: str) -> bool:
+        """Whether ``subject`` is a known directory user (an ``authz_users`` row).
+
+        Gates the no-role default-role fallback: the default applies only to people the operator
+        onboarded, so an arbitrary authenticated ``sub`` that was never provisioned is denied rather
+        than granted the default. Reads through the engine's own db, so the directory must share it
+        (the default ``AgentOS(db=...)`` shape does); with no directory / a split db this returns
+        False and the fallback stays closed -- the safe direction."""
+        getter = getattr(self._db, "get_authz_user", None)
+        if not callable(getter):
+            return False
+        try:
+            return getter(subject) is not None
+        except Exception:
+            return False
 
     def _default_role(self) -> Optional[str]:
         """The role flagged ``is_default`` -- the fallback for a subject with no assigned role.

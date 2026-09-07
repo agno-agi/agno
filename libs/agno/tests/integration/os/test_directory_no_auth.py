@@ -115,25 +115,38 @@ def test_user_isolation_top_level_flag_wires_through_under_auth(tmp_path):
     assert getattr(app.state, "user_isolation_enabled", False) is True
 
 
-def test_no_auth_provisioning_fires_on_any_endpoint_not_just_runs(tmp_path):
-    """Regression for the run-only limitation: without auth, provisioning now fires on any endpoint
-    that carries a user_id (via the no-auth identity middleware), not only /runs. A GET with
-    ?user_id=ghost registers ghost."""
+def test_no_auth_provisioning_is_run_only(tmp_path):
+    """No-auth provisioning is restricted to RUN endpoints (a run has intent to use the system). A
+    plain GET carrying a user_id does NOT provision -- otherwise an open instance would be an
+    unauthenticated roster/audit flooding primitive (GET ?user_id=<random> per id). Runs still fill
+    the roster."""
+    from unittest.mock import AsyncMock, patch
+
     from fastapi.testclient import TestClient
 
     os_ = _os(tmp_path, user_directory=True)  # bare True -> auto_provision on
     client = TestClient(os_.get_app())
+
+    # a GET with a user_id must NOT provision
+    client.get("/agents/research-agent", params={"user_id": "ghost"})
     assert os_.user_directory.store.get("ghost") is None
 
-    r = client.get("/agents/research-agent", params={"user_id": "ghost"})
+    # a run DOES provision
+    with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
+        m.return_value = _MockRunOutput()
+        r = client.post(
+            "/agents/research-agent/runs",
+            data={"message": "hi", "stream": "false", "user_id": "realrunner"},
+        )
     assert r.status_code == 200, r.text
-    assert os_.user_directory.store.get("ghost") is not None  # provisioned off a non-run GET
+    assert os_.user_directory.store.get("realrunner") is not None
 
 
-def test_user_isolation_without_auth_sets_scoping_and_provisions(tmp_path):
+def test_user_isolation_without_auth_sets_scoping_but_does_not_provision(tmp_path):
     """user_isolation must work without auth: the no-auth identity middleware reads the self-asserted
     user_id and sets request.state (user_id + user_isolation_enabled) so get_scoped_user_id scopes to
-    it, and provisions the directory. Tested at the middleware directly (no endpoint noise)."""
+    it. It does NOT provision the directory (scoping is read-only; provisioning is run-only). Tested
+    at the middleware directly (no endpoint noise)."""
     import asyncio
     from types import SimpleNamespace
 
@@ -175,7 +188,7 @@ def test_user_isolation_without_auth_sets_scoping_and_provisions(tmp_path):
     asyncio.run(mw.dispatch(request, call_next))
 
     assert captured["scoped"] == "zara"  # isolation scopes to the self-asserted id
-    assert store.get("zara") is not None  # and the directory was provisioned
+    assert store.get("zara") is None  # scoping is read-only: the middleware does NOT provision
 
 
 def test_no_auth_isolation_without_a_user_id_stays_unscoped_not_403(tmp_path):
@@ -230,10 +243,12 @@ def test_users_admin_api_requires_auth_even_on_a_no_auth_instance(tmp_path):
     assert client.get("/users").status_code == 401  # admin API is not auto-opened
 
 
-def test_no_auth_middleware_refuses_a_reserved_principal(tmp_path):
-    """A self-asserted query user_id must never claim a system-reserved principal (sa:*,
-    __scheduler__): every other intake refuses these, so the no-auth path must too. Otherwise
-    ?user_id=sa:victim would self-scope to a service account and land runs in its history."""
+def test_no_auth_run_refuses_a_reserved_principal(tmp_path):
+    """A self-asserted run user_id must never claim a system-reserved principal (sa:*, __scheduler__):
+    every other intake refuses these, so the no-auth run path must too. Otherwise user_id=sa:victim
+    would land runs in that service account's history."""
+    from unittest.mock import AsyncMock, patch
+
     from fastapi.testclient import TestClient
 
     from agno.os.authz.user_store import ManagedUserStore
@@ -242,14 +257,16 @@ def test_no_auth_middleware_refuses_a_reserved_principal(tmp_path):
     os_ = _os(tmp_path, user_isolation=True, user_directory=UserDirectoryConfig(store=store, auto_provision=True))
     client = TestClient(os_.get_app())
 
-    # A reserved id on any endpoint must NOT provision or scope to that principal.
-    client.get("/agents/research-agent", params={"user_id": "sa:backend"})
-    client.get("/agents/research-agent", params={"user_id": "__scheduler__"})
-    assert store.get("sa:backend") is None
-    assert store.get("__scheduler__") is None
-    # A normal id still works (control).
-    client.get("/agents/research-agent", params={"user_id": "realuser"})
-    assert store.get("realuser") is not None
+    with patch.object(Agent, "arun", new_callable=AsyncMock) as m:
+        m.return_value = _MockRunOutput()
+        for uid in ("sa:backend", "__scheduler__", "realuser"):
+            client.post(
+                "/agents/research-agent/runs",
+                data={"message": "hi", "stream": "false", "user_id": uid},
+            )
+    assert store.get("sa:backend") is None  # reserved -> refused
+    assert store.get("__scheduler__") is None  # reserved -> refused
+    assert store.get("realuser") is not None  # normal -> provisioned
 
 
 def test_role_store_still_requires_authorization(tmp_path):
