@@ -35,8 +35,8 @@ class TestToFormValue:
 
 class TestExecutorInit:
     def test_requires_httpx(self):
-        with patch("agno.scheduler.executor.httpx", None):
-            with pytest.raises(ImportError, match="httpx"):
+        with patch("agno.scheduler.executor.httpx2", None):
+            with pytest.raises(ImportError, match="httpx2"):
                 ScheduleExecutor(base_url="http://localhost:8000", internal_service_token="tok")
 
     def test_strips_trailing_slash(self):
@@ -298,7 +298,7 @@ class TestExecutorExecute:
         mock_resp.status_code = 200
         mock_resp.text = "OK"
 
-        with patch("agno.scheduler.executor.httpx") as mock_httpx:
+        with patch("agno.scheduler.executor.httpx2") as mock_httpx:
             mock_client = AsyncMock()
             mock_client.request = AsyncMock(return_value=mock_resp)
             mock_client.__aenter__ = AsyncMock(return_value=mock_client)

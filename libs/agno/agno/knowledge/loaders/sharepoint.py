@@ -8,8 +8,8 @@ Provides methods for loading content from Microsoft SharePoint.
 from io import BytesIO
 from typing import Dict, List, Optional, cast
 
-import httpx
-from httpx import AsyncClient
+import httpx2
+from httpx2 import AsyncClient
 
 from agno.knowledge.content import Content, ContentStatus
 from agno.knowledge.loaders.base import BaseLoader
@@ -82,10 +82,10 @@ class SharePointLoader(BaseLoader):
         headers = {"Authorization": f"Bearer {access_token}"}
 
         try:
-            response = httpx.get(url, headers=headers)
+            response = httpx2.get(url, headers=headers)
             response.raise_for_status()
             return response.json().get("id")
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {str(e)}")
             return None
 
@@ -101,11 +101,11 @@ class SharePointLoader(BaseLoader):
         headers = {"Authorization": f"Bearer {access_token}"}
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.get(url, headers=headers)
                 response.raise_for_status()
                 return response.json().get("id")
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"Failed to get SharePoint site ID: {e.response.status_code} - {e.response.text}: {str(e)}")
             return None
 
@@ -118,12 +118,12 @@ class SharePointLoader(BaseLoader):
 
         try:
             while url:
-                response = httpx.get(url, headers=headers)
+                response = httpx2.get(url, headers=headers)
                 response.raise_for_status()
                 data = response.json()
                 items.extend(data.get("value", []))
                 url = data.get("@odata.nextLink")
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {str(e)}")
 
         return items
@@ -136,14 +136,14 @@ class SharePointLoader(BaseLoader):
         items: List[dict] = []
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 while url:
                     response = await client.get(url, headers=headers)
                     response.raise_for_status()
                     data = response.json()
                     items.extend(data.get("value", []))
                     url = data.get("@odata.nextLink")
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"Failed to list SharePoint folder: {e.response.status_code} - {e.response.text}: {str(e)}")
 
         return items
@@ -155,10 +155,10 @@ class SharePointLoader(BaseLoader):
         headers = {"Authorization": f"Bearer {access_token}"}
 
         try:
-            response = httpx.get(url, headers=headers, follow_redirects=True)
+            response = httpx2.get(url, headers=headers, follow_redirects=True)
             response.raise_for_status()
             return BytesIO(response.content)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}")
             return None
 
@@ -169,11 +169,11 @@ class SharePointLoader(BaseLoader):
         headers = {"Authorization": f"Bearer {access_token}"}
 
         try:
-            async with httpx.AsyncClient() as client:
+            async with httpx2.AsyncClient() as client:
                 response = await client.get(url, headers=headers, follow_redirects=True)
                 response.raise_for_status()
                 return BytesIO(response.content)
-        except httpx.HTTPStatusError as e:
+        except httpx2.HTTPStatusError as e:
             log_error(f"Failed to download SharePoint file {file_path}: {e.response.status_code} - {e.response.text}")
             return None
 
@@ -377,7 +377,7 @@ class SharePointLoader(BaseLoader):
 
         if path_to_process:
             try:
-                with httpx.Client() as client:
+                with httpx2.Client() as client:
                     url = f"https://graph.microsoft.com/v1.0/sites/{site_id}/drive/root:/{path_to_process}"
                     headers = {"Authorization": f"Bearer {access_token}"}
                     response = client.get(url, headers=headers, timeout=30.0)

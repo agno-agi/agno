@@ -13,7 +13,7 @@ Try: In another terminal, rerun this file with --demo
 import os
 import sys
 
-import httpx
+import httpx2
 from agno.agent import Agent, AgentFactory
 from agno.db.sqlite import SqliteDb
 from agno.factory import RequestContext
@@ -80,7 +80,7 @@ def verify_resolution_contract() -> None:
 def run_demo() -> None:
     """Inspect factory discovery and run a live tenant-specific Agent."""
     verify_resolution_contract()
-    with httpx.Client(base_url=BASE_URL, timeout=90.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=90.0) as client:
         health = client.get("/health")
         health.raise_for_status()
 

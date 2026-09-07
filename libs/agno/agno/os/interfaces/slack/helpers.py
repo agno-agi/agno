@@ -1,6 +1,6 @@
 from typing import Any, Dict, List, Optional, Tuple
 
-import httpx
+import httpx2
 
 from agno.media import Audio, File, Image, Video
 from agno.utils.log import log_error, log_warning
@@ -207,7 +207,7 @@ async def download_event_files_async(
 
     headers = {"Authorization": f"Bearer {token}"}
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         for file_info in event["files"]:
             file_id = file_info.get("id")
             filename = file_info.get("name", "file")

@@ -14,7 +14,7 @@ ENV = {
 @pytest.fixture
 def whatsapp_tools():
     with patch.dict("os.environ", ENV):
-        with patch("agno.tools.whatsapp.httpx") as mock_httpx:
+        with patch("agno.tools.whatsapp.httpx2") as mock_httpx:
             mock_response = Mock()
             mock_response.status_code = 200
             mock_response.json.return_value = {"messages": [{"id": "wamid.test123"}]}
@@ -84,7 +84,7 @@ def test_send_text_message_default_recipient(whatsapp_tools):
 def test_send_text_message_no_recipient():
     env = {**ENV, "WHATSAPP_RECIPIENT_WAID": ""}
     with patch.dict("os.environ", env, clear=False):
-        with patch("agno.tools.whatsapp.httpx"):
+        with patch("agno.tools.whatsapp.httpx2"):
             tools = WhatsAppTools()
             result = tools.send_text_message(text="Hello")
             parsed = json.loads(result)

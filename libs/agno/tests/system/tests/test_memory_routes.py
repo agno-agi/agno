@@ -6,7 +6,7 @@ Run with: pytest test_memory_routes.py -v --tb=short
 
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
@@ -19,9 +19,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -40,7 +40,7 @@ class TestMemoryRoutesWithLocalAgent:
     DB_ID = "gateway-db"
 
     @pytest.fixture(scope="class")
-    def agent_run_for_memory(self, client: httpx.Client, test_user_id: str) -> dict:
+    def agent_run_for_memory(self, client: httpx2.Client, test_user_id: str) -> dict:
         """Run the local agent to potentially generate memories."""
         session_id = str(uuid.uuid4())
         response = client.post(
@@ -60,7 +60,7 @@ class TestMemoryRoutesWithLocalAgent:
         }
 
     @pytest.fixture(scope="class")
-    def created_memory_id(self, client: httpx.Client, test_user_id: str) -> str:
+    def created_memory_id(self, client: httpx2.Client, test_user_id: str) -> str:
         """Create a memory for testing CRUD operations."""
         response = client.post(
             f"/memories?db_id={self.DB_ID}",
@@ -73,7 +73,7 @@ class TestMemoryRoutesWithLocalAgent:
         assert response.status_code == 200
         return response.json()["memory_id"]
 
-    def test_create_memory_with_topics(self, client: httpx.Client, test_user_id: str, agent_run_for_memory: dict):
+    def test_create_memory_with_topics(self, client: httpx2.Client, test_user_id: str, agent_run_for_memory: dict):
         """Test POST /memories creates memory with topics for local agent user."""
         response = client.post(
             f"/memories?db_id={self.DB_ID}",
@@ -93,7 +93,7 @@ class TestMemoryRoutesWithLocalAgent:
         assert "local" in data["topics"]
         assert data["user_id"] == test_user_id
 
-    def test_get_memories_for_user(self, client: httpx.Client, test_user_id: str, agent_run_for_memory: dict):
+    def test_get_memories_for_user(self, client: httpx2.Client, test_user_id: str, agent_run_for_memory: dict):
         """Test GET /memories returns memories for specific user."""
         response = client.get(f"/memories?user_id={test_user_id}&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -107,7 +107,7 @@ class TestMemoryRoutesWithLocalAgent:
         for memory in data["data"]:
             assert memory["user_id"] == test_user_id
 
-    def test_get_memory_by_id(self, client: httpx.Client, created_memory_id: str, test_user_id: str):
+    def test_get_memory_by_id(self, client: httpx2.Client, created_memory_id: str, test_user_id: str):
         """Test GET /memories/{memory_id} returns full memory details."""
         response = client.get(f"/memories/{created_memory_id}?user_id={test_user_id}&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -121,7 +121,7 @@ class TestMemoryRoutesWithLocalAgent:
         assert "frontend" in data["topics"]
         assert "local" in data["topics"]
 
-    def test_get_memory_topics_list(self, client: httpx.Client, agent_run_for_memory: dict):
+    def test_get_memory_topics_list(self, client: httpx2.Client, agent_run_for_memory: dict):
         """Test GET /memory_topics returns list of all topics."""
         response = client.get(f"/memory_topics?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -131,7 +131,7 @@ class TestMemoryRoutesWithLocalAgent:
         # Should contain topics from our created memories
         assert "programming" in data or len(data) >= 1
 
-    def test_update_memory_content(self, client: httpx.Client, created_memory_id: str, test_user_id: str):
+    def test_update_memory_content(self, client: httpx2.Client, created_memory_id: str, test_user_id: str):
         """Test PATCH /memories/{memory_id} updates memory content and topics."""
         response = client.patch(
             f"/memories/{created_memory_id}?db_id={self.DB_ID}",
@@ -148,7 +148,7 @@ class TestMemoryRoutesWithLocalAgent:
         assert "rust" in data["topics"]
         assert "Rust" in data["memory"]
 
-    def test_get_user_memory_stats(self, client: httpx.Client, agent_run_for_memory: dict):
+    def test_get_user_memory_stats(self, client: httpx2.Client, agent_run_for_memory: dict):
         """Test GET /user_memory_stats returns statistics."""
         response = client.get(f"/user_memory_stats?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -164,7 +164,7 @@ class TestMemoryRoutesWithLocalAgent:
             assert "total_memories" in stat
             assert stat["total_memories"] >= 1
 
-    def test_delete_memory(self, client: httpx.Client, test_user_id: str):
+    def test_delete_memory(self, client: httpx2.Client, test_user_id: str):
         """Test DELETE /memories/{memory_id} removes the memory."""
         # Create a memory to delete
         create_response = client.post(
@@ -194,7 +194,7 @@ class TestMemoryRoutesWithRemoteAgent:
     DB_ID = "remote-db"
 
     @pytest.fixture(scope="class")
-    def agent_run_for_memory(self, client: httpx.Client, test_user_id: str) -> dict:
+    def agent_run_for_memory(self, client: httpx2.Client, test_user_id: str) -> dict:
         """Run the remote agent to potentially generate memories."""
         session_id = str(uuid.uuid4())
         response = client.post(
@@ -214,7 +214,7 @@ class TestMemoryRoutesWithRemoteAgent:
         }
 
     @pytest.fixture(scope="class")
-    def created_memory_id(self, client: httpx.Client, test_user_id: str) -> str:
+    def created_memory_id(self, client: httpx2.Client, test_user_id: str) -> str:
         """Create a memory for testing CRUD operations with remote agent user."""
         response = client.post(
             f"/memories?db_id={self.DB_ID}",
@@ -228,7 +228,7 @@ class TestMemoryRoutesWithRemoteAgent:
         return response.json()["memory_id"]
 
     def test_create_memory_for_remote_agent_user(
-        self, client: httpx.Client, test_user_id: str, agent_run_for_memory: dict
+        self, client: httpx2.Client, test_user_id: str, agent_run_for_memory: dict
     ):
         """Test POST /memories creates memory for user who interacted with remote agent."""
         response = client.post(
@@ -248,7 +248,7 @@ class TestMemoryRoutesWithRemoteAgent:
         assert "remote" in data["topics"]
         assert data["user_id"] == test_user_id
 
-    def test_get_memories_for_remote_user(self, client: httpx.Client, test_user_id: str, agent_run_for_memory: dict):
+    def test_get_memories_for_remote_user(self, client: httpx2.Client, test_user_id: str, agent_run_for_memory: dict):
         """Test GET /memories returns memories for remote agent user."""
         response = client.get(f"/memories?user_id={test_user_id}&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -261,7 +261,7 @@ class TestMemoryRoutesWithRemoteAgent:
         for memory in data["data"]:
             assert memory["user_id"] == test_user_id
 
-    def test_get_memory_by_id_for_remote_user(self, client: httpx.Client, created_memory_id: str, test_user_id: str):
+    def test_get_memory_by_id_for_remote_user(self, client: httpx2.Client, created_memory_id: str, test_user_id: str):
         """Test GET /memories/{memory_id} returns memory for remote agent user."""
         response = client.get(f"/memories/{created_memory_id}?user_id={test_user_id}&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -271,7 +271,7 @@ class TestMemoryRoutesWithRemoteAgent:
         assert data["user_id"] == test_user_id
         assert "remote" in data["topics"]
 
-    def test_update_memory_for_remote_user(self, client: httpx.Client, created_memory_id: str, test_user_id: str):
+    def test_update_memory_for_remote_user(self, client: httpx2.Client, created_memory_id: str, test_user_id: str):
         """Test PATCH /memories/{memory_id} updates memory for remote agent user."""
         response = client.patch(
             f"/memories/{created_memory_id}?db_id={self.DB_ID}",
@@ -288,7 +288,7 @@ class TestMemoryRoutesWithRemoteAgent:
         assert "zig" in data["topics"]
         assert "Zig" in data["memory"]
 
-    def test_delete_memory_for_remote_user(self, client: httpx.Client, test_user_id: str):
+    def test_delete_memory_for_remote_user(self, client: httpx2.Client, test_user_id: str):
         """Test DELETE /memories/{memory_id} removes memory for remote agent user."""
         # Create a memory to delete
         create_response = client.post(

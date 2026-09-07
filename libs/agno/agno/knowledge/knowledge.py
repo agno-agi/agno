@@ -10,7 +10,7 @@ from os.path import basename
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union, cast, overload
 
-from httpx import AsyncClient
+from httpx2 import AsyncClient
 
 from agno.db.base import AsyncBaseDb, BaseDb
 from agno.db.schemas.knowledge import KnowledgeRow

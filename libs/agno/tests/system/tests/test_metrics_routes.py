@@ -7,7 +7,7 @@ Run with: pytest test_metrics_routes.py -v --tb=short
 import time
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
@@ -20,9 +20,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -46,7 +46,7 @@ class TestLocalMetricsRoutes:
         return f"metrics-local-user-{uuid.uuid4().hex[:8]}"
 
     @pytest.fixture(scope="class")
-    def generate_metrics_data(self, client: httpx.Client, metrics_test_user_id: str) -> dict:
+    def generate_metrics_data(self, client: httpx2.Client, metrics_test_user_id: str) -> dict:
         """Run an agent to generate some metrics data."""
         session_id = str(uuid.uuid4())
         response = client.post(
@@ -65,7 +65,7 @@ class TestLocalMetricsRoutes:
             "agent_id": self.AGENT_ID,
         }
 
-    def test_get_metrics_structure(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_get_metrics_structure(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test GET /metrics returns proper metrics structure for local db."""
         response = client.get(f"/metrics?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -75,7 +75,7 @@ class TestLocalMetricsRoutes:
         assert isinstance(data["metrics"], list)
         assert "updated_at" in data
 
-    def test_get_metrics_with_date_range(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_get_metrics_with_date_range(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test GET /metrics filters by date range for local db."""
         response = client.get(f"/metrics?starting_date=2024-01-01&ending_date=2030-12-31&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -84,7 +84,7 @@ class TestLocalMetricsRoutes:
         assert "metrics" in data
         assert isinstance(data["metrics"], list)
 
-    def test_get_metrics_contains_expected_fields(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_get_metrics_contains_expected_fields(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test GET /metrics returns metrics with expected fields for local db."""
         response = client.get(f"/metrics?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -106,7 +106,7 @@ class TestLocalMetricsRoutes:
             assert "created_at" in metric
             assert "updated_at" in metric
 
-    def test_refresh_metrics_returns_list(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_refresh_metrics_returns_list(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test POST /metrics/refresh recalculates and returns metrics for local db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -114,7 +114,7 @@ class TestLocalMetricsRoutes:
 
         assert isinstance(data, list)
 
-    def test_refresh_metrics_contains_expected_fields(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_refresh_metrics_contains_expected_fields(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test POST /metrics/refresh returns metrics with expected fields for local db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -128,7 +128,7 @@ class TestLocalMetricsRoutes:
             assert "model_metrics" in metric
             assert "date" in metric
 
-    def test_refresh_metrics_background_returns_accepted(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_refresh_metrics_background_returns_accepted(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test POST /metrics/refresh?background=true returns 202 with a refresh status for local db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")
         assert response.status_code == 202
@@ -138,7 +138,7 @@ class TestLocalMetricsRoutes:
         assert "message" in data
 
     def test_refresh_metrics_background_status_reaches_completed(
-        self, client: httpx.Client, generate_metrics_data: dict
+        self, client: httpx2.Client, generate_metrics_data: dict
     ):
         """Test GET /metrics/refresh/status reports completion after a background refresh for local db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")
@@ -173,7 +173,7 @@ class TestRemoteMetricsRoutes:
         return f"metrics-remote-user-{uuid.uuid4().hex[:8]}"
 
     @pytest.fixture(scope="class")
-    def generate_metrics_data(self, client: httpx.Client, metrics_test_user_id: str) -> dict:
+    def generate_metrics_data(self, client: httpx2.Client, metrics_test_user_id: str) -> dict:
         """Run a remote agent to generate some metrics data."""
         session_id = str(uuid.uuid4())
         response = client.post(
@@ -192,7 +192,7 @@ class TestRemoteMetricsRoutes:
             "agent_id": self.AGENT_ID,
         }
 
-    def test_get_metrics_structure(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_get_metrics_structure(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test GET /metrics returns proper metrics structure for remote db."""
         response = client.get(f"/metrics?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -202,7 +202,7 @@ class TestRemoteMetricsRoutes:
         assert isinstance(data["metrics"], list)
         assert "updated_at" in data
 
-    def test_get_metrics_with_date_range(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_get_metrics_with_date_range(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test GET /metrics filters by date range for remote db."""
         response = client.get(f"/metrics?starting_date=2024-01-01&ending_date=2030-12-31&db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -211,7 +211,7 @@ class TestRemoteMetricsRoutes:
         assert "metrics" in data
         assert isinstance(data["metrics"], list)
 
-    def test_get_metrics_contains_expected_fields(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_get_metrics_contains_expected_fields(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test GET /metrics returns metrics with expected fields for remote db."""
         response = client.get(f"/metrics?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -233,7 +233,7 @@ class TestRemoteMetricsRoutes:
             assert "created_at" in metric
             assert "updated_at" in metric
 
-    def test_refresh_metrics_returns_list(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_refresh_metrics_returns_list(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test POST /metrics/refresh recalculates and returns metrics for remote db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -241,7 +241,7 @@ class TestRemoteMetricsRoutes:
 
         assert isinstance(data, list)
 
-    def test_refresh_metrics_contains_expected_fields(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_refresh_metrics_contains_expected_fields(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test POST /metrics/refresh returns metrics with expected fields for remote db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}")
         assert response.status_code == 200
@@ -255,7 +255,7 @@ class TestRemoteMetricsRoutes:
             assert "model_metrics" in metric
             assert "date" in metric
 
-    def test_refresh_metrics_background_returns_accepted(self, client: httpx.Client, generate_metrics_data: dict):
+    def test_refresh_metrics_background_returns_accepted(self, client: httpx2.Client, generate_metrics_data: dict):
         """Test POST /metrics/refresh?background=true returns 202 with a refresh status for remote db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")
         assert response.status_code == 202
@@ -265,7 +265,7 @@ class TestRemoteMetricsRoutes:
         assert "message" in data
 
     def test_refresh_metrics_background_status_reaches_completed(
-        self, client: httpx.Client, generate_metrics_data: dict
+        self, client: httpx2.Client, generate_metrics_data: dict
     ):
         """Test GET /metrics/refresh/status reports completion after a background refresh for remote db."""
         response = client.post(f"/metrics/refresh?db_id={self.DB_ID}&background=true")

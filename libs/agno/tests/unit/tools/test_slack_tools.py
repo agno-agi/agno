@@ -213,7 +213,7 @@ def test_download_file_saves_to_disk(slack_tools, tmp_path):
     slack_tools.client.files_info.return_value = {
         "file": {"id": "F1", "name": "f.txt", "size": 10, "url_private": "https://files.slack.com/f.txt"}
     }
-    with patch("agno.tools.slack.httpx.get") as mock_get:
+    with patch("agno.tools.slack.httpx2.get") as mock_get:
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
         result = slack_tools.download_file("F1")
@@ -250,7 +250,7 @@ def test_download_file_dest_path_traversal_falls_back_to_base64(slack_tools, tmp
     slack_tools.client.files_info.return_value = {
         "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
     }
-    with patch("agno.tools.slack.httpx.get") as mock_get:
+    with patch("agno.tools.slack.httpx2.get") as mock_get:
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
         result = slack_tools.download_file("F1", dest_path="../../escape.bin")
@@ -268,7 +268,7 @@ def test_download_file_dest_path_subdir_lands_inside_output_directory(slack_tool
         "file": {"id": "F1", "name": "f.txt", "size": 4, "url_private": "https://files.slack.com/f.txt"}
     }
     (tmp_path / "subdir").mkdir()
-    with patch("agno.tools.slack.httpx.get") as mock_get:
+    with patch("agno.tools.slack.httpx2.get") as mock_get:
         mock_get.return_value.content = b"data"
         mock_get.return_value.raise_for_status = Mock()
         result = slack_tools.download_file("F1", dest_path="subdir/foo.bin")

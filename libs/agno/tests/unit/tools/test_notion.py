@@ -222,7 +222,7 @@ def test_search_pages_success(notion_tools, mock_search_pages_response):
     mock_response.status_code = 200
     mock_response.json.return_value = mock_search_pages_response
 
-    with patch("httpx.post", return_value=mock_response):
+    with patch("httpx2.post", return_value=mock_response):
         result = notion_tools.search_pages(tag="travel")
 
         result_json = json.loads(result)
@@ -239,7 +239,7 @@ def test_search_pages_empty_results(notion_tools, mock_empty_search_response):
     mock_response.status_code = 200
     mock_response.json.return_value = mock_empty_search_response
 
-    with patch("httpx.post", return_value=mock_response):
+    with patch("httpx2.post", return_value=mock_response):
         result = notion_tools.search_pages(tag="nonexistent")
 
         result_json = json.loads(result)
@@ -254,7 +254,7 @@ def test_search_pages_api_error(notion_tools):
     mock_response.status_code = 400
     mock_response.text = "Invalid database ID"
 
-    with patch("httpx.post", return_value=mock_response):
+    with patch("httpx2.post", return_value=mock_response):
         result = notion_tools.search_pages(tag="tech")
 
         result_json = json.loads(result)
@@ -265,7 +265,7 @@ def test_search_pages_api_error(notion_tools):
 
 def test_search_pages_network_exception(notion_tools):
     """Test search when network request fails."""
-    with patch("httpx.post", side_effect=Exception("Network timeout")):
+    with patch("httpx2.post", side_effect=Exception("Network timeout")):
         result = notion_tools.search_pages(tag="fashion")
 
         result_json = json.loads(result)
@@ -293,7 +293,7 @@ def test_search_pages_with_missing_properties(notion_tools):
     mock_response.status_code = 200
     mock_response.json.return_value = mock_response_data
 
-    with patch("httpx.post", return_value=mock_response):
+    with patch("httpx2.post", return_value=mock_response):
         result = notion_tools.search_pages(tag="tech")
 
         result_json = json.loads(result)
@@ -312,7 +312,7 @@ def test_search_pages_with_various_tags(notion_tools, mock_search_pages_response
     mock_response.json.return_value = mock_search_pages_response
 
     for tag in tags_to_test:
-        with patch("httpx.post", return_value=mock_response):
+        with patch("httpx2.post", return_value=mock_response):
             result = notion_tools.search_pages(tag=tag)
             result_json = json.loads(result)
             assert result_json["success"] is True
@@ -341,7 +341,7 @@ def test_notion_tools_with_all_methods(
     mock_response.status_code = 200
     mock_response.json.return_value = mock_search_pages_response
 
-    with patch("httpx.post", return_value=mock_response):
+    with patch("httpx2.post", return_value=mock_response):
         search_result = notion_tools.search_pages("travel")
         search_json = json.loads(search_result)
         assert search_json["success"] is True

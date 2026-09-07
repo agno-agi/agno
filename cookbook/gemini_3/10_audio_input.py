@@ -15,7 +15,7 @@ Example prompts to try:
 - "What is the overall sentiment of this conversation?"
 """
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.media import Audio
 from agno.models.google import Gemini
@@ -49,7 +49,7 @@ audio_agent = Agent(
 if __name__ == "__main__":
     # Download a sample audio file
     url = "https://agno-public.s3.amazonaws.com/demo/sample-audio.mp3"
-    response = httpx.get(url)
+    response = httpx2.get(url)
 
     audio_agent.print_response(
         "Transcribe and summarize this audio.",
@@ -66,8 +66,8 @@ if __name__ == "__main__":
 Audio input methods:
 
 1. From URL (download first)
-   import httpx
-   response = httpx.get("https://example.com/audio.mp3")
+   import httpx2
+   response = httpx2.get("https://example.com/audio.mp3")
    audio=[Audio(content=response.content, format="mp3")]
 
 2. From local file

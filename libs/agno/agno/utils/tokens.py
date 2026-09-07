@@ -293,9 +293,9 @@ def _get_image_dimensions(image: Image) -> Tuple[int, int]:
             with open(image.filepath, "rb") as f:
                 data = f.read(100)  # Only need header bytes for dimension parsing
         elif image.url:
-            import httpx
+            import httpx2
 
-            response = httpx.get(image.url, timeout=5)
+            response = httpx2.get(image.url, timeout=5)
             data = response.content
         else:
             return DEFAULT_IMAGE_WIDTH, DEFAULT_IMAGE_HEIGHT

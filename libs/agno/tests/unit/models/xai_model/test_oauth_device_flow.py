@@ -8,7 +8,7 @@ those cases encode the RFC and the observed interval of 5 seconds [A3].
 from unittest.mock import AsyncMock, patch
 from urllib.parse import parse_qsl
 
-import httpx
+import httpx2
 import pytest
 
 from agno.exceptions import ModelAuthenticationError
@@ -27,7 +27,7 @@ EXPIRED_MESSAGE = "The SuperGrok sign-in code expired (30 minutes). Start the lo
 
 
 def _manager(handler, **kwargs) -> XAITokenManager:
-    return XAITokenManager(http_client=httpx.Client(transport=httpx.MockTransport(handler)), **kwargs)
+    return XAITokenManager(http_client=httpx2.Client(transport=httpx2.MockTransport(handler)), **kwargs)
 
 
 # ---------------------------------------------------------------------------
@@ -52,9 +52,9 @@ def test_constants_match_live_verified_values():
 def test_start_device_login_sends_client_id_and_scope_only(device_response):
     captured = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         captured.append(request)
-        return httpx.Response(200, json=device_response)
+        return httpx2.Response(200, json=device_response)
 
     info = _manager(handler).start_device_login()
 
@@ -80,7 +80,7 @@ def test_start_device_login_defaults_when_fields_absent():
         "verification_uri_complete": "https://auth.x.ai/activate?user_code=ABCD-1234",
     }
 
-    info = _manager(lambda request: httpx.Response(200, json=minimal)).start_device_login()
+    info = _manager(lambda request: httpx2.Response(200, json=minimal)).start_device_login()
 
     assert info.expires_in == 1800
     assert info.interval == 5
@@ -97,14 +97,14 @@ def test_start_device_login_falls_back_when_uri_complete_absent():
         "interval": 5,
     }
 
-    info = _manager(lambda request: httpx.Response(200, json=minimal)).start_device_login()
+    info = _manager(lambda request: httpx2.Response(200, json=minimal)).start_device_login()
 
     assert info.verification_uri_complete == "https://auth.x.ai/activate"
 
 
 async def test_astart_device_login_parses_response(device_response):
-    async with httpx.AsyncClient(
-        transport=httpx.MockTransport(lambda r: httpx.Response(200, json=device_response))
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda r: httpx2.Response(200, json=device_response))
     ) as client:
         info = await XAITokenManager(async_http_client=client).astart_device_login()
 
@@ -121,7 +121,7 @@ async def test_astart_device_login_parses_response(device_response):
 def _sequence_handler(responses):
     calls = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
         return responses[min(len(calls), len(responses)) - 1]
 
@@ -129,7 +129,7 @@ def _sequence_handler(responses):
 
 
 def test_poll_request_fields(token_response):
-    handler, calls = _sequence_handler([httpx.Response(200, json=token_response)])
+    handler, calls = _sequence_handler([httpx2.Response(200, json=token_response)])
 
     _manager(handler).poll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
 
@@ -145,9 +145,9 @@ def test_poll_request_fields(token_response):
 def test_poll_pending_then_success(token_response):
     handler, calls = _sequence_handler(
         [
-            httpx.Response(400, json={"error": "authorization_pending"}),
-            httpx.Response(400, json={"error": "authorization_pending"}),
-            httpx.Response(200, json=token_response),
+            httpx2.Response(400, json={"error": "authorization_pending"}),
+            httpx2.Response(400, json={"error": "authorization_pending"}),
+            httpx2.Response(200, json=token_response),
         ]
     )
 
@@ -162,9 +162,9 @@ def test_poll_pending_then_success(token_response):
 def test_poll_slow_down_adds_five_seconds(token_response):
     handler, calls = _sequence_handler(
         [
-            httpx.Response(400, json={"error": "authorization_pending"}),
-            httpx.Response(400, json={"error": "slow_down"}),
-            httpx.Response(200, json=token_response),
+            httpx2.Response(400, json={"error": "authorization_pending"}),
+            httpx2.Response(400, json={"error": "slow_down"}),
+            httpx2.Response(200, json=token_response),
         ]
     )
 
@@ -177,7 +177,7 @@ def test_poll_slow_down_adds_five_seconds(token_response):
 
 
 def test_poll_access_denied_is_terminal():
-    handler, calls = _sequence_handler([httpx.Response(400, json={"error": "access_denied"})])
+    handler, calls = _sequence_handler([httpx2.Response(400, json={"error": "access_denied"})])
 
     with pytest.raises(ModelAuthenticationError) as exc_info:
         _manager(handler).poll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
@@ -187,7 +187,7 @@ def test_poll_access_denied_is_terminal():
 
 
 def test_poll_expired_token_is_terminal():
-    handler, calls = _sequence_handler([httpx.Response(400, json={"error": "expired_token"})])
+    handler, calls = _sequence_handler([httpx2.Response(400, json={"error": "expired_token"})])
 
     with pytest.raises(ModelAuthenticationError) as exc_info:
         _manager(handler).poll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
@@ -198,7 +198,7 @@ def test_poll_expired_token_is_terminal():
 
 def test_poll_unknown_error_carries_raw_body():
     body = {"error": "pizza_error", "error_description": "the oven is off"}
-    response = httpx.Response(400, json=body)
+    response = httpx2.Response(400, json=body)
     handler, calls = _sequence_handler([response])
 
     with pytest.raises(ModelAuthenticationError) as exc_info:
@@ -212,7 +212,7 @@ def test_poll_unknown_error_carries_raw_body():
 def test_poll_200_with_error_body_raises_clean():
     # An HTTP 200 carrying an error body must surface as a clean auth error,
     # not a KeyError from envelope construction
-    handler, calls = _sequence_handler([httpx.Response(200, json={"error": "server_error"})])
+    handler, calls = _sequence_handler([httpx2.Response(200, json={"error": "server_error"})])
 
     with pytest.raises(ModelAuthenticationError, match="missing access_token"):
         _manager(handler).poll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
@@ -221,7 +221,7 @@ def test_poll_200_with_error_body_raises_clean():
 
 
 def test_poll_non_json_error_is_terminal():
-    handler, calls = _sequence_handler([httpx.Response(500, text="upstream exploded")])
+    handler, calls = _sequence_handler([httpx2.Response(500, text="upstream exploded")])
 
     with pytest.raises(ModelAuthenticationError, match="upstream exploded"):
         _manager(handler).poll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
@@ -231,16 +231,16 @@ def test_poll_non_json_error_is_terminal():
 
 async def test_apoll_pending_then_success(token_response):
     responses = [
-        httpx.Response(400, json={"error": "authorization_pending"}),
-        httpx.Response(200, json=token_response),
+        httpx2.Response(400, json={"error": "authorization_pending"}),
+        httpx2.Response(200, json=token_response),
     ]
     calls = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls.append(request)
         return responses[min(len(calls), len(responses)) - 1]
 
-    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as client:
         manager = XAITokenManager(async_http_client=client)
         with patch("agno.models.xai.oauth.asyncio.sleep", new_callable=AsyncMock) as mock_sleep:
             token = await manager.apoll_for_token("device-code-1", interval=5, deadline=10_000_000_000)
@@ -255,7 +255,7 @@ async def test_apoll_pending_then_success(token_response):
 
 
 def test_poll_past_deadline_is_terminal(fake_clock):
-    handler, calls = _sequence_handler([httpx.Response(400, json={"error": "authorization_pending"})])
+    handler, calls = _sequence_handler([httpx2.Response(400, json={"error": "authorization_pending"})])
     manager = _manager(handler, now_fn=fake_clock)
 
     with patch("agno.models.xai.oauth.time.sleep") as mock_sleep:
@@ -270,7 +270,7 @@ def test_poll_past_deadline_is_terminal(fake_clock):
 
 
 # ---------------------------------------------------------------------------
-# Transport timeout: httpx defaults to 5s, which is too short for a live IdP
+# Transport timeout: httpx2 defaults to 5s, which is too short for a live IdP
 # ---------------------------------------------------------------------------
 
 
@@ -292,9 +292,9 @@ def test_the_sync_form_post_applies_the_managers_timeout(monkeypatch):
             return False
 
         def post(self, url, data=None):
-            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+            return httpx2.Response(200, json={}, request=httpx2.Request("POST", url))
 
-    monkeypatch.setattr(oauth.httpx, "Client", FakeClient)
+    monkeypatch.setattr(oauth.httpx2, "Client", FakeClient)
     oauth.XAITokenManager(timeout=12.5)._post_form("https://auth.example.invalid/token", {})
 
     assert captured["timeout"] == 12.5
@@ -314,9 +314,9 @@ async def test_the_async_form_post_applies_the_managers_timeout(monkeypatch):
             return False
 
         async def post(self, url, data=None):
-            return httpx.Response(200, json={}, request=httpx.Request("POST", url))
+            return httpx2.Response(200, json={}, request=httpx2.Request("POST", url))
 
-    monkeypatch.setattr(oauth.httpx, "AsyncClient", FakeAsyncClient)
+    monkeypatch.setattr(oauth.httpx2, "AsyncClient", FakeAsyncClient)
     await oauth.XAITokenManager(timeout=12.5)._apost_form("https://auth.example.invalid/token", {})
 
     assert captured["timeout"] == 12.5

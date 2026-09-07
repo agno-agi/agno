@@ -11,7 +11,7 @@ import time
 from typing import Any, Dict, List
 from urllib.parse import parse_qsl
 
-import httpx
+import httpx2
 import pytest
 
 XAI_SCOPE = "openid profile email offline_access grok-cli:access api:access"
@@ -104,18 +104,18 @@ class TokenEndpoint:
         self.poll_requests: List[Dict[str, str]] = []
         self.refresh_requests: List[Dict[str, str]] = []
 
-    def __call__(self, request: httpx.Request) -> httpx.Response:
+    def __call__(self, request: httpx2.Request) -> httpx2.Response:
         fields = dict(parse_qsl(request.content.decode()))
         if str(request.url) == DEVICE_CODE_URL:
             self.device_requests.append(fields)
-            return httpx.Response(200, json=self.device_json)
+            return httpx2.Response(200, json=self.device_json)
         if fields.get("grant_type") == "refresh_token":
             self.refresh_requests.append(fields)
             if self.refresh_delay:
                 time.sleep(self.refresh_delay)
-            return httpx.Response(self.refresh_status, json=self.refresh_json)
+            return httpx2.Response(self.refresh_status, json=self.refresh_json)
         self.poll_requests.append(fields)
-        return httpx.Response(200, json=self.token_json)
+        return httpx2.Response(200, json=self.token_json)
 
 
 @pytest.fixture

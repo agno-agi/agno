@@ -16,7 +16,7 @@ from importlib.util import find_spec
 from os import getenv
 from typing import TYPE_CHECKING, Dict, List, Optional, Protocol, Set, runtime_checkable
 
-import httpx
+import httpx2
 
 from agno.knowledge.reader.utils.url_validation import (
     is_host_allowed,
@@ -45,7 +45,7 @@ class FetchedPage:
     url: str
     content: Optional[str] = None
     title: Optional[str] = None
-    extractor: str = "httpx"
+    extractor: str = "httpx2"
     error: Optional[str] = None
     attempts: List[Dict[str, str]] = field(default_factory=list)
 
@@ -112,18 +112,18 @@ def _pdf_page_text(url: str, raw: bytes) -> FetchedPage:
     try:
         from agno.knowledge.reader.pdf_reader import PDFReader
     except ImportError:
-        return FetchedPage(url=url, error="pdf support requires the `agno[pdf]` extra (pypdf)", extractor="httpx")
+        return FetchedPage(url=url, error="pdf support requires the `agno[pdf]` extra (pypdf)", extractor="httpx2")
     try:
         documents = PDFReader(chunk=False).read(io.BytesIO(raw), name=url)
     except Exception as e:
-        return FetchedPage(url=url, error=f"pdf: {type(e).__name__}: {e}"[:300], extractor="httpx")
+        return FetchedPage(url=url, error=f"pdf: {type(e).__name__}: {e}"[:300], extractor="httpx2")
     text = "\n\n".join(doc.content for doc in documents if doc.content)
     if not text:
-        return FetchedPage(url=url, error="empty", extractor="httpx")
-    return FetchedPage(url=url, content=text, extractor="httpx")
+        return FetchedPage(url=url, error="empty", extractor="httpx2")
+    return FetchedPage(url=url, content=text, extractor="httpx2")
 
 
-def _page_from_response(url: str, response: httpx.Response) -> FetchedPage:
+def _page_from_response(url: str, response: httpx2.Response) -> FetchedPage:
     content_type = response.headers.get("content-type", "").split(";")[0].strip().lower()
     if content_type == "application/pdf" or response.content[:5] == b"%PDF-":
         page = _pdf_page_text(url, response.content)
@@ -132,41 +132,43 @@ def _page_from_response(url: str, response: httpx.Response) -> FetchedPage:
     else:
         body = response.text
         if content_type in _TEXT_CONTENT_TYPES:
-            page = FetchedPage(url=url, content=body, extractor="httpx")
+            page = FetchedPage(url=url, content=body, extractor="httpx2")
         elif content_type == "text/html" or body.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
             page = FetchedPage(
-                url=url, content=extract_page_text(body), title=extract_page_title(body), extractor="httpx"
+                url=url, content=extract_page_text(body), title=extract_page_title(body), extractor="httpx2"
             )
         else:
-            return FetchedPage(url=url, error=f"not-html ({content_type or 'unknown content type'})", extractor="httpx")
+            return FetchedPage(
+                url=url, error=f"not-html ({content_type or 'unknown content type'})", extractor="httpx2"
+            )
     if not page.content:
-        return FetchedPage(url=url, title=page.title, error="empty", extractor="httpx")
+        return FetchedPage(url=url, title=page.title, error="empty", extractor="httpx2")
     return page
 
 
 def _failure_reason(exc: Exception) -> str:
-    if isinstance(exc, httpx.HTTPStatusError):
+    if isinstance(exc, httpx2.HTTPStatusError):
         return f"HTTP {exc.response.status_code}"
-    if isinstance(exc, httpx.TimeoutException):
+    if isinstance(exc, httpx2.TimeoutException):
         return "timeout"
     return f"{type(exc).__name__}: {exc}"
 
 
 class HttpxPageFetcher:
-    """The fetcher that always works: httpx + BeautifulSoup, no key, no crawl delay.
+    """The fetcher that always works: httpx2 + BeautifulSoup, no key, no crawl delay.
 
     Fetching a list the caller already chose is not crawling, so there is no politeness sleep;
     ``concurrency`` bounds how many requests are in flight at once instead.
     """
 
-    extractor_id = "httpx"
+    extractor_id = "httpx2"
 
     def __init__(self, *, concurrency: int = 8, timeout: int = 30, proxy: Optional[str] = None):
         self.concurrency = concurrency
         self.timeout = timeout
         self.proxy = proxy
 
-    def _fetch_one(self, client: httpx.Client, url: str, allowed_hosts: Optional[List[str]]) -> FetchedPage:
+    def _fetch_one(self, client: httpx2.Client, url: str, allowed_hosts: Optional[List[str]]) -> FetchedPage:
         if not is_host_allowed(url, allowed_hosts):
             return FetchedPage(url=url, error="off-host", extractor=self.extractor_id)
         try:
@@ -181,7 +183,7 @@ class HttpxPageFetcher:
     def fetch_many(self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None) -> List[FetchedPage]:
         guard = make_redirect_guard(allowed_hosts)
         event_hooks = {"request": [guard]} if guard else None
-        with httpx.Client(timeout=self.timeout, proxy=self.proxy, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
+        with httpx2.Client(timeout=self.timeout, proxy=self.proxy, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
             return [self._fetch_one(client, url, allowed_hosts) for url in urls]
 
     async def afetch_many(self, urls: List[str], *, allowed_hosts: Optional[List[str]] = None) -> List[FetchedPage]:
@@ -189,7 +191,7 @@ class HttpxPageFetcher:
         event_hooks = {"request": [guard]} if guard else None
         semaphore = asyncio.Semaphore(self.concurrency)
 
-        async with httpx.AsyncClient(timeout=self.timeout, proxy=self.proxy, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
+        async with httpx2.AsyncClient(timeout=self.timeout, proxy=self.proxy, event_hooks=event_hooks) as client:  # type: ignore[arg-type]
 
             async def fetch_one(url: str) -> FetchedPage:
                 if not is_host_allowed(url, allowed_hosts):
@@ -263,7 +265,7 @@ class ParallelPageFetcher:
     @property
     def extractor_id(self) -> str:
         if self.backend is None:
-            return getattr(self.fallback, "extractor_id", "httpx")
+            return getattr(self.fallback, "extractor_id", "httpx2")
         return getattr(self.backend, "extractor_id", "parallel")
 
     # --- async ---
@@ -325,7 +327,7 @@ class ParallelPageFetcher:
             return pages
 
         batches = [fetchable[i : i + self.batch_size] for i in range(0, len(fetchable), self.batch_size)]
-        fallback_extractor = getattr(self.fallback, "extractor_id", "httpx")
+        fallback_extractor = getattr(self.fallback, "extractor_id", "httpx2")
         for batch_pages in await asyncio.gather(*[fetch_batch(batch) for batch in batches]):
             # Pages the fallback already produced have nowhere further to fall
             retry_urls = [page.url for page in batch_pages if not page.ok and page.extractor != fallback_extractor]
@@ -397,7 +399,7 @@ class ParallelPageFetcher:
                 for page in batch_pages:
                     page.attempts = attempts + page.attempts
 
-            fallback_extractor = getattr(self.fallback, "extractor_id", "httpx")
+            fallback_extractor = getattr(self.fallback, "extractor_id", "httpx2")
             # Pages the fallback already produced have nowhere further to fall
             retry_urls = [page.url for page in batch_pages if not page.ok and page.extractor != fallback_extractor]
             retry_pages: Dict[str, FetchedPage] = {}

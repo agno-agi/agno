@@ -26,7 +26,7 @@ VECTOR_TABLE = "image_library_vectors"
 KNOWLEDGE_TABLE = "image_library_contents"
 
 # How many URLs to process concurrently inside the ingest workflow. Each
-# in-flight URL holds an httpx fetch + a Gemini vision call + an embedding
+# in-flight URL holds an httpx2 fetch + a Gemini vision call + an embedding
 # call. 3 keeps us comfortably under Gemini Flash's limits; we saw
 # transient 5xx bursts at higher concurrency.
 INGEST_CONCURRENCY = 3

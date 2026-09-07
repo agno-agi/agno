@@ -1,7 +1,7 @@
 import json
 from typing import Callable, List, Optional
 
-import httpx
+import httpx2
 
 from agno.knowledge.knowledge import Knowledge
 from agno.knowledge.reader.llms_txt_reader import LLMsTxtReader
@@ -49,8 +49,8 @@ class LLMsTxtTools(Toolkit):
 
     # Helpers
 
-    def _async_client(self) -> httpx.AsyncClient:
-        return httpx.AsyncClient(timeout=self.timeout, proxy=self.reader.proxy)
+    def _async_client(self) -> httpx2.AsyncClient:
+        return httpx2.AsyncClient(timeout=self.timeout, proxy=self.reader.proxy)
 
     def _format_index(self, overview: str, entries: list) -> str:
         return json.dumps(

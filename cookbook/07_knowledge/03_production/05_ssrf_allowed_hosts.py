@@ -11,7 +11,7 @@ This matters in production for two reasons:
    a background fetch. Without an allowlist, an attacker can target internal
    services.
 
-2. The allowlist also runs on every redirect target via an httpx request hook,
+2. The allowlist also runs on every redirect target via an httpx2 request hook,
    so a permitted host cannot 3xx-bounce the request to an internal address.
 """
 

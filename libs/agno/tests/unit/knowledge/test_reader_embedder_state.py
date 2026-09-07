@@ -112,7 +112,7 @@ def test_website_reader_sync_crawl_resets_visited(mock_http_response):
     reader._visited.add("https://old-site.com/page1")
     assert len(reader._visited) == 2
 
-    with patch("httpx.get", return_value=mock_http_response):
+    with patch("httpx2.get", return_value=mock_http_response):
         reader.crawl("https://new-site.com")
 
     assert "https://old-site.com" not in reader._visited
@@ -124,7 +124,7 @@ def test_website_reader_sync_crawl_resets_urls_to_crawl(mock_http_response):
 
     reader._urls_to_crawl = [("https://leftover.com", 1), ("https://leftover2.com", 2)]
 
-    with patch("httpx.get", return_value=mock_http_response):
+    with patch("httpx2.get", return_value=mock_http_response):
         reader.crawl("https://new-site.com")
 
     remaining_urls = [url for url, _ in reader._urls_to_crawl]

@@ -14,7 +14,7 @@ Try: Run this file with --demo in another terminal
 import argparse
 import os
 
-import httpx
+import httpx2
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
@@ -82,7 +82,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 
 
-def send_message(client: httpx.Client, message: str) -> dict:
+def send_message(client: httpx2.Client, message: str) -> dict:
     """Send one non-streaming chat turn to the WorkflowAgent workflow."""
     response = client.post(
         f"/workflows/{WORKFLOW_ID}/runs",
@@ -101,7 +101,7 @@ def send_message(client: httpx.Client, message: str) -> dict:
 
 def run_chat_demo() -> None:
     """Execute a new topic and a history-aware follow-up over HTTP."""
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         detail_response = client.get(f"/workflows/{WORKFLOW_ID}")
         detail_response.raise_for_status()
         detail = detail_response.json()

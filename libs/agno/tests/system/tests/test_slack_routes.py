@@ -15,7 +15,7 @@ import time
 import uuid
 from typing import Any, Dict
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import REQUEST_TIMEOUT, generate_jwt_token
@@ -57,9 +57,9 @@ def test_channel_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -73,11 +73,11 @@ def slack_signing_secret() -> str:
 
 
 def make_slack_request(
-    client: httpx.Client,
+    client: httpx2.Client,
     endpoint: str,
     body: Dict[str, Any],
     signing_secret: str,
-) -> httpx.Response:
+) -> httpx2.Response:
     """Make a properly signed Slack webhook request.
 
     Args:
@@ -112,7 +112,7 @@ def make_slack_request(
 class TestSlackURLVerification:
     """Test Slack URL verification challenge."""
 
-    def test_slack_url_verification_local_agent(self, client: httpx.Client, slack_signing_secret: str):
+    def test_slack_url_verification_local_agent(self, client: httpx2.Client, slack_signing_secret: str):
         """Test Slack URL verification for local agent interface."""
         challenge = str(uuid.uuid4())
         body = {"type": "url_verification", "challenge": challenge}
@@ -128,7 +128,7 @@ class TestSlackURLVerification:
         data = response.json()
         assert data["challenge"] == challenge
 
-    def test_slack_url_verification_remote_agent(self, client: httpx.Client, slack_signing_secret: str):
+    def test_slack_url_verification_remote_agent(self, client: httpx2.Client, slack_signing_secret: str):
         """Test Slack URL verification for remote agent interface."""
         challenge = str(uuid.uuid4())
         body = {"type": "url_verification", "challenge": challenge}
@@ -144,7 +144,7 @@ class TestSlackURLVerification:
         data = response.json()
         assert data["challenge"] == challenge
 
-    def test_slack_url_verification_team(self, client: httpx.Client, slack_signing_secret: str):
+    def test_slack_url_verification_team(self, client: httpx2.Client, slack_signing_secret: str):
         """Test Slack URL verification for team interface."""
         challenge = str(uuid.uuid4())
         body = {"type": "url_verification", "challenge": challenge}
@@ -160,7 +160,7 @@ class TestSlackURLVerification:
         data = response.json()
         assert data["challenge"] == challenge
 
-    def test_slack_url_verification_workflow(self, client: httpx.Client, slack_signing_secret: str):
+    def test_slack_url_verification_workflow(self, client: httpx2.Client, slack_signing_secret: str):
         """Test Slack URL verification for workflow interface."""
         challenge = str(uuid.uuid4())
         body = {"type": "url_verification", "challenge": challenge}
@@ -186,7 +186,7 @@ class TestSlackEventHandling:
     """Test Slack event handling for agents, teams, and workflows."""
 
     def test_slack_event_local_agent(
-        self, client: httpx.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
+        self, client: httpx2.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
     ):
         """Test Slack event handling for local agent (DM)."""
         ts = str(time.time())
@@ -215,7 +215,7 @@ class TestSlackEventHandling:
         assert data["status"] == "ok"
 
     def test_slack_event_remote_agent(
-        self, client: httpx.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
+        self, client: httpx2.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
     ):
         """Test Slack event handling for remote agent (DM)."""
         ts = str(time.time())
@@ -243,7 +243,7 @@ class TestSlackEventHandling:
         assert data["status"] == "ok"
 
     def test_slack_event_team(
-        self, client: httpx.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
+        self, client: httpx2.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
     ):
         """Test Slack event handling for team (app mention)."""
         ts = str(time.time())
@@ -270,7 +270,7 @@ class TestSlackEventHandling:
         assert data["status"] == "ok"
 
     def test_slack_event_workflow(
-        self, client: httpx.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
+        self, client: httpx2.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
     ):
         """Test Slack event handling for workflow (DM)."""
         ts = str(time.time())
@@ -298,7 +298,7 @@ class TestSlackEventHandling:
         assert data["status"] == "ok"
 
     def test_slack_ignores_bot_events(
-        self, client: httpx.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
+        self, client: httpx2.Client, slack_signing_secret: str, test_user_id: str, test_channel_id: str
     ):
         """Test that bot events are ignored."""
         ts = str(time.time())
@@ -335,7 +335,7 @@ class TestSlackEventHandling:
 class TestSlackSecurity:
     """Test Slack security measures."""
 
-    def test_slack_missing_headers(self, client: httpx.Client):
+    def test_slack_missing_headers(self, client: httpx2.Client):
         """Test that requests without Slack headers are rejected."""
         response = client.post(
             "/slack/local/events",
@@ -345,7 +345,7 @@ class TestSlackSecurity:
         data = response.json()
         assert "Missing Slack headers" in data["detail"]
 
-    def test_slack_invalid_signature(self, client: httpx.Client):
+    def test_slack_invalid_signature(self, client: httpx2.Client):
         """Test that requests with invalid signature are rejected."""
         body = json.dumps({"type": "url_verification", "challenge": "test"})
         timestamp = str(int(time.time()))

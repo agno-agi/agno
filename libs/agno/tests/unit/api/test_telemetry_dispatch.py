@@ -16,7 +16,7 @@ from pathlib import Path
 from queue import Queue
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 
 from agno.api.agent import acreate_agent_run, create_agent_run
@@ -70,11 +70,11 @@ def dispatcher_factory():
     """Build isolated dispatchers and always stop their workers after a test."""
     dispatchers: list[_TelemetryDispatcher] = []
 
-    def make(handler, *, register_at_fork: bool = False) -> tuple[_TelemetryDispatcher, list[httpx.Client]]:
-        constructed: list[httpx.Client] = []
+    def make(handler, *, register_at_fork: bool = False) -> tuple[_TelemetryDispatcher, list[httpx2.Client]]:
+        constructed: list[httpx2.Client] = []
 
-        def make_client() -> httpx.Client:
-            client = httpx.Client(base_url="https://telemetry.test", transport=httpx.MockTransport(handler))
+        def make_client() -> httpx2.Client:
+            client = httpx2.Client(base_url="https://telemetry.test", transport=httpx2.MockTransport(handler))
             constructed.append(client)
             return client
 
@@ -89,11 +89,11 @@ def dispatcher_factory():
 
 
 def test_events_are_sent_over_a_single_reused_client(dispatcher_factory):
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, constructed = dispatcher_factory(handler)
     instance = Api(dispatcher)
@@ -109,11 +109,11 @@ def test_events_are_sent_over_a_single_reused_client(dispatcher_factory):
 
 
 def test_concurrent_first_use_starts_one_worker_and_delivers_every_event(dispatcher_factory):
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, constructed = dispatcher_factory(handler)
     instance = Api(dispatcher)
@@ -134,16 +134,16 @@ def test_concurrent_first_use_starts_one_worker_and_delivers_every_event(dispatc
 
 def test_worker_survives_transport_errors_and_bad_statuses(dispatcher_factory):
     calls = {"n": 0}
-    delivered: list[httpx.Request] = []
+    delivered: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         calls["n"] += 1
         if calls["n"] == 1:
-            raise httpx.ConnectError("https://secret-telemetry.example/internal")
+            raise httpx2.ConnectError("https://secret-telemetry.example/internal")
         if calls["n"] == 2:
-            return httpx.Response(500)
+            return httpx2.Response(500)
         delivered.append(request)
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, _ = dispatcher_factory(handler)
     instance = Api(dispatcher)
@@ -261,11 +261,11 @@ async def test_async_telemetry_helpers_dispatch_in_background(monkeypatch, helpe
 def test_async_variant_is_paired_and_delegates(dispatcher_factory):
     import asyncio
 
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, constructed = dispatcher_factory(handler)
     instance = Api(dispatcher)
@@ -526,8 +526,8 @@ def test_run_telemetry_helpers_never_raise_when_the_api_module_is_unimportable(m
 
 
 def test_changed_pid_is_reset_before_acquiring_inherited_lock(dispatcher_factory):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200)
 
     dispatcher, _ = dispatcher_factory(handler)
     inherited_lock = dispatcher._lock
@@ -551,8 +551,8 @@ def test_changed_pid_is_reset_before_acquiring_inherited_lock(dispatcher_factory
 
 
 def test_changed_pid_is_reset_before_acquiring_inherited_close_lock(dispatcher_factory):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200)
 
     dispatcher, _ = dispatcher_factory(handler)
     inherited_close_lock = dispatcher._close_lock
@@ -575,11 +575,11 @@ def test_changed_pid_is_reset_before_acquiring_inherited_close_lock(dispatcher_f
 
 
 def test_api_wrappers_share_dispatcher_without_retaining_instances(dispatcher_factory):
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, constructed = dispatcher_factory(handler)
     baseline_threads = set(threading.enumerate())
@@ -618,8 +618,8 @@ def test_default_api_wrappers_share_the_process_dispatcher():
 
 
 def test_close_is_idempotent_and_rejects_later_posts(dispatcher_factory):
-    def handler(request: httpx.Request) -> httpx.Response:
-        return httpx.Response(200)
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(200)
 
     dispatcher, constructed = dispatcher_factory(handler)
 
@@ -635,9 +635,9 @@ def test_close_is_idempotent_and_rejects_later_posts(dispatcher_factory):
 def test_worker_start_failure_is_retried_without_losing_queued_event(dispatcher_factory):
     delivered: list[int] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         delivered.append(json.loads(request.content)["i"])
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, _ = dispatcher_factory(handler)
     original_start = threading.Thread.start
@@ -664,9 +664,9 @@ def test_worker_start_failure_is_retried_without_losing_queued_event(dispatcher_
 def test_full_queue_retries_a_worker_stranded_by_start_failures(dispatcher_factory):
     delivered: list[int] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         delivered.append(json.loads(request.content)["i"])
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, _ = dispatcher_factory(handler)
     dispatcher._queue = Queue(maxsize=2)
@@ -695,9 +695,9 @@ def test_full_queue_retries_a_worker_stranded_by_start_failures(dispatcher_facto
 def test_dead_worker_is_replaced_and_pending_events_are_delivered(dispatcher_factory):
     delivered: list[int] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         delivered.append(json.loads(request.content)["i"])
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, _ = dispatcher_factory(handler)
     original_drain = dispatcher._drain
@@ -767,9 +767,9 @@ def test_close_discards_a_full_queue_within_its_deadline():
 def test_post_racing_close_is_either_flushed_or_rejected(dispatcher_factory):
     delivered: list[str] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         delivered.append(json.loads(request.content)["run_id"])
-        return httpx.Response(200)
+        return httpx2.Response(200)
 
     dispatcher, _ = dispatcher_factory(handler)
     original_put = dispatcher._queue.put_nowait

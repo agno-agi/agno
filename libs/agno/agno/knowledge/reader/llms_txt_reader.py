@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 from urllib.parse import urljoin
 
-import httpx
+import httpx2
 
 try:
     from bs4 import BeautifulSoup  # noqa: F401
@@ -201,7 +201,7 @@ class LLMsTxtReader(Reader):
                 client_kwargs: dict = {"timeout": self.timeout, "event_hooks": {"request": [guard]}}
                 if self.proxy:
                     client_kwargs["proxy"] = self.proxy
-                with httpx.Client(**client_kwargs) as client:
+                with httpx2.Client(**client_kwargs) as client:
                     response = client.get(url, follow_redirects=True)
                 response.raise_for_status()
             return self._process_response(response.headers.get("content-type", ""), response.text)
@@ -209,7 +209,7 @@ class LLMsTxtReader(Reader):
             log_warning(f"Failed to fetch {url}: {e}")
             return None
 
-    async def async_fetch_url(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
+    async def async_fetch_url(self, client: httpx2.AsyncClient, url: str) -> Optional[str]:
         if not is_host_allowed(url, self.allowed_hosts):
             log_debug(f"Host not in allowed_hosts: {url}")
             return None
@@ -226,7 +226,7 @@ class LLMsTxtReader(Reader):
             else:
                 # Build a local client so we can attach the per-redirect host-check hook
                 # without mutating the caller's client (which may be shared across calls).
-                async with httpx.AsyncClient(
+                async with httpx2.AsyncClient(
                     proxy=self.proxy,
                     timeout=self.timeout,
                     event_hooks={"request": [guard]},
@@ -263,7 +263,7 @@ class LLMsTxtReader(Reader):
 
     async def async_read(self, url: str, name: Optional[str] = None) -> List[Document]:
         log_debug(f"Reading llms.txt asynchronously: {url}")
-        async with httpx.AsyncClient(proxy=self.proxy) as client:
+        async with httpx2.AsyncClient(proxy=self.proxy) as client:
             llms_txt_content = await self.async_fetch_url(client, url)
             if not llms_txt_content:
                 log_error(f"Failed to fetch llms.txt from {url}")
@@ -276,7 +276,7 @@ class LLMsTxtReader(Reader):
             if len(entries) > self.max_urls:
                 log_warning(f"Limiting to {self.max_urls} URLs (found {len(entries)})")
 
-            # httpx AsyncClient limits concurrent connections per host (default 20)
+            # httpx2 AsyncClient limits concurrent connections per host (default 20)
             async def _fetch_entry(entry: LLMsTxtEntry) -> Tuple[str, Optional[str]]:
                 content = await self.async_fetch_url(client, entry.url)
                 return entry.url, content

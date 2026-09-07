@@ -25,7 +25,7 @@ import time  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
 from uuid import uuid4  # noqa: E402
 
-import httpx  # noqa: E402
+import httpx2  # noqa: E402
 from fastmcp.server.auth import RemoteAuthProvider  # noqa: E402
 from fastmcp.server.auth.providers.jwt import StaticTokenVerifier  # noqa: E402
 from pydantic import AnyHttpUrl  # noqa: E402
@@ -100,8 +100,8 @@ def _os(provider, db=None, **config_kwargs) -> AgentOS:
 async def _http_client(os: AgentOS):
     app = os.get_app()
     async with app.router.lifespan_context(app):
-        transport = httpx.ASGITransport(app=app)
-        async with httpx.AsyncClient(transport=transport, base_url="http://localhost") as client:
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(transport=transport, base_url="http://localhost") as client:
             yield client
 
 

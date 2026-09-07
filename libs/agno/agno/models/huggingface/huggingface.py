@@ -4,7 +4,7 @@ from dataclasses import asdict, dataclass
 from os import getenv
 from typing import Any, Dict, Iterator, List, Optional, Type, Union
 
-import httpx
+import httpx2
 from huggingface_hub import ChatCompletionInputStreamOptions
 from pydantic import BaseModel
 
@@ -59,7 +59,7 @@ class HuggingFace(Model):
 
     # Client parameters
     api_key: Optional[str] = None
-    base_url: Optional[Union[str, httpx.URL]] = None
+    base_url: Optional[Union[str, httpx2.URL]] = None
     timeout: Optional[float] = None
     max_retries: Optional[int] = None
     default_headers: Optional[Any] = None

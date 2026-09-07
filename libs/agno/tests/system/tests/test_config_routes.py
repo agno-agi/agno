@@ -6,7 +6,7 @@ Run with: pytest test_config_routes.py -v --tb=short
 
 import uuid
 
-import httpx
+import httpx2
 import pytest
 
 from .test_utils import (
@@ -25,9 +25,9 @@ def test_user_id() -> str:
 
 
 @pytest.fixture(scope="module")
-def client(gateway_url: str, test_user_id: str) -> httpx.Client:
+def client(gateway_url: str, test_user_id: str) -> httpx2.Client:
     """Create an HTTP client for the gateway server with authentication."""
-    return httpx.Client(
+    return httpx2.Client(
         base_url=gateway_url,
         timeout=REQUEST_TIMEOUT,
         headers={"Authorization": f"Bearer {generate_jwt_token(audience='gateway-os', user_id=test_user_id)}"},
@@ -39,7 +39,7 @@ def client(gateway_url: str, test_user_id: str) -> httpx.Client:
 # =============================================================================
 
 
-def test_health_check(client: httpx.Client):
+def test_health_check(client: httpx2.Client):
     """Test the health check endpoint returns proper status."""
     response = client.get("/health")
     assert response.status_code == 200
@@ -54,7 +54,7 @@ def test_health_check(client: httpx.Client):
 # =============================================================================
 
 
-def test_get_config_structure(client: httpx.Client):
+def test_get_config_structure(client: httpx2.Client):
     """Test GET /config returns all required fields with correct structure."""
     response = client.get("/config")
     assert response.status_code == 200
@@ -67,7 +67,7 @@ def test_get_config_structure(client: httpx.Client):
     assert data["os_id"] == "gateway-os"
 
 
-def test_get_config_agents(client: httpx.Client):
+def test_get_config_agents(client: httpx2.Client):
     """Test GET /config returns all expected agents."""
     response = client.get("/config")
     assert response.status_code == 200
@@ -81,7 +81,7 @@ def test_get_config_agents(client: httpx.Client):
     assert len(data["agents"]) == len(EXPECTED_ALL_AGENTS)
 
 
-def test_get_config_teams(client: httpx.Client):
+def test_get_config_teams(client: httpx2.Client):
     """Test GET /config returns all expected teams."""
     response = client.get("/config")
     assert response.status_code == 200
@@ -93,7 +93,7 @@ def test_get_config_teams(client: httpx.Client):
         assert team_id in team_ids, f"Missing team: {team_id}"
 
 
-def test_get_config_workflows(client: httpx.Client):
+def test_get_config_workflows(client: httpx2.Client):
     """Test GET /config returns all expected workflows."""
     response = client.get("/config")
     assert response.status_code == 200
@@ -105,7 +105,7 @@ def test_get_config_workflows(client: httpx.Client):
         assert workflow_id in workflow_ids, f"Missing workflow: {workflow_id}"
 
 
-def test_get_config_available_models(client: httpx.Client):
+def test_get_config_available_models(client: httpx2.Client):
     """Test GET /config returns unique models from all agents in available_models."""
     response = client.get("/config")
     assert response.status_code == 200

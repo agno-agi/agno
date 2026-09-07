@@ -2,7 +2,7 @@ import json
 from os import getenv
 from typing import Any, Dict, List, Optional, Union
 
-import httpx
+import httpx2
 from pydantic import BaseModel, Field
 
 from agno.tools import Toolkit
@@ -102,14 +102,14 @@ class WhatsAppTools(Toolkit):
 
     def _send_message(self, data: Dict[str, Any]) -> Dict[str, Any]:
         # Raise on 4xx/5xx with parsed error body for better diagnostics
-        response = httpx.post(self._get_messages_url(), headers=self._get_headers(), json=data, timeout=self.timeout)
+        response = httpx2.post(self._get_messages_url(), headers=self._get_headers(), json=data, timeout=self.timeout)
         if response.status_code >= 400:
             error_body = (
                 response.json()
                 if response.headers.get("content-type", "").startswith("application/json")
                 else {"raw": response.text}
             )
-            raise httpx.HTTPStatusError(
+            raise httpx2.HTTPStatusError(
                 f"{response.status_code}: {error_body}",
                 request=response.request,
                 response=response,

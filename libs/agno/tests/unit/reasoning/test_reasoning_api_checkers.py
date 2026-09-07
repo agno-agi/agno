@@ -328,14 +328,14 @@ async def test_async_detection_does_not_block_event_loop(monkeypatch):
 # ============================================================================
 # Credential resolution for the catalog lookups
 #
-# These exercise the real _fetch_* functions and stub httpx instead. Mocking the fetch
+# These exercise the real _fetch_* functions and stub httpx2 instead. Mocking the fetch
 # helpers away is what let a missing Authorization header go unnoticed: the Moonshot
 # catalog endpoint rejects unauthenticated calls, so the lookup could never succeed.
 # ============================================================================
 
 
 def _capture_catalog_request(monkeypatch, module, payload):
-    """Stub httpx.get inside `module` and record the headers the catalog lookup sends."""
+    """Stub httpx2.get inside `module` and record the headers the catalog lookup sends."""
     sent = {}
 
     def _fake_get(url, headers=None, timeout=None, **kwargs):
@@ -351,7 +351,7 @@ def _capture_catalog_request(monkeypatch, module, payload):
 
         return _Response()
 
-    monkeypatch.setattr(module.httpx, "get", _fake_get)
+    monkeypatch.setattr(module.httpx2, "get", _fake_get)
     return sent
 
 

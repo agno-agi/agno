@@ -14,7 +14,7 @@ import os
 from typing import Any
 from uuid import uuid4
 
-import httpx
+import httpx2
 
 # ---------------------------------------------------------------------------
 # Create Learnings API Helpers
@@ -24,7 +24,7 @@ BASE_URL = os.getenv("AGENT_OS_BASE_URL", "http://localhost:7777")
 AGENT_ID = "learning-assistant"
 
 
-def delete_user(client: httpx.Client, user_id: str) -> None:
+def delete_user(client: httpx2.Client, user_id: str) -> None:
     """Remove every learning owned by one demo user."""
     response = client.delete(f"/learnings/users/{user_id}")
     if response.status_code != 204:
@@ -32,7 +32,7 @@ def delete_user(client: httpx.Client, user_id: str) -> None:
         raise RuntimeError("Learning-user cleanup did not return 204")
 
 
-def list_user_learnings(client: httpx.Client, user_id: str) -> dict[str, Any]:
+def list_user_learnings(client: httpx2.Client, user_id: str) -> dict[str, Any]:
     """List every learning currently owned by one user."""
     response = client.get(
         "/learnings",
@@ -42,7 +42,7 @@ def list_user_learnings(client: httpx.Client, user_id: str) -> dict[str, Any]:
     return response.json()
 
 
-def verify_server(client: httpx.Client) -> None:
+def verify_server(client: httpx2.Client) -> None:
     """Verify health and discovery for the learning-enabled agent."""
     health_response = client.get("/health")
     health_response.raise_for_status()
@@ -59,7 +59,7 @@ def verify_server(client: httpx.Client) -> None:
 
 
 def run_agent_learning(
-    client: httpx.Client,
+    client: httpx2.Client,
     user_id: str,
     session_id: str,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -109,7 +109,7 @@ def run_agent_learning(
     return run, records
 
 
-def run_manual_crud(client: httpx.Client, user_id: str) -> dict[str, Any]:
+def run_manual_crud(client: httpx2.Client, user_id: str) -> dict[str, Any]:
     """Exercise the manual learning CRUD and bulk-delete routes."""
     create_response = client.post(
         "/learnings",
@@ -224,7 +224,7 @@ if __name__ == "__main__":
     crud_user_id = f"crud-learning-{run_suffix}"
     session_id = f"learning-session-{run_suffix}"
 
-    with httpx.Client(base_url=BASE_URL, timeout=300.0) as http_client:
+    with httpx2.Client(base_url=BASE_URL, timeout=300.0) as http_client:
         verify_server(http_client)
         delete_user(http_client, agent_user_id)
         delete_user(http_client, crud_user_id)

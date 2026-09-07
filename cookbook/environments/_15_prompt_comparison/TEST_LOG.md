@@ -40,7 +40,7 @@ under one typed output schema.
 the process exited successfully.
 
 **Observation:** During client cleanup, the live run emitted one asynchronous
-`httpx` "Event loop is closed" warning after the first rollout. Both rollout
+`httpx2` "Event loop is closed" warning after the first rollout. Both rollout
 results completed and the process exited 0. No library code was changed.
 
 ---

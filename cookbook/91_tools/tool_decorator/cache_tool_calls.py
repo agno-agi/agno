@@ -7,7 +7,7 @@ Demonstrates cache tool calls.
 
 import json
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.tools import tool
 
@@ -19,13 +19,13 @@ from agno.tools import tool
 @tool(stop_after_tool_call=True, cache_results=True)
 def get_top_hackernews_stories(num_stories: int = 5) -> str:
     # Fetch top story IDs
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+    response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
 
     # Yield story details
     stories = []
     for story_id in story_ids[:num_stories]:
-        story_response = httpx.get(
+        story_response = httpx2.get(
             f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
         )
         story = story_response.json()

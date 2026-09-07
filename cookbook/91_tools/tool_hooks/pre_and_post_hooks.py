@@ -9,7 +9,7 @@ import asyncio
 import json
 from typing import AsyncIterator, Iterator
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.tools import FunctionCall, tool
 
@@ -35,12 +35,12 @@ def get_top_hackernews_stories(agent: Agent) -> Iterator[str]:
     num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
     # Fetch top story IDs
-    response = httpx.get("https://hacker-news.firebaseio.com/v0/topstories.json")
+    response = httpx2.get("https://hacker-news.firebaseio.com/v0/topstories.json")
     story_ids = response.json()
 
     # Yield story details
     for story_id in story_ids[:num_stories]:
-        story_response = httpx.get(
+        story_response = httpx2.get(
             f"https://hacker-news.firebaseio.com/v0/item/{story_id}.json"
         )
         story = story_response.json()
@@ -75,7 +75,7 @@ async def post_hook_async(fc: FunctionCall):
 async def get_top_hackernews_stories_async(agent: Agent) -> AsyncIterator[str]:
     num_stories = agent.dependencies.get("num_stories", 5) if agent.dependencies else 5
 
-    async with httpx.AsyncClient() as client:
+    async with httpx2.AsyncClient() as client:
         # Fetch top story IDs
         response = await client.get(
             "https://hacker-news.firebaseio.com/v0/topstories.json"

@@ -13,7 +13,7 @@ Try: In another terminal, rerun this file with --demo
 import os
 import sys
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.factory import RequestContext
@@ -90,7 +90,7 @@ def verify_team_resolution() -> None:
 def run_demo() -> None:
     """Discover and run the live Team factory."""
     verify_team_resolution()
-    with httpx.Client(base_url=BASE_URL, timeout=180.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=180.0) as client:
         health = client.get("/health")
         health.raise_for_status()
 

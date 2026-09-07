@@ -1,16 +1,16 @@
 """
-Tests for httpx client caching and resource leak prevention.
+Tests for httpx2 client caching and resource leak prevention.
 
 This test suite verifies that:
-1. Global httpx clients are singletons
-2. No model provider uses the global shared httpx client (each SDK manages its own)
+1. Global httpx2 clients are singletons
+2. No model provider uses the global shared httpx2 client (each SDK manages its own)
 3. Clients are cached per model instance to prevent resource leaks
 4. Custom http_client is respected when explicitly provided
 """
 
 import os
 
-import httpx
+import httpx2
 import pytest
 
 # Set test API keys to avoid env var lookup errors
@@ -31,7 +31,7 @@ from agno.utils.http import (
 
 
 class TestGlobalHttpxClients:
-    """Test suite for global httpx client singleton pattern."""
+    """Test suite for global httpx2 client singleton pattern."""
 
     def teardown_method(self):
         """Clean up global clients after each test."""
@@ -39,21 +39,21 @@ class TestGlobalHttpxClients:
 
     @pytest.mark.asyncio
     async def test_sync_client_is_singleton(self):
-        """Verify that the global sync httpx client is a singleton."""
+        """Verify that the global sync httpx2 client is a singleton."""
         client1 = get_default_sync_client()
         client2 = get_default_sync_client()
 
         assert client1 is client2, "Sync clients should be the same instance"
-        assert isinstance(client1, httpx.Client)
+        assert isinstance(client1, httpx2.Client)
 
     @pytest.mark.asyncio
     async def test_async_client_is_singleton(self):
-        """Verify that the global async httpx client is a singleton."""
+        """Verify that the global async httpx2 client is a singleton."""
         client1 = get_default_async_client()
         client2 = get_default_async_client()
 
         assert client1 is client2, "Async clients should be the same instance"
-        assert isinstance(client1, httpx.AsyncClient)
+        assert isinstance(client1, httpx2.AsyncClient)
 
     def test_sync_and_async_clients_are_different(self):
         """Verify that sync and async clients are different instances."""
@@ -71,7 +71,7 @@ class TestGlobalHttpxClients:
 
         # Should create a new client when the previous one is closed
         assert client1 is not client2
-        assert isinstance(client2, httpx.Client)
+        assert isinstance(client2, httpx2.Client)
 
     @pytest.mark.asyncio
     async def test_closed_async_client_gets_recreated(self):
@@ -83,7 +83,7 @@ class TestGlobalHttpxClients:
 
         # Should create a new client when the previous one is closed
         assert client1 is not client2
-        assert isinstance(client2, httpx.AsyncClient)
+        assert isinstance(client2, httpx2.AsyncClient)
 
 
 class TestOpenAIChatClientCaching:
@@ -116,7 +116,7 @@ class TestOpenAIChatClientCaching:
         assert model.async_client is client1
 
     def test_sync_client_does_not_use_global_httpx_client(self):
-        """Verify that OpenAIChat does NOT use the global shared httpx client.
+        """Verify that OpenAIChat does NOT use the global shared httpx2 client.
 
         OpenAI's infrastructure has issues with HTTP/2. The SDK intentionally defaults
         to HTTP/1.1. We must not inject the shared HTTP/2 client.
@@ -126,11 +126,11 @@ class TestOpenAIChatClientCaching:
 
         openai_client = model.get_client()
 
-        # The OpenAI client must NOT have the global httpx client
+        # The OpenAI client must NOT have the global httpx2 client
         assert openai_client._client is not global_sync_client
 
     def test_async_client_does_not_use_global_httpx_client(self):
-        """Verify that OpenAIChat does NOT use the global shared httpx client for async.
+        """Verify that OpenAIChat does NOT use the global shared httpx2 client for async.
 
         The global async client uses HTTP/2 which causes transient 400 errors with OpenAI.
         """
@@ -139,7 +139,7 @@ class TestOpenAIChatClientCaching:
 
         openai_client = model.get_async_client()
 
-        # The OpenAI client must NOT have the global httpx client
+        # The OpenAI client must NOT have the global httpx2 client
         assert openai_client._client is not global_async_client
 
     def test_each_model_instance_has_own_cached_client(self):
@@ -187,7 +187,7 @@ class TestOpenAIResponsesClientCaching:
         assert model.async_client is client1
 
     def test_does_not_use_global_httpx_client(self):
-        """Verify that OpenAIResponses does NOT use the global shared httpx client."""
+        """Verify that OpenAIResponses does NOT use the global shared httpx2 client."""
         global_sync_client = get_default_sync_client()
         global_async_client = get_default_async_client()
 
@@ -204,7 +204,7 @@ class TestOpenAIResponsesClientCaching:
 class TestClaudeClientCaching:
     """Test suite for Claude (Anthropic) client caching.
 
-    Verifies that Anthropic models do NOT use the shared global httpx client,
+    Verifies that Anthropic models do NOT use the shared global httpx2 client,
     preventing HTTP/2 stream saturation when multiple model instances
     (main agent, MemoryManager, etc.) run concurrently.
     """
@@ -236,7 +236,7 @@ class TestClaudeClientCaching:
         assert model.async_client is client1
 
     def test_sync_client_does_not_use_global_httpx_client(self):
-        """Verify that Claude does NOT use the global shared httpx client.
+        """Verify that Claude does NOT use the global shared httpx2 client.
 
         Each model instance should get its own HTTP connection to prevent
         HTTP/2 stream saturation under concurrent load.
@@ -249,7 +249,7 @@ class TestClaudeClientCaching:
         assert anthropic_client._client is not global_sync_client
 
     def test_async_client_does_not_use_global_httpx_client(self):
-        """Verify that Claude does NOT use the global shared httpx client for async.
+        """Verify that Claude does NOT use the global shared httpx2 client for async.
 
         Under concurrent load, a shared HTTP/2 connection hits the 100-stream limit
         causing cascading failures. Each model instance needs its own connection.
@@ -279,15 +279,15 @@ class TestClaudeClientCaching:
 
 
 class TestCustomHttpClient:
-    """Test suite for custom httpx client support."""
+    """Test suite for custom httpx2 client support."""
 
     def teardown_method(self):
         """Clean up global clients after each test."""
         close_sync_client()
 
     def test_custom_sync_client_is_respected(self):
-        """Verify that custom sync httpx client is used when provided."""
-        custom_client = httpx.Client()
+        """Verify that custom sync httpx2 client is used when provided."""
+        custom_client = httpx2.Client()
         model = OpenAIChat(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_client()
@@ -297,8 +297,8 @@ class TestCustomHttpClient:
         custom_client.close()
 
     def test_custom_async_client_is_respected(self):
-        """Verify that custom async httpx client is used when provided."""
-        custom_client = httpx.AsyncClient()
+        """Verify that custom async httpx2 client is used when provided."""
+        custom_client = httpx2.AsyncClient()
         model = OpenAIChat(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_async_client()
@@ -307,8 +307,8 @@ class TestCustomHttpClient:
         assert openai_client._client is custom_client
 
     def test_custom_sync_client_respected_on_responses(self):
-        """Verify that custom sync httpx client is used on OpenAIResponses."""
-        custom_client = httpx.Client()
+        """Verify that custom sync httpx2 client is used on OpenAIResponses."""
+        custom_client = httpx2.Client()
         model = OpenAIResponses(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_client()
@@ -317,8 +317,8 @@ class TestCustomHttpClient:
         custom_client.close()
 
     def test_custom_async_client_respected_on_responses(self):
-        """Verify that custom async httpx client is used on OpenAIResponses."""
-        custom_client = httpx.AsyncClient()
+        """Verify that custom async httpx2 client is used on OpenAIResponses."""
+        custom_client = httpx2.AsyncClient()
         model = OpenAIResponses(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_async_client()
@@ -363,7 +363,7 @@ class TestAsyncCleanup:
 class TestSetGlobalClients:
     """Test suite for setting custom global clients.
 
-    Note: No model providers use the global shared httpx client by default.
+    Note: No model providers use the global shared httpx2 client by default.
     Each provider SDK manages its own HTTP client to prevent HTTP/2 stream
     saturation under concurrent load. The global client utilities remain
     available for explicit customization via set_default_sync_client/set_default_async_client.
@@ -379,7 +379,7 @@ class TestSetGlobalClients:
         default_client = get_default_sync_client()
 
         # Set custom client
-        custom_client = httpx.Client(limits=httpx.Limits(max_connections=100))
+        custom_client = httpx2.Client(limits=httpx2.Limits(max_connections=100))
         set_default_sync_client(custom_client)
 
         # New calls should get custom client
@@ -391,7 +391,7 @@ class TestSetGlobalClients:
 
     def test_set_custom_sync_client_retrievable(self):
         """Verify that a custom sync client set globally is returned by get_default_sync_client."""
-        custom_client = httpx.Client(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
+        custom_client = httpx2.Client(limits=httpx2.Limits(max_connections=100, max_keepalive_connections=50))
         set_default_sync_client(custom_client)
 
         retrieved = get_default_sync_client()
@@ -400,20 +400,20 @@ class TestSetGlobalClients:
 
     def test_set_custom_async_client_retrievable(self):
         """Verify that a custom async client set globally is returned by get_default_async_client."""
-        custom_client = httpx.AsyncClient(limits=httpx.Limits(max_connections=100, max_keepalive_connections=50))
+        custom_client = httpx2.AsyncClient(limits=httpx2.Limits(max_connections=100, max_keepalive_connections=50))
         set_default_async_client(custom_client)
 
         retrieved = get_default_async_client()
         assert retrieved is custom_client
 
     def test_openai_models_ignore_global_client_override(self):
-        """Verify that OpenAI models do NOT pick up globally set httpx clients.
+        """Verify that OpenAI models do NOT pick up globally set httpx2 clients.
 
         This is the key behavioral change: OpenAI models let the SDK manage its own
         HTTP client to avoid HTTP/2-related transient errors.
         """
-        custom_sync = httpx.Client(limits=httpx.Limits(max_connections=100))
-        custom_async = httpx.AsyncClient(limits=httpx.Limits(max_connections=100))
+        custom_sync = httpx2.Client(limits=httpx2.Limits(max_connections=100))
+        custom_async = httpx2.AsyncClient(limits=httpx2.Limits(max_connections=100))
         set_default_sync_client(custom_sync)
         set_default_async_client(custom_async)
 
@@ -464,7 +464,7 @@ class TestResourceLeakPrevention:
             assert model.get_async_client() is first_async
 
     def test_global_httpx_client_singleton_unchanged(self):
-        """Verify the global httpx client remains a singleton when accessed directly."""
+        """Verify the global httpx2 client remains a singleton when accessed directly."""
         global_client = get_default_sync_client()
 
         # Multiple retrievals return the same instance

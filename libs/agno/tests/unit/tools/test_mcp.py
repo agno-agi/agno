@@ -954,7 +954,7 @@ async def test_connect_failure_against_a_dead_server_releases_the_http_connectio
 
     gc.collect()
     leaked = [o for o in gc.get_objects() if isinstance(o, httpx2.AsyncClient) and not o.is_closed]
-    assert leaked == [], f"failed connect left {len(leaked)} open httpx client(s)"
+    assert leaked == [], f"failed connect left {len(leaked)} open httpx2 client(s)"
 
 
 @pytest.mark.asyncio
@@ -1884,7 +1884,7 @@ async def test_terminate_on_close_true_stays_on_the_stock_transport():
 
 @pytest.mark.asyncio
 async def test_terminate_on_close_transport_keeps_the_stream_read_timeout():
-    """The subclass must not lose the httpx factory that bounds long-lived streams."""
+    """The subclass must not lose the httpx2 factory that bounds long-lived streams."""
     from dataclasses import asdict
 
     from agno.tools.mcp.mcp import _build_fastmcp_client
@@ -1964,7 +1964,7 @@ def test_build_fastmcp_client_keeps_sse_read_timeout_on_streamable_http():
     session timeout.
 
     fastmcp derives its HTTP read timeout from read_timeout_seconds, so without a
-    custom httpx factory a 10s session timeout would cut long-lived streams from
+    custom httpx2 factory a 10s session timeout would cut long-lived streams from
     300s down to 10s -- contradicting StreamableHTTPClientParams' documented contract.
     """
     from dataclasses import asdict

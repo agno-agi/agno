@@ -456,19 +456,19 @@ def _captured_body(model, stream=False):
     """Run one invoke against a stub transport and return the request body the SDK sent."""
     import json
 
-    import httpx
+    import httpx2
 
     bodies = []
 
-    def handler(request: "httpx.Request") -> "httpx.Response":
+    def handler(request: "httpx2.Request") -> "httpx2.Response":
         bodies.append(json.loads(request.content))
         if stream:
             event = {"type": "response.completed", "sequence_number": 0, "response": COMPLETED_RESPONSE}
             body = f"event: response.completed\ndata: {json.dumps(event)}\n\n"
-            return httpx.Response(200, text=body, headers={"content-type": "text/event-stream"})
-        return httpx.Response(200, json=COMPLETED_RESPONSE)
+            return httpx2.Response(200, text=body, headers={"content-type": "text/event-stream"})
+        return httpx2.Response(200, json=COMPLETED_RESPONSE)
 
-    model.http_client = httpx.Client(transport=httpx.MockTransport(handler))
+    model.http_client = httpx2.Client(transport=httpx2.MockTransport(handler))
     messages = [Message(role="user", content="hi")]
 
     if stream:

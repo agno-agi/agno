@@ -1,6 +1,6 @@
 from pathlib import Path
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.media import Image
 from agno.models.openai import OpenAIResponses
@@ -13,7 +13,7 @@ agent = Agent(
 image_path = Path(__file__).parent.joinpath("sample.jpg")
 
 if not image_path.exists():
-    resp = httpx.get(
+    resp = httpx2.get(
         "https://picsum.photos/id/1/640/480",
         headers={"User-Agent": "agno-cookbook/1.0"},
         follow_redirects=True,

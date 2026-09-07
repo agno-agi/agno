@@ -16,7 +16,7 @@ Tested 2026-07-18 against gemini-3.5-flash + gemini-embedding-001 (embedder), ag
 
 **Status:** PASS
 
-**Description:** Triggers the image-ingest workflow (full wipe + re-ingest of the 38 built-in Picsum URLs at INGEST_CONCURRENCY=3: httpx fetch, gemini-3.5-flash structured ImageDescription extraction, gemini-embedding-001 embed, PgVector upsert) via POST /workflows/image-ingest/runs with background=true and stream=false, then polls GET /workflows/image-ingest/runs/{run_id}?session_id={session_id} until terminal status.
+**Description:** Triggers the image-ingest workflow (full wipe + re-ingest of the 38 built-in Picsum URLs at INGEST_CONCURRENCY=3: httpx2 fetch, gemini-3.5-flash structured ImageDescription extraction, gemini-embedding-001 embed, PgVector upsert) via POST /workflows/image-ingest/runs with background=true and stream=false, then polls GET /workflows/image-ingest/runs/{run_id}?session_id={session_id} until terminal status.
 
 **Result:** Run completed with status COMPLETED and final summary content `{'total': 38, 'failed': 0, 'indexed': 38}` in well under a minute. Server log showed 38 "Upserted batch of 1 documents" lines for the run (76 cumulative across the two runs performed today, confirming the wipe + full re-ingest behavior), and /knowledge/content reported `total_count: 38` afterward. Per-image Gemini extraction calls ran at roughly 4s each (e.g. one logged call: input=1401 tokens, output=240, duration 3.88s). No failed URLs, no "agent returned str" structured-output corruption.
 

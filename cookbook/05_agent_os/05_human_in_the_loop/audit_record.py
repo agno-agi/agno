@@ -16,7 +16,7 @@ Try: Run this file with --demo in another terminal
 import argparse
 import json
 
-import httpx
+import httpx2
 from agno.agent import Agent
 from agno.approval import approval
 from agno.db.sqlite import SqliteDb
@@ -68,7 +68,7 @@ app = agent_os.get_app()
 
 def run_demo() -> None:
     """Confirm the pause and read back the audit record written on resolution."""
-    with httpx.Client(base_url=BASE_URL, timeout=120.0) as client:
+    with httpx2.Client(base_url=BASE_URL, timeout=120.0) as client:
         response = client.post(
             f"/agents/{AGENT_ID}/runs",
             data={

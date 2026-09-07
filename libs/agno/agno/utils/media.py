@@ -78,11 +78,11 @@ def download_image(url: str, output_path: str) -> bool:
     - url (str): URL of the image to download.
     - output_path (str): Local filesystem path to save the image
     """
-    import httpx
+    import httpx2
 
     try:
         # Send HTTP GET request to the image URL
-        response = httpx.get(url)
+        response = httpx2.get(url)
         response.raise_for_status()  # Raise an exception for HTTP errors
 
         # Check if the response contains image content
@@ -103,7 +103,7 @@ def download_image(url: str, output_path: str) -> bool:
         log_info(f"Image successfully downloaded and saved to '{output_path}'.")
         return True
 
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         log_warning(f"Error downloading the image: {str(e)}")
         return False
     except IOError as e:
@@ -113,9 +113,9 @@ def download_image(url: str, output_path: str) -> bool:
 
 def download_audio(url: str, output_path: str) -> str:
     """Download audio from URL"""
-    import httpx
+    import httpx2
 
-    response = httpx.get(url)
+    response = httpx2.get(url)
     response.raise_for_status()
 
     with open(output_path, "wb") as f:
@@ -126,9 +126,9 @@ def download_audio(url: str, output_path: str) -> str:
 
 def download_video(url: str, output_path: str) -> str:
     """Download video from URL"""
-    import httpx
+    import httpx2
 
-    response = httpx.get(url)
+    response = httpx2.get(url)
     response.raise_for_status()
 
     with open(output_path, "wb") as f:
@@ -146,12 +146,12 @@ def download_file(url: str, output_path: str) -> None:
         output_path (str): The local path where the file should be saved
 
     Raises:
-        httpx.HTTPError: If the download fails
+        httpx2.HTTPError: If the download fails
     """
-    import httpx
+    import httpx2
 
     try:
-        response = httpx.get(url)
+        response = httpx2.get(url)
         response.raise_for_status()
 
         output_file = Path(output_path)
@@ -162,7 +162,7 @@ def download_file(url: str, output_path: str) -> None:
                 if chunk:
                     f.write(chunk)
 
-    except httpx.HTTPError as e:
+    except httpx2.HTTPError as e:
         raise Exception(f"Failed to download file from {url}: {str(e)}")
 
 
@@ -203,7 +203,7 @@ def wait_for_media_ready(url: str, timeout: int = 120, interval: int = 5, verbos
     Returns:
         bool: True if media is ready, False if timeout reached
     """
-    import httpx
+    import httpx2
 
     max_attempts = timeout // interval
 
@@ -212,12 +212,12 @@ def wait_for_media_ready(url: str, timeout: int = 120, interval: int = 5, verbos
 
     for attempt in range(max_attempts):
         try:
-            response = httpx.head(url, timeout=10)
+            response = httpx2.head(url, timeout=10)
             response.raise_for_status()
             if verbose:
                 log_info(f"Media ready: {url}")
             return True
-        except httpx.HTTPError:
+        except httpx2.HTTPError:
             pass
 
         if verbose and (attempt + 1) % 3 == 0:
@@ -525,10 +525,10 @@ def reconstruct_response_audio(audio: Optional[dict]) -> Optional[Audio]:
 
 
 def __getattr__(name: str) -> Any:
-    # ``agno.utils.media.httpx`` stays resolvable for callers that patch it,
-    # without the module paying for the httpx import when nothing downloads.
-    if name == "httpx":
-        import httpx
+    # ``agno.utils.media.httpx2`` stays resolvable for callers that patch it,
+    # without the module paying for the httpx2 import when nothing downloads.
+    if name == "httpx2":
+        import httpx2
 
-        return httpx
+        return httpx2
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
