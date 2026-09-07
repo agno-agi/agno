@@ -49,12 +49,9 @@ async def main() -> None:
     for question in questions:
         await agent.aprint_response(question)
 
-    # The async counterpart of agent.compact().
-    record = await agent.acompact(session_id=agent.session_id)
-    if record is not None:
-        print(
-            f"\nCompacted {record.messages_compacted} messages: {record.tokens_before} -> {record.tokens_after} tokens"
-        )
+    # The async counterpart of agent.compact(), returning the same CompactionResult.
+    result = await agent.acompact(session_id=agent.session_id)
+    print(f"\n[{result.status.value}] {result.message}")
 
     print(f"Compactions: {compaction.stats.compactions}")
 

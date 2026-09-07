@@ -57,13 +57,20 @@ if __name__ == "__main__":
         agent.print_response(question)
 
     # Fold now, rather than waiting for the context to reach compact_at_tokens.
-    # Returns the record, or None when there was nothing worth folding.
-    record = agent.compact(session_id="compaction_demo")
-    if record is not None:
+    # Returns a CompactionResult: `compacted` says whether a fold happened, and
+    # `message` explains the outcome either way - declining is a normal answer,
+    # since a summary cannot pay for itself on a short span.
+    result = agent.compact(session_id="compaction_demo")
+    if result.compacted:
+        r = result.record
         print(
-            f"\n[compacted {record.messages_compacted} messages: "
-            f"{record.tokens_before} -> {record.tokens_after} tokens]"
+            f"\n[compacted {r.messages_compacted} messages: "
+            f"{r.tokens_before} -> {r.tokens_after} tokens, archived={r.archived}]"
         )
+    else:
+        # Not an error: a summary cannot pay for itself on a short span, so the
+        # server declines and says why.
+        print(f"\n[{result.status.value}] {result.message}")
 
     # The next run sends the summary in place of the folded turns.
     agent.print_response("Remind me what my budget was.")
