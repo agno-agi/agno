@@ -143,7 +143,6 @@ class HITLHandler:
         requirements: List[Any],
         *,
         session_id: str,
-        user_id: Optional[str] = None,
     ) -> StreamState:
         state = StreamState(entity_name=self.entity_name, entity_type=self.entity_type)
         try:
@@ -164,7 +163,15 @@ class HITLHandler:
                 run_id=ctx.run_id,
                 requirements=requirements,
                 session_id=session_id,
-                user_id=user_id,
+                # Deliberately not the run's user: a Slack thread is one session
+                # shared by everyone in it, and the session row is owned by
+                # whoever spoke first. Passing a second participant's id scopes
+                # the session read to them, finds nothing, and continues against
+                # an empty session -- so approving anyone else's paused run fails
+                # with "No runs found for run ID". Left unset, continue_run
+                # resolves the owner from the paused run itself, which is the
+                # value we would have passed.
+                user_id=None,
                 stream=True,
                 stream_events=True,
             )
@@ -328,7 +335,6 @@ class HITLHandler:
         if not run_output:
             return
 
-        run_user_id = run_output.user_id
         requirements = list(getattr(run_output, "active_requirements", None) or [])
 
         for req in requirements:
@@ -355,7 +361,7 @@ class HITLHandler:
             self.task_display_mode,
             self.buffer_size,
         )
-        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
+        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id)
         await self.complete_or_repause(ctx, stream, state)
 
     async def handle_check_status(self, payload: Dict[str, Any]) -> None:
@@ -481,7 +487,6 @@ class HITLHandler:
             await self.post_ephemeral(channel=ctx.channel, user=ctx.user_id, text="This approval is no longer active.")
             return
 
-        run_user_id = run_output.user_id
         requirements = list(active_reqs)
 
         decisions = await self.validate_and_apply_decisions(ctx, payload, requirements)
@@ -504,7 +509,7 @@ class HITLHandler:
         )
 
         await self.post_denial_cards(stream, decisions, requirements, ctx.run_id)
-        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id, user_id=run_user_id)
+        state = await self.stream_resumed_run(ctx, stream, requirements, session_id=session_id)
         await self.complete_or_repause(ctx, stream, state)
 
     async def post_ephemeral(self, *, channel: str, user: str, text: str) -> None:
