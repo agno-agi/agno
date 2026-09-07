@@ -14,6 +14,9 @@ MCP_BUILTIN_TAGS: frozenset = frozenset({"core", "session", "lifecycle"})
 # string values while keeping the API stringly-typed (callers still pass ``{"core"}``).
 MCPBuiltinTag = Literal["core", "session", "lifecycle"]
 
+# Where the MCP server publishes its Server Card: the MCP endpoint path plus ``/server-card``.
+MCP_SERVER_CARD_PATH = "/mcp/server-card"
+
 
 def _apply_legacy_enable_builtin_tools(data: Dict[str, Any]) -> Dict[str, Any]:
     """Map the deprecated ``enable_builtin_tools`` key onto ``default_tools`` in a dict
@@ -54,6 +57,26 @@ class MCPConfig(BaseModel):
     # extra="forbid": a typo like ``tool=`` (for ``tools=``) must fail at construction,
     # not silently serve a different tool surface.
     model_config = ConfigDict(arbitrary_types_allowed=True, extra="forbid")
+
+    # Sent in the initialize response. ``name`` defaults to the AgentOS name and
+    # ``version`` to ``AgentOS(version=...)``. ``instructions`` tells the calling
+    # model what the tools are for and how to use them.
+    name: Optional[str] = None
+    version: Optional[str] = None
+    instructions: Optional[str] = None
+
+    # Publish a Server Card at ``/mcp/server-card`` (name, version, description, the endpoint
+    # URL, and the served tools by name and description) and send a browser that opens ``/mcp``
+    # to it. The card is public even when the server is gated; it carries nothing secret --
+    # the tool names it lists are the same ones ``tools/list`` returns to any caller.
+    server_card: bool = True
+
+    # The public URL of the MCP endpoint, e.g. ``https://docs.agno.com/mcp``. Set this when the
+    # deployment sits behind a proxy or load balancer: it is what the card advertises, verbatim.
+    # Without it the card derives the URL from the request, and ``X-Forwarded-Host`` is honoured
+    # only when that hostname is itself listed in ``allowed_hosts`` -- an unvalidated forwarded
+    # host would otherwise be echoed into a publicly cacheable document.
+    server_card_url: Optional[str] = None
 
     # The tool surface of this MCP server. Each entry may be:
     #
@@ -188,6 +211,13 @@ class MCPConfig(BaseModel):
     # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
 
+    # Serve the MCP endpoint without session tracking: every request gets a fresh transport
+    # and nothing is kept between requests. Lets any replica answer any request, so a
+    # multi-instance deployment needs no session affinity. Costs the features that require a
+    # retained session -- server-initiated notifications and SSE resumability -- so it stays
+    # off by default.
+    stateless: bool = False
+
     @model_validator(mode="before")
     @classmethod
     def _map_deprecated_enable_builtin_tools(cls, data: Any) -> Any:
@@ -223,6 +253,54 @@ class MCPConfig(BaseModel):
         if update and "enable_builtin_tools" in update:
             update = _apply_legacy_enable_builtin_tools(update)
         return super().model_copy(update=update, deep=deep)
+
+    @model_validator(mode="after")
+    def _check_server_card_url(self) -> "MCPConfig":
+        """Refuse a card URL that is not a well-formed absolute http(s) URL.
+
+        The value is published verbatim as the endpoint clients connect to, so a relative path,
+        a non-transport scheme, or a malformed host would produce a card that no client can use
+        (and that the Server Card schema rejects). Fail at construction rather than at request
+        time. Whitespace is rejected outright rather than left to the URL parser, which silently
+        strips it -- this value lands in a publicly cacheable response, so a newline must never
+        be quietly accepted and reshaped.
+        """
+        if self.server_card_url is None:
+            return self
+
+        from pydantic import AnyHttpUrl, TypeAdapter
+        from pydantic import ValidationError as _ValidationError
+
+        invalid = f"MCPConfig(server_card_url={self.server_card_url!r}) must be an absolute http(s) URL "
+        if any(character.isspace() for character in self.server_card_url):
+            raise ValueError(invalid + "with no whitespace, e.g. 'https://docs.agno.com/mcp'.")
+        try:
+            parsed = TypeAdapter(AnyHttpUrl).validate_python(self.server_card_url)
+        except _ValidationError as exc:
+            raise ValueError(invalid + "including the host, e.g. 'https://docs.agno.com/mcp'.") from exc
+        if parsed.username or parsed.password:
+            # The card is public and cacheable; anything in a userinfo segment would be published.
+            raise ValueError(
+                f"MCPConfig(server_card_url={self.server_card_url!r}) must not contain credentials: "
+                "the Server Card is published publicly. Use 'https://docs.agno.com/mcp' and let "
+                "clients authenticate with the Authorization header the card declares."
+            )
+        # Structure, not canonical form: the parser also normalises (``https:///mcp`` becomes host
+        # ``mcp``), and the card publishes the original string, so the scheme and host it resolved
+        # to must be the ones actually written. A default port or uppercase host is fine.
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(invalid + "including the host, e.g. 'https://docs.agno.com/mcp'.")
+        written = self.server_card_url.split("//", 1)[-1].split("/", 1)[0].rsplit("@", 1)[-1]
+        # Drop the port, but not the colons inside an ipv6 literal.
+        written = written[: written.index("]") + 1] if written.startswith("[") else written.rsplit(":", 1)[0]
+        if not parsed.host or parsed.host.strip("[]").lower() != written.strip("[]").lower():
+            raise ValueError(invalid + "including the host, e.g. 'https://docs.agno.com/mcp'.")
+        # The card's URL pattern matches lowercase ``http(s)://`` only, so a scheme written in any
+        # other case is lowercased here rather than published as an invalid card.
+        scheme_written = self.server_card_url.split("://", 1)[0]
+        if scheme_written != scheme_written.lower():
+            self.server_card_url = parsed.scheme + self.server_card_url[len(scheme_written) :]
+        return self
 
     @model_validator(mode="after")
     def _check_has_tools(self) -> "MCPConfig":
@@ -286,6 +364,9 @@ class AuthorizationConfig(BaseModel):
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
     admin_scope: Optional[str] = None
+    # Additional fnmatch path patterns that bypass all AgentOS authentication,
+    # merged with the default public-route exclusions.
+    excluded_route_paths: Optional[List[str]] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers

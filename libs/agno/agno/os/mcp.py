@@ -16,6 +16,7 @@ from typing import (
     Literal,
     NamedTuple,
     Optional,
+    Set,
     Union,
     get_type_hints,
 )
@@ -74,6 +75,7 @@ logger = logging.getLogger(__name__)
 # tag set lives in agno/os/config.py next to the MCPConfig fields that consume it --
 # single source of truth so adding a new tag is a one-place change.
 from agno.os.config import MCP_BUILTIN_TAGS as _BUILTIN_TOOL_TAGS  # noqa: E402
+from agno.os.config import MCP_SERVER_CARD_PATH  # noqa: E402
 
 # Names of the default (built-in) tools by tag set, used to detect name collisions with
 # exposed components before registration. Keep in sync with the ``name=`` / ``tags=``
@@ -1974,6 +1976,198 @@ def _register_exposed_components(
         mcp.tool(name=tool_name, title=title, description=description, annotations=annotations)(fn)
 
 
+SERVER_CARD_SCHEMA = "https://static.modelcontextprotocol.io/schemas/v1/server-card.schema.json"
+SERVER_CARD_MEDIA_TYPE = "application/mcp-server-card+json"
+_MCP_PATH = "/mcp"
+
+
+def _server_card_enabled(mcp_config: "Optional[MCPConfig]") -> bool:
+    return mcp_config is None or mcp_config.server_card
+
+
+def _card_name(hostname: str, server_name: str) -> str:
+    """The card's reverse-DNS name: the request host reversed, a slash, the server name as a slug.
+
+    The schema caps the whole name at 200 characters and requires exactly one slash, so the two
+    halves are clipped separately -- truncating the joined string could drop the slash entirely.
+    """
+    is_ip_literal = hostname.startswith("[") or re.fullmatch(r"[\d.]+", hostname) is not None
+    namespace = "" if is_ip_literal else ".".join(reversed(hostname.lower().split(".")))
+    namespace = re.sub(r"[^a-z0-9.-]+", "", namespace).strip(".-")
+    slug = re.sub(r"[^A-Za-z0-9._-]+", "-", server_name).strip("-.").lower()
+    namespace = namespace or "localhost"
+    slug = slug or "agentos"
+    # Keep the slug whole where possible; give the namespace whatever the slug leaves.
+    slug = slug[:_CARD_SLUG_MAX].rstrip("-._") or "agentos"
+    namespace = namespace[: _CARD_NAME_MAX - len(slug) - 1].rstrip("-.") or "localhost"
+    return f"{namespace}/{slug}"
+
+
+# Length limits from the Server Card schema. An AgentOS name or description is free text and
+# routinely longer, so values are truncated rather than published as an invalid card.
+_CARD_NAME_MAX = 200
+# Half the name budget, so a very long server name cannot squeeze the namespace out entirely.
+_CARD_SLUG_MAX = 100
+_CARD_TITLE_MAX = 100
+_CARD_TEXT_MAX = 100
+_CARD_VERSION_MAX = 255
+
+
+def _truncate(value: str, limit: int) -> str:
+    """Clip to the schema's limit, marking the clip with an ellipsis so it does not read as complete."""
+    return value if len(value) <= limit else value[: limit - 1].rstrip() + "…"
+
+
+async def _card_tools(mcp: FastMCP) -> List[Dict[str, Any]]:
+    """The published tools in the same shape ``tools/list`` returns.
+
+    Built from each tool's own MCP representation, so the card cannot drift from the live
+    surface and a reader gets what a connected client would get: name, title, description and
+    ``inputSchema``. Descriptions are published whole -- they are written for the calling model,
+    and a clipped one is worse than none. Internal transport metadata (``_meta``) is dropped.
+    """
+    entries: List[Dict[str, Any]] = []
+    seen: Set[str] = set()
+    # list_tools returns every version of a tool; the card names each one once.
+    for tool in await mcp.list_tools():
+        if tool.name in seen:
+            continue
+        seen.add(tool.name)
+        entry = tool.to_mcp_tool().model_dump(exclude_none=True, by_alias=True)
+        entry.pop("_meta", None)
+        entries.append(entry)
+    return entries
+
+
+async def _server_card(
+    mcp: FastMCP,
+    os: "AgentOS",
+    request: Any,
+    version: Optional[str] = None,
+    card_url: Optional[str] = None,
+    allowed_hosts: Optional[List[str]] = None,
+) -> Dict[str, Any]:
+    """The Server Card for one request.
+
+    A configured ``server_card_url`` is authoritative. Otherwise the endpoint URL is derived from
+    the request. ``X-Forwarded-Host`` is honoured only when its value is itself listed in
+    ``allowed_hosts``: the header is attacker-controlled even on a request whose ``Host`` is
+    allowed, and this response is publicly cacheable, so an unvalidated value would let a caller
+    plant a card naming their own host.
+    """
+    from urllib.parse import urlparse
+
+    if card_url:
+        host = urlparse(card_url).netloc or request.headers.get("host") or request.url.netloc
+        url = card_url
+    else:
+        scheme = request.url.scheme
+        host = request.headers.get("host") or request.url.netloc
+        forwarded_host = request.headers.get("x-forwarded-host", "").split(",")[0].strip()
+        if forwarded_host and allowed_hosts:
+            host_set = {_mcp_request_hostname(h) for h in list(allowed_hosts) + list(_MCP_LOCALHOST_HOSTS)}
+            if _mcp_host_allowed(_mcp_request_hostname(forwarded_host), host_set):
+                host = forwarded_host
+                # Only the two transport schemes; the header is caller-supplied, and anything
+                # else here would be published as the endpoint's URL.
+                forwarded_proto = request.headers.get("x-forwarded-proto", "").split(",")[0].strip().lower()
+                scheme = forwarded_proto if forwarded_proto in ("http", "https") else scheme
+        url = f"{scheme}://{host}{_MCP_PATH}"
+    remote: Dict[str, Any] = {"type": "streamable-http", "url": url}
+    if not _mcp_server_is_open(os):
+        remote["headers"] = [
+            {"name": "Authorization", "description": "Bearer token", "isRequired": True, "isSecret": True}
+        ]
+    card = {
+        "$schema": SERVER_CARD_SCHEMA,
+        "name": _card_name(_mcp_request_hostname(host), mcp.name),
+        "title": _truncate(mcp.name, _CARD_TITLE_MAX),
+        "description": _truncate(getattr(os, "description", None) or f"{mcp.name} MCP server", _CARD_TEXT_MAX),
+        "remotes": [remote],
+    }
+    # ``version`` is required by the schema and must match what the runtime reports in
+    # ``serverInfo.version``, so the card mirrors ``mcp.version`` when nothing was configured --
+    # even though fastmcp defaults that to its own library version. Set ``MCPConfig(version=...)``
+    # or ``AgentOS(version=...)`` to publish the deployment's real version instead.
+    card["version"] = _truncate(version or str(mcp.version), _CARD_VERSION_MAX)
+    # Not part of the Server Card schema, which leaves the tool surface to ``tools/list``. It is
+    # carried anyway (the schema allows extra keys) because the card is what a person or a crawler
+    # opening the endpoint in a browser sees, and they never speak the protocol.
+    card["tools"] = await _card_tools(mcp)
+    return card
+
+
+def _register_server_card(
+    mcp: FastMCP,
+    os: "AgentOS",
+    version: Optional[str] = None,
+    card_url: Optional[str] = None,
+    allowed_hosts: Optional[List[str]] = None,
+) -> None:
+    from starlette.requests import Request
+    from starlette.responses import JSONResponse, Response
+
+    # The body varies with the request host unless a URL was configured, so a shared cache must
+    # key on the headers that shape it -- otherwise one caller's card is served to everyone.
+    vary = "Origin" if card_url else "Origin, Host, X-Forwarded-Host, X-Forwarded-Proto"
+
+    @mcp.custom_route(MCP_SERVER_CARD_PATH, methods=["GET"], include_in_schema=False)
+    async def server_card(request: Request) -> Response:
+        return JSONResponse(
+            await _server_card(mcp, os, request, version, card_url, allowed_hosts),
+            media_type=SERVER_CARD_MEDIA_TYPE,
+            headers={
+                "Cache-Control": "public, max-age=300",
+                "Vary": vary,
+                "Access-Control-Allow-Origin": "*",
+                "Access-Control-Allow-Methods": "GET",
+                "Access-Control-Allow-Headers": "Content-Type, If-None-Match",
+                "Access-Control-Expose-Headers": "ETag",
+            },
+        )
+
+
+def _accepts_event_stream(accept_header: str) -> bool:
+    """True when the Accept header explicitly names ``text/event-stream``.
+
+    Media types are case-insensitive and may carry parameters (``;q=0.9``), so each entry is
+    normalised the way the MCP SDK's own Accept parsing does before comparing. A bare ``*/*``
+    is deliberately NOT treated as a match: every browser sends it, and the redirect exists
+    for browsers. An MCP client always names the type explicitly.
+    """
+    return any(
+        media_type.split(";")[0].strip().lower() == "text/event-stream" for media_type in accept_header.split(",")
+    )
+
+
+def _add_browser_redirect_middleware(mcp_app: StarletteWithLifespan) -> None:
+    """Send a browser that opens the MCP endpoint to the Server Card.
+
+    MCP clients send ``Accept: text/event-stream`` on a GET; a GET without it is a person
+    in a browser, who would otherwise get a JSON-RPC 406 or a 405.
+    """
+
+    class _BrowserRedirectMiddleware:
+        def __init__(self, app: Any) -> None:
+            self.app = app
+
+        async def __call__(self, scope: Any, receive: Any, send: Any) -> None:
+            if (
+                scope["type"] == "http"
+                and scope.get("method") == "GET"
+                and scope.get("path", "").rstrip("/") == _MCP_PATH
+            ):
+                accept = next((v.decode("latin-1") for k, v in scope.get("headers", []) if k == b"accept"), "")
+                if not _accepts_event_stream(accept):
+                    headers = [(b"location", MCP_SERVER_CARD_PATH.encode()), (b"content-length", b"0")]
+                    await send({"type": "http.response.start", "status": 302, "headers": headers})
+                    await send({"type": "http.response.body", "body": b""})
+                    return
+            await self.app(scope, receive, send)
+
+    mcp_app.add_middleware(_BrowserRedirectMiddleware)
+
+
 def build_mcp_server(
     os: "AgentOS",
 ) -> FastMCP:
@@ -1989,7 +2183,25 @@ def build_mcp_server(
     # owns authentication for the HTTP transport: http_app() serves its discovery/OAuth
     # routes inside this app and wraps the MCP path in the SDK's challenge middleware.
     # The in-memory client path used in tests ignores it.
-    mcp = FastMCP(os.name or "AgentOS", auth=os._get_mcp_auth_provider())
+    server_name = (mcp_config.name if mcp_config is not None else None) or os.name or "AgentOS"
+    server_version = (mcp_config.version if mcp_config is not None else None) or getattr(os, "version", None)
+    server_instructions = mcp_config.instructions if mcp_config is not None else None
+    mcp = FastMCP(
+        server_name,
+        instructions=server_instructions,
+        version=server_version,
+        auth=os._get_mcp_auth_provider(),
+    )
+    if _server_card_enabled(mcp_config):
+        # allowed_hosts is the operator declaring the hostnames this deployment answers to; a
+        # forwarded host is advertised only if it appears in that list.
+        _register_server_card(
+            mcp,
+            os,
+            server_version,
+            card_url=(mcp_config.server_card_url if mcp_config is not None else None),
+            allowed_hosts=(mcp_config.allowed_hosts if mcp_config is not None else None),
+        )
 
     # Classify the tool surface up front: the enabled default-tool tags depend on
     # whether components are exposed (the lifecycle pair rides along with exposure).
@@ -2667,8 +2879,13 @@ def get_mcp_server(
     # below), which protects open servers by default and lets deployed hosts opt in via
     # MCPConfig.allowed_hosts.
     http_app_kwargs: Dict[str, Any] = {"path": "/mcp"}
-    if "host_origin_protection" in inspect.signature(mcp.http_app).parameters:
+    http_app_params = inspect.signature(mcp.http_app).parameters
+    if "host_origin_protection" in http_app_params:
         http_app_kwargs["host_origin_protection"] = False
+    # Opt-in stateless transport: no session is retained between requests, so any replica
+    # can answer any request. Only passed when requested, so the fastmcp default stands.
+    if mcp_config is not None and mcp_config.stateless and "stateless_http" in http_app_params:
+        http_app_kwargs["stateless_http"] = True
     if mcp_auth is not None:
         # Constructor middleware runs INSIDE fastmcp's authentication middleware (the
         # app's middleware list is auth first, then these) -- the only placement where
@@ -2722,6 +2939,9 @@ def get_mcp_server(
         for mw in reversed(mcp_config.middleware):
             cls, args, kwargs = mw
             mcp_app.add_middleware(cls, *args, **kwargs)
+
+    if _server_card_enabled(mcp_config):
+        _add_browser_redirect_middleware(mcp_app)
 
     # Outermost: built-in DNS-rebinding protection (runs first, before auth and tools).
     #
