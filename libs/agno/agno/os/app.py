@@ -292,6 +292,7 @@ class AgentOS:
         knowledge: Optional[List[Knowledge]] = None,
         interfaces: Optional[List[BaseInterface]] = None,
         a2a_interface: bool = False,
+        authentication: bool = False,
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
         user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
@@ -453,7 +454,12 @@ class AgentOS:
         # between AgentOS instances: another OS's mirror must not look
         # user-registered here.
 
-        # RBAC
+        # RBAC. Authentication (verify WHO the caller is) is separable from authorization (decide
+        # what they may DO). authentication=True runs the auth middleware in verify-only mode: a
+        # valid token is required and the identity is populated, but no scopes/roles are enforced.
+        # So the user directory and per-user isolation -- which need identity, not access rules --
+        # work without opting into the whole authorization layer. authorization=True implies it.
+        self.authentication = authentication
         self.authorization = authorization
         self.authorization_config = authorization_config
         # The credential-less user directory is a PEER of authorization (who the users are +
@@ -1596,12 +1602,19 @@ class AgentOS:
         authz_plane_configured = cfg is not None and (
             getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
         )
-        if not self.authorization and (authz_plane_configured or self.user_directory is not None):
+        if not self.authorization and authz_plane_configured:
             raise ValueError(
-                "AuthorizationConfig(role_store=.../authorization_provider=...) or AgentOS(user_directory=...) "
-                "requires AgentOS(authorization=True). Without it the authorization plane is never enforced "
-                "(every route is served unauthenticated) and the user-directory kill switch does nothing. "
-                "Set authorization=True, or drop the config if you intended an open instance."
+                "AuthorizationConfig(role_store=.../authorization_provider=...) requires "
+                "AgentOS(authorization=True). Without enforcement the plane is never applied "
+                "(every route is served unauthenticated). Set authorization=True, or drop the "
+                "config if you intended an open instance."
+            )
+        if not (self.authentication or self.authorization) and self.user_directory is not None:
+            raise ValueError(
+                "AgentOS(user_directory=...) needs a verified identity to key off. Set "
+                "AgentOS(authentication=True) -- verify WHO the caller is, with no access rules -- "
+                "or authorization=True (verify + enforce access). Without either there is no identity "
+                "for the directory to attach to, and its disable kill-switch cannot run."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -1624,11 +1637,11 @@ class AgentOS:
         if service_account_verifier is not None:
             fastapi_app.state.service_account_verifier = service_account_verifier
 
-        auth_configured = bool(self.authorization or jwt_env_configured or security_key)
+        auth_configured = bool(self.authentication or self.authorization or jwt_env_configured or security_key)
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
-            effective_key = None if (self.authorization or jwt_env_configured) else security_key
+            effective_key = None if (self.authentication or self.authorization or jwt_env_configured) else security_key
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
 
         # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
@@ -1776,12 +1789,12 @@ class AgentOS:
         # with no way to verify a JWT: otherwise every JWT and anonymous request would fall
         # through unauthenticated, silently serving an OPEN instance. AuthMiddleware enforces
         # the same invariant as a backstop for the manual add_middleware path.
-        if self.authorization and not jwt_configured:
+        if (self.authentication or self.authorization) and not jwt_configured:
             raise ValueError(
-                "AgentOS(authorization=True) requires a JWT verification key: set JWT_VERIFICATION_KEY or "
-                "JWT_JWKS_FILE (or pass verification_keys / jwks_file via authorization_config). Without one, "
-                "JWT and anonymous requests are not authenticated and RBAC is not enforced. For "
-                "service-account-only enforcement, use a db without authorization=True."
+                "AgentOS(authentication=True / authorization=True) requires a JWT verification key: set "
+                "JWT_VERIFICATION_KEY or JWT_JWKS_FILE (or pass verification_keys / jwks_file via "
+                "authorization_config). Without one, tokens cannot be verified so no identity is established "
+                "and RBAC is not enforced. For service-account-only enforcement, use a db without either flag."
             )
         log_info("Adding AgentOS auth middleware" + (f" (JWT algorithm: {algorithm})" if jwt_configured else ""))
 
