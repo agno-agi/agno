@@ -174,3 +174,23 @@ on his run too, leaving a two-person roster. After `set_disabled("chegizkhan",
 True)`, his next no-token run still returned ALLOWED (200) -- confirming the flag
 is advisory, not enforced, without auth. Points to managed_users.py for the
 enforced kill switch.
+
+---
+
+### manage_users.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** A users-ONLY serving backend -- a user directory with authorization
+(scope plane) but NO role store, mounting only `/users`. The users-only counterpart
+of manage_users_and_roles.py, for a frontend that renders a plain User-Management
+page (no role selector).
+
+**Result:** Admin token (agent_os:admin scope) listed the seeded users
+(admin@example.com, bob, carol) and added `dave` -- both 200. A token with no admin
+scope was refused (403). After `PATCH /users/bob {"disabled": true}`, bob's next
+request bounced (403) -- the kill-switch is enforced here because auth is on. Route
+inspection confirmed NO `/authz` surface exists (only `/users`, `/users/{user_id}`),
+so a frontend gets a clean users-only API.

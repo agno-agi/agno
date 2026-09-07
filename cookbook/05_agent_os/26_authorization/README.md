@@ -29,6 +29,7 @@ it runs offline against a simulated issuer.
 | `managed_roles_sessions.py` | Roles protecting real data: who may delete a chat session |
 | `managed_roles_audit.py` | The audit trail — who changed what, plus every allow/deny decision |
 | `manage_users_and_roles.py` | Serve the `/authz` user and role management API for a frontend |
+| `manage_users.py` | Serve a users-ONLY management API (`/users`, no role store, no `/authz` roles) for a plain User-Management frontend |
 | `custom_authorization_provider.py` | Bring your own decision engine in about thirty lines |
 | `idp_workos_auth0.py` | Let WorkOS, Auth0, or Okta own identity while you enforce what a role may do |
 | `fga_relationship_based.py` | Relationship-based access (ReBAC): "alice may run this because she owns its folder" |
