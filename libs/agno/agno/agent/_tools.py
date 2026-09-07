@@ -430,6 +430,9 @@ def parse_tools(
         strict = True
 
     for tool_index, tool in enumerate(tools):
+        # ComponentTool markers are rejected at the API boundary (Agent __init__ /
+        # set_tools / add_tool), so anything reaching here is already a real tool -- no
+        # per-run guard, which would tax every run to catch a case the entry points own.
         if isinstance(tool, Dict):
             # If a dict is passed, it is a builtin tool
             # that is run by the model provider and not the Agent

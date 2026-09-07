@@ -309,8 +309,10 @@ def initialize_agent(agent: Agent, debug_mode: Optional[bool] = None) -> None:
 
 
 def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> None:
+    from agno.tools.component import raise_if_component_tool
     from agno.utils.callables import is_callable_factory
 
+    raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
     if is_callable_factory(agent.tools, excluded_types=(Toolkit, Function)):
         raise RuntimeError(
             "Cannot add_tool() when tools is a callable factory. Use set_tools() to replace the factory."
@@ -321,13 +323,17 @@ def add_tool(agent: Agent, tool: Union[Toolkit, Callable, Function, Dict]) -> No
 
 
 def set_tools(agent: Agent, tools: Union[Sequence[Union[Toolkit, Callable, Function, Dict]], Callable]) -> None:
+    from agno.tools.component import raise_if_component_tool
     from agno.utils.callables import is_callable_factory
 
     if is_callable_factory(tools, excluded_types=(Toolkit, Function)):
         agent.tools = tools  # type: ignore[assignment]
         agent._callable_tools_cache.clear()
     else:
-        agent.tools = list(tools) if tools else []  # type: ignore[arg-type]
+        concrete_tools = list(tools) if tools else []  # type: ignore[arg-type]
+        for tool in concrete_tools:
+            raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
+        agent.tools = concrete_tools
 
 
 async def connect_mcp_tools(agent: Agent) -> None:

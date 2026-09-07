@@ -14,8 +14,7 @@ import pytest
 
 from agno.skills.utils import is_safe_path
 from agno.tools import Toolkit
-from agno.tools.file import FileTools
-from agno.tools.file_generation import FileGenerationTools
+from agno.tools.file import FileGenerationTools, FileTools
 from agno.tools.slack import SlackTools
 
 # Inputs every caller rejects: control chars, empty, dot-dot.

@@ -1,6 +1,6 @@
 [project]
 name = "agno"
-version = "3.0.1"
+version = "3.0.6"
 description = "The programming language for agentic software."
 requires-python = ">=3.9,<4"
 readme = "README.md"
@@ -28,7 +28,9 @@ dependencies = [
   "docstring-parser",
   # Prevent the request-smuggling CVE in h11 < 0.16
   "h11>=0.16.0",
-  "httpx[http2]",
+  # Floor keeps pre-release resolvers from picking httpx 1.0 dev builds, which drop
+  # HTTPStatusError and break fastmcp 4 (see mcp 2.x migration notes).
+  "httpx[http2]>=0.28.1",
   "packaging",
   "pydantic-settings",
   "pydantic",
@@ -51,6 +53,7 @@ dev = [
   "timeout-decorator",
   "types-pyyaml",
   "types-aiofiles",
+  "types-regex",
   "fastapi",
   "python-multipart>=0.0.18",
   "uvicorn",
@@ -78,7 +81,7 @@ dev = [
 
 # AgentOS server bundle
 os = ["fastapi", "python-multipart>=0.0.18", "uvicorn", "websockets", "sqlalchemy", "PyJWT", "opentelemetry-sdk", "openinference-instrumentation-agno", "agno[scheduler]"]
-mcp = ["mcp>=1.9.2,<2", "fastmcp>=3.4.3,<4"]
+mcp = ["mcp>=2.1.0,<3.0.0", "fastmcp>=4.0.0,<5"]
 scheduler = ["croniter>=1.3", "pytz>=2023.3"]
 
 # Dependencies for Telemetry
@@ -101,7 +104,7 @@ google = ["google-genai>=1.52.0", "pydantic>=2.12.5"]
 groq = ["groq"]
 ibm = ["ibm-watsonx-ai"]
 infinity = ["infinity_client"]
-litellm = ["litellm<=1.82.6"]
+litellm = ["litellm>=1.83.0"]
 lmstudio = ["lmstudio"]
 meta = ["llama-api-client"]
 mistral = ["mistralai>=2.0.0"]
@@ -191,6 +194,7 @@ firestore = ["google-cloud-firestore"]
 gcs = ["google-cloud-storage"]
 mysql = ["pymysql", "asyncmy"]
 postgres = ["sqlalchemy", "psycopg[binary]"]
+pages = ["agno[postgres]", "agno[pgvector]", "dnspython>=2.6.1", "beautifulsoup4", "regex>=2024.5.15"]
 redis = ["redis>=4.5.4", "redisvl>=0.12.1"]  # >=4.5.4: safe cancellation of blocking commands (XREAD in event stream tail)
 s3 = ["boto3", "aioboto3"]
 sql = ["sqlalchemy"]
@@ -218,6 +222,7 @@ weaviate = ["weaviate-client"]
 # Dependencies for Knowledge
 chonkie = [
     "chonkie[semantic,code]>=1.6.7",
+    "tree-sitter-language-pack<1.16",  # 1.16.1 process() returns a dict; chonkie reads .chunks. Drop when xberg-io/tree-sitter-language-pack#183 or chonkie fixes that
 ]
 csv = ["aiofiles"]
 docx = ["python-docx"]
@@ -278,7 +283,7 @@ models = [
   "agno[groq]",
   "agno[ibm]",
   # "agno[infinity]",  # Excluded: infinity_client pins httpx<0.28.0, unresolvable next to a2a-sdk (httpx>=0.28.1) in agno[tests]
-  # "agno[litellm]",  # Temporarily disabled - litellm compromised on PyPI (March 24, 2026)
+  "agno[litellm]",
   "agno[lmstudio]",
   "agno[meta]",
   "agno[mistral]",
@@ -297,7 +302,7 @@ tools = [
   "agno[cartesia]",
   "agno[code]",
   "agno[confluence]",
-  # "agno[crawl4ai]",  # Excluded: depends on litellm, which was compromised on PyPI (March 24, 2026)
+  "agno[crawl4ai]",
   "agno[daytona]",
   "agno[ddg]",
   "agno[docling]",
@@ -415,6 +420,7 @@ embedders = [
 
 # All libraries for testing
 tests = [
+  "agno[pages]",
     "agno[a2a]",
     "agno[slack]",
     "agno[dev]",
@@ -436,6 +442,7 @@ tests = [
 
 # Models integration test dependencies
 integration-tests = [
+  "agno[pages]",
     "exa_py>=2.0.0",
     "ddgs",
     "yfinance",
@@ -595,6 +602,7 @@ module = [
   "httplib2.*",
   "groq.*",
   "hexbytes.*",
+  "httpx2.*",
   "huggingface_hub.*",
   "ibm_watsonx_ai.*",
   "imghdr.*",

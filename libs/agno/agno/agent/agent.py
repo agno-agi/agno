@@ -41,6 +41,7 @@ from agno.knowledge.protocol import KnowledgeProtocol
 
 if TYPE_CHECKING:
     from agno.learn.machine import LearningMachine
+    from agno.tools.component import ComponentTool
 
 from agno.media import Audio, File, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
@@ -114,7 +115,9 @@ class Agent:
     session_summary_manager: Optional[SessionSummaryManager] = None
 
     # --- Agent Dependencies ---
-    # Dependencies available for tools and prompt functions
+    # Dependencies available for tools and prompt functions. Callables may request
+    # agent, run_context, run_input and session; resolved before pre-hooks.
+    # On continuation, run_input is the original RunInput (None for runs stored without it).
     dependencies: Optional[Dict[str, Any]] = None
     # If True, add the dependencies to the user prompt
     add_dependencies_to_context: bool = False
@@ -604,7 +607,14 @@ class Agent:
         elif is_callable_factory(tools, excluded_types=(Toolkit, Function)):
             self.tools = tools  # type: ignore[assignment]
         else:
-            self.tools = list(tools)  # type: ignore[arg-type]
+            # A ComponentTool is not a runnable tool, and must fail here,
+            # at construction -- not at the first run.
+            from agno.tools.component import raise_if_component_tool
+
+            concrete_tools = list(tools)  # type: ignore[arg-type]
+            for tool in concrete_tools:
+                raise_if_component_tool(tool, "Agent", "To let this agent delegate to another agent, use a Team.")
+            self.tools = concrete_tools
         self.tool_call_limit = tool_call_limit
         self.tool_choice = tool_choice
         self.tool_hooks = tool_hooks
@@ -785,6 +795,30 @@ class Agent:
     # ---------------------------------------------------------------
     # _init module delegates
     # ---------------------------------------------------------------
+
+    def as_tool(
+        self,
+        name: Optional[str] = None,
+        description: Optional[str] = None,
+        title: Optional[str] = None,
+        annotations: Optional[Dict[str, Any]] = None,
+    ) -> "ComponentTool":
+        """Publish this agent as a tool with its own model-facing name, description,
+        title, and behaviour annotations.
+
+        Returns a declarative :class:`~agno.tools.component.ComponentTool` marker
+        for surfaces that turn components into tools. The tool name must be a
+        valid tool identifier (start with a letter or underscore, then
+        letters/digits/hyphens/underscores).
+
+        ``title`` is the human-facing display name; ``annotations`` are MCP behaviour
+        hints (``readOnlyHint``, ``destructiveHint``, ``idempotentHint``,
+        ``openWorldHint``) merged over the publishing surface's defaults -- see
+        :mod:`agno.tools.annotations`.
+        """
+        from agno.tools.component import ComponentTool
+
+        return ComponentTool(component=self, name=name, description=description, title=title, annotations=annotations)
 
     def set_id(self) -> None:
         return _init.set_id(self)
