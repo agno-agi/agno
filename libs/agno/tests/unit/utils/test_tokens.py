@@ -498,7 +498,10 @@ ESTIMATED_PROVIDER_DEFAULTS = {
 def _provider_default_model_ids():
     """Default `id` of every Model subclass under agno/models, read statically.
 
-    Parsed rather than imported so the check does not require every provider SDK.
+    Parsed rather than imported so the check does not require every provider SDK. Returns
+    (defaults, unresolved): `unresolved` holds `id` declarations whose default this parser
+    could not reduce to a string, so an unreadable declaration fails the coverage test
+    instead of quietly dropping out of it.
     """
     import ast
     from pathlib import Path
@@ -507,25 +510,46 @@ def _provider_default_model_ids():
 
     root = Path(agno.models.__file__).parent
     defaults = {}
+    unresolved = {}
     for path in sorted(root.rglob("*.py")):
-        if path.name == "__init__.py":
+        # Providers live in subpackages; agno/models/*.py holds Model, Message and friends.
+        if path.name == "__init__.py" or path.parent == root:
             continue
         try:
             tree = ast.parse(path.read_text())
         except SyntaxError:  # pragma: no cover - a provider module that cannot be parsed
             continue
+
+        # Module-level string constants, so `id: str = DEFAULT_GATEWAY_MODEL` resolves.
+        constants = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and isinstance(node.value, ast.Constant):
+                if isinstance(node.value.value, str):
+                    for target in node.targets:
+                        if isinstance(target, ast.Name):
+                            constants[target.id] = node.value.value
+
         for node in ast.walk(tree):
             if not isinstance(node, ast.ClassDef):
                 continue
             for stmt in node.body:
-                if (
-                    isinstance(stmt, ast.AnnAssign)
-                    and getattr(stmt.target, "id", None) == "id"
-                    and isinstance(stmt.value, ast.Constant)
-                    and isinstance(stmt.value.value, str)
-                ):
-                    defaults[stmt.value.value] = f"{path.relative_to(root)}::{node.name}"
-    return defaults
+                is_id = (isinstance(stmt, ast.AnnAssign) and getattr(stmt.target, "id", None) == "id") or (
+                    isinstance(stmt, ast.Assign) and any(getattr(t, "id", None) == "id" for t in stmt.targets)
+                )
+                if not is_id or stmt.value is None:
+                    continue
+
+                where = f"{path.relative_to(root)}::{node.name}"
+                if isinstance(stmt.value, ast.Constant):
+                    if isinstance(stmt.value.value, str):
+                        defaults[stmt.value.value] = where
+                    # `id: Optional[str] = None` means the provider has no default id
+                    continue
+                if isinstance(stmt.value, ast.Name) and stmt.value.id in constants:
+                    defaults[constants[stmt.value.id]] = where
+                    continue
+                unresolved[where] = ast.unparse(stmt.value)
+    return defaults, unresolved
 
 
 def _tiktoken_installed() -> bool:
@@ -538,15 +562,30 @@ def _tiktoken_installed() -> bool:
 
 
 @pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
-def test_provider_default_ids_have_a_known_tokenizer():
-    """Every provider's default model id resolves to a known tokenizer, or is a listed estimate."""
-    from agno.utils.tokens import TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE, resolve_tokenizer_source
+def test_every_provider_default_id_is_readable():
+    """A default `id` this parser cannot read would drop out of the coverage check below."""
+    _, unresolved = _provider_default_model_ids()
+    assert not unresolved, (
+        "These providers declare a default id this check cannot resolve, so they are not "
+        f"covered by test_provider_default_ids_have_a_known_tokenizer: {unresolved}"
+    )
 
+
+@pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
+def test_provider_default_ids_have_a_known_tokenizer():
+    """Every provider's default model id belongs to a mapped family, or is a listed estimate.
+
+    Asks whether the mapping has a gap, via is_family_mapped(), rather than what this machine
+    resolves to -- otherwise a machine without the optional tokenizers package would report
+    every mapped family as a gap, or worse, pass while silently counting with the estimate.
+    """
+    from agno.utils.tokens import is_family_mapped
+
+    defaults, _ = _provider_default_model_ids()
     unlisted = {
         model_id: where
-        for model_id, where in _provider_default_model_ids().items()
-        if resolve_tokenizer_source(model_id) == TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE
-        and model_id not in ESTIMATED_PROVIDER_DEFAULTS
+        for model_id, where in defaults.items()
+        if not is_family_mapped(model_id) and model_id not in ESTIMATED_PROVIDER_DEFAULTS
     }
     assert not unlisted, (
         "These provider defaults silently fall back to OpenAI's encoding. Map the family in "
@@ -557,13 +596,13 @@ def test_provider_default_ids_have_a_known_tokenizer():
 @pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
 def test_estimated_provider_defaults_has_no_stale_entries():
     """The estimate list does not outlive the ids it excuses."""
-    from agno.utils.tokens import TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE, resolve_tokenizer_source
+    from agno.utils.tokens import is_family_mapped
 
-    defaults = _provider_default_model_ids()
+    defaults, _ = _provider_default_model_ids()
     stale = {
         model_id: ("no longer a provider default" if model_id not in defaults else "now has a real tokenizer")
         for model_id in ESTIMATED_PROVIDER_DEFAULTS
-        if model_id not in defaults or resolve_tokenizer_source(model_id) != TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE
+        if model_id not in defaults or is_family_mapped(model_id)
     }
     assert not stale, f"Remove these from ESTIMATED_PROVIDER_DEFAULTS: {stale}"
 
@@ -618,3 +657,34 @@ def test_estimated_count_warns_once_per_model_id(monkeypatch):
 
     tokens_module._select_tokenizer("gpt-4o")
     assert len(warnings) == 1, "an exactly matched model must not be reported as an estimate"
+
+
+@pytest.mark.skipif(not _tiktoken_installed(), reason="tiktoken is not installed")
+def test_mapped_family_reports_the_estimate_when_tokenizers_is_missing(monkeypatch):
+    """tokenizers is optional: a mapped family must not be reported as exact without it.
+
+    Setting sys.modules["tokenizers"] to None makes `import tokenizers` raise ImportError,
+    so this exercises the real resolution path rather than a stubbed one.
+    """
+    import sys
+
+    from agno.utils import tokens as tokens_module
+
+    monkeypatch.setitem(sys.modules, "tokenizers", None)
+    tokens_module._tokenizers_available.cache_clear()
+    tokens_module._get_hf_tokenizer.cache_clear()
+    try:
+        model_id = "command-a-03-2025"
+
+        # The family is still mapped; only this machine cannot act on it.
+        assert tokens_module.is_family_mapped(model_id)
+        assert tokens_module.resolve_tokenizer_source(model_id) == (
+            tokens_module.TOKENIZER_SOURCE_HUGGINGFACE_UNAVAILABLE
+        )
+
+        # And the reported source matches what counting actually does.
+        source, _ = tokens_module._select_tokenizer(model_id)
+        assert source == tokens_module.TOKENIZER_SOURCE_TIKTOKEN
+    finally:
+        tokens_module._tokenizers_available.cache_clear()
+        tokens_module._get_hf_tokenizer.cache_clear()

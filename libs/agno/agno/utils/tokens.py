@@ -21,10 +21,13 @@ DEFAULT_IMAGE_HEIGHT = 1024
 # Tokenizer sources, most to least faithful.
 #
 # "huggingface"      the model family's own tokenizer
+# "huggingface-unavailable"  the family is mapped, but the tokenizers package is missing,
+#                    so counting falls back to the estimate below
 # "tiktoken-exact"   tiktoken recognised the model id, so the encoding is the model's own
 # "tiktoken-estimate" no tokenizer for this family; OpenAI's o200k_base is used as an estimate
 # "none"             no tokenizer library available; character-based estimation
 TOKENIZER_SOURCE_HUGGINGFACE = "huggingface"
+TOKENIZER_SOURCE_HUGGINGFACE_UNAVAILABLE = "huggingface-unavailable"
 TOKENIZER_SOURCE_TIKTOKEN = "tiktoken"
 TOKENIZER_SOURCE_TIKTOKEN_EXACT = "tiktoken-exact"
 TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE = "tiktoken-estimate"
@@ -133,19 +136,51 @@ def _warn_estimated_token_count(model_id: str) -> None:
     )
 
 
-def resolve_tokenizer_source(model_id: str) -> str:
-    """Report which tokenizer count_text_tokens() would use for a model id.
+@lru_cache(maxsize=1)
+def _tokenizers_available() -> bool:
+    try:
+        import tokenizers  # noqa: F401
 
-    Returns one of the TOKENIZER_SOURCE_* constants. Exposed so callers, and the test suite,
-    can tell an exact count from an estimate without triggering a tokenizer download.
-    """
-    if _match_hf_tokenizer_repo(model_id) is not None:
-        return TOKENIZER_SOURCE_HUGGINGFACE
-    if _is_exact_tiktoken_model(model_id):
-        return TOKENIZER_SOURCE_TIKTOKEN_EXACT
+        return True
+    except ImportError:
+        return False
+
+
+@lru_cache(maxsize=1)
+def _tiktoken_available() -> bool:
     try:
         import tiktoken  # noqa: F401
+
+        return True
     except ImportError:
+        return False
+
+
+def is_family_mapped(model_id: str) -> bool:
+    """Whether a model id belongs to a family agno knows a real tokenizer for.
+
+    Independent of which optional packages are installed: this answers whether the mapping
+    has a gap, not whether this machine can act on it.
+    """
+    return _match_hf_tokenizer_repo(model_id) is not None or _is_exact_tiktoken_model(model_id)
+
+
+def resolve_tokenizer_source(model_id: str) -> str:
+    """Report which tokenizer count_text_tokens() will use for a model id, on this machine.
+
+    Returns one of the TOKENIZER_SOURCE_* constants, without downloading anything. Note that
+    TOKENIZER_SOURCE_HUGGINGFACE means the family is mapped and the tokenizers package is
+    importable; fetching that tokenizer can still fail at runtime, in which case the count
+    falls back to the estimate and _warn_estimated_token_count reports it.
+    """
+    if _match_hf_tokenizer_repo(model_id) is not None:
+        if _tokenizers_available():
+            return TOKENIZER_SOURCE_HUGGINGFACE
+        # The family is mapped, but without the tokenizers package the count is an estimate.
+        return TOKENIZER_SOURCE_HUGGINGFACE_UNAVAILABLE
+    if _is_exact_tiktoken_model(model_id):
+        return TOKENIZER_SOURCE_TIKTOKEN_EXACT
+    if not _tiktoken_available():
         return TOKENIZER_SOURCE_NONE
     return TOKENIZER_SOURCE_TIKTOKEN_ESTIMATE
 
