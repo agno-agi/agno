@@ -71,11 +71,12 @@ class LlamaOpenAI(OpenAILike):
         Format a message into the format expected by Llama API.
 
         The base class calls this with compress_tool_results as a positional
-        argument, so the override must accept it and forward it.
+        argument, so the override must accept it even though the Llama
+        formatter does not use it.
 
         Args:
             message (Message): The message to format.
-            compress_tool_results (bool): Whether to compress tool results.
+            compress_tool_results (bool): Accepted for signature compatibility.
 
         Returns:
             Dict[str, Any]: The formatted message.
