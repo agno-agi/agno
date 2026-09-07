@@ -14,6 +14,7 @@ import pytest
 pytest.importorskip("fastmcp")
 
 import asyncio  # noqa: E402
+import inspect  # noqa: E402
 import re  # noqa: E402
 import time  # noqa: E402
 from contextlib import asynccontextmanager  # noqa: E402
@@ -1207,6 +1208,64 @@ async def test_assigning_config_to_mcp_server_attribute_applies_config():
     assert os.mcp_server is True
     assert os.mcp_config is not None
     assert await _tool_names(os) == {"ping"}
+
+
+# ----------------------------- stateless transport -----------------------------
+
+
+def _captured_http_app_kwargs(monkeypatch, os_instance) -> dict:
+    """Build the MCP app, returning the kwargs handed to fastmcp's ``http_app``."""
+    captured: dict = {}
+    real_build = mcp_mod.build_mcp_server
+
+    def _spy_build(os_arg):
+        server = real_build(os_arg)
+        real_http_app = server.http_app
+
+        def _spy_http_app(**kwargs):
+            captured.update(kwargs)
+            return real_http_app(**kwargs)
+
+        # functools.wraps keeps the signature that get_mcp_server introspects.
+        _spy_http_app.__signature__ = inspect.signature(real_http_app)  # type: ignore[attr-defined]
+        monkeypatch.setattr(server, "http_app", _spy_http_app)
+        return server
+
+    monkeypatch.setattr(mcp_mod, "build_mcp_server", _spy_build)
+    get_mcp_server(os_instance)
+    return captured
+
+
+def test_stateless_defaults_off_and_is_not_passed(monkeypatch):
+    """Default config leaves fastmcp's own default in place rather than forcing False."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig())
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert "stateless_http" not in kwargs
+
+
+def test_stateless_true_is_passed_to_http_app(monkeypatch):
+    """``MCPConfig(stateless=True)`` reaches fastmcp as ``stateless_http=True``."""
+    os = AgentOS(agents=[_agent()], mcp=MCPConfig(stateless=True))
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert kwargs["stateless_http"] is True
+
+
+def test_stateless_is_not_passed_for_plain_mcp_true(monkeypatch):
+    """``mcp=True`` builds no MCPConfig, so the flag is simply absent."""
+    os = AgentOS(agents=[_agent()], mcp=True)
+
+    kwargs = _captured_http_app_kwargs(monkeypatch, os)
+
+    assert "stateless_http" not in kwargs
+
+
+def test_stateless_config_field_defaults_to_false():
+    assert MCPConfig().stateless is False
+    assert MCPConfig(stateless=True).stateless is True
 
 
 # ----------------------------- server identity -----------------------------

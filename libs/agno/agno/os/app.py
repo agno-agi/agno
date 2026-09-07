@@ -312,6 +312,7 @@ class AgentOS:
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
+        public: Optional[Any] = None,
     ):
         """Initialize AgentOS.
 
@@ -425,6 +426,8 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
+        self._public_explicit_id = id
+        self.public = public
         self.mcp_config: Optional[MCPConfig] = None
         # ``mcp_server`` is the deprecated alias for ``mcp``.
         if mcp is not None and mcp_server is not None and mcp != mcp_server:
@@ -744,10 +747,18 @@ class AgentOS:
 
         # Add A2A interface if relevant
         has_a2a_interface = False
+        self._public_interface_routes: List[tuple[str, str]] = []
         for interface in self.interfaces:
             if not has_a2a_interface and interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
             interface_router = interface.get_router()
+            if getattr(interface, "authenticates_own_requests", False):
+                self._public_interface_routes.extend(
+                    (method, route.path)
+                    for route in interface_router.routes
+                    if hasattr(route, "methods") and hasattr(route, "path")
+                    for method in route.methods
+                )
             self._add_router(app, interface_router)
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
@@ -1267,6 +1278,12 @@ class AgentOS:
         setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
+        if self.public is not None:
+            from agno.os.public import PublicSurface
+
+            if not isinstance(self.public, PublicSurface):
+                raise ValueError("AgentOS.public must be a PublicSurface")
+            self.public._bind(self)
         # Pick up MCP tools added to the registry after construction, before the
         # lifespan that connects them is assembled below
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
@@ -1541,6 +1558,23 @@ class AgentOS:
         if service_account_verifier is not None:
             fastapi_app.state.service_account_verifier = service_account_verifier
 
+        if self.public is not None:
+            from contextlib import asynccontextmanager
+
+            from agno.os.public._middleware import PublicMiddleware
+
+            original_lifespan = fastapi_app.router.lifespan_context
+
+            @asynccontextmanager
+            async def public_lifespan(app):
+                assert self.public is not None
+                await self.public._limiter._aprepare()
+                async with original_lifespan(app) as state:
+                    yield state
+
+            fastapi_app.router.lifespan_context = public_lifespan
+            fastapi_app.add_middleware(PublicMiddleware, surface=self.public, agent_os=self)
+
         auth_configured = bool(self.authorization or jwt_env_configured or security_key)
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
@@ -1559,6 +1593,15 @@ class AgentOS:
         from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
         fastapi_app.add_middleware(TrailingSlashMiddleware)
+
+        if self.public is not None:
+            from starlette.middleware.cors import CORSMiddleware
+
+            # Keep preflights and admission/auth failures under the configured CORS policy.
+            cors = [middleware for middleware in fastapi_app.user_middleware if middleware.cls is CORSMiddleware]
+            fastapi_app.user_middleware[:] = cors + [
+                middleware for middleware in fastapi_app.user_middleware if middleware.cls is not CORSMiddleware
+            ]
 
         if self.base_app is not None:
             self._base_app_prepared = True
