@@ -202,6 +202,7 @@ cassandra = ["cassio"]
 chromadb = ["chromadb"]
 clickhouse = ["clickhouse-connect"]
 couchbase = ["couchbase"]
+elasticsearch = ["elasticsearch>=8.0.0"]
 lancedb = ["lancedb>=0.26.0"]
 milvusdb = ["pymilvus>=2.5.10"]
 mongodb = ["pymongo[srv]"]
@@ -371,6 +372,7 @@ vectordbs = [
   "agno[chromadb]",
   "agno[clickhouse]",
   "agno[couchbase]",
+  "agno[elasticsearch]",
   "agno[lancedb]",
   "agno[milvusdb]",
   "agno[mongodb]",
@@ -572,6 +574,7 @@ module = [
   "docx.*",
   "duckdb.*",
   "ddgs.*",
+  "elasticsearch.*",
   "email_validator.*",
   "e2b_code_interpreter.*",
   "ipykernel.*",

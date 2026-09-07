@@ -68,6 +68,16 @@ No tests recorded yet.
 
 ---
 
+### elasticsearch_db.py
+
+**Status:** NOT RUN
+
+**Description:** Elasticsearch 9.1.0 on localhost:9200, index `per_user_isolation_demo`. `user_id` keyword field scoped with `term` OR `must_not exists`, applied inside the `knn` clause so the scope pre-filters.
+
+**Result:** Not executed - no OPENAI_API_KEY available in this environment, and the example needs both an embedder and a model. Compiles clean and passes `check_cookbook_pattern.py` (0 violations). The same isolation behaviour it demonstrates was verified end-to-end against a live Elasticsearch 9.1.0 cluster with a deterministic embedder: Alice and Bob each saw their own chunk plus the shared one, never each other's, and the admin view saw all three.
+
+---
+
 ### lance_db.py
 
 **Status:** PASS
