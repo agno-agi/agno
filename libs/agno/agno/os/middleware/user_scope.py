@@ -171,20 +171,23 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     return user_id
 
 
-def sync_directory_from_run(request: Request, user_id: Optional[str]) -> None:
-    """Register a run's ``user_id`` in the user directory when the caller is NOT authenticated.
+def sync_directory_from_request(request: Request, user_id: Optional[str]) -> None:
+    """Register a request's self-asserted ``user_id`` in the user directory when the caller is NOT
+    authenticated.
 
-    The directory is a roster, not a security boundary: with no auth configured a run still
-    carries a ``user_id`` (a form field the caller asserts), and this registers that person so a
-    no-IdP deployment still gets a working directory -- the "user id chegizkhan comes in on a run
-    and it just works" path for local/demo/cookbook use.
+    The directory is a roster, not a security boundary: with no auth configured a request still
+    carries a ``user_id`` (a run's form field, or a query param), and this registers that person so
+    a no-IdP deployment still gets a working directory -- the "user id chegizkhan comes in and it
+    just works" path for local/demo/cookbook use. Called from the run endpoints (form user_id) and
+    from the no-auth identity middleware (query user_id) so any endpoint fills the roster, matching
+    the authenticated path where the middleware provisions on every request.
 
     Deliberately narrow:
       * Only for UNAUTHENTICATED requests. When a token was verified the auth middleware /
         WebSocket / MCP gates already provisioned (and enforced ``disabled``), so we skip.
       * Only PROVISIONS -- it does NOT enforce the ``disabled`` kill-switch. Here the id is
         self-asserted (a caller could send any id), so ``disabled`` is a real revocation only
-        under authentication/authorization, where identity is verified.
+        under authorization, where identity is verified.
       * Respects ``auto_provision``: an unknown id is created only when the operator opted in,
         exactly as the authenticated path does.
     """

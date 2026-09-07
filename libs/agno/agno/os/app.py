@@ -1655,11 +1655,19 @@ class AgentOS:
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
             effective_key = None if (self.authorization or jwt_env_configured) else security_key
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
-        elif self.user_directory is not None:
-            # No auth middleware is installed (that path seeds the directory onto app.state as a
-            # side effect), but a no-auth roster still needs its store there so an unauthenticated
-            # run can register its user_id. Seed it directly.
-            self._seed_user_directory(fastapi_app)
+        elif self.user_directory is not None or self.user_isolation:
+            # No auth middleware is installed (that path seeds identity as a side effect), but a
+            # no-auth directory / isolation still key off the request's self-asserted user_id. Seed
+            # the directory store, record the isolation flag, and install a lightweight middleware
+            # that resolves the user_id (query string, never the body) to provision the directory
+            # and enable isolation scoping on any endpoint -- matching the authenticated path.
+            if self.user_directory is not None:
+                self._seed_user_directory(fastapi_app)
+            fastapi_app.state.user_isolation_enabled = self.user_isolation
+
+            from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
+
+            fastapi_app.add_middleware(NoAuthIdentityMiddleware, user_isolation=self.user_isolation)
 
         # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
         # AgentOS exempts them on the AuthMiddleware it installs itself, but an agno
@@ -2060,6 +2068,15 @@ class AgentOS:
                 "UserDirectoryConfig(default_role=...) is set but no role_store is configured. "
                 "Default roles are granted through the role store, so configure managed roles via "
                 "AuthorizationConfig(role_store=...) (not authorization_provider=) for it to apply."
+            )
+        elif fastapi_app.state.role_store is None:
+            # A directory with no role store is valid (a pure roster), but say so once at boot: no
+            # roles apply, provisioned users get none, and the /authz roles API is not mounted. This
+            # is the signal a UI uses to hide role management for this deployment.
+            log_info(
+                "AgentOS(user_directory=...) is configured without managed roles (no role_store). "
+                "The directory works as a roster; roles are not available and provisioned users get "
+                "none. Add AuthorizationConfig(role_store=...) to enable roles and the /authz API."
             )
 
     def get_routes(self) -> List[Any]:

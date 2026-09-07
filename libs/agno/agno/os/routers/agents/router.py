@@ -59,7 +59,7 @@ from agno.os.middleware.user_scope import (
     caller_is_admin,
     get_scoped_user_id,
     run_matches_component,
-    sync_directory_from_run,
+    sync_directory_from_request,
     verify_run_in_session,
     verify_run_in_session_via_db,
 )
@@ -699,7 +699,7 @@ def get_agent_router(
             user_id = state_user_id
         # No-auth roster: an unauthenticated run's user_id still registers the person in the
         # directory (no-op when auth is on -- the middleware already provisioned/enforced).
-        sync_directory_from_run(request, user_id)
+        sync_directory_from_request(request, user_id)
         if hasattr(request.state, "session_id") and request.state.session_id is not None:
             if session_id and session_id != request.state.session_id:
                 log_warning("Session ID parameter passed in both request state and kwargs, using request state")

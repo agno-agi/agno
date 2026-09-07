@@ -83,8 +83,8 @@ def test_no_auth_directory_does_not_enforce_disabled(tmp_path):
 
 def test_authenticated_directory_is_not_double_provisioned_by_the_run_hook(tmp_path):
     """The no-auth run hook must stay dormant when a token was verified: the middleware already
-    provisioned/enforced, so sync_directory_from_run is a no-op on authenticated requests."""
-    from agno.os.middleware.user_scope import sync_directory_from_run
+    provisioned/enforced, so sync_directory_from_request is a no-op on authenticated requests."""
+    from agno.os.middleware.user_scope import sync_directory_from_request
 
     class _State:
         authenticated = True
@@ -98,7 +98,7 @@ def test_authenticated_directory_is_not_double_provisioned_by_the_run_hook(tmp_p
 
     # Would raise if it tried to use the bogus user_store; the authenticated short-circuit
     # returns before touching it.
-    sync_directory_from_run(_Req(), "someone")
+    sync_directory_from_request(_Req(), "someone")
 
 
 def test_user_isolation_top_level_flag_wires_through_under_auth(tmp_path):
@@ -113,6 +113,103 @@ def test_user_isolation_top_level_flag_wires_through_under_auth(tmp_path):
     )
     app = os_.get_app()
     assert getattr(app.state, "user_isolation_enabled", False) is True
+
+
+def test_no_auth_provisioning_fires_on_any_endpoint_not_just_runs(tmp_path):
+    """Regression for the run-only limitation: without auth, provisioning now fires on any endpoint
+    that carries a user_id (via the no-auth identity middleware), not only /runs. A GET with
+    ?user_id=ghost registers ghost."""
+    from fastapi.testclient import TestClient
+
+    os_ = _os(tmp_path, user_directory=True)  # bare True -> auto_provision on
+    client = TestClient(os_.get_app())
+    assert os_.user_directory.store.get("ghost") is None
+
+    r = client.get("/agents/research-agent", params={"user_id": "ghost"})
+    assert r.status_code == 200, r.text
+    assert os_.user_directory.store.get("ghost") is not None  # provisioned off a non-run GET
+
+
+def test_user_isolation_without_auth_sets_scoping_and_provisions(tmp_path):
+    """user_isolation must work without auth: the no-auth identity middleware reads the self-asserted
+    user_id and sets request.state (user_id + user_isolation_enabled) so get_scoped_user_id scopes to
+    it, and provisions the directory. Tested at the middleware directly (no endpoint noise)."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    from agno.os.authz.user_store import ManagedUserStore
+    from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
+    from agno.os.middleware.user_scope import get_scoped_user_id
+
+    store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "m.db")))
+    app_obj = SimpleNamespace(
+        state=SimpleNamespace(
+            user_store=store,
+            user_auto_provision=True,
+            role_store=None,
+            user_default_role=None,
+            user_email_claim="email",
+            user_name_claim="name",
+        )
+    )
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/x",
+        "query_string": b"user_id=zara",
+        "headers": [],
+        "app": app_obj,
+        "state": {},
+    }
+    request = Request(scope)
+
+    captured = {}
+
+    async def call_next(req):
+        captured["scoped"] = get_scoped_user_id(req)  # what a downstream read would scope to
+        return SimpleNamespace(status_code=200)
+
+    mw = NoAuthIdentityMiddleware(app=None, user_isolation=True)
+    asyncio.run(mw.dispatch(request, call_next))
+
+    assert captured["scoped"] == "zara"  # isolation scopes to the self-asserted id
+    assert store.get("zara") is not None  # and the directory was provisioned
+
+
+def test_no_auth_isolation_without_a_user_id_stays_unscoped_not_403(tmp_path):
+    """Advisory, not enforced: with no auth and no user_id on the request, isolation must fall back
+    to unscoped (None) rather than 403 -- there is no verified identity to fail closed on."""
+    import asyncio
+    from types import SimpleNamespace
+
+    from starlette.requests import Request
+
+    from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
+    from agno.os.middleware.user_scope import get_scoped_user_id
+
+    app_obj = SimpleNamespace(state=SimpleNamespace(user_store=None, user_auto_provision=False))
+    scope = {
+        "type": "http",
+        "method": "GET",
+        "path": "/x",
+        "query_string": b"",
+        "headers": [],
+        "app": app_obj,
+        "state": {},
+    }
+    request = Request(scope)
+
+    captured = {}
+
+    async def call_next(req):
+        captured["scoped"] = get_scoped_user_id(req)
+        return SimpleNamespace(status_code=200)
+
+    mw = NoAuthIdentityMiddleware(app=None, user_isolation=True)
+    asyncio.run(mw.dispatch(request, call_next))
+    assert captured["scoped"] is None  # no id -> unscoped, no 403
 
 
 def test_role_store_still_requires_authorization(tmp_path):
