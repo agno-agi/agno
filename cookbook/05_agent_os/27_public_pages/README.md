@@ -139,3 +139,47 @@ Add `--check` to validate the configuration without starting the server.
 Successful public Team runs retain native member tool results, including member
 failure details when the leader recovers. Failed top-level runs use the same
 sanitized errors and output bounds as public Agents.
+
+### Read-only page commands
+
+`PageFileSystem(knowledge=knowledge)` provides explicit `run_command` and
+`arun_command` methods for `ls`, `tree`, `find`, `cat`, `head`, `tail`, `wc`,
+`rg` and `grep`. Install `agno[pages]`; regex is optional outside this adapter.
+After publishing the demo corpus:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/page_filesystem.py 'cat /introduction'
+```
+
+Commands cannot execute processes, expand shell expressions or write files.
+Direct reads use the requested page; directory listings fetch scoped metadata;
+literal grep uses bounded Knowledge scans. Cache bodies belong to one adapter
+instance and remain subject to publication checks. Command workers retain their
+capacity through cancellation until work exits. Output defaults to 30,000
+characters plus a continuation notice. Constructor limits also bound regex time,
+command lifetime, cache bytes/entries, command read volume and catalog entries.
+An unavailable publication raises `PageError`; the application owns its wording.
+
+Expose a command tool explicitly with `tools()`. Agno selects its sync or async
+implementation for the run, and page errors become readable tool results:
+
+```python
+knowledge.setup()  # Once during application startup.
+page_files = PageFileSystem(knowledge=knowledge)
+agent = Agent(tools=[page_files.tools()])
+```
+
+Customize the model-visible name and description without a wrapper:
+
+```python
+agent = Agent(tools=[page_files.tools(
+    tool_name="query_docs_filesystem",
+    description="Read or search the published docs using ls, cat or rg.",
+)])
+```
+
+Direct `run_command`/`arun_command` calls still raise `PageError`. Applications
+can retain custom wrappers for their own error wording or tracing. Creating the
+toolkit does not initialize storage, retrieve context or add prompt instructions.
+`get_corpus`/`aget_corpus` expose command-local metadata snapshots for offline
+evaluation; subsequent mapping reads are synchronous.

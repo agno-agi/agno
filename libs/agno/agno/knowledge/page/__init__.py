@@ -1,5 +1,6 @@
 """Public page types; storage and discovery are loaded only when needed."""
 
+from agno.knowledge.page.filesystem import PageFileSystem
 from agno.knowledge.page.types import (
     GrepMatch,
     GrepResult,
@@ -24,6 +25,7 @@ __all__ = [
     "GrepMatch",
     "GrepResult",
     "Page",
+    "PageFileSystem",
     "PageChanged",
     "PageError",
     "PageList",

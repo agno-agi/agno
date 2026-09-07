@@ -1714,3 +1714,326 @@ def test_legacy_default_hnsw_index_requires_explicit_operator_rebuild(corpus):
             conn.execute(text("SELECT reloptions FROM pg_class WHERE relname=:name"), {"name": name}).scalar() is None
         )
     assert knowledge.read_page("/agent").text.startswith("# Agent")
+
+
+@pytest.mark.asyncio
+async def test_page_filesystem_public_reads_are_lazy_scoped_and_async_equivalent(corpus, monkeypatch):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge, _, site = corpus
+    site["https://docs.example.com/llms.txt"] += "\n- [Scoped](https://docs.example.com/scope/a.md)"
+    site["https://docs.example.com/scope/a.md"] = "# Scoped\n\nneedle\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    listing, reading, grepping = knowledge.list_pages, knowledge.read_page, knowledge.grep_pages
+    calls = []
+
+    def list_pages(**kwargs):
+        calls.append(("list", kwargs))
+        return listing(**kwargs)
+
+    def read_page(path, **kwargs):
+        calls.append(("read", path))
+        return reading(path, **kwargs)
+
+    def grep_pages(*args, **kwargs):
+        calls.append(("grep", kwargs))
+        return grepping(*args, **kwargs)
+
+    monkeypatch.setattr(knowledge, "list_pages", list_pages)
+    monkeypatch.setattr(knowledge, "read_page", read_page)
+    monkeypatch.setattr(knowledge, "grep_pages", grep_pages)
+    files = PageFileSystem(knowledge=knowledge)
+    sync = files.run_command("cat /agent")
+    assert "Use Agent with tools" in sync
+    assert calls == [("list", {"limit": 1}), ("read", "/agent.md")]
+    calls.clear()
+    assert await files.arun_command("cat /agent") == sync
+    assert calls == [("list", {"limit": 1}), ("read", "/agent.md")]
+    calls.clear()
+    assert files.run_command("ls /scope") == "a.md"
+    lists = [kwargs for kind, kwargs in calls if kind == "list"]
+    assert lists == [
+        {"limit": 1},
+        {"prefix": "/scope/", "cursor": None, "limit": 200},
+        {"prefix": "/scope.md", "limit": 1},
+    ]
+    assert not any(kind == "read" for kind, _ in calls)
+    calls.clear()
+    assert files.run_command("rg -l needle /") == "[1 matching lines in 1 files]\n/scope/a.md"
+    assert calls == [("list", {"limit": 1}), ("grep", {"prefix": "/", "ignore_case": False, "limit": 100})]
+
+
+def test_page_filesystem_real_publication_invalidates_cached_and_continued_reads(corpus, monkeypatch):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge, _, site = corpus
+    url = "https://docs.example.com/agent.md"
+    site[url] = "# Old\n" + "old text\n" * 4000
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    files = PageFileSystem(knowledge=knowledge)
+    assert "old text" in files.get_corpus()["/agent.md"]
+    old_snapshot = files.get_corpus()
+    site[url] = "# New\n\nNew body\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    with pytest.raises(PageChanged):
+        old_snapshot["/agent.md"]
+    assert "New body" in files.run_command("cat /agent")
+    site[url] = "# Long\n" + "old text\n" * 4000
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    original = knowledge.read_page
+
+    def refresh_after_first_read(path, **kwargs):
+        result = original(path, **kwargs)
+        if result.next_offset is not None and kwargs.get("offset", 0) == 0:
+            site[url] = "# Refreshed\n\nNew body\n"
+            knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+        return result
+
+    monkeypatch.setattr(knowledge, "read_page", refresh_after_first_read)
+    with pytest.raises(PageChanged):
+        files.run_command("cat /agent")
+    assert "New body" in files.run_command("cat /agent")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_command", [False, True])
+@pytest.mark.parametrize(
+    "command",
+    ["ls /Getting%20Started", "ls /Getting%20Started.md", "tree /Getting%20Started", "tree /Getting%20Started.md"],
+)
+async def test_page_filesystem_encoded_file_listing_uses_canonical_metadata(
+    corpus, monkeypatch, command, async_command
+):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge, _, site = corpus
+    site["https://docs.example.com/llms.txt"] = "- [Getting Started](https://docs.example.com/Getting%20Started.md)"
+    site["https://docs.example.com/Getting%20Started.md"] = "# Getting Started\n\nPublished body.\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    assert knowledge.list_pages().pages[0].path == "/Getting Started.md"
+
+    def no_body_reads(*args, **kwargs):
+        pytest.fail("file listing must use metadata only")
+
+    monkeypatch.setattr(knowledge, "read_page", no_body_reads)
+    files = PageFileSystem(knowledge=knowledge)
+    output = await files.arun_command(command) if async_command else files.run_command(command)
+    assert output == "/Getting%20Started.md"
+
+
+def _publish_filesystem_pages(corpus, documents):
+    knowledge, _, site = corpus
+    site["https://docs.example.com/llms.txt"] = "\n".join(
+        f"- [Page](https://docs.example.com{path})" for path in documents
+    )
+    site.update(("https://docs.example.com" + path, body) for path, body in documents.items())
+    assert knowledge.sync_pages(url="https://docs.example.com/llms.txt").status == "completed"
+    return knowledge
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("target", ["/concepts/agent", "/concepts/agent.md"])
+async def test_page_filesystem_exact_search_cannot_be_starved_by_sibling(corpus, monkeypatch, async_mode, target):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge = _publish_filesystem_pages(
+        corpus,
+        {
+            "/concepts/agent-intro.md": "needle sibling\n" * 110,
+            "/concepts/agent.md": "needle requested\n",
+            "/concepts/agent/child.md": "needle child\n",
+        },
+    )
+    original = knowledge.list_pages
+
+    def scoped_listing(**kwargs):
+        assert kwargs == {"limit": 1} or kwargs["prefix"].startswith("/concepts/agent")
+        return original(**kwargs)
+
+    monkeypatch.setattr(knowledge, "list_pages", scoped_listing)
+    files = PageFileSystem(knowledge=knowledge)
+    command = "rg needle " + target
+    result = await files.arun_command(command) if async_mode else files.run_command(command)
+    assert "/concepts/agent.md:1:needle requested" in result
+    assert "sibling" not in result
+    assert ("needle child" in result) == (not target.endswith(".md"))
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["lazy", "eager", "async"])
+async def test_page_filesystem_canonical_paths_and_scope_cover_all_access(corpus, mode):
+    from agno.knowledge.page import PageFileSystem
+    from agno.knowledge.page._commands import run_command
+
+    knowledge = _publish_filesystem_pages(
+        corpus,
+        {
+            "/Getting%20Started/a%20b.md": "needle requested\n",
+            "/Getting%20Started/index.md": "needle index\n",
+            "/Getting%20Started-sibling.md": "needle sibling\n",
+            "/outside.md": "needle outside\n",
+        },
+    )
+    files = PageFileSystem(knowledge=knowledge)
+    prefix = "/Getting%20Started/"
+    mapping = (
+        await files.aget_corpus(prefix=prefix)
+        if mode == "async"
+        else files.get_corpus(lazy=mode == "lazy", prefix=prefix)
+    )
+    assert mapping["/Getting%20Started/a%20b.md"] == "needle requested\n"
+    assert "/Getting%20Started/a%20b.md" in mapping
+    assert "/outside.md" not in mapping and mapping.get("/outside.md") is None
+    assert set(mapping) == {"/Getting Started/a b.md", "/Getting Started/index.md"}
+    for command in ("ls", "find", "tree", "rg needle", 'rg "needl[e]"'):
+        result = run_command(command + " /Getting%20Started", mapping)
+        assert "a b.md" in result
+        assert "outside" not in result and "sibling" not in result
+    for command in ("cat", "head", "tail", "wc", "rg needle", 'rg "needl[e]"'):
+        result = run_command(command + " /Getting%20Started/a%20b", mapping)
+        assert "a b.md" in result and "no such" not in result
+    assert "needle index" in run_command("cat /Getting%20Started", mapping)
+    assert "needle outside" not in run_command("cat /outside /Getting%20Started/a%20b", mapping)
+    for command in ("rg needle /", 'rg "needl[e]" /'):
+        result = run_command(command, mapping)
+        assert "needle requested" in result and "outside" not in result and "sibling" not in result
+    # A bare prefix keeps public page API prefix semantics, including sibling names.
+    assert "/Getting Started-sibling.md" in files.get_corpus(prefix="/Getting%20Started")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("command", ["cat", "head", "tail", "wc"])
+async def test_page_filesystem_invalid_targets_do_not_abort_later_reads(corpus, async_mode, command):
+    from agno.knowledge.page import PageFileSystem
+
+    knowledge = _publish_filesystem_pages(corpus, {"/valid.md": "needle requested\n"})
+    files = PageFileSystem(knowledge=knowledge)
+    query = command + " /scope/../valid /scope/./valid /valid#heading /valid?query /valid"
+    result = await files.arun_command(query) if async_mode else files.run_command(query)
+    assert result.count("invalid page path") == 4
+    assert "/valid.md" in result
+    if command != "wc":
+        assert "needle requested" in result
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("direct", [False, True])
+async def test_page_filesystem_unpublished_selected_page_retains_typed_error(corpus, monkeypatch, async_mode, direct):
+    from agno.knowledge.page import PageFileSystem, PageNotFound
+
+    documents = {"/scope/a.md": "needle\n" * 4000, "/scope/b.md": "needle\n"}
+    knowledge = _publish_filesystem_pages(corpus, documents)
+    original = knowledge.read_page
+    refreshed = False
+
+    def unpublish(path, **kwargs):
+        nonlocal refreshed
+        if path == "/scope/a.md" and not refreshed and (not direct or kwargs.get("offset", 0) > 0):
+            refreshed = True
+            _publish_filesystem_pages(corpus, {"/scope/b.md": documents["/scope/b.md"]})
+        return original(path, **kwargs)
+
+    monkeypatch.setattr(knowledge, "read_page", unpublish)
+    files = PageFileSystem(knowledge=knowledge)
+    command = "cat /scope/a" if direct else 'rg "needl[e]" /scope'
+    with pytest.raises(PageNotFound):
+        if async_mode:
+            await files.arun_command(command)
+        else:
+            files.run_command(command)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_page_filesystem_tool_reads_published_pages_and_preserves_revision_errors(
+    corpus, monkeypatch, async_mode
+):
+    import json
+
+    from agno.knowledge.page import PageFileSystem
+    from agno.tools.function import FunctionCall
+
+    knowledge, _, _ = corpus
+    assert knowledge.sync_pages(url="https://docs.example.com/llms.txt").updated == 1
+    files = PageFileSystem(knowledge=knowledge)
+    toolkit = files.tools(tool_name="query_docs_filesystem", description="Read published docs.")
+    functions = toolkit.get_async_functions() if async_mode else toolkit.get_functions()
+    function = functions["query_docs_filesystem"]
+    function.process_entrypoint()
+    call = FunctionCall(function=function, arguments={"command": "cat /agent"})
+    result = await call.aexecute() if async_mode else call.execute()
+    assert result.status == "success" and "# Agent" in result.result
+
+    def changed(*args, **kwargs):
+        raise PageChanged(current_revision="new-publication")
+
+    monkeypatch.setattr(knowledge, "read_page", changed)
+    call = FunctionCall(function=function, arguments={"command": "cat /agent"})
+    result = await call.aexecute() if async_mode else call.execute()
+    assert result.status == "success"
+    assert json.loads(result.result) == {
+        "schema_version": 1,
+        "error": "page_changed",
+        "current_revision": "new-publication",
+    }
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_page_filesystem_section_search_and_explicit_files_bound_database_access(corpus, monkeypatch, async_mode):
+    from agno.knowledge.page import PageFileSystem
+
+    documents = {f"/agents/child-{i:03}.md": "ordinary child\n" for i in range(250)}
+    documents.update(
+        {
+            "/agents.md": "needle overview\n",
+            "/agents/child-249.md": "needle child\n",
+            "/agents-other.md": "needle sibling\n" * 110,
+            "/index.md": "root index\n",
+        }
+    )
+    knowledge = _publish_filesystem_pages(corpus, documents)
+    original_list, original_read, original_grep = knowledge.list_pages, knowledge.read_page, knowledge.grep_pages
+    calls = []
+
+    def listing(**kwargs):
+        # Directory existence and exact-file metadata may each need one record;
+        # no command here should enumerate any of the 250 children.
+        assert kwargs.get("limit") == 1
+        calls.append(("list", kwargs.get("prefix")))
+        return original_list(**kwargs)
+
+    def read(path, **kwargs):
+        assert path in ("/agents.md", "/index.md")
+        calls.append(("read", path))
+        return original_read(path, **kwargs)
+
+    def grep(query, **kwargs):
+        assert kwargs["prefix"] == "/agents/" and kwargs["limit"] == 100
+        calls.append(("grep", query))
+        return original_grep(query, **kwargs)
+
+    monkeypatch.setattr(knowledge, "list_pages", listing)
+    monkeypatch.setattr(knowledge, "read_page", read)
+    monkeypatch.setattr(knowledge, "grep_pages", grep)
+
+    for command, expected in (
+        ("rg absent /agents", "rg: no matches for 'absent'"),
+        (
+            "rg needle /agents",
+            "[2 matching lines in 2 files]\n/agents.md:1:needle overview\n/agents/child-249.md:1:needle child",
+        ),
+        ("ls /agents.md", "/agents.md"),
+        ("rg absent /agents.md", "rg: no matches for 'absent'"),
+        ("cat / /agents.md", "==> /index.md <==\nroot index\n\n\n==> /agents.md <==\nneedle overview\n"),
+    ):
+        calls.clear()
+        files = PageFileSystem(knowledge=knowledge)
+        result = await files.arun_command(command) if async_mode else files.run_command(command)
+        assert result == expected
+        assert sum(kind == "grep" for kind, _ in calls) == int(command.endswith(" /agents"))
+        if command.endswith(".md") and not command.startswith("cat"):
+            assert ("list", "/agents/") not in calls
