@@ -7,7 +7,8 @@ tell the calling model what the tools are for and how to use them.
 
 Prerequisites: OPENAI_API_KEY
 Run: .venvs/demo/bin/python cookbook/05_agent_os/14_mcp/server_identity.py
-Try: connect an MCP client to http://localhost:7777/mcp and read the initialize response
+Try: open http://localhost:7777/mcp in a browser to see the server card, or connect
+     an MCP client and read the initialize response
 """
 
 from agno.agent import Agent
