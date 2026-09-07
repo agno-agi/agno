@@ -278,6 +278,20 @@ class TestClaudeClientCaching:
         assert client1 is not client2
 
 
+def _openai_flavoured_client(is_async: bool = False):
+    """A custom client of the flavour the installed OpenAI SDK accepts.
+
+    agno[tests] resolves openai to 2.x (httpx) because litellm pins openai<3, so a
+    hard-coded httpx2 client would be the wrong flavour and get dropped by
+    resolve_http_client.
+    """
+    from openai import DefaultAsyncHttpxClient, DefaultHttpxClient
+
+    from agno.utils.http import sdk_http_client_type
+
+    return sdk_http_client_type(DefaultHttpxClient, DefaultAsyncHttpxClient, is_async)()
+
+
 class TestCustomHttpClient:
     """Test suite for custom httpx2 client support."""
 
@@ -286,8 +300,8 @@ class TestCustomHttpClient:
         close_sync_client()
 
     def test_custom_sync_client_is_respected(self):
-        """Verify that custom sync httpx2 client is used when provided."""
-        custom_client = httpx2.Client()
+        """Verify that a custom sync client of the SDK flavour is used when provided."""
+        custom_client = _openai_flavoured_client()
         model = OpenAIChat(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_client()
@@ -297,8 +311,8 @@ class TestCustomHttpClient:
         custom_client.close()
 
     def test_custom_async_client_is_respected(self):
-        """Verify that custom async httpx2 client is used when provided."""
-        custom_client = httpx2.AsyncClient()
+        """Verify that a custom async client of the SDK flavour is used when provided."""
+        custom_client = _openai_flavoured_client(is_async=True)
         model = OpenAIChat(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_async_client()
@@ -307,8 +321,8 @@ class TestCustomHttpClient:
         assert openai_client._client is custom_client
 
     def test_custom_sync_client_respected_on_responses(self):
-        """Verify that custom sync httpx2 client is used on OpenAIResponses."""
-        custom_client = httpx2.Client()
+        """Verify that a custom sync client of the SDK flavour is used on OpenAIResponses."""
+        custom_client = _openai_flavoured_client()
         model = OpenAIResponses(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_client()
@@ -317,8 +331,8 @@ class TestCustomHttpClient:
         custom_client.close()
 
     def test_custom_async_client_respected_on_responses(self):
-        """Verify that custom async httpx2 client is used on OpenAIResponses."""
-        custom_client = httpx2.AsyncClient()
+        """Verify that a custom async client of the SDK flavour is used on OpenAIResponses."""
+        custom_client = _openai_flavoured_client(is_async=True)
         model = OpenAIResponses(id="gpt-4o", http_client=custom_client)
 
         openai_client = model.get_async_client()
