@@ -285,12 +285,6 @@ def _make_require_admin(role_store: "Optional[ManagedRoleStore]" = None) -> Any:
 
     def require_admin(request: Request) -> str:
         if not getattr(request.state, "authenticated", False):
-            # An open (no-auth) instance has no identity to gate on and serves every other route
-            # unauthenticated; the admin gate is a no-op here too, so mounting this router on the
-            # open-roster shape works instead of 401-ing every request. Add auth to protect it.
-            app_state = getattr(getattr(request, "app", None), "state", None)
-            if app_state is not None and getattr(app_state, "auth_open", False):
-                return getattr(request.state, "user_id", None) or ""
             raise HTTPException(status_code=401, detail="Not authenticated")
         principal_id = getattr(request.state, "user_id", None)
         claims = getattr(request.state, "claims", {}) or {}

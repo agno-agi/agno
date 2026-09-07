@@ -212,26 +212,44 @@ def test_no_auth_isolation_without_a_user_id_stays_unscoped_not_403(tmp_path):
     assert captured["scoped"] is None  # no id -> unscoped, no 403
 
 
-def test_users_router_is_open_on_a_no_auth_instance(tmp_path):
-    """Reported gap: mounting get_users_router on a no-auth OS 401'd every request because
-    require_admin needs a verified identity, while every other route on that OS was open. On an
-    open (no-auth) instance the admin gate is now a no-op, so the directory API is servable."""
+def test_users_admin_api_requires_auth_even_on_a_no_auth_instance(tmp_path):
+    """The /users (and /authz) admin API is admin-gated and always requires a verified identity --
+    it is NOT auto-opened on a no-auth instance. Inferring "open" from "no agno auth config" is
+    unsafe (a third-party auth proxy sets nothing agno can see, so the gate would fail open). Serve
+    the admin API under authorization (see manage_users.py) or manage the directory via the store."""
     from fastapi.testclient import TestClient
 
     from agno.os.authz.role_router import get_users_router
     from agno.os.authz.user_store import ManagedUserStore
 
     store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
-    store.upsert("bob", name="Bob")
     os_ = _os(tmp_path, user_directory=UserDirectoryConfig(store=store, auto_provision=True))
     app = os_.get_app()
     app.include_router(get_users_router(store))
-    assert getattr(app.state, "auth_open", False) is True
-
     client = TestClient(app)
-    assert client.get("/users").status_code == 200  # was 401 before the open-instance no-op
-    assert client.post("/users", json={"id": "dave", "name": "Dave"}).status_code == 200
-    assert store.get("dave") is not None
+    assert client.get("/users").status_code == 401  # admin API is not auto-opened
+
+
+def test_no_auth_middleware_refuses_a_reserved_principal(tmp_path):
+    """A self-asserted query user_id must never claim a system-reserved principal (sa:*,
+    __scheduler__): every other intake refuses these, so the no-auth path must too. Otherwise
+    ?user_id=sa:victim would self-scope to a service account and land runs in its history."""
+    from fastapi.testclient import TestClient
+
+    from agno.os.authz.user_store import ManagedUserStore
+
+    store = ManagedUserStore(db=SqliteDb(db_file=str(tmp_path / "u.db")))
+    os_ = _os(tmp_path, user_isolation=True, user_directory=UserDirectoryConfig(store=store, auto_provision=True))
+    client = TestClient(os_.get_app())
+
+    # A reserved id on any endpoint must NOT provision or scope to that principal.
+    client.get("/agents/research-agent", params={"user_id": "sa:backend"})
+    client.get("/agents/research-agent", params={"user_id": "__scheduler__"})
+    assert store.get("sa:backend") is None
+    assert store.get("__scheduler__") is None
+    # A normal id still works (control).
+    client.get("/agents/research-agent", params={"user_id": "realuser"})
+    assert store.get("realuser") is not None
 
 
 def test_role_store_still_requires_authorization(tmp_path):

@@ -81,17 +81,30 @@ def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bo
 
 
 def caller_is_admin(request: Request) -> bool:
-    """True when the caller holds the configured (or default) admin scope.
+    """True when the caller holds the configured (or default) admin scope AND that scope is
+    their actual authority.
 
     Not the same as ``get_scoped_user_id(request) is None``: that returns None for
     admins *and* for every caller on a non-isolated deployment (the default), so it
     cannot stand in for an admin check.
+
+    The admin scope in a token counts ONLY when the caller's scopes are authoritative -- a
+    scope plane, or a service-account PAT (``caller_scopes_are_authoritative``). Under a
+    managed-roles / ReBAC plane a JWT's ``scopes`` claim is inert (the store/engine decides),
+    so a bare ``agent_os:admin`` string must NOT be trusted here: this gate feeds
+    ``assert_session_writable(is_admin=...)``, and trusting it would let any validly-signed
+    token skip the cross-user session-ownership check and write a run into another user's
+    session. Mirrors the admin logic in :func:`get_scoped_user_id`.
     """
     admin_scope_raw = getattr(request.state, "admin_scope", None)
-    return _has_admin_scope(
+    if not _has_admin_scope(
         list(getattr(request.state, "scopes", None) or []),
         admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
-    )
+    ):
+        return False
+    from agno.os.auth import caller_scopes_are_authoritative
+
+    return caller_scopes_are_authoritative(request)
 
 
 def get_scoped_user_id(request: Request) -> Optional[str]:
@@ -192,6 +205,12 @@ def sync_directory_from_request(request: Request, user_id: Optional[str]) -> Non
         exactly as the authenticated path does.
     """
     if not user_id:
+        return
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    if is_reserved_principal(user_id):
+        # A self-asserted id must never provision (or key off) a system-reserved principal
+        # (sa:*, __scheduler__, __oauth__:) -- those are first-party identities, not roster users.
         return
     if getattr(request.state, "authenticated", False):
         return  # verified identity -> already provisioned + enforced by the auth middleware

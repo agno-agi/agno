@@ -37,7 +37,16 @@ class NoAuthIdentityMiddleware(BaseHTTPMiddleware):
         # Defensive: never override a verified identity. There is none here (this only installs when
         # no auth middleware runs), but if one is added later this keeps the self-asserted path off.
         if not getattr(request.state, "authenticated", False):
+            from agno.os.middleware.jwt import is_reserved_principal
+
             user_id = request.query_params.get("user_id")
+            # A self-asserted query id must never claim a system-reserved principal (sa:*,
+            # __scheduler__, __oauth__:) -- every other intake refuses these (jwt.py rejects such
+            # JWT subs; resolve_run_user_id refuses them from the form). Without this guard a query
+            # param like ?user_id=sa:victim would self-scope to that service account and route a
+            # run into its history. Treat a reserved id as absent.
+            if user_id and is_reserved_principal(user_id):
+                user_id = None
             if user_id:
                 if self.user_isolation:
                     # Mirror what the auth middleware sets so get_scoped_user_id scopes to this id.
