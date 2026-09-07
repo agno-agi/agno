@@ -2,7 +2,7 @@ import asyncio
 import re
 from hashlib import md5
 from math import sqrt
-from typing import Any, Dict, List, Optional, Union, cast
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union, cast
 
 from agno.utils.string import generate_id
 
@@ -26,16 +26,27 @@ try:
 except ImportError:
     raise ImportError("`pgvector` not installed. Please install using `pip install pgvector`")
 
+from agno.exceptions import EmbeddingError
 from agno.filters import FilterExpr
 from agno.knowledge.document import Document
 from agno.knowledge.embedder import Embedder
 from agno.knowledge.reranker.base import Reranker
 from agno.utils.log import log_debug, log_error, log_info, log_warning
-from agno.vectordb.base import VectorDb
+from agno.vectordb.base import (
+    VectorDb,
+    aembed_before_replace,
+    embed_before_replace,
+    is_rate_limit_error,
+    raise_embedding_failures,
+    retrievable_documents,
+)
 from agno.vectordb.distance import Distance
 from agno.vectordb.pgvector.index import HNSW, Ivfflat
 from agno.vectordb.score import normalize_score, score_to_distance_threshold
 from agno.vectordb.search import SearchType
+
+if TYPE_CHECKING:
+    from agno.db.postgres import PostgresDb
 
 
 class PgVector(VectorDb):
@@ -66,6 +77,8 @@ class PgVector(VectorDb):
         reranker: Optional[Reranker] = None,
         create_schema: bool = True,
         similarity_threshold: Optional[float] = None,
+        *,
+        db: Optional["PostgresDb"] = None,
     ):
         """
         Initialize the PgVector instance.
@@ -77,6 +90,8 @@ class PgVector(VectorDb):
             description (Optional[str]): Description of the vector database.
             db_url (Optional[str]): Database connection URL.
             db_engine (Optional[Engine]): SQLAlchemy database engine.
+            db (Optional[PostgresDb]): Borrow a synchronous PostgreSQL database's engine.
+                Cannot be combined with db_url or db_engine; does not transfer ownership.
             embedder (Optional[Embedder]): Embedder instance for creating embeddings.
             search_type (SearchType): Type of search to perform.
             vector_index (Union[Ivfflat, HNSW]): Vector index configuration.
@@ -93,8 +108,20 @@ class PgVector(VectorDb):
         if not table_name:
             raise ValueError("Table name must be provided.")
 
+        if db is not None:
+            from agno.db.postgres import PostgresDb
+
+            if db_url is not None or db_engine is not None:
+                raise ValueError("Provide db alone, without db_url or db_engine")
+            if (
+                not isinstance(db, PostgresDb)
+                or not isinstance(db.db_engine, Engine)
+                or db.db_engine.dialect.name != "postgresql"
+            ):
+                raise ValueError("db requires a synchronous PostgresDb; use db_engine for a direct engine")
+            db_engine = db.db_engine
         if db_engine is None and db_url is None:
-            raise ValueError("Either 'db_url' or 'db_engine' must be provided.")
+            raise ValueError("Provide db, db_url, or db_engine")
 
         if id is None:
             base_seed = db_url or str(db_engine.url)  # type: ignore
@@ -162,6 +189,12 @@ class PgVector(VectorDb):
         # Database table
         self.table: Table = self.get_table()
         log_debug(f"Initialized PgVector with table '{self.schema}.{self.table_name}'")
+
+    def _replace_page_on(self, conn, content_id: str, records: List[Dict[str, Any]]) -> None:
+        """Replace already embedded page records using the caller's transaction."""
+        conn.execute(self.table.delete().where(self.table.c.content_id == content_id))
+        for start in range(0, len(records), 100):
+            conn.execute(self.table.insert(), records[start : start + 100])
 
     def get_table_v1(self) -> Table:
         """
@@ -396,8 +429,17 @@ class PgVector(VectorDb):
                         for doc in batch_docs:
                             try:
                                 batch_records.append(self._get_document_record(doc, filters, content_hash, user_id))
+                            except EmbeddingError:
+                                # A chunk that did not embed is unretrievable. Dropping it here
+                                # would commit the rest of the batch and report success, so the
+                                # failure is raised for ingestion to retry and record.
+                                raise
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records if r.get("embedding")]
 
                         # Insert the batch of records
                         insert_stmt = postgresql.insert(self.table)
@@ -433,6 +475,9 @@ class PgVector(VectorDb):
                     try:
                         # Embed all documents in the batch
                         await self._async_embed_documents(batch_docs)
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_docs = retrievable_documents(batch_docs)
 
                         # Prepare documents for insertion
                         batch_records = []
@@ -464,6 +509,10 @@ class PgVector(VectorDb):
                                 batch_records.append(record)
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
+
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records if r.get("embedding")]
 
                         # Insert the batch of records
                         if batch_records:
@@ -503,6 +552,15 @@ class PgVector(VectorDb):
 
         ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        for document in documents:
+            if not document.embedding:
+                document.embedding = None
+        embed_before_replace(documents, self.embedder)
+        # Empty results retain generic partial ingestion: write the usable chunks
+        # without asking the embedder again. Raised failures above still precede deletion.
+        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -539,14 +597,21 @@ class PgVector(VectorDb):
                         batch_records_dict: Dict[str, Dict[str, Any]] = {}  # Use dict to deduplicate by ID
                         for doc in batch_docs:
                             try:
-                                record = self._get_document_record(doc, filters, content_hash, user_id)
+                                record = self._get_document_record(doc, filters, content_hash, user_id, prepared=True)
                                 # Use the generated record ID (which includes content_hash) for deduplication
                                 batch_records_dict[record["id"]] = record
+                            except EmbeddingError:
+                                # A chunk that did not embed is unretrievable. Dropping it here
+                                # would commit the rest of the batch and report success, so the
+                                # failure is raised for ingestion to retry and record.
+                                raise
                             except Exception as e:
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
                         # Convert dict to list for upsert
-                        batch_records = list(batch_records_dict.values())
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records_dict.values() if r.get("embedding")]
                         if not batch_records:
                             log_info("No valid records to upsert in this batch.")
                             continue
@@ -599,8 +664,11 @@ class PgVector(VectorDb):
         filters: Optional[Dict[str, Any]] = None,
         content_hash: str = "",
         user_id: Optional[str] = None,
+        *,
+        prepared: bool = False,
     ) -> Dict[str, Any]:
-        doc.embed(embedder=self.embedder)
+        if not prepared or not doc.embedding:
+            doc.embed(embedder=self.embedder)
         cleaned_content = self._clean_content(doc.content)
         # Include content_hash in ID to ensure uniqueness across different content hashes
         # This allows the same URL/content to be inserted with different descriptions
@@ -627,13 +695,17 @@ class PgVector(VectorDb):
             record["user_id"] = user_id
         return record
 
-    async def _async_embed_documents(self, batch_docs: List[Document]) -> None:
+    async def _async_embed_documents(self, batch_docs: List[Document], *, prepared: bool = False) -> None:
         """
         Embed a batch of documents using either batch embedding or individual embedding.
 
         Args:
             batch_docs: List of documents to embed
         """
+        if prepared:
+            batch_docs = [doc for doc in batch_docs if not doc.embedding]
+        if not batch_docs:
+            return
         if self.embedder.enable_batch and hasattr(self.embedder, "async_get_embeddings_batch_and_usage"):
             # Use batch embedding when enabled and supported
             try:
@@ -654,11 +726,12 @@ class PgVector(VectorDb):
 
             except Exception as e:
                 # Check if this is a rate limit error - don't fall back as it would make things worse
-                error_str = str(e).lower()
-                is_rate_limit = any(
-                    phrase in error_str
-                    for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                )
+                if isinstance(e, EmbeddingError):
+                    # The embedder already classified this; prefer that over matching text.
+                    is_rate_limit = e.reason == "rate_limit"
+                else:
+                    # A throttle must not fall back to per-item calls, which would throttle harder.
+                    is_rate_limit = is_rate_limit_error(e)
 
                 if is_rate_limit:
                     log_error(f"Rate limit detected during batch embedding.: {str(e)}")
@@ -668,50 +741,12 @@ class PgVector(VectorDb):
                     # Fall back to individual embedding
                     embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
                     results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-                    # Check for exceptions and handle them
-                    for i, result in enumerate(results):
-                        if isinstance(result, Exception):
-                            error_msg = str(result)
-                            # If it's an event loop closure error, log it but don't fail
-                            if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
-                                log_warning(
-                                    f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}: {e}",
-                                )
-
-                            else:
-                                log_error(f"Error embedding document {i}: {result}: {str(e)}")
+                    raise_embedding_failures(results)
         else:
             # Use individual embedding
             embed_tasks = [doc.async_embed(embedder=self.embedder) for doc in batch_docs]
             results = await asyncio.gather(*embed_tasks, return_exceptions=True)
-
-            # Re-raise on rate limits to avoid writing NULL embeddings.
-            rate_limit_error: Optional[Exception] = None
-
-            # Check for exceptions and handle them
-            for i, result in enumerate(results):
-                if isinstance(result, Exception):
-                    error_msg = str(result)
-
-                    error_str = error_msg.lower()
-                    is_rate_limit = any(
-                        phrase in error_str
-                        for phrase in ["rate limit", "too many requests", "429", "trial key", "api calls / minute"]
-                    )
-                    if is_rate_limit and rate_limit_error is None:
-                        rate_limit_error = result
-
-                    # If it's an event loop closure error, log it but don't fail
-                    if "Event loop is closed" in error_msg or "RuntimeError" in type(result).__name__:
-                        log_warning(
-                            f"Event loop closure during embedding for document {i}, but operation may have succeeded: {result}"
-                        )
-                    else:
-                        log_error(f"Error embedding document {i}: {result}")
-
-            if rate_limit_error is not None:
-                raise rate_limit_error
+            raise_embedding_failures(results)
 
     async def async_upsert(
         self,
@@ -725,6 +760,15 @@ class PgVector(VectorDb):
 
         ``user_id`` is the owner of these chunks; ``None`` means shared. See ``insert``.
         """
+        # Embed before the delete below: clearing the old chunks first would destroy
+        # retrievable content if the embedder then fails.
+        for document in documents:
+            if not document.embedding:
+                document.embedding = None
+        await aembed_before_replace(documents, self.embedder)
+        # Empty results retain generic partial ingestion: write the usable chunks
+        # without asking the embedder again. Raised failures above still precede deletion.
+        documents = retrievable_documents(documents)
         self._require_owner_column(user_id)
         try:
             if self.content_hash_exists(content_hash, user_id=user_id):
@@ -758,7 +802,10 @@ class PgVector(VectorDb):
                     log_info(f"Processing batch starting at index {i}, size: {len(batch_docs)}")
                     try:
                         # Embed all documents in the batch
-                        await self._async_embed_documents(batch_docs)
+                        await self._async_embed_documents(batch_docs, prepared=True)
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_docs = retrievable_documents(batch_docs)
 
                         # Prepare documents for upserting
                         batch_records_dict = {}  # Use dict to deduplicate by ID
@@ -799,7 +846,9 @@ class PgVector(VectorDb):
                                 log_error(f"Error processing document '{doc.name}': {str(e)}")
 
                         # Convert dict to list for upsert
-                        batch_records = list(batch_records_dict.values())
+                        # An unembedded chunk would be rejected by the store and take the
+                        # whole batch down with it, including the chunks that did embed.
+                        batch_records = [r for r in batch_records_dict.values() if r.get("embedding")]
                         if not batch_records:
                             log_info("No valid records to upsert in this batch.")
                             continue
@@ -1056,6 +1105,10 @@ class PgVector(VectorDb):
 
             log_info(f"Found {len(search_results)} documents")
             return search_results
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error during vector search: {str(e)}")
             return []
@@ -1347,6 +1400,10 @@ class PgVector(VectorDb):
             log_info(f"Found {len(search_results)} documents")
 
             return search_results
+        except EmbeddingError:
+            # A failed query embedding is not a store problem: let it surface instead
+            # of returning an empty result set that looks like "no matches".
+            raise
         except Exception as e:
             log_error(f"Error during hybrid search: {str(e)}")
             return []
