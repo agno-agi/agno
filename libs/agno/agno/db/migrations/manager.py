@@ -37,6 +37,8 @@ class MigrationManager:
         Args:
             target_version: The version to migrate to, e.g. "v3.0.0". If not provided, the latest available version will be used.
             table_type: The type of table to migrate. If not provided, all table types will be considered.
+            force: Re-run every migration up to the target version even when the table is already stamped
+                at or above it. Each migration checks the table shape before touching it, so a re-run is safe.
         """
 
         # If not target version is provided, use the latest available version
@@ -98,10 +100,10 @@ class MigrationManager:
                 f"Starting database migration for table {table_name}. Current version: {current_version}. Target version: {_target_version}."
             )
 
-            # Find files after the current version
+            # Find files after the current version, or every file up to the target when forced
             latest_version = None
             for version, normalised_version in self.available_versions:
-                if normalised_version > current_version:
+                if normalised_version > current_version or force:
                     if target_version and normalised_version > _target_version:
                         break
 
