@@ -152,3 +152,24 @@ run returned 200; demoting back to viewer also took effect. Users, Roles and
 Scope-catalog tabs rendered from the API; the Change-audit tab showed the live
 `user.assigned bob ["viewer"] -> ["runner"]` entry and the Decisions tab showed
 every allow/deny with its jti reference. No console errors.
+
+---
+
+### directory_without_auth.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (real gpt-5.5 runs via OpenAIResponses)
+
+**Description:** The user directory with NO authentication or authorization -- a
+plain roster. Drives real, unauthenticated runs through a `TestClient` (a form
+`user_id`, no Authorization header) and checks the directory populates from them,
+then shows the `disabled` flag is advisory without auth.
+
+**Result:** Boot logged the expected one-line warning that the disabled kill
+switch is advisory. Directory started empty; a no-token run as `chegizkhan`
+auto-registered him (`get` False -> True), and `subotai` registered on his run
+too, leaving a two-person roster. After `set_disabled("chegizkhan", True)`, his
+next no-token run still returned ALLOWED (200) -- confirming the flag is advisory,
+not enforced, without a verified identity. Points to managed_users.py for the
+enforced kill switch.

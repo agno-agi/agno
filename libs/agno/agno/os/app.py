@@ -1594,11 +1594,11 @@ class AgentOS:
         # author believes is governed by roles serves every route to anonymous callers.
         # Fail at construction rather than shipping a silently open instance.
         cfg = self.authorization_config
-        # Any plane that only takes effect through the auth middleware (seeded when the
-        # middleware is added) leaves a silently-open instance if authorization is off. The
-        # user directory is the same: its disabled-user kill switch is inert without the
-        # middleware, so a no-IdP directory deployment that forgets authorization=True serves
-        # every route to anonymous callers AND the revocation switch does nothing.
+        # A plane (role_store / custom provider) only takes effect through the auth middleware,
+        # so with authorization off it is a silently-open instance -- the author believes routes
+        # are governed by roles, but nothing consults the provider. That still raises. A user
+        # directory is different: it is a roster, valid without auth (the guard below only warns),
+        # because it is data, not an enforcement point.
         authz_plane_configured = cfg is not None and (
             getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
         )
@@ -1610,11 +1610,17 @@ class AgentOS:
                 "config if you intended an open instance."
             )
         if not (self.authentication or self.authorization) and self.user_directory is not None:
-            raise ValueError(
-                "AgentOS(user_directory=...) needs a verified identity to key off. Set "
-                "AgentOS(authentication=True) -- verify WHO the caller is, with no access rules -- "
-                "or authorization=True (verify + enforce access). Without either there is no identity "
-                "for the directory to attach to, and its disable kill-switch cannot run."
+            # A directory with no auth is a valid, intentional shape: it is a roster (who exists,
+            # roles, metadata), and a run's user_id registers that person even without a token --
+            # the no-IdP path for local/demo/cookbook use. What it is NOT, without a verified
+            # identity, is a security boundary: the caller asserts their own user_id, so the
+            # `disabled` flag is advisory here, not an enforced kill-switch. Warn (don't raise) so
+            # an operator who expected revocation to bite knows to add authentication.
+            log_warning(
+                "AgentOS(user_directory=...) is configured without authentication or authorization. "
+                "The directory works as a roster (a run's user_id registers the person, roles apply), "
+                "but the disabled kill-switch is ADVISORY here -- the caller's user_id is self-asserted. "
+                "Add AgentOS(authentication=True) to verify identity and make disable a real revocation."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -1643,6 +1649,11 @@ class AgentOS:
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
             effective_key = None if (self.authentication or self.authorization or jwt_env_configured) else security_key
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
+        elif self.user_directory is not None:
+            # No auth middleware is installed (that path seeds the directory onto app.state as a
+            # side effect), but a no-auth roster still needs its store there so an unauthenticated
+            # run can register its user_id. Seed it directly.
+            self._seed_user_directory(fastapi_app)
 
         # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
         # AgentOS exempts them on the AuthMiddleware it installs itself, but an agno

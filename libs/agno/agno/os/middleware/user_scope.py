@@ -171,6 +171,50 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
     return user_id
 
 
+def sync_directory_from_run(request: Request, user_id: Optional[str]) -> None:
+    """Register a run's ``user_id`` in the user directory when the caller is NOT authenticated.
+
+    The directory is a roster, not a security boundary: with no auth configured a run still
+    carries a ``user_id`` (a form field the caller asserts), and this registers that person so a
+    no-IdP deployment still gets a working directory -- the "user id chegizkhan comes in on a run
+    and it just works" path for local/demo/cookbook use.
+
+    Deliberately narrow:
+      * Only for UNAUTHENTICATED requests. When a token was verified the auth middleware /
+        WebSocket / MCP gates already provisioned (and enforced ``disabled``), so we skip.
+      * Only PROVISIONS -- it does NOT enforce the ``disabled`` kill-switch. Here the id is
+        self-asserted (a caller could send any id), so ``disabled`` is a real revocation only
+        under authentication/authorization, where identity is verified.
+      * Respects ``auto_provision``: an unknown id is created only when the operator opted in,
+        exactly as the authenticated path does.
+    """
+    if not user_id:
+        return
+    if getattr(request.state, "authenticated", False):
+        return  # verified identity -> already provisioned + enforced by the auth middleware
+    state = getattr(getattr(request, "app", None), "state", None)
+    if state is None:
+        return
+    user_store = getattr(state, "user_store", None)
+    if user_store is None or not getattr(state, "user_auto_provision", False):
+        return
+
+    from agno.os.auth import provision_user_with_default_role
+
+    try:
+        provision_user_with_default_role(
+            user_store,
+            getattr(state, "role_store", None),
+            getattr(state, "user_default_role", None),
+            user_id,
+            {},  # no token claims in the no-auth path: register by id alone
+            email_claim=getattr(state, "user_email_claim", "email"),
+            name_claim=getattr(state, "user_name_claim", "name"),
+        )
+    except Exception as e:  # a roster write must never break the run itself
+        log_warning(f"user directory sync failed for {user_id!r}: {e}")
+
+
 def _schedule_owner_from_header(request: Request) -> Optional[str]:
     """Read the owner the executor forwarded for the schedule it is firing.
 
