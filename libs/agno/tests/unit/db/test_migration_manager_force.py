@@ -5,6 +5,7 @@ instead of executed, so no database is involved.
 """
 
 import asyncio
+import importlib
 
 from agno.db.migrations.manager import MigrationManager
 
@@ -63,14 +64,17 @@ def test_up_skips_a_table_already_at_the_target():
 def test_up_with_force_reruns_every_migration_up_to_the_target():
     manager, db = _run_up("3.0.0", force=True)
 
-    assert manager.applied == [version for version, _ in manager.available_versions]
+    assert manager.applied == [version for version, _ in manager.available_versions[1:]]
     assert db.stored_versions == [("sessions", manager.latest_schema_version.public)]
+    # The baseline entry has no module behind it; everything the forced run applies must be loadable.
+    for version in manager.applied:
+        importlib.import_module(f"agno.db.migrations.versions.{version}")
 
 
 def test_up_with_force_honours_an_explicit_target():
     manager, db = _run_up("3.0.0", target_version="2.5.6", force=True)
 
-    assert manager.applied == ["v2_0_0", "v2_3_0", "v2_5_0", "v2_5_6"]
+    assert manager.applied == ["v2_3_0", "v2_5_0", "v2_5_6"]
     assert db.stored_versions == [("sessions", "2.5.6")]
 
 

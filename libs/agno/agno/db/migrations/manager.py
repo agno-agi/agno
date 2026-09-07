@@ -26,6 +26,11 @@ class MigrationManager:
     def latest_schema_version(self) -> Version:
         return self.available_versions[-1][1]
 
+    @property
+    def baseline_schema_version(self) -> Version:
+        """The version an unstamped table is assumed to be at. It has no migration module."""
+        return self.available_versions[0][1]
+
     def _invalidate_table(self, table_name: str) -> None:
         invalidate = getattr(self.db, "_invalidate_table_cache", None)
         if invalidate is not None:
@@ -100,10 +105,12 @@ class MigrationManager:
                 f"Starting database migration for table {table_name}. Current version: {current_version}. Target version: {_target_version}."
             )
 
-            # Find files after the current version, or every file up to the target when forced
+            # Find files after the current version, or every file above the baseline when forced
             latest_version = None
             for version, normalised_version in self.available_versions:
-                if normalised_version > current_version or force:
+                if normalised_version > current_version or (
+                    force and normalised_version > self.baseline_schema_version
+                ):
                     if target_version and normalised_version > _target_version:
                         break
 
