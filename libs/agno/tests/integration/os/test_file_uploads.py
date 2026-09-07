@@ -3,6 +3,8 @@
 import json
 from unittest.mock import AsyncMock, patch
 
+import pytest
+
 from agno.agent.agent import Agent
 from agno.media import File as FileMedia
 from agno.media import Image
@@ -199,6 +201,26 @@ class TestAgentFileUploads:
             assert docs[0].filename == "contract.pdf"
             assert docs[0].metadata == {"category": "legal"}
 
+    @pytest.mark.parametrize("content_type", ["application/x-zip", "application/x-zip-compressed"])
+    def test_upload_zip_mime_alias(self, test_os_client, test_agent: Agent, content_type: str):
+        with (
+            patch.object(test_agent, "deep_copy", return_value=test_agent),
+            patch.object(test_agent, "arun", new_callable=AsyncMock) as mock_arun,
+        ):
+            mock_arun.return_value = MockRunOutput()
+            files = [("files", ("archive.zip", b"zip-data", content_type))]
+
+            resp = self._post_agent_files(test_os_client, test_agent.id, files)
+
+            assert resp.status_code == 200
+            docs = mock_arun.call_args.kwargs["files"]
+            assert len(docs) == 1
+            assert isinstance(docs[0], FileMedia)
+            assert docs[0].content == b"zip-data"
+            assert docs[0].filename == "archive.zip"
+            assert docs[0].format == "zip"
+            assert docs[0].mime_type == "application/zip"
+
 
 # ---------------------------------------------------------------------------
 # Team endpoint — file uploads
@@ -294,3 +316,23 @@ class TestTeamFileUploads:
             assert isinstance(docs[0], FileMedia)
             assert docs[0].filename == "report.pdf"
             assert docs[0].metadata == {"category": "report"}
+
+    @pytest.mark.parametrize("content_type", ["application/x-zip", "application/x-zip-compressed"])
+    def test_team_upload_zip_mime_alias(self, test_os_client, test_team: Team, content_type: str):
+        with (
+            patch.object(test_team, "deep_copy", return_value=test_team),
+            patch.object(test_team, "arun", new_callable=AsyncMock) as mock_arun,
+        ):
+            mock_arun.return_value = MockRunOutput()
+            files = [("files", ("archive.zip", b"zip-data", content_type))]
+
+            resp = self._post_team_files(test_os_client, test_team.id, files)
+
+            assert resp.status_code == 200
+            docs = mock_arun.call_args.kwargs["files"]
+            assert len(docs) == 1
+            assert isinstance(docs[0], FileMedia)
+            assert docs[0].content == b"zip-data"
+            assert docs[0].filename == "archive.zip"
+            assert docs[0].format == "zip"
+            assert docs[0].mime_type == "application/zip"

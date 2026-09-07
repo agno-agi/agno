@@ -134,7 +134,7 @@ async def test_binary_media_becomes_image_content_block():
 
     image_blocks = [b for b in result.content if getattr(b, "type", None) == "image"]
     assert len(image_blocks) == 1
-    assert image_blocks[0].mimeType == "image/png"
+    assert image_blocks[0].mime_type == "image/png"
     assert image_blocks[0].data  # base64 payload present
 
 
