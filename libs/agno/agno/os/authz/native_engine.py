@@ -21,7 +21,11 @@ The decision model, in agno terms:
 - a subject (or a token-carried role) is allowed an action on a resource iff some
   matching grant says *allow* and none says *deny* — evaluated per identity root
   and OR'd across token-carried roles, so a deny on one role can't silently veto
-  an allow carried by another.
+  an allow carried by another,
+- a subject with NO role of its own (no assignment and no token-carried role) is
+  treated as holding the ``is_default`` role, so "no role" is equivalent to the
+  default role's permissions rather than an automatic deny (``disabled`` — not zero
+  roles — is the lockout). This is decision-time only: nothing is written.
 """
 
 import logging
@@ -145,9 +149,35 @@ class NativePolicyEngine(PolicyEngine):
                     continue
                 principals.add(role)
                 stack.extend(self._db.get_authz_direct_roles(role))
+            if not principals:
+                # No role of its own: a subject with no assigned role is treated as holding the
+                # default (``is_default``) role, so "no role" is equivalent to the default role's
+                # permissions. This only reaches here when the caller carries no token role either
+                # (``_enforce`` consults assignments only then), so it fires precisely for a subject
+                # with no role from any source. ``disabled`` -- not zero roles -- is the lockout.
+                # Decision-time only: nothing is written, so ``roles_of`` stays truthful.
+                default = self._default_role()
+                if default is not None:
+                    principals.add(default)
             return principals
 
         return memoize(("subject", id(self), subject), resolve)
+
+    def _default_role(self) -> Optional[str]:
+        """The role flagged ``is_default`` -- the fallback for a subject with no assigned role.
+
+        Mirrors :meth:`ManagedRoleStore.default_role`: at most one role carries the flag (the
+        metadata setters clear the others); the lowest slug wins if legacy data has several, so
+        the choice is deterministic. Returns ``None`` when no default is set or the db cannot
+        list role metadata (e.g. a third-party backend)."""
+        lister = getattr(self._db, "list_authz_role_meta", None)
+        if not callable(lister):
+            return None
+        try:
+            defaults = sorted(m["slug"] for m in lister() if m.get("is_default"))
+        except Exception:
+            return None
+        return defaults[0] if defaults else None
 
     def _policies_for(self, principals: Set[str]) -> List[_PolicyRow]:
         """All (role, resource, action, effect) rows whose role is in ``principals``."""

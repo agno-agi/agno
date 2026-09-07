@@ -79,14 +79,17 @@ def test_config_default_role_overrides_is_default():
 
 
 def test_existing_user_is_not_regranted_on_later_login():
-    """The grant happens only on first creation, so a later login never re-grants and never
-    fights an admin who removed the role."""
+    """The grant is materialised only on first creation: a later login never re-writes an
+    assignment (``roles_of`` stays empty after an admin unassigns). Note the subject is not
+    "locked out" by this -- with an ``is_default`` role it falls back to the default's permissions
+    at decision time (see test_subject_with_no_role_is_treated_as_the_default_role). ``disabled``,
+    not zero roles, is the lockout."""
     roles, users = _roles(), _users()
     roles.set_role_scopes("member", ["agents:*:read"], is_default=True)
     # first login: provisioned + granted the default role
     provision_user_with_default_role(users, roles, None, "carol", {"email": "c@co"})
     assert roles.roles_of("carol") == ["member"]
-    # admin revokes; a subsequent login must NOT silently re-grant (created=False)
+    # admin revokes; a subsequent login must NOT silently re-materialise the assignment
     roles.unassign("carol", "member")
     provision_user_with_default_role(users, roles, None, "carol", {"email": "c@co"})
     assert roles.roles_of("carol") == []
@@ -114,3 +117,41 @@ def test_no_role_store_is_a_noop_no_grant_no_warn(monkeypatch):
     assert user["email"] == "e@co"
     assert users.get("erin") is not None
     assert warnings == []
+
+
+# ------------------------------------------------ no role == default role (decision-time fallback)
+def test_subject_with_no_role_is_treated_as_the_default_role():
+    """ "no role is equivalent to default role": a subject with no assigned role gets the default
+    (``is_default``) role's permissions at DECISION time, so it is never inert. Nothing is written
+    -- ``roles_of`` stays empty -- and ``disabled`` (not zero roles) remains the only lockout."""
+    roles = _roles()
+    roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    engine = roles._engine
+
+    assert roles.roles_of("stranger") == []  # no assignment at all
+    # ...yet allowed what the default 'viewer' grants, and denied what it does not
+    assert engine.check_scope("agents:x:read", subject="stranger") is True
+    assert engine.check_scope("agent_os:admin", subject="stranger") is False
+    # decision-time only: the fallback wrote nothing
+    assert roles.roles_of("stranger") == []
+
+
+def test_no_default_role_means_a_roleless_subject_is_denied():
+    """With no ``is_default`` role, a roleless subject falls through to denied -- the fallback never
+    invents access where no default was chosen."""
+    roles = _roles()
+    roles.set_role_scopes("viewer", ["agents:*:read"])  # exists, but NOT flagged default
+    assert roles._engine.check_scope("agents:x:read", subject="stranger") is False
+
+
+def test_an_explicit_role_wins_over_the_default_fallback():
+    """A subject WITH a role uses it, not the default: the fallback only fills the gap for a subject
+    that has no role of its own."""
+    roles = _roles()
+    roles.set_role_scopes("viewer", ["agents:*:read"], is_default=True)
+    roles.set_role_scopes("editor", ["agents:*:write"])
+    roles.assign("bob", "editor")  # bob has a real role
+    engine = roles._engine
+    assert engine.check_scope("agents:x:write", subject="bob") is True  # editor grants write
+    assert engine.check_scope("agents:x:read", subject="bob") is False  # editor is not the default viewer
