@@ -85,21 +85,96 @@ def test_size_is_the_only_automatic_trigger():
     them fires on conversations far too small to fold and stays quiet on ones that overflow.
     """
     c = Compaction(compact_at_tokens=1_000)
-    assert c.should_compact(_transcript(runs=50), last_input_tokens=200) is False
-    assert c.should_compact(_transcript(runs=2), last_input_tokens=5_000) is True
+    assert c.should_compact(_transcript(runs=50), context_tokens=200) is False
+    assert c.should_compact(_transcript(runs=2), context_tokens=5_000) is True
 
 
-def test_prefers_reported_tokens_over_counting():
-    """The provider's own number is used when available, with no model call."""
-    c = Compaction(compact_at_tokens=1000)
-    assert c.should_compact(_transcript(), last_input_tokens=2000, model=None) is True
-    assert c.should_compact(_transcript(), last_input_tokens=500, model=None) is False
+def test_compaction_threshold_uses_context_size_not_previous_run_billing_total():
+    """RunMetrics.input_tokens accumulates tool-loop calls; it is not a context size.
+
+    Four calls of a 20k context bill 80k, so a threshold read off billing telemetry fires on a
+    request that never came close to it. The trigger takes the size of the view being sent, and
+    has no way to be handed a billing total by mistake - the parameter simply does not exist.
+    """
+    import inspect
+
+    assert "last_input_tokens" not in inspect.signature(Compaction.should_compact).parameters
+
+    c = Compaction(compact_at_tokens=25_000)
+    # The billing total for a four-call tool loop, none of which exceeded 21,200.
+    assert c.should_compact([], context_tokens=21_200, model=None) is False
+    assert c.should_compact([], context_tokens=26_000, model=None) is True
 
 
-def test_no_threshold_met_without_signal():
-    """A token threshold with nothing to measure must not fire."""
-    c = Compaction(compact_at_tokens=1000)
-    assert c.should_compact(_transcript(), last_input_tokens=None, model=None) is False
+def test_tool_loop_context_is_measured_once_not_summed_per_call():
+    """The estimator sizes the request, where billing telemetry sums every call in the loop.
+
+    A tool loop re-sends the whole conversation each iteration, so the provider bills it once
+    per call. Summing that is the right number for cost and the wrong one for "will this fit" -
+    it grows with tool use while the context barely moves. This walks the real estimator over a
+    real four-call transcript rather than asserting on a hand-supplied number, so the wiring
+    that produces the figure is what is under test.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+
+    messages = [
+        Message(role="system", content="sys " * 100),
+        Message(role="user", content="q " * 200),
+    ]
+    for i in range(4):
+        messages.append(
+            Message(
+                role="assistant",
+                content="",
+                tool_calls=[{"id": f"c{i}", "function": {"name": "search", "arguments": "{}"}}],
+            )
+        )
+        messages.append(Message(role="tool", tool_call_id=f"c{i}", tool_name="search", content="result " * 300))
+
+    agent = Agent()
+    context = _estimated_context_tokens(agent, messages)
+
+    # What billing telemetry would have reported: every intermediate request, summed.
+    billed = sum(_estimated_context_tokens(agent, messages[: 2 + 2 * (i + 1)]) for i in range(4))
+
+    assert context is not None
+    assert billed > context * 2, (billed, context)
+
+    # The gap is the bug: a threshold between the two fires on a request that never reached it.
+    threshold = (context + billed) // 2
+    compaction = Compaction(compact_at_tokens=threshold)
+    assert compaction.should_compact(messages, context_tokens=context, model=None) is False
+
+
+def test_context_estimate_counts_more_than_history():
+    """System text and tool schemas ride in every request, so they count toward the threshold.
+
+    A request can be oversized because of instructions or tool definitions rather than history.
+    Measuring history alone would leave the trigger blind to that.
+    """
+    from agno.agent import Agent
+    from agno.agent._messages import _estimated_context_tokens
+
+    history = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
+    with_system = [Message(role="system", content="instructions " * 500)] + history
+
+    agent = Agent()
+
+    assert _estimated_context_tokens(agent, with_system) > _estimated_context_tokens(agent, history)
+
+
+def test_context_size_is_estimated_locally_when_not_supplied():
+    """The fallback is local token counting, not provider count_tokens."""
+
+    class ExplodingModel:
+        id = "x"
+
+        def count_tokens(self, *args, **kwargs):
+            raise AssertionError("provider count_tokens must not be called")
+
+    c = Compaction(compact_at_tokens=1)
+    assert c.should_compact(_transcript(), model=ExplodingModel()) is True
 
 
 def test_replay_window_below_the_tail_warns(caplog):
@@ -798,38 +873,39 @@ def test_regex_patterns_skip_the_sql_prefilter():
 # --- token measurement ------------------------------------------------------
 
 
-def test_provider_reported_tokens_win_over_counting():
-    """The provider's own number is free; count_tokens can be a network call."""
+def test_supplied_context_tokens_win_over_local_estimation():
+    """The caller can count the whole in-flight view once and pass that exact number."""
 
     class ExplodingModel:
         id = "x"
 
         def count_tokens(self, *args, **kwargs):
-            raise AssertionError("count_tokens must not be called when a report exists")
+            raise AssertionError("provider count_tokens must not be called")
 
     c = Compaction()
 
     assert c._measured_tokens(_transcript(), 1234, ExplodingModel()) == 1234
 
 
-def test_token_counting_failure_is_not_fatal():
-    """A provider that refuses to count must not take the run down with it."""
+def test_token_estimation_failure_is_not_fatal(monkeypatch):
+    """Local counting failures must not take the run down with them."""
+    import agno.utils.tokens
 
-    class FailingModel:
-        id = "x"
+    monkeypatch.setattr(
+        agno.utils.tokens,
+        "count_tokens",
+        lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError("tokenizer said no")),
+    )
 
-        def count_tokens(self, *args, **kwargs):
-            raise RuntimeError("provider said no")
-
-    c = Compaction()
-
-    assert c._measured_tokens(_transcript(), None, FailingModel()) is None
-
-
-def test_no_model_and_no_report_measures_nothing():
     c = Compaction()
 
     assert c._measured_tokens(_transcript(), None, None) is None
+
+
+def test_no_model_still_uses_local_estimate():
+    c = Compaction()
+
+    assert c._measured_tokens(_transcript(), None, None) > 0
 
 
 # --- tail selection ---------------------------------------------------------

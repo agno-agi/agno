@@ -118,32 +118,31 @@ class Compaction:
     def _measured_tokens(
         self,
         messages: List[Message],
-        last_input_tokens: Optional[int],
+        context_tokens: Optional[int],
         model: Optional[Model],
         tools: Optional[List[Any]] = None,
     ) -> Optional[int]:
-        """Context size in tokens, preferring the free signal.
+        """Context size in tokens for the current model-bound message view.
 
-        The previous run's provider-reported input_tokens costs nothing and is
-        what the provider actually charged for. ``count_tokens`` is the
-        fallback, and on some providers it is a network call, so it is only
-        reached when no run has reported yet.
+        ``context_tokens`` is computed locally by the caller from the messages being considered
+        for this request.
         """
-        if last_input_tokens is not None:
-            return last_input_tokens
-        if model is None:
-            return None
+        if context_tokens is not None:
+            return context_tokens
         try:
-            return model.count_tokens(messages, tools)
+            model_id = getattr(model, "id", None) or "gpt-4o"
+            from agno.utils.tokens import count_tokens
+
+            return count_tokens(messages, tools=tools, model_id=model_id)
         except Exception as e:
-            log_warning(f"Could not count tokens for compaction: {e}")
+            log_warning(f"Could not estimate tokens for compaction: {e}")
             return None
 
     def should_compact(
         self,
         messages: List[Message],
         *,
-        last_input_tokens: Optional[int] = None,
+        context_tokens: Optional[int] = None,
         model: Optional[Model] = None,
         tools: Optional[List[Any]] = None,
     ) -> bool:
@@ -153,7 +152,7 @@ class Compaction:
         worth doing is a separate question, decided by the ratio guard once a boundary exists.
         """
         if self.compact_at_tokens is not None:
-            tokens = self._measured_tokens(messages, last_input_tokens, model, tools)
+            tokens = self._measured_tokens(messages, context_tokens, model, tools)
             if tokens is not None and tokens >= self.compact_at_tokens:
                 log_info(f"Compaction: token count {tokens} >= {self.compact_at_tokens}")
                 return True
@@ -514,6 +513,7 @@ class Compaction:
         run_metrics: Optional["RunMetrics"] = None,
         tokens_before: Optional[int] = None,
         run_id: Optional[str] = None,
+        context_prefix: Optional[List[Message]] = None,
     ) -> Optional[CompactionRecord]:
         """Archive and summarize the head of ``messages``.
 
@@ -546,7 +546,8 @@ class Compaction:
         record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
-        self.measure(record, messages, self.apply_record(messages, record))
+        prefix = context_prefix or []
+        self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
         if archive is not None:
             record.archived = archive.write(record, to_compact)
         self.stats.record(record)
@@ -562,6 +563,7 @@ class Compaction:
         run_metrics: Optional["RunMetrics"] = None,
         tokens_before: Optional[int] = None,
         run_id: Optional[str] = None,
+        context_prefix: Optional[List[Message]] = None,
     ) -> Optional[CompactionRecord]:
         # See the sync path: only the span the previous compaction did not
         # already cover is new.
@@ -588,7 +590,8 @@ class Compaction:
         record.elision_watermark_message_id = self._watermark(messages, boundary, previous)
         # Size the fold before persisting: the row is written once and never updated, so a
         # measurement taken afterwards would never reach it.
-        self.measure(record, messages, self.apply_record(messages, record))
+        prefix = context_prefix or []
+        self.measure(record, prefix + messages, prefix + self.apply_record(messages, record))
         if archive is not None:
             record.archived = archive.write(record, to_compact)
         self.stats.record(record)

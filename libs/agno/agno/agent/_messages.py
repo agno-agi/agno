@@ -82,24 +82,31 @@ def _compaction_as_of(run_response: Optional[RunOutput]) -> Optional[str]:
     return getattr(run_response, "forked_from_run_id", None) or getattr(run_response, "regenerated_from", None)
 
 
-def _last_input_tokens(session: AgentSession) -> Optional[int]:
-    """Input tokens the provider reported for the most recent run.
+def _estimated_context_tokens(
+    agent: "Agent", messages: List[Message], tools: Optional[List[Any]] = None
+) -> Optional[int]:
+    """Local estimate for the model-bound context this compaction decision is about.
 
-    Free and authoritative - it is what the provider actually billed - so it
-    is preferred over counting tokens locally, which on some providers costs a
-    network round trip of its own.
+    RunMetrics.input_tokens is billing telemetry. It accumulates every model call in a tool loop,
+    plus background and compaction model calls, so it can be much larger than any single request
+    the provider had to fit. ``compact_at_tokens`` is a context-size threshold, so use the current
+    message view instead.
     """
-    for run in reversed(session.runs or []):
-        metrics = getattr(run, "metrics", None)
-        input_tokens = getattr(metrics, "input_tokens", None) if metrics is not None else None
-        if input_tokens:
-            return int(input_tokens)
-    return None
+    from agno.utils.tokens import count_tokens
+
+    model_id = getattr(agent.model, "id", None) or "gpt-4o"
+    try:
+        return count_tokens(messages, tools=tools, model_id=model_id)
+    except Exception as e:  # noqa: BLE001 - token estimation must never fail a run
+        log_warning(f"Could not estimate tokens for compaction: {e}")
+        return None
 
 
-def _compaction_inputs(agent: "Agent", session: AgentSession) -> Dict[str, Any]:
+def _compaction_inputs(
+    agent: "Agent", messages: Optional[List[Message]] = None, tools: Optional[List[Any]] = None
+) -> Dict[str, Any]:
     return {
-        "last_input_tokens": _last_input_tokens(session),
+        "context_tokens": _estimated_context_tokens(agent, messages, tools) if messages is not None else None,
         "model": agent.model,
     }
 
@@ -219,13 +226,13 @@ def compact_now(agent: "Agent", session: AgentSession, history: List[Message]) -
         return CompactionResult(status=status, message=reason)
 
     log_info("Compacting conversation history")
-    inputs = _compaction_inputs(agent, session)
+    inputs = _compaction_inputs(agent, history)
     new_record = compaction.compact(
         history,
         session_id=session.session_id,
         db=agent.db,
         previous=record,
-        tokens_before=inputs["last_input_tokens"],
+        tokens_before=inputs["context_tokens"],
     )
     if new_record is None:
         return CompactionResult(
@@ -251,13 +258,13 @@ async def acompact_now(agent: "Agent", session: AgentSession, history: List[Mess
         return CompactionResult(status=status, message=reason)
 
     log_info("Compacting conversation history")
-    inputs = _compaction_inputs(agent, session)
+    inputs = _compaction_inputs(agent, history)
     new_record = await compaction.acompact(
         history,
         session_id=session.session_id,
         db=agent.db,
         previous=record,
-        tokens_before=inputs["last_input_tokens"],
+        tokens_before=inputs["context_tokens"],
     )
     if new_record is None:
         return CompactionResult(
@@ -294,6 +301,8 @@ def apply_compaction(
     history: List[Message],
     run_response: Optional[RunOutput] = None,
     events: Optional[List[Any]] = None,
+    context_prefix: Optional[List[Message]] = None,
+    tools: Optional[List[Any]] = None,
 ) -> List[Message]:
     """Replace the head of ``history`` with a summary once it grows too long.
 
@@ -310,7 +319,8 @@ def apply_compaction(
     # paid for once and the prompt prefix stays stable between runs.
     in_context = compaction.apply_record(history, record) if record is not None else history
 
-    inputs = _compaction_inputs(agent, session)
+    prefix = context_prefix or []
+    inputs = _compaction_inputs(agent, prefix + in_context, tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
 
@@ -334,8 +344,9 @@ def apply_compaction(
         db=agent.db,
         previous=record,
         run_metrics=run_response.metrics if run_response is not None else None,
-        tokens_before=inputs["last_input_tokens"],
+        tokens_before=inputs["context_tokens"],
         run_id=run_response.run_id if run_response is not None else None,
+        context_prefix=prefix,
     )
     if new_record is None:
         return in_context
@@ -357,6 +368,8 @@ async def aapply_compaction(
     history: List[Message],
     run_response: Optional[RunOutput] = None,
     events: Optional[List[Any]] = None,
+    context_prefix: Optional[List[Message]] = None,
+    tools: Optional[List[Any]] = None,
 ) -> List[Message]:
     compaction = getattr(agent, "compaction", None)
     if compaction is None or not history:
@@ -365,7 +378,8 @@ async def aapply_compaction(
     record = _stored_compaction(agent, session, _compaction_as_of(run_response))
     in_context = compaction.apply_record(history, record) if record is not None else history
 
-    inputs = _compaction_inputs(agent, session)
+    prefix = context_prefix or []
+    inputs = _compaction_inputs(agent, prefix + in_context, tools)
     if not compaction.should_compact(in_context, **inputs):
         return in_context
 
@@ -387,8 +401,9 @@ async def aapply_compaction(
         db=agent.db,
         previous=record,
         run_metrics=run_response.metrics if run_response is not None else None,
-        tokens_before=inputs["last_input_tokens"],
+        tokens_before=inputs["context_tokens"],
         run_id=run_response.run_id if run_response is not None else None,
+        context_prefix=prefix,
     )
     if new_record is None:
         return in_context
@@ -1557,7 +1572,15 @@ def get_run_messages(
 
             # Replace the older part of the history with a summary once it has
             # grown past the configured threshold.
-            history_copy = apply_compaction(agent, session, history_copy, run_response, events=run_messages.events)
+            history_copy = apply_compaction(
+                agent,
+                session,
+                history_copy,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
+            )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
 
@@ -1768,7 +1791,13 @@ async def aget_run_messages(
             # Replace the older part of the history with a summary once it has
             # grown past the configured threshold.
             history_copy = await aapply_compaction(
-                agent, session, history_copy, run_response, events=run_messages.events
+                agent,
+                session,
+                history_copy,
+                run_response,
+                events=run_messages.events,
+                context_prefix=run_messages.messages,
+                tools=tools,
             )
 
             log_debug(f"Adding {len(history_copy)} messages from history")
