@@ -896,16 +896,12 @@ class MCPTools(Toolkit):
             available_tools = list(listed if isinstance(listed, list) else listed.tools)
             if isinstance(listed, ListToolsResult):
                 # Collect all pages before validating filters or changing the registry.
-                seen_cursors: set[str] = set()
                 page_count = 1
                 while listed.next_cursor is not None:
-                    cursor = listed.next_cursor
-                    if cursor in seen_cursors:
-                        raise RuntimeError("MCP tools/list returned a repeated pagination cursor")
                     if page_count >= _MCP_TOOL_PAGINATION_MAX_PAGES:
                         raise RuntimeError(f"MCP tools/list reached the page limit ({_MCP_TOOL_PAGINATION_MAX_PAGES})")
-                    seen_cursors.add(cursor)
-                    listed = await self.session.list_tools(params=PaginatedRequestParams(cursor=cursor))
+                    # Cursors are opaque: empty or repeated values may still advance the listing.
+                    listed = await self.session.list_tools(params=PaginatedRequestParams(cursor=listed.next_cursor))
                     available_tools.extend(listed.tools)
                     page_count += 1
 

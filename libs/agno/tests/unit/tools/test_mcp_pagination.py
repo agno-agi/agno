@@ -76,28 +76,30 @@ def toolkit_with_existing_function(session):
 
 
 @pytest.mark.asyncio
-async def test_cursor_cycle_fails_without_registering_partial_results():
+@pytest.mark.parametrize("cursor", ["same", ""])
+async def test_repeated_cursor_may_advance_server_state(cursor):
     session = AsyncMock()
     session.list_tools.side_effect = [
-        ListToolsResult(tools=[tool("first")], next_cursor="a"),
-        ListToolsResult(tools=[tool("second")], next_cursor="b"),
-        ListToolsResult(tools=[tool("third")], next_cursor="a"),
+        ListToolsResult(tools=[tool("first")], next_cursor=cursor),
+        ListToolsResult(tools=[tool("second")], next_cursor=cursor),
+        ListToolsResult(tools=[tool("third")]),
     ]
     toolkit = toolkit_with_existing_function(session)
-    existing = toolkit.functions.copy()
 
-    with pytest.raises(RuntimeError, match="repeated pagination cursor"):
-        await toolkit.build_tools()
+    await toolkit.build_tools()
 
-    assert toolkit.functions == existing
+    assert list(toolkit.functions) == ["existing", "first", "second", "third"]
     assert session.list_tools.await_count == 3
 
 
 @pytest.mark.asyncio
-async def test_unique_cursors_are_bounded_by_page_limit(monkeypatch):
+@pytest.mark.parametrize("repeated", [False, True])
+async def test_non_terminating_listing_is_bounded_by_page_limit(monkeypatch, repeated):
     monkeypatch.setattr(mcp_module, "_MCP_TOOL_PAGINATION_MAX_PAGES", 3, raising=False)
     session = AsyncMock()
-    session.list_tools.side_effect = [ListToolsResult(tools=[tool(str(i))], next_cursor=str(i)) for i in range(4)]
+    session.list_tools.side_effect = [
+        ListToolsResult(tools=[tool(str(i))], next_cursor="same" if repeated else str(i)) for i in range(4)
+    ]
     toolkit = toolkit_with_existing_function(session)
     existing = toolkit.functions.copy()
 
