@@ -26,7 +26,7 @@ class CompactionStatus(str, Enum):
     NOT_ENABLED = "not_enabled"
     # The session has no stored history yet.
     NO_HISTORY = "no_history"
-    # keep_last_runs / keep_last_messages covers the whole conversation, so there is no
+    # keep_last_runs covers the whole conversation, so there is no
     # history in front of the kept tail to fold.
     NOTHING_TO_FOLD = "nothing_to_fold"
     # A previous fold already covers everything up to the only safe cut point.

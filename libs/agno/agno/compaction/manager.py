@@ -71,18 +71,17 @@ class Compaction:
     compact_at_tokens: Optional[int] = 150_000
 
     # -- what to keep ---------------------------------------------------
-    # Recent runs kept verbatim. Ignored when keep_last_messages is set.
+    # Recent runs kept verbatim.
+    #
+    # Runs rather than messages: a run is one turn, so a tail measured in runs never cuts
+    # through the middle of one, which is what the pair-safe boundary walk wants anyway.
     keep_last_runs: Optional[int] = 5
-    # Recent messages kept verbatim.
-    keep_last_messages: Optional[int] = None
 
     # -- archive --------------------------------------------------------
     # Write replaced messages to the filesystem so they stay recoverable.
     archive: bool = True
     # Give the agent read-only search over the archive.
     searchable: bool = False
-    # Where the archive lives. Defaults to the agent's db (AgentFS).
-    fs: Optional[Any] = None
 
     # Render tool results older than the cut as a short placeholder in the view. A cheap,
     # no-inference tier: on a tool-heavy transcript this reclaims more than the summary does,
@@ -109,13 +108,8 @@ class Compaction:
             self.id = f"compaction_{uuid4().hex[:8]}"
         if self.compact_at_tokens is not None and self.compact_at_tokens <= 0:
             raise ValueError(f"compact_at_tokens must be a positive integer, got {self.compact_at_tokens}")
-        for name in ("keep_last_runs", "keep_last_messages"):
-            value = getattr(self, name)
-            if value is not None and value < 0:
-                raise ValueError(f"{name} must be zero or a positive integer, got {value}")
-        if self.keep_last_runs is not None and self.keep_last_messages is not None:
-            log_warning("keep_last_runs and keep_last_messages cannot both be set. Using keep_last_messages.")
-            self.keep_last_runs = None
+        if self.keep_last_runs is not None and self.keep_last_runs < 0:
+            raise ValueError(f"keep_last_runs must be zero or a positive integer, got {self.keep_last_runs}")
         # compact_at_tokens=None is legal: it disables the automatic trigger and leaves
         # agent.compact() as the only way to fold, which is a coherent way to run this.
 
@@ -171,13 +165,10 @@ class Compaction:
     def _keep_from_index(self, messages: List[Message]) -> Optional[int]:
         """Index the kept tail starts at, for a request expressed in turns.
 
-        ``keep_last_runs`` / ``keep_last_messages`` name a position, so this returns one. The
-        boundary walk then only snaps it earlier for safety - it never moves later, which is what
-        makes the setting a floor: you may keep more than asked, never less.
+        ``keep_last_runs`` names a position, so this returns one. The boundary walk then only
+        snaps it earlier for safety - it never moves later, which is what makes the setting a
+        floor: you may keep more than asked, never less.
         """
-        if self.keep_last_messages is not None:
-            return max(0, len(messages) - self.keep_last_messages)
-
         keep_runs = self.keep_last_runs or 0
         if keep_runs <= 0:
             return len(messages)
@@ -486,12 +477,10 @@ class Compaction:
         already = self._resolved_boundary(messages, previous)
         boundary = self.boundary_for(messages, min_index=already)
         if boundary is None or boundary <= already:
-            kept = "keep_last_messages" if self.keep_last_messages is not None else "keep_last_runs"
-            size = self.keep_last_messages if self.keep_last_messages is not None else self.keep_last_runs
             if previous is None:
                 reason = (
-                    f"Nothing to fold yet - {kept}={size} covers the whole conversation, so there is "
-                    f"no history before the kept tail. Lower {kept} to fold sooner."
+                    f"Nothing to fold yet - keep_last_runs={self.keep_last_runs} covers the whole "
+                    f"conversation, so there is no history before the kept tail. Lower it to fold sooner."
                 )
                 log_info(f"Compaction: threshold reached but {reason[0].lower()}{reason[1:]}")
                 return None, CompactionStatus.NOTHING_TO_FOLD, reason
@@ -504,14 +493,13 @@ class Compaction:
             # and the ratio is the one thing that says which lever to reach for.
             fold_tokens = estimate_tokens([m for m in messages[already:boundary] if not is_offload_envelope(m)])
             keep_tokens = max(estimate_tokens([m for m in messages[boundary:] if not is_offload_envelope(m)]), 1)
-            kept = "keep_last_messages" if self.keep_last_messages is not None else "keep_last_runs"
-            size = self.keep_last_messages if self.keep_last_messages is not None else self.keep_last_runs
             return (
                 None,
                 CompactionStatus.NOT_WORTH_IT,
                 f"This fold would replace {fold_tokens} tokens against a {keep_tokens}-token tail "
                 f"(ratio {fold_tokens / keep_tokens:.2f}, needs {self.min_fold_ratio}), so the "
-                f"context would not shrink. Continue the conversation, or lower {kept}={size} or "
+                f"context would not shrink. Continue the conversation, or lower "
+                f"keep_last_runs={self.keep_last_runs} or "
                 f"min_fold_ratio to fold sooner.",
             )
         return boundary, CompactionStatus.COMPACTED, "Ready to compact."

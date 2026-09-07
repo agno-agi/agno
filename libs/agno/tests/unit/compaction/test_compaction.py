@@ -75,12 +75,6 @@ def test_rejects_non_positive_threshold():
         Compaction(compact_at_tokens=0)
 
 
-def test_keep_last_messages_wins_over_runs():
-    c = Compaction(keep_last_runs=3, keep_last_messages=10)
-    assert c.keep_last_runs is None
-    assert c.keep_last_messages == 10
-
-
 # --- triggers ------------------------------------------------------------
 
 
@@ -351,7 +345,7 @@ def test_boundary_never_splits_a_tool_batch():
     """The kept tail must never begin with an unanswered tool result."""
     messages = _transcript(runs=3)
     for keep in range(len(messages) + 1):
-        c = Compaction(keep_last_messages=keep)
+        c = Compaction(keep_last_runs=keep)
         boundary = c.boundary_for(messages)
         tail = messages[boundary:]
         if tail:
@@ -566,7 +560,7 @@ def test_no_new_span_does_not_recompact():
 def test_skips_a_fold_that_cannot_pay_for_its_summary():
     """Folding barely more than is kept leaves the context bigger, not smaller."""
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_runs=1, model=_StubModel())
 
     assert c.compact(tiny, session_id="s", db=None) is None
 
@@ -577,7 +571,7 @@ def test_fold_ratio_can_be_disabled():
         Message(role="assistant", content="hello"),
         Message(role="user", content="more"),
     ]
-    c = Compaction(keep_last_messages=1, min_fold_ratio=0, model=_StubModel())
+    c = Compaction(keep_last_runs=1, min_fold_ratio=0, model=_StubModel())
 
     assert c.compact(messages, session_id="s", db=None) is not None
 
@@ -588,7 +582,7 @@ def test_large_fold_against_a_small_tail_clears_the_ratio():
         Message(role="assistant", content="y" * 5_000),
         Message(role="user", content="tiny"),
     ]
-    c = Compaction(keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_runs=1, model=_StubModel())
 
     assert c.compact(big, session_id="s", db=None) is not None
 
@@ -600,8 +594,9 @@ def test_plan_refuses_what_compact_would_refuse():
     floor, so announcing on it logs "Auto-compacting" and emits
     CompactionStarted for compactions that then never happen.
     """
+    # Too small to be worth folding: whatever boundary exists, both must decline together.
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(keep_last_messages=0, model=_StubModel())
+    c = Compaction(keep_last_runs=1, model=_StubModel())
 
     assert c.plan(tiny) is None
     assert c.compact(tiny, session_id="s", db=None) is None
@@ -613,7 +608,7 @@ def test_plan_agrees_with_compact_when_worthwhile():
         Message(role="assistant", content="y" * 5_000),
         Message(role="user", content="tiny"),
     ]
-    c = Compaction(keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_runs=1, model=_StubModel())
 
     boundary = c.plan(big)
     record = c.compact(big, session_id="s", db=None)
@@ -700,7 +695,7 @@ def test_boundary_never_anchors_on_a_message_that_will_not_persist():
         Message(role="user", content="q2"),
     ]
 
-    boundary = Compaction(keep_last_messages=2).boundary_for(messages)
+    boundary = Compaction(keep_last_runs=1).boundary_for(messages)
 
     assert boundary is None or not messages[boundary].temporary
 
@@ -941,7 +936,7 @@ async def test_acompact_matches_compact():
 @pytest.mark.asyncio
 async def test_acompact_declines_where_compact_declines():
     tiny = [Message(role="user", content="hi"), Message(role="assistant", content="hello")]
-    c = Compaction(keep_last_messages=1, model=_StubModel())
+    c = Compaction(keep_last_runs=1, model=_StubModel())
 
     assert await c.acompact(tiny, session_id="s", db=None) is None
 
