@@ -38,8 +38,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
-from agno.os.authz.role_store import ManagedRoleStore
-from agno.os.authz.user_store import ManagedUserStore
+from agno.os.authz import ManagedRoleStore, ManagedUserStore
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 
 JWT_SECRET = os.getenv("JWT_VERIFICATION_KEY", "your-secret-key-at-least-256-bits-long")

@@ -37,7 +37,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
-from agno.os.authz.role_store import ManagedRoleStore
+from agno.os.authz import ManagedRoleStore
 from agno.os.config import AuthorizationConfig
 
 # ---------------------------------------------------------------------------

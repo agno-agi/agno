@@ -65,11 +65,10 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS
+from agno.os.authz import ManagedRoleStore, ManagedUserStore
 from agno.os.authz.audit import DbAuditSink
 from agno.os.authz.role_router import get_roles_router, get_users_router
-from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.scope_provider import ScopeAuthorizationProvider
-from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 from fastapi import HTTPException, Request
 

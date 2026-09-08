@@ -38,9 +38,9 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
 from agno.os import AgentOS, create_dev_token
+from agno.os.authz import ManagedUserStore
 from agno.os.authz.audit import DbAuditSink
 from agno.os.authz.role_router import get_users_router
-from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig
 
 OS_ID = os.getenv("OS_ID", "manage-users-os")  # the token audience (your os_id)

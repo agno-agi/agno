@@ -35,8 +35,8 @@ import jwt
 from agno.agent import Agent
 from agno.db.in_memory import InMemoryDb
 from agno.os import AgentOS
+from agno.os.authz import ManagedRoleStore
 from agno.os.authz.audit import DbAuditSink
-from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.config import AuthorizationConfig
 from fastapi.testclient import TestClient
 

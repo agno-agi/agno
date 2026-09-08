@@ -364,17 +364,6 @@ class PostgresDb(BaseDb):
         - __foreign_keys__: [{"columns":[...], "ref_table":"...", "ref_columns":[...]}]
         - column-level foreign_key: "logical_table.column" (resolved via _resolve_* helpers)
         """
-        # The runs table declares a FK to sessions — ensure the sessions
-        # Table is registered in ``self.metadata`` first so SQLAlchemy can
-        # resolve the FK reference at ``Table(...)`` construction.
-        if table_type == "runs":
-            fq_sessions = f"{self.db_schema}.{self.session_table_name}" if self.db_schema else self.session_table_name
-            if fq_sessions not in self.metadata.tables:
-                self._get_or_create_table(
-                    table_name=self.session_table_name,
-                    table_type="sessions",
-                    create_table_if_not_found=True,
-                )
         try:
             # Pass table names and db_schema for foreign key resolution
             table_schema = get_table_schema_definition(
