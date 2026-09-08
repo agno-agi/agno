@@ -15,14 +15,25 @@ Magic Hour MCP docs: https://docs.magichour.ai/integration/model-context-protoco
 
 import asyncio
 from os import getenv
+from pathlib import Path
 from textwrap import dedent
+from typing import Optional
+from urllib.parse import urlparse
 
+import httpx
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.tools.mcp import MCPTools
-from agno.utils.log import log_error
+from agno.utils.log import log_error, log_info
+from pydantic import BaseModel
 
 MAGIC_HOUR_MCP_URL = "https://mcp.magichour.ai/"
+
+
+class MediaResult(BaseModel):
+    project_id: str
+    download_url: str
+    summary: str
 
 
 async def run_agent(task: str) -> None:
@@ -40,21 +51,50 @@ async def run_agent(task: str) -> None:
     ) as magic_hour_tools:
         agent = Agent(
             name="MagicHourAgent",
-            model=OpenAIResponses(id="gpt-5.6-luna"),
+            model=OpenAIResponses(id="gpt-5.6-luna", parallel_tool_calls=False),
             tools=[magic_hour_tools],
+            output_schema=MediaResult,
+            # Keep the final response structured without forcing OpenAI's strict
+            # schema rules onto externally defined MCP tool schemas.
+            use_json_mode=True,
             instructions=dedent("""\
                 You create media with Magic Hour's tools.
 
                 - Choose the creation tool that matches the requested media
-                - Start exactly one project and retain its returned project ID
+                - Call the creation tool once and only once; every call bills credits
+                - Request 640px resolution unless the user asks for something larger,
+                  since higher resolutions need a paid Magic Hour plan
+                - If a call is rejected, report why instead of retrying with different
+                  settings; a retry that succeeds bills a second project
+                - Retain the returned project ID
                 - Call the matching wait_for_*_project tool until it reaches a terminal state
                 - If waiting times out, resume with the same project ID; do not create a duplicate
-                - Return the exact completed download URL without changing its query parameters
                 - Report terminal errors clearly and never claim completion without an output URL
+                - Copy the download URL exactly; its query parameters are a signature
+                  and stop working if altered
             """),
-            markdown=True,
         )
         await agent.aprint_response(input=task, stream=True)
+
+        run_output = await agent.aget_last_run_output()
+        result: Optional[MediaResult] = getattr(run_output, "content", None)
+        if not isinstance(result, MediaResult):
+            log_error("Agent did not return a MediaResult.")
+            return
+
+        print(result.download_url)
+
+        output_path = (
+            Path(__file__).parent
+            / "tmp"
+            / Path(urlparse(result.download_url).path).name
+        )
+        output_path.parent.mkdir(parents=True, exist_ok=True)
+        async with httpx.AsyncClient(timeout=120) as client:
+            response = await client.get(result.download_url)
+            response.raise_for_status()
+            output_path.write_bytes(response.content)
+        log_info(f"Saved {output_path}")
 
 
 if __name__ == "__main__":
@@ -64,7 +104,6 @@ if __name__ == "__main__":
             "background. Wait for completion and return the final image URL."
         )
     )
-
 
 # More example prompts:
 """
