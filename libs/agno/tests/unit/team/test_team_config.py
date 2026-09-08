@@ -233,6 +233,24 @@ class TestTeamToDict:
 
         assert config["add_search_knowledge_instructions"] is False
 
+    def test_error_on_tool_name_collision_default_is_false(self):
+        """By default, collision handling should remain skip-by-default and not be serialized."""
+        team = Team(id="collision-default-team", members=[])
+
+        assert team.error_on_tool_name_collision is False
+        assert "error_on_tool_name_collision" not in team.to_dict()
+
+    def test_error_on_tool_name_collision_true_is_serialized(self):
+        """When enabled, the collision policy is serialized for persistence and reload."""
+        team = Team(
+            id="collision-flag-team",
+            members=[],
+            error_on_tool_name_collision=True,
+        )
+        config = team.to_dict()
+
+        assert config["error_on_tool_name_collision"] is True
+
     def test_to_dict_with_db(self, basic_team, mock_db):
         """Test to_dict includes database configuration."""
         basic_team.db = mock_db
@@ -444,6 +462,18 @@ class TestTeamFromDict:
         assert team.respond_directly is True
         assert team.delegate_to_all_members is True
         assert team.add_datetime_to_context is True
+        assert team.error_on_tool_name_collision is False
+
+    def test_from_dict_with_tool_collision_flag(self):
+        config = {
+            "id": "collision-team",
+            "name": "Collision Team",
+            "error_on_tool_name_collision": True,
+        }
+
+        team = Team.from_dict(config)
+
+        assert team.error_on_tool_name_collision is True
 
     def test_from_dict_with_db_postgres(self):
         """Test from_dict reconstructs PostgresDb."""
