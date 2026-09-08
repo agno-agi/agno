@@ -568,6 +568,34 @@ def test_reader_allowed_hosts_ignores_port_and_userinfo():
     assert is_host_allowed("http://docs.agno.com@evil.example/x", reader.allowed_hosts) is False
 
 
+def test_reader_allowed_hosts_normalizes_trailing_dot_in_url():
+    """``docs.agno.com.`` names the root label explicitly and resolves the same."""
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    assert is_host_allowed("https://docs.agno.com./x", reader.allowed_hosts) is True
+    assert is_host_allowed("https://docs.agno.com/x", reader.allowed_hosts) is True
+
+
+def test_reader_allowed_hosts_normalizes_trailing_dot_in_entry():
+    """The direction that matters for a guard: an entry copied from a zone file.
+
+    Written with the dot, the allowlist used to admit only the dotted spelling --
+    so every ordinary URL for the host the operator meant to permit was refused.
+    """
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com."])
+    assert is_host_allowed("https://docs.agno.com/x", reader.allowed_hosts) is True
+    assert is_host_allowed("https://docs.agno.com./x", reader.allowed_hosts) is True
+    assert is_host_allowed("https://other.example/x", reader.allowed_hosts) is False
+
+
+def test_reader_allowed_hosts_trailing_dot_is_not_a_suffix_bypass():
+    """Normalizing the dot must not turn exact matching into suffix matching."""
+    reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
+    assert is_host_allowed("https://docs.agno.com.evil.example/x", reader.allowed_hosts) is False
+    assert is_host_allowed("https://evil.example/docs.agno.com./x", reader.allowed_hosts) is False
+    # A hostname of nothing but root labels names no host, so it matches nothing.
+    assert is_host_allowed("https://./x", reader.allowed_hosts) is False
+
+
 def test_reader_allowed_hosts_blocks_localhost_and_metadata():
     reader = LLMsTxtReader(allowed_hosts=["docs.agno.com"])
     assert is_host_allowed("http://127.0.0.1:8000/admin", reader.allowed_hosts) is False
