@@ -39,8 +39,9 @@ _DATABASE_UNSET = object()
 
 
 def _validate_full_page_read(max_chars: int, timeout: float) -> None:
-    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or max_chars < 0:
-        raise ValueError("max_chars must be a non-negative integer")
+    # PostgreSQL substr accepts a signed 32-bit integer length.
+    if isinstance(max_chars, bool) or not isinstance(max_chars, int) or not 0 <= max_chars <= 2**31 - 1:
+        raise ValueError("max_chars must be an integer between 0 and 2147483647")
     if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout <= 0:
         raise ValueError("timeout must be finite and positive")
 
@@ -306,13 +307,16 @@ class Knowledge(RemoteKnowledge):
     ) -> Optional[str]:
         """Read a complete published page within a character and time budget.
 
-        Return None if the page exceeds max_chars; zero skips storage entirely.
+        max_chars must be an integer from 0 through 2147483647. Return None
+        if the page exceeds max_chars; zero skips storage entirely.
         Limits count Unicode code points, not serialized JSON bytes. A single
         read-only snapshot returns the text without continuation round trips.
         Pass a search hit's revision to reject a changed publication. Missing,
         changed and unavailable pages raise PageNotFound, PageChanged and
         PageError respectively. The timeout covers worker and database work;
-        capacity stays occupied until cleanup finishes after a timeout.
+        capacity stays occupied until cleanup finishes after a timeout. Both
+        full-page variants use the shared eight-slot page-read worker pool and
+        raise PageError immediately when all slots are occupied.
         """
         from sqlalchemy.exc import DBAPIError
         from sqlalchemy.exc import TimeoutError as PoolTimeout

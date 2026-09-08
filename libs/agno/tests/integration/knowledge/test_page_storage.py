@@ -2068,6 +2068,11 @@ async def test_full_page_read_bounds_unicode_and_preserves_publication_errors(co
         body = await read(revision=page.revision, max_chars=short.total_chars)
         assert body == site["https://docs.example.com/agent.md"]
         assert len(statements) == 1 and "substr(" in statements[0][0]
+        assert await read(revision=page.revision, max_chars=2**31 - 1) == body
+        statements.clear()
+        with pytest.raises(ValueError, match="max_chars"):
+            await read(max_chars=2**31)
+        assert not statements
         assert await read(revision=page.revision, max_chars=short.total_chars - 1) is None
         statements.clear()
         assert await read(max_chars=0) is None

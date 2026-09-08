@@ -101,7 +101,7 @@ async def test_zero_budget_skips_storage_and_invalid_limits_fail_before_storage(
     monkeypatch.setattr(Knowledge, "_pages", unexpected)
     knowledge = Knowledge()
     assert await read(knowledge, async_mode, max_chars=0) is None
-    for size in (-1, True, 1.5, "10", None):
+    for size in (-1, 2**31, 2**63, True, 1.5, "10", None):
         with pytest.raises(ValueError, match="max_chars"):
             await read(knowledge, async_mode, max_chars=size)
     for timeout in (0, -1, True, float("nan"), float("inf"), "2", None):

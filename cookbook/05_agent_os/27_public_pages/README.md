@@ -205,12 +205,16 @@ count Unicode code points, and a single bounded SQL read returns the text withou
 JSON clipping or continuation round trips. Missing and changed pages raise
 `PageNotFound` and `PageChanged`; unavailable storage or an expired deadline raises
 `PageError`. The revision check happens before the oversize result. Invalid size
-or timeout arguments raise `ValueError`. With no revision, the read returns the
-publication visible in its read-only snapshot.
+or timeout arguments raise `ValueError`; `max_chars` accepts integers from zero
+through 2,147,483,647, the PostgreSQL substring length limit. With no revision,
+the read returns the publication visible in its read-only snapshot.
 
 The timeout covers the complete read, and worker capacity remains occupied until
-cleanup finishes after timeout or async cancellation. Applications still choose
-an overall deadline and excerpt policy when expanding several search results.
+cleanup finishes after timeout or async cancellation. Both full-page variants
+share the eight-slot page-read worker pool with the existing async page APIs.
+When all slots are occupied, calls raise `PageError` immediately rather than
+waiting for a slot. Applications still choose an overall deadline and excerpt
+policy when expanding several search results.
 Call these APIs from application code with explicit budgets; tool responses need
 their own serialized output limit.
 
