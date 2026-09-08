@@ -68,3 +68,16 @@ async def test_async_bulk_upsert_does_not_reassign_another_users_session(tmp_pat
     assert accepted == []
     assert stored.user_id == "alice"
     assert stored.session_data["session_state"] == {"owner": "alice-data"}
+
+
+def test_bulk_upsert_returns_a_session_whose_user_id_is_not_a_string(tmp_path):
+    """The stored user_id comes back as text, so a session submitted with a
+    non-string one must still be recognised as a session this call wrote."""
+    db = SqliteDb(db_file=str(tmp_path / "t.db"))
+
+    session = AgentSession(session_id="shared", agent_id="a1", user_id=123, created_at=1000, updated_at=1000)
+
+    accepted = db.upsert_sessions([session])
+
+    assert [session.session_id for session in accepted] == ["shared"]
+    assert db.get_session("shared").user_id == "123"
