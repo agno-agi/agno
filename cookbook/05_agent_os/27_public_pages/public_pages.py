@@ -149,7 +149,6 @@ agent_os = AgentOS(
     mcp=MCPConfig(
         tools=tools,
         default_tools=False,
-        lifecycle_tools=False,
         stateless=True,
         server_card_url=getenv("PAGE_DEMO_MCP_URL"),
         allowed_hosts=["localhost:*", "127.0.0.1:*"],
