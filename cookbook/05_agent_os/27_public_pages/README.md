@@ -12,7 +12,9 @@ one runtime URL. Configure the Control Plane's RS256 public key in
 ```
 
 Anonymous clients retain the selected chat routes, compact roster and public
-limits. `/info` reports the authentication mode so the Control Plane can connect.
+limits. Anonymous `/info` reports the authentication mode and counts only selected
+public components. Verified JWT callers receive the full runtime counts. Discovery
+keeps the same response fields so the Control Plane can connect.
 JWT callers get the normal REST API only after signature and endpoint permission
 checks; their responses are private and non-cacheable. Invalid credentials are
 rejected, including on anonymous routes. Public chat does not need
@@ -32,6 +34,8 @@ scheduler and service-account requests retain their existing public contracts.
 With a public surface, service-account tokens can use selected public routes and
 permitted protected workflows, but cannot reach management REST routes; use a JWT
 for management access.
+Mounted runtimes apply JWT and service-account permissions to the route within
+AgentOS, independent of the mount prefix, including without a public surface.
 Without `authorization=True`, the public surface continues to close management
 routes and WebSockets.
 

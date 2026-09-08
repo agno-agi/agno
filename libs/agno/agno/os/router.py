@@ -7,6 +7,7 @@ from fastapi import (
     Depends,
     HTTPException,
     Request,
+    Response,
     WebSocket,
 )
 
@@ -20,7 +21,7 @@ from agno.os.auth import (
     verify_websocket_service_account,
 )
 from agno.os.managers import websocket_manager
-from agno.os.middleware.jwt import JWTValidator, is_reserved_principal, resolve_expected_audience
+from agno.os.middleware.jwt import _VERIFIED_API_JWT, JWTValidator, is_reserved_principal, resolve_expected_audience
 from agno.os.middleware.user_scope import (
     INSUFFICIENT_PERMISSIONS_WS_RECONNECT,
     WORKFLOW_ID_REQUIRED_RECONNECT,
@@ -245,7 +246,16 @@ def get_info_router(os: "AgentOS") -> APIRouter:
         description="Return lightweight, unauthenticated metadata about this AgentOS instance.",
         response_model=InfoResponse,
     )
-    async def get_info(request: Request) -> InfoResponse:
+    async def get_info(request: Request, response: Response) -> InfoResponse:
+        policy = getattr(request.app.state, "public_route_policy", None)
+        public_selection = None
+        if (
+            policy is not None
+            and policy.authenticated_api
+            and getattr(request.state, "_agno_verified_api_jwt", None) is not _VERIFIED_API_JWT
+        ):
+            public_selection = policy.selected
+            response.headers["Vary"] = "Authorization"
         mcp_enabled = bool(os.mcp)
         mcp_oauth = None
         if mcp_enabled and getattr(os, "mcp_auth", None) is not None:
@@ -260,9 +270,9 @@ def get_info_router(os: "AgentOS") -> APIRouter:
             name=os.name,
             os_version=os.version or "1.0.0",
             agno_version=agno_version,
-            agent_count=len(os.agents or []),
-            team_count=len(os.teams or []),
-            workflow_count=len(os.workflows or []),
+            agent_count=len(public_selection["agents"] if public_selection is not None else os.agents or []),
+            team_count=len(public_selection["teams"] if public_selection is not None else os.teams or []),
+            workflow_count=len(public_selection["workflows"] if public_selection is not None else os.workflows or []),
             mcp=McpInfo(enabled=mcp_enabled, path="/mcp" if mcp_enabled else None, oauth=mcp_oauth),
             auth_mode=get_effective_auth_mode(
                 settings=os.settings,

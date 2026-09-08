@@ -294,6 +294,87 @@ def test_mounted_runtime_keeps_route_permissions_and_public_selection(runtime):
         assert socket.receive_json()["event"] == "auth_required"
 
 
+@pytest.mark.parametrize("mounted", [False, True])
+@pytest.mark.parametrize("credential_kind", ["jwt", "pat"])
+@pytest.mark.parametrize("path", ["/config", "/sessions", "/metrics", "/schedules"])
+def test_native_management_scopes_are_enforced_with_and_without_mounts(runtime, mounted, credential_kind, path):
+    from uuid import uuid4
+
+    from agno.db.schemas.service_accounts import ServiceAccount
+    from agno.os.service_accounts import ServiceAccountVerifier, generate_token
+
+    runtime.os.public = None
+    runtime.os.db = runtime.db
+    runtime.os._service_account_verifier = ServiceAccountVerifier(runtime.db)
+
+    def credential(scopes):
+        if credential_kind == "jwt":
+            return token(scopes)
+        plaintext, digest, prefix = generate_token()
+        runtime.db.create_service_account(
+            ServiceAccount(
+                id=str(uuid4()),
+                name="test-" + uuid4().hex,
+                token_hash=digest,
+                token_prefix=prefix,
+                scopes=scopes,
+                created_at=int(time.time()),
+            ).to_dict()
+        )
+        return plaintext
+
+    app = runtime.os.get_app()
+    if mounted:
+        parent = FastAPI()
+        parent.mount("/runtime", app)
+        app = parent
+    client = TestClient(app)
+    url = ("/runtime" if mounted else "") + path
+    params = {"db_id": "sessions"} if path in ("/sessions", "/metrics") else {}
+    assert client.get(url, params=params).status_code == 401
+    denied = client.get(url, params=params, headers=auth(credential([])))
+    assert denied.status_code == 403, denied.text
+    allowed = client.get(url, params=params, headers=auth(credential(["agent_os:admin"])))
+    assert allowed.status_code == 200, allowed.text
+
+
+@pytest.mark.parametrize("mounted", [False, True])
+def test_public_info_counts_only_selected_components_and_preserves_discovery_schema(runtime, mounted):
+    from agno.team import Team
+    from agno.workflow import Workflow
+
+    public_team = Team(id="public-team", members=[runtime.os.agents[0]], model=AnswerModel(), telemetry=False)
+    private_team = Team(id="private-team", members=[runtime.os.agents[1]], model=AnswerModel(), telemetry=False)
+    public_workflow = Workflow(id="public-workflow", steps=[], telemetry=False)
+    private_workflow = Workflow(id="private-workflow", steps=[], telemetry=False)
+    runtime.os.teams = [public_team, private_team]
+    runtime.os.workflows = [public_workflow, private_workflow]
+    runtime.surface.teams = [public_team]
+    runtime.surface.workflows = [public_workflow]
+    app = runtime.os.get_app()
+    path = "/info"
+    if mounted:
+        parent = FastAPI()
+        parent.mount("/runtime", app)
+        app = parent
+        path = "/runtime/info"
+    client = TestClient(app)
+    anonymous = client.get(path)
+    authenticated = client.get(path, headers=auth())
+    assert anonymous.status_code == authenticated.status_code == 200
+    public_info = anonymous.json()
+    native_info = authenticated.json()
+    assert public_info.keys() == native_info.keys()
+    for kind in ("agent", "team", "workflow"):
+        assert public_info[kind + "_count"] == 1
+        assert native_info[kind + "_count"] == 2
+    for field in ("os_id", "name", "os_version", "agno_version", "auth_mode", "mcp"):
+        assert public_info[field] == native_info[field]
+    assert public_info["auth_mode"] == "jwt"
+    assert "Authorization" in anonymous.headers["vary"]
+    assert authenticated.headers["cache-control"] == "private, no-store"
+
+
 @pytest.mark.parametrize("unavailable", [False, True])
 def test_public_socket_admission_rejects_before_accept(runtime, unavailable):
     runtime.surface.client_id = lambda request: request.headers["x-real-ip"]

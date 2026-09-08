@@ -7,4 +7,6 @@
 - [x] Composed HTTP tests cover public access, scoped JWTs, invalid credentials, mounts and CORS.
 - [x] Public workflow WebSocket admission, authentication deadlines and attempt limits.
 - [x] Composed public authorization suite runs in PR CI.
+- [x] Mounted runtime scope checks cover JWTs and service accounts outside mixed mode.
+- [x] Anonymous discovery counts only public components while retaining the discovery schema.
 - [ ] Live hosted Control Plane connection after framework release and deployment configuration.

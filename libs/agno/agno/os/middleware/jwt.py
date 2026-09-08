@@ -919,16 +919,13 @@ class AuthMiddleware(BaseHTTPMiddleware):
             request.app.state.admin_scope = self.admin_scope
             request.app.state.user_isolation_enabled = self.user_isolation
 
-        path = request.url.path
-        method = request.method
-
         from starlette._utils import get_route_path
 
+        path = get_route_path(request.scope)
+        method = request.method
         public_policy = getattr(request.app.state, "public_route_policy", None)
-        public_path = get_route_path(request.scope)
+        public_path = path
         mixed_public = public_policy is not None and public_policy.authenticated_api
-        if mixed_public:
-            path = public_path
         if mixed_public and len(request.headers.getlist("authorization")) > 1:
             return self._create_error_response(401, "Ambiguous Authorization header")
 
