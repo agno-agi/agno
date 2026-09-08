@@ -227,6 +227,38 @@ def _step_on_error(step: Union[Step, Condition]) -> Union[OnError, str]:
     return hr.on_error
 
 
+def _check_failed_step(step: Any, output: StepOutput, run: WorkflowRunOutput, outputs: list) -> None:
+    """Honor a Step's explicit failure policy and retain its structured report.
+
+    Composite success flags also summarize tolerated child failures. Their own
+    exception policies decide whether execution aborts; do not reinterpret the
+    aggregate flag as a new exception at the workflow boundary.
+    """
+    if (
+        not output.success
+        and isinstance(step, Step)
+        and _step_on_error(step) == OnError.fail
+        and not getattr(step, "skip_on_failure", False)
+    ):
+        run.step_results = list(outputs)
+        raise RuntimeError(output.error or f"Step {output.step_name} reported failure")
+
+
+def _record_failed_step(step: Any, error: Exception, run: WorkflowRunOutput, outputs: list) -> None:
+    """Keep exhausted exception diagnostics alongside already completed steps."""
+    if not outputs or not isinstance(outputs[-1], StepOutput) or outputs[-1].step_id != getattr(step, "step_id", None):
+        outputs.append(
+            StepOutput(
+                step_name=getattr(step, "name", None),
+                step_id=getattr(step, "step_id", None),
+                success=False,
+                error=str(error),
+                content=str(error),
+            )
+        )
+    run.step_results = list(outputs)
+
+
 def _find_inner_step_by_executor(
     step: WorkflowStep,
     executor_id: Optional[str] = None,
@@ -2328,6 +2360,56 @@ class Workflow:
             run_index=run_index,
         )
 
+    def _error_events(
+        self, error: Exception, run: WorkflowRunOutput, step: Optional[WorkflowStep] = None
+    ) -> List[WorkflowRunOutputEvent]:
+        """Register failure reports and the terminal event before error persistence."""
+        from agno.run.workflow import WorkflowErrorEvent
+
+        events: List[WorkflowRunOutputEvent] = []
+        # Resolve this run's failed step, rather than carrying an inner workflow's
+        # step identity on the exception as it propagates through outer workflows.
+        output = run.step_results[-1] if run.step_results else None
+        if (
+            step is not None
+            and isinstance(output, StepOutput)
+            and not output.success
+            and output.step_id == getattr(step, "step_id", None)
+            and (output.step_id is not None or output.step_name == getattr(step, "name", None))
+            and isinstance(self.steps, list)
+        ):
+            step_index = next((index for index, candidate in enumerate(self.steps) if candidate is step), None)
+            if step_index is not None:
+                # Function outputs have no executor token stream. Agent/team and
+                # nested workflow outputs already reach consumers through theirs.
+                if output.executor_type == "function":
+                    events.append(self._transform_step_output_to_event(output, run, step_index=step_index))
+                events.append(
+                    StepErrorEvent(
+                        run_id=run.run_id or "",
+                        workflow_id=self.id,
+                        workflow_name=self.name,
+                        session_id=run.session_id,
+                        step_name=output.step_name,
+                        step_index=step_index,
+                        step_id=output.step_id,
+                        error=str(error),
+                    )
+                )
+        events.append(
+            WorkflowErrorEvent(
+                run_id=run.run_id or "",
+                workflow_id=self.id,
+                workflow_name=self.name,
+                session_id=run.session_id,
+                error=str(error),
+                error_type=getattr(error, "type", None),
+                error_id=getattr(error, "error_id", None),
+                additional_data=getattr(error, "additional_data", None),
+            )
+        )
+        return [self._handle_event(event, run) for event in events]
+
     def _persist_errored_run_stream(self, session: WorkflowSession, run: "WorkflowRunOutput") -> None:
         """Persist an errored streaming run and finish its terminal bookkeeping.
 
@@ -2476,20 +2558,29 @@ class Workflow:
     async def _aterminalize_workflow_agent_run(
         self, workflow_run_response: WorkflowRunOutput, session_id: Optional[str], user_id: Optional[str]
     ) -> None:
-        """Terminalize a workflow-agent background run after its generator ends.
+        """Resolve a workflow-agent producer's status from the executed run.
 
-        _aexecute_workflow_agent maintains its own run output internally and
-        never mutates the caller's workflow_run_response, and its internal
-        session save does not flip the run row out of RUNNING. Without this,
-        the row stays RUNNING forever and the producers complete_run a stale
-        status. The generator finishing without raising means the leg is
-        complete; error paths are handled by the producers' except branches."""
+        The tool and direct-answer paths persist their own run output. The
+        producer holds a separate pending/running placeholder, so stream
+        exhaustion alone cannot determine whether execution succeeded.
+        """
         if workflow_run_response.status in (RunStatus.running, RunStatus.pending):
-            workflow_run_response.status = RunStatus.completed
             persist_session_id = session_id or workflow_run_response.session_id
-            if persist_session_id is None:
+            if persist_session_id is None or workflow_run_response.run_id is None:
                 return
             try:
+                executed_run = await self.aget_run_output(
+                    run_id=workflow_run_response.run_id, session_id=persist_session_id, user_id=user_id
+                )
+                if executed_run is not None and executed_run.status in (
+                    RunStatus.completed,
+                    RunStatus.error,
+                    RunStatus.cancelled,
+                    RunStatus.paused,
+                ):
+                    workflow_run_response.status = executed_run.status
+                    return
+                workflow_run_response.status = RunStatus.completed
                 await apersist_run_transition(
                     self, "workflow", persist_session_id, workflow_run_response, user_id=user_id
                 )
@@ -2979,7 +3070,7 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error
                             )
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                             raise
 
                     # Check if executor (agent/team) is paused for tool-level HITL
@@ -3042,6 +3133,7 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -3095,7 +3187,9 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
-
+                if current_step is not None:
+                    _record_failed_step(current_step, e, workflow_run_response, collected_step_outputs)
+                workflow_run_response.step_results = list(collected_step_outputs)
                 raise e
             except RunCancelledException as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
@@ -3141,6 +3235,7 @@ class Workflow:
                 logger.exception("Workflow execution failed")
                 # Store error response
                 workflow_run_response.status = RunStatus.error
+                workflow_run_response.step_results = list(collected_step_outputs)
                 workflow_run_response.content = f"Workflow execution failed: {e}"
                 raise e
 
@@ -3249,24 +3344,12 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session.session_id,
-                    error=str(e),
-                )
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                error_events = self._error_events(e, workflow_run_response)
                 self._persist_errored_run_stream(session=session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         else:
@@ -3396,6 +3479,7 @@ class Workflow:
                                         return
 
                                 collected_step_outputs.append(step_output)
+                                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                                 # Update the workflow-level previous_step_outputs dictionary
                                 previous_step_outputs[step_name] = step_output
@@ -3510,9 +3594,12 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                             )
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(
+                                step, step_error_exception, workflow_run_response, collected_step_outputs
+                            )
                             raise step_error_exception
 
                     # Post-execution output review check
@@ -3624,22 +3711,16 @@ class Workflow:
 
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed | Check: {e.check_trigger}")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session.session_id,
-                    error=str(e),
-                )
-
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
+                if current_step is not None:
+                    _record_failed_step(current_step, e, workflow_run_response, collected_step_outputs)
+                workflow_run_response.step_results = list(collected_step_outputs)
+                error_events = self._error_events(e, workflow_run_response, step=current_step)
+                self._persist_errored_run_stream(session=session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
+                raise e
             except RunCancelledException as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -3717,25 +3798,13 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session.session_id,
-                    error=str(e),
-                )
-
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                workflow_run_response.step_results = list(collected_step_outputs)
+                error_events = self._error_events(e, workflow_run_response, step=current_step)
                 self._persist_errored_run_stream(session=session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         # Yield workflow completed event
@@ -4027,7 +4096,7 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error
                             )
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                             raise
 
                     # Check if executor (agent/team) is paused for tool-level HITL
@@ -4088,6 +4157,7 @@ class Workflow:
                     # Update the workflow-level previous_step_outputs dictionary
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     # Update shared media for next step
                     shared_images.extend(step_output.images or [])
@@ -4141,7 +4211,10 @@ class Workflow:
                 # Store error response
                 workflow_run_response.status = RunStatus.error
                 workflow_run_response.content = f"Validation failed: {str(e)} | Check: {e.check_trigger}"
-
+                if current_step is not None:
+                    _record_failed_step(current_step, e, workflow_run_response, collected_step_outputs)
+                workflow_run_response.step_results = list(collected_step_outputs)
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 raise e
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt) as e:
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled")
@@ -4187,7 +4260,9 @@ class Workflow:
             except Exception as e:
                 logger.exception("Workflow execution failed")
                 workflow_run_response.status = RunStatus.error
+                workflow_run_response.step_results = list(collected_step_outputs)
                 workflow_run_response.content = f"Workflow execution failed: {e}"
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
                 raise e
 
         # Stop timer on error
@@ -4317,24 +4392,12 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session_id,
-                    error=str(e),
-                )
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                error_events = self._error_events(e, workflow_run_response)
                 await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         else:
@@ -4476,6 +4539,7 @@ class Workflow:
                                         return
 
                                 collected_step_outputs.append(step_output)
+                                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                                 # Update the workflow-level previous_step_outputs dictionary
                                 previous_step_outputs[step_name] = step_output
@@ -4594,9 +4658,12 @@ class Workflow:
                                 step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                             )
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
                         else:
-                            # Default behavior: re-raise the exception
+                            _record_failed_step(
+                                step, step_error_exception, workflow_run_response, collected_step_outputs
+                            )
                             raise step_error_exception
 
                     # Post-execution output review check
@@ -4708,22 +4775,16 @@ class Workflow:
 
             except (InputCheckError, OutputCheckError) as e:
                 log_error(f"Validation failed | Check: {e.check_trigger}")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session_id,
-                    error=str(e),
-                )
-
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
+                if current_step is not None:
+                    _record_failed_step(current_step, e, workflow_run_response, collected_step_outputs)
+                workflow_run_response.step_results = list(collected_step_outputs)
+                error_events = self._error_events(e, workflow_run_response, step=current_step)
+                await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
+                raise e
             except (RunCancelledException, asyncio.CancelledError, KeyboardInterrupt, GeneratorExit) as e:
                 # Handle run cancellation during streaming
                 logger.info(f"Workflow run {workflow_run_response.run_id} was cancelled during streaming")
@@ -4814,25 +4875,13 @@ class Workflow:
                 return
             except Exception as e:
                 logger.exception("Workflow execution failed")
-
-                from agno.run.workflow import WorkflowErrorEvent
-
-                error_event = WorkflowErrorEvent(
-                    run_id=workflow_run_response.run_id or "",
-                    workflow_id=self.id,
-                    workflow_name=self.name,
-                    session_id=session_id,
-                    error=str(e),
-                )
-
-                yield error_event
-
-                # Update workflow_run_response with error
-                workflow_run_response.content = error_event.error
+                workflow_run_response.content = str(e)
                 workflow_run_response.status = RunStatus.error
-
-                # Persist the ERROR run before re-raising so it is not lost.
+                workflow_run_response.step_results = list(collected_step_outputs)
+                error_events = self._error_events(e, workflow_run_response, step=current_step)
                 await self._apersist_errored_run_stream(session=workflow_session, run=workflow_run_response)
+                for error_event in error_events:
+                    yield error_event
                 raise e
 
         # Yield workflow completed event
@@ -5747,7 +5796,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent, WorkflowErrorEvent
 
         # Initialize agent with stream_events=True so tool yields events
         self._initialize_workflow_agent(session, execution_input, run_context=run_context, stream=stream)
@@ -5805,8 +5854,11 @@ class Workflow:
             if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
-                # Track if workflow was executed by checking for WorkflowCompletedEvent
-                if isinstance(event, WorkflowCompletedEvent):
+                # A tool failure is still an executed workflow. The model can catch
+                # its exception and answer, but must not replace the saved ERROR run.
+                if isinstance(event, WorkflowCompletedEvent) or (
+                    isinstance(event, WorkflowErrorEvent) and event.run_id == run_id
+                ):
                     workflow_executed = True
             elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                 if event.step_name is None:
@@ -5871,10 +5923,8 @@ class Workflow:
             # Workflow was executed by the tool
             reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-
+            executed_run = reloaded_session.get_run(run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
                     run_id=agent_response.run_id if agent_response else None,
@@ -5885,18 +5935,18 @@ class Workflow:
                 )
                 yield agent_completed_event
 
-                # Update the last run with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+                # Update the executed run with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                self._persist_session_and_run(session=reloaded_session, run=last_run)
+                self._persist_session_and_run(session=reloaded_session, run=executed_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -5993,30 +6043,28 @@ class Workflow:
             # Workflow was executed by the tool
             reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-
-                # Update the last run directly with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+            executed_run = reloaded_session.get_run(run_context.run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
+                # Update the executed run directly with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                self._persist_session_and_run(session=reloaded_session, run=last_run)
+                self._persist_session_and_run(session=reloaded_session, run=executed_run)
 
-                # Return the last run directly (WRO2 from inner workflow)
-                return last_run
+                # Return the executed run directly (WRO2 from inner workflow)
+                return executed_run
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
                 # Return a placeholder error response
                 return WorkflowRunOutput(
-                    run_id=str(uuid4()),
+                    run_id=run_context.run_id or str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
                     user_id=session.user_id,
@@ -6148,7 +6196,7 @@ class Workflow:
         Yields:
             WorkflowRunOutputEvent: Events from workflow execution (agent events are filtered)
         """
-        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent
+        from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES, WorkflowCompletedEvent, WorkflowErrorEvent
 
         logger.info("Workflow agent enabled - async streaming mode")
         log_debug(f"User input: {agent_input}")
@@ -6213,9 +6261,11 @@ class Workflow:
             if isinstance(event, WORKFLOW_RUN_OUTPUT_EVENT_TYPES):
                 yield event  # type: ignore[misc]
 
-                if isinstance(event, WorkflowCompletedEvent):
+                if isinstance(event, WorkflowCompletedEvent) or (
+                    isinstance(event, WorkflowErrorEvent) and event.run_id == run_id
+                ):
                     workflow_executed = True
-                    log_debug("Workflow execution detected via WorkflowCompletedEvent")
+                    log_debug("Workflow execution detected via terminal event")
 
             elif isinstance(event, (RunContentEvent, TeamRunContentEvent)):
                 if event.step_name is None:
@@ -6289,10 +6339,8 @@ class Workflow:
             else:
                 reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-
+            executed_run = reloaded_session.get_run(run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
                 # Yield WorkflowAgentCompletedEvent
                 agent_completed_event = WorkflowAgentCompletedEvent(
                     run_id=agent_response.run_id if agent_response else None,
@@ -6306,18 +6354,18 @@ class Workflow:
 
                 yield agent_completed_event
 
-                # Update the last run with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+                # Update the executed run with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                await self._apersist_session_and_run(session=reloaded_session, run=last_run)
+                await self._apersist_session_and_run(session=reloaded_session, run=executed_run)
 
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
@@ -6420,34 +6468,33 @@ class Workflow:
             else:
                 reloaded_session = self.get_session(session_id=session.session_id)
 
-            if reloaded_session and reloaded_session.runs and len(reloaded_session.runs) > 0:
-                # Get the last run (which is the one just created by the tool)
-                last_run = reloaded_session.runs[-1]
-                log_debug(f"Retrieved latest workflow run: {last_run.run_id}")
-                log_debug(f"Total workflow runs in session: {len(reloaded_session.runs)}")
+            executed_run = reloaded_session.get_run(run_context.run_id) if reloaded_session else None
+            if reloaded_session and executed_run is not None:
+                log_debug(f"Retrieved executed workflow run: {executed_run.run_id}")
+                log_debug(f"Total workflow runs in session: {len(reloaded_session.runs or [])}")
 
-                # Update the last run with workflow_agent_run
-                last_run.workflow_agent_run = agent_response
+                # Update the executed run with workflow_agent_run
+                executed_run.workflow_agent_run = agent_response
 
                 # Store the full agent RunOutput and establish parent-child relationship
                 if agent_response:
-                    agent_response.parent_run_id = last_run.run_id
-                    agent_response.workflow_id = last_run.workflow_id
+                    agent_response.parent_run_id = executed_run.run_id
+                    agent_response.workflow_id = executed_run.workflow_id
 
                 # v3: save_session only writes the session row; the mutated run
                 # must be re-persisted to the runs table for workflow_agent_run
                 # to survive a reload.
-                await self._apersist_session_and_run(session=reloaded_session, run=last_run)
+                await self._apersist_session_and_run(session=reloaded_session, run=executed_run)
 
                 log_debug(f"Agent decision: workflow_executed={workflow_executed}")
 
-                # Return the last run directly (WRO2 from inner workflow)
-                return last_run
+                # Return the executed run directly (WRO2 from inner workflow)
+                return executed_run
             else:
                 log_warning("Could not reload session or no runs found after workflow execution")
                 # Return a placeholder error response
                 return WorkflowRunOutput(
-                    run_id=str(uuid4()),
+                    run_id=run_context.run_id or str(uuid4()),
                     input=execution_input.input,
                     session_id=session.session_id,
                     user_id=session.user_id,
@@ -7032,6 +7079,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -7112,6 +7160,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -7205,6 +7254,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -7305,13 +7355,13 @@ class Workflow:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         # Pause workflow and let user decide to retry or skip
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(i, step_error)
 
                         # Store the paused state
                         workflow_run_response.status = RunStatus.paused
@@ -7333,7 +7383,7 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error
                         )
                     else:
-                        # Default behavior: re-raise the exception
+                        _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                         raise
 
                 # Check if executor (agent/team) is paused for tool-level HITL
@@ -7397,6 +7447,7 @@ class Workflow:
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
+                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                 shared_images.extend(step_output.images or [])
                 shared_videos.extend(step_output.videos or [])
@@ -7436,6 +7487,7 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
         finally:
@@ -7767,6 +7819,7 @@ class Workflow:
         **kwargs: Any,
     ) -> Iterator[WorkflowRunOutputEvent]:
         """Continue executing a workflow from a specific step index with streaming."""
+        current_step = None
         try:
             # Initialize execution state (restores step outputs and media from previous execution)
             state = ContinueExecutionState(workflow_run_response, execution_input)
@@ -7806,6 +7859,7 @@ class Workflow:
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
+                current_step = step
                 raise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Streaming continued step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -7885,6 +7939,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -8285,6 +8340,7 @@ class Workflow:
                                     return
 
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
 
                             step_output_event = self._transform_step_output_to_event(
@@ -8347,12 +8403,14 @@ class Workflow:
 
                 # Handle step execution error based on on_error policy
                 if step_error_occurred and step_error_exception is not None:
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                            i, step_error_exception
+                        )
 
                         workflow_run_response.status = RunStatus.paused
                         workflow_run_response.error_requirements = [error_requirement]
@@ -8383,8 +8441,10 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                         )
                         collected_step_outputs.append(step_output)
+                        _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                         previous_step_outputs[step_name] = step_output
                     else:
+                        _record_failed_step(step, step_error_exception, workflow_run_response, collected_step_outputs)
                         raise step_error_exception
 
                 # Post-execution output review check
@@ -8495,7 +8555,12 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
+            error_events = self._error_events(e, workflow_run_response, step=current_step)
+            self._persist_errored_run_stream(session=session, run=workflow_run_response)
+            for error_event in error_events:
+                yield error_event
             raise e
         finally:
             cleanup_run(workflow_run_response.run_id)  # type: ignore
@@ -9072,6 +9137,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -9154,6 +9220,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -9245,6 +9312,7 @@ class Workflow:
                     # Update tracking
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
@@ -9337,12 +9405,12 @@ class Workflow:
                     raise
                 except Exception as step_error:
                     # Handle step execution error based on on_error policy
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(i, step_error)
 
                         workflow_run_response.status = RunStatus.paused
                         workflow_run_response.error_requirements = [error_requirement]
@@ -9361,6 +9429,7 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error
                         )
                     else:
+                        _record_failed_step(step, step_error, workflow_run_response, collected_step_outputs)
                         raise
 
                 # Check if executor (agent/team) is paused for tool-level HITL
@@ -9424,6 +9493,7 @@ class Workflow:
 
                 previous_step_outputs[step_name] = step_output
                 collected_step_outputs.append(step_output)
+                _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
 
                 shared_images.extend(step_output.images or [])
                 shared_videos.extend(step_output.videos or [])
@@ -9474,6 +9544,7 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
             raise e
         finally:
@@ -9508,6 +9579,7 @@ class Workflow:
         **kwargs: Any,
     ) -> AsyncIterator[WorkflowRunOutputEvent]:
         """Continue executing a workflow from a specific step index with streaming (async version)."""
+        current_step = None
         try:
             # Initialize execution state (restores step outputs and media from previous execution)
             state = ContinueExecutionState(workflow_run_response, execution_input)
@@ -9547,6 +9619,7 @@ class Workflow:
 
             # Continue from the paused step
             for i, step in enumerate(self.steps[start_step_index:], start=start_step_index):  # type: ignore[arg-type, index]
+                current_step = step
                 await araise_if_cancelled(workflow_run_response.run_id)  # type: ignore
                 step_name = getattr(step, "name", f"step_{i + 1}")
                 log_debug(f"Streaming continued step {i + 1}/{self._get_step_count()}: {step_name}")
@@ -9625,6 +9698,7 @@ class Workflow:
 
                     previous_step_outputs[step_name] = step_output
                     collected_step_outputs.append(step_output)
+                    _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                     shared_images.extend(step_output.images or [])
                     shared_videos.extend(step_output.videos or [])
                     shared_audio.extend(step_output.audio or [])
@@ -10026,6 +10100,7 @@ class Workflow:
                                     return
 
                             collected_step_outputs.append(step_output)
+                            _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                             previous_step_outputs[step_name] = step_output
 
                             step_output_event = self._transform_step_output_to_event(
@@ -10088,12 +10163,14 @@ class Workflow:
 
                 # Handle step execution error based on on_error policy
                 if step_error_occurred and step_error_exception is not None:
-                    step_on_error = _step_on_error(step) if isinstance(step, Step) else "fail"
+                    step_on_error = _step_on_error(step) if isinstance(step, (Step, Condition)) else "fail"
 
                     if step_on_error == "pause":
                         log_debug(f"Step '{step_name}' failed with on_error='pause' - pausing workflow")
 
-                        error_requirement = cast(Step, step).create_error_requirement(i, step_error_exception)
+                        error_requirement = cast(Union[Step, Condition], step).create_error_requirement(
+                            i, step_error_exception
+                        )
 
                         workflow_run_response.status = RunStatus.paused
                         workflow_run_response.error_requirements = [error_requirement]
@@ -10124,8 +10201,10 @@ class Workflow:
                             step_name, getattr(step, "step_id", str(uuid4())), step_error_exception
                         )
                         collected_step_outputs.append(step_output)
+                        _check_failed_step(step, step_output, workflow_run_response, collected_step_outputs)
                         previous_step_outputs[step_name] = step_output
                     else:
+                        _record_failed_step(step, step_error_exception, workflow_run_response, collected_step_outputs)
                         raise step_error_exception
 
                 # Post-execution output review check
@@ -10243,7 +10322,12 @@ class Workflow:
         except Exception as e:
             logger.exception("Workflow execution failed")
             workflow_run_response.status = RunStatus.error
+            workflow_run_response.step_results = list(collected_step_outputs)
             workflow_run_response.content = f"Workflow execution failed: {e}"
+            error_events = self._error_events(e, workflow_run_response, step=current_step)
+            await self._apersist_errored_run_stream(session=session, run=workflow_run_response)
+            for error_event in error_events:
+                yield error_event
             raise e
 
         # Yield workflow completed event
