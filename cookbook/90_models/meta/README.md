@@ -29,30 +29,14 @@ uv pip install -U agno openai
 
 ### 4. Run a basic Agent
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/meta/llama/basic_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/meta/llama/basic.py
+python cookbook/90_models/meta/llama/basic.py
 ```
 
 ### 5. Run an Agent with Tools
 
 > Run `uv pip install ddgs` to install dependencies.
 
-- Streaming on
-
 ```shell
-python cookbook/92_models/meta/llama/tool_use_stream.py
-```
-
-- Streaming off
-
-```shell
-python cookbook/92_models/meta/llama/tool_use.py
+python cookbook/90_models/meta/llama/tool_use.py
 ```

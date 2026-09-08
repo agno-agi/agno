@@ -446,9 +446,7 @@ class TestStreamMessage:
                 async for event in client.stream_message(message="Hello"):
                     yield event
 
-            run_events = [
-                event async for event in map_stream_events_to_run_events(raw_stream(), agent_id="agent-1")
-            ]
+            run_events = [event async for event in map_stream_events_to_run_events(raw_stream(), agent_id="agent-1")]
 
             assert [type(e) for e in run_events] == [
                 RunStartedEvent,

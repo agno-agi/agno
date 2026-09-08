@@ -22,14 +22,14 @@ db = PostgresDb(db_url="postgresql+psycopg://ai:ai@localhost:5532/ai")
 researcher = Agent(
     id="researcher-agent",
     name="Researcher",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Research and gather information",
 )
 
 writer = Agent(
     id="writer-agent",
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     role="Write content based on research",
 )
 
@@ -40,7 +40,7 @@ writer = Agent(
 content_team = Team(
     id="content-team",
     name="Content Creation Team",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     members=[researcher, writer],
     description="A team that researches and creates content",
     db=db,

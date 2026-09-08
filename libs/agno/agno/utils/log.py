@@ -117,12 +117,16 @@ debug_level: Literal[1, 2] = 1
 log_tracebacks: bool = getenv("AGNO_LOG_TRACEBACKS", "false").lower() in ("true", "1", "yes")
 
 
+# These setters run on every agent/team/workflow run. Logger.setLevel clears
+# the level cache of EVERY logger in the process (cost grows with the host
+# app's logger count), so skip it when the level is already correct.
 def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 2] = 1):
     if source_type is None:
         use_agent_logger()
 
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.DEBUG)
+    if _logger.level != logging.DEBUG:
+        _logger.setLevel(logging.DEBUG)
 
     global debug_on
     debug_on = True
@@ -133,7 +137,8 @@ def set_log_level_to_debug(source_type: Optional[str] = None, level: Literal[1, 
 
 def set_log_level_to_info(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.INFO)
+    if _logger.level != logging.INFO:
+        _logger.setLevel(logging.INFO)
 
     global debug_on
     debug_on = False
@@ -141,7 +146,8 @@ def set_log_level_to_info(source_type: Optional[str] = None):
 
 def set_log_level_to_warning(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.WARNING)
+    if _logger.level != logging.WARNING:
+        _logger.setLevel(logging.WARNING)
 
     global debug_on
     debug_on = False
@@ -149,7 +155,8 @@ def set_log_level_to_warning(source_type: Optional[str] = None):
 
 def set_log_level_to_error(source_type: Optional[str] = None):
     _logger = logging.getLogger(LOGGER_NAME if source_type is None else f"{LOGGER_NAME}-{source_type}")
-    _logger.setLevel(logging.ERROR)
+    if _logger.level != logging.ERROR:
+        _logger.setLevel(logging.ERROR)
 
     global debug_on
     debug_on = False

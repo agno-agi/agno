@@ -494,7 +494,7 @@ Try it with the demo in this cookbook:
 .venvs/demo/bin/python cookbook/08_learning/10_demo/run.py
 ```
 
-See [10_demo](10_demo/) for the walkthrough, and [cookbook/05_agent_os/learnings](../05_agent_os/learnings/) for a client-side tour of the REST endpoints.
+See [10_demo](10_demo/) for the walkthrough, and [cookbook/05_agent_os/11_learnings](../05_agent_os/11_learnings/) for a client-side tour of the REST endpoints.
 
 ## Learn More
 

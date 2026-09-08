@@ -48,7 +48,7 @@ Hundreds of examples. Copy, paste, run.
 [10_reasoning](./10_reasoning) — Make agents think before they act. Three approaches:
 - **Reasoning models** — Use models pre-trained for reasoning (o1, o3, etc.)
 - **Reasoning tools** — Give the agent tools that enable reasoning (think, analyze)
-- **Reasoning harness** — Set `reasoning=True` for chain-of-thought with tool use
+- **Reasoning harness** — Set `reasoning_model` for chain-of-thought with a separate thinking model
 
 ### Memory
 [11_memory](./11_memory) — Agents that remember. Store insights and facts about users across conversations for personalized responses.
@@ -85,6 +85,9 @@ Hundreds of examples. Copy, paste, run.
 
 ### Observability
 [observability](./observability) — Trace and monitor agents, teams, and workflows: Langfuse, Arize Phoenix, AgentOps, LangSmith, MLflow, Weave, Logfire, and more (via OpenInference, OpenLIT, and autolog).
+
+### Performance
+[performance](./performance) — The canonical framework-overhead benchmark suite: instantiation, run loop, cold imports and memory footprint, measured with in-process mock models (no network, no keys), plus cross-framework comparisons (LangGraph, PydanticAI, CrewAI) and an HTML report generator. For `PerformanceEval` API examples see [09_evals](./09_evals).
 
 ## Quality Standard
 

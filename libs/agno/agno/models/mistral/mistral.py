@@ -5,28 +5,31 @@ from typing import Any, AsyncIterator, Dict, Iterator, List, Optional, Type, Uni
 from pydantic import BaseModel
 
 from agno.exceptions import ModelProviderError
+from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.message import Message
-from agno.models.metrics import MessageMetrics
 from agno.models.response import ModelResponse
 from agno.run.agent import RunOutput
 from agno.utils.log import log_debug, log_error
-from agno.utils.models._mistral_compat import (
-    AssistantMessage,
-    ChatCompletionResponse,
-    CompletionEvent,
-    DeltaMessage,
-    HTTPValidationError,
-    MistralClient,
-    ParsedChatCompletionResponse,
-    SDKError,
-    SystemMessage,
-    ToolMessage,
-    Unset,
-    UserMessage,
-    response_format_from_pydantic_model,
-)
 from agno.utils.models.mistral import format_messages
+
+try:
+    from mistralai.client import Mistral as MistralClient
+    from mistralai.client.errors import HTTPValidationError, SDKError
+    from mistralai.client.models import (
+        AssistantMessage,
+        ChatCompletionResponse,
+        CompletionEvent,
+        DeltaMessage,
+        SystemMessage,
+        ToolMessage,
+        UserMessage,
+    )
+    from mistralai.client.types.basemodel import Unset
+    from mistralai.extra import response_format_from_pydantic_model
+    from mistralai.extra.struct_chat import ParsedChatCompletionResponse
+except ImportError:
+    raise ImportError("`mistralai` not installed. Please install using `pip install mistralai`")
 
 MistralMessage = Union[UserMessage, AssistantMessage, SystemMessage, ToolMessage]
 
@@ -346,7 +349,7 @@ class MistralChat(Model):
         """
         model_response = ModelResponse()
         if response.choices is not None and len(response.choices) > 0:
-            response_message: AssistantMessage = response.choices[0].message
+            response_message: AssistantMessage = response.choices[0].message  # type: ignore
 
             # -*- Set content
             model_response.content = response_message.content  # type: ignore

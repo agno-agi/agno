@@ -22,11 +22,11 @@ from typing import (
     Tuple,
     Type,
     Union,
-    get_args,
 )
 
 if TYPE_CHECKING:
     from agno.compression.manager import CompressionManager
+    from agno.offload.store import ResultStore
 from uuid import uuid4
 
 from pydantic import BaseModel
@@ -42,11 +42,11 @@ from agno.media import Audio, File, Image, Video
 from agno.metrics import MessageMetrics, ModelType, ToolCallMetrics
 from agno.models.message import Citations, Message
 from agno.models.response import ModelResponse, ModelResponseEvent, ToolExecution
-from agno.run.agent import CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
+from agno.run.agent import RUN_OUTPUT_EVENT_TYPES, CustomEvent, RunContentEvent, RunOutput, RunOutputEvent
 from agno.run.requirement import RunRequirement
+from agno.run.team import TEAM_RUN_OUTPUT_EVENT_TYPES, TeamRunOutput, TeamRunOutputEvent
 from agno.run.team import RunContentEvent as TeamRunContentEvent
-from agno.run.team import TeamRunOutput, TeamRunOutputEvent
-from agno.run.workflow import WorkflowRunOutputEvent
+from agno.run.workflow import WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 from agno.tools.function import (
     Function,
     FunctionCall,
@@ -58,6 +58,10 @@ from agno.tools.function import (
 from agno.utils.log import log_debug, log_error, log_info, log_warning
 from agno.utils.timer import Timer
 from agno.utils.tools import get_function_call_for_tool_call, get_function_call_for_tool_execution
+
+# Every run-event type a tool-result generator can bubble up, cached once:
+# these isinstance checks run per streamed item on the hot path.
+_ALL_RUN_OUTPUT_EVENT_TYPES = RUN_OUTPUT_EVENT_TYPES + TEAM_RUN_OUTPUT_EVENT_TYPES + WORKFLOW_RUN_OUTPUT_EVENT_TYPES
 
 
 @dataclass
@@ -192,19 +196,11 @@ class Model(ABC):
             return self.delay_between_retries * (2**attempt)
         return self.delay_between_retries
 
-    @staticmethod
-    def classify_error(error: ModelProviderError) -> ModelProviderError:
-        """Re-classify a generic ModelProviderError into a specific subclass.
-
-        Delegates to ModelProviderError.classify(). Kept for backwards compatibility.
-        """
-        return ModelProviderError.classify(error)
-
     def _is_retryable_error(self, error: ModelProviderError) -> bool:
         """Determine if an error is worth retrying.
 
         Non-retryable errors include:
-        - ContextWindowExceededError (fast path after classify_error)
+        - ContextWindowExceededError (fast path after ModelProviderError.classify)
         - Client errors (400, 401, 403, 404, 413, 422) that won't change on retry
         - Context window/token limit patterns in error message (defense-in-depth)
 
@@ -213,7 +209,7 @@ class Model(ABC):
         - Server errors (500, 502, 503, 504)
         - Anything else not explicitly non-retryable
         """
-        # Fast path: already classified by classify_error()
+        # Fast path: already classified by ModelProviderError.classify()
         if isinstance(error, ContextWindowExceededError):
             return False
 
@@ -242,7 +238,7 @@ class Model(ABC):
             try:
                 return self.invoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -290,7 +286,7 @@ class Model(ABC):
             try:
                 return await self.ainvoke(**kwargs)
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -340,7 +336,7 @@ class Model(ABC):
                 yield from self.invoke_stream(**kwargs)
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable (e.g., context window exceeded, auth errors)
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -393,7 +389,7 @@ class Model(ABC):
                     yield response
                 return  # Success, exit the retry loop
             except ModelProviderError as e:
-                last_exception = self.classify_error(e)
+                last_exception = ModelProviderError.classify(e)
                 # Check if error is non-retryable
                 if not self._is_retryable_error(last_exception):
                     log_error(f"Non-retryable model provider error: {str(e)}")
@@ -657,6 +653,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> ModelResponse:
         """
@@ -753,6 +750,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -811,7 +809,7 @@ class Model(ABC):
                                 model_response.content += function_call_response.content  # type: ignore
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -888,6 +886,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> ModelResponse:
         """
@@ -975,6 +974,7 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if isinstance(function_call_response, ModelResponse):
                         # The session state is updated by the function call
@@ -1032,7 +1032,7 @@ class Model(ABC):
                                 model_response.content += function_call_response.content  # type: ignore
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 self.format_function_call_results(
@@ -1370,6 +1370,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], None]] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1518,13 +1519,14 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
                     yield function_call_response
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 if stream_data and stream_data.extra is not None:
@@ -1649,6 +1651,7 @@ class Model(ABC):
         run_response: Optional[Union[RunOutput, TeamRunOutput]] = None,
         send_media_to_model: bool = True,
         compression_manager: Optional["CompressionManager"] = None,
+        result_store: Optional["ResultStore"] = None,
         after_tool_results: Optional[Callable[["ModelResponse"], Awaitable[None]]] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         """
@@ -1797,13 +1800,14 @@ class Model(ABC):
                     function_call_results=function_call_results,
                     current_function_call_count=function_call_count,
                     function_call_limit=tool_call_limit,
+                    result_store=result_store,
                 ):
                     if self.cache_response and isinstance(function_call_response, ModelResponse):
                         streaming_responses.append(function_call_response)
                     yield function_call_response
 
                 # Add a function call for each successful execution
-                function_call_count += len(function_call_results)
+                function_call_count += self._limit_charge_for(function_call_results, result_store)
 
                 # Format and add results to messages
                 if stream_data and stream_data.extra is not None:
@@ -2080,6 +2084,81 @@ class Model(ABC):
                 function_calls_to_run.append(_function_call)
         return function_calls_to_run
 
+    @staticmethod
+    def _offload_candidate(
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> Optional[str]:
+        """The output as text when it qualifies for offloading, else None.
+
+        Never offloaded: failed calls (the model needs the error text
+        verbatim), empty results, sub-threshold results, the read-back tools'
+        own output, and any result that ends the run. A result that ends the
+        run is the answer the caller receives, so a pointer in its place would
+        replace the answer with a reference to it. Only the message content is
+        ever replaced - media on the FunctionExecutionResult is untouched.
+        """
+        if not success or not output:
+            return None
+        if function_call.function.stop_after_tool_call:
+            return None
+        text = output
+        if not result_store.should_offload(function_call.function.name, text):
+            return None
+        if function_call.function._run_context is None:
+            return None
+        return text
+
+    def _substitute_tool_result(
+        self,
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> str:
+        """Replace an oversized successful tool result with its envelope."""
+        text = self._offload_candidate(result_store, function_call, success, output)
+        if text is None:
+            return output
+        run_context = function_call.function._run_context
+        assert run_context is not None
+        return result_store.offload_for_model(
+            session_id=run_context.session_id,
+            run_id=run_context.run_id,
+            tool_call_id=function_call.call_id or function_call.function.name,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            output=text,
+            user_id=run_context.user_id,
+            shared=function_call.function._team is not None,
+        )
+
+    async def _asubstitute_tool_result(
+        self,
+        result_store: "ResultStore",
+        function_call: FunctionCall,
+        success: bool,
+        output: str,
+    ) -> str:
+        """Async variant of ``_substitute_tool_result``."""
+        text = self._offload_candidate(result_store, function_call, success, output)
+        if text is None:
+            return output
+        run_context = function_call.function._run_context
+        assert run_context is not None
+        return await result_store.aoffload_for_model(
+            session_id=run_context.session_id,
+            run_id=run_context.run_id,
+            tool_call_id=function_call.call_id or function_call.function.name,
+            tool_name=function_call.function.name,
+            tool_args=function_call.arguments,
+            output=text,
+            user_id=run_context.user_id,
+            shared=function_call.function._team is not None,
+        )
+
     def create_function_call_result(
         self,
         function_call: FunctionCall,
@@ -2120,6 +2199,21 @@ class Model(ABC):
             **kwargs,  # type: ignore
         )
 
+    @staticmethod
+    def _limit_charge_for(function_call_results: List[Message], result_store: Optional["ResultStore"]) -> int:
+        """How many of this batch's results spend the tool call limit.
+
+        With offloading on, the read-back tools are exempt: they exist only
+        because a result was replaced with a pointer the model was told to
+        follow, so the running total charges the same calls the per-batch
+        check charges.
+        """
+        if result_store is None:
+            return len(function_call_results)
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
+        return sum(1 for m in function_call_results if m.tool_name not in NEVER_OFFLOADED_TOOLS)
+
     def create_tool_call_limit_error_result(self, function_call: FunctionCall) -> Message:
         return Message(
             role=self.tool_message_role,
@@ -2135,6 +2229,7 @@ class Model(ABC):
         function_call: FunctionCall,
         function_call_results: List[Message],
         additional_input: Optional[List[Message]] = None,
+        result_store: Optional["ResultStore"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Start function call
         function_call_timer = Timer()
@@ -2182,11 +2277,7 @@ class Model(ABC):
             try:
                 for item in function_execution_result.result:
                     # This function yields agent/team/workflow run events
-                    if (
-                        isinstance(item, tuple(get_args(RunOutputEvent)))
-                        or isinstance(item, tuple(get_args(TeamRunOutputEvent)))
-                        or isinstance(item, tuple(get_args(WorkflowRunOutputEvent)))
-                    ):
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events for output accumulation
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -2214,7 +2305,7 @@ class Model(ABC):
 
                         # Yield the event itself to bubble it up. The isinstance guards
                         # above narrow item at runtime, but mypy cannot see through
-                        # tuple(get_args(...)).
+                        # the cached union-member tuple.
                         yield item  # type: ignore[misc]
 
                     else:
@@ -2274,6 +2365,13 @@ class Model(ABC):
             tool_metrics.end_time = current_time
             tool_metrics.start_time = current_time - function_call_timer.elapsed
 
+        # Replace an oversized successful result with its stored envelope
+        # BEFORE the tool message (and the ToolExecution derived from it) is
+        # built. With no result_store this is a no-op passthrough.
+        if result_store is not None:
+            function_call_output = self._substitute_tool_result(
+                result_store, function_call, function_call_success, function_call_output
+            )
         # Create and yield function call result
         function_call_result = self.create_function_call_result(
             function_call,
@@ -2317,13 +2415,20 @@ class Model(ABC):
         additional_input: Optional[List[Message]] = None,
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
+        result_store: Optional["ResultStore"] = None,
     ) -> Iterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
 
         for fc in function_calls:
-            if function_call_limit is not None:
+            # The read-back tools exist only because offloading replaced a result
+            # the model was told to go and read. Counting them against the limit
+            # can refuse the very read the run needs to answer.
+            counts_against_limit = result_store is None or fc.function.name not in NEVER_OFFLOADED_TOOLS
+            if function_call_limit is not None and counts_against_limit:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
@@ -2458,7 +2563,10 @@ class Model(ABC):
                 continue
 
             yield from self.run_function_call(
-                function_call=fc, function_call_results=function_call_results, additional_input=additional_input
+                function_call=fc,
+                function_call_results=function_call_results,
+                additional_input=additional_input,
+                result_store=result_store,
             )
 
         # Add any additional messages at the end
@@ -2515,14 +2623,21 @@ class Model(ABC):
         current_function_call_count: int = 0,
         function_call_limit: Optional[int] = None,
         skip_pause_check: bool = False,
+        result_store: Optional["ResultStore"] = None,
     ) -> AsyncIterator[Union[ModelResponse, RunOutputEvent, TeamRunOutputEvent]]:
         # Additional messages from function calls that will be added to the function call results
         if additional_input is None:
             additional_input = []
 
+        from agno.offload.types import NEVER_OFFLOADED_TOOLS
+
         function_calls_to_run = []
         for fc in function_calls:
-            if function_call_limit is not None:
+            # The read-back tools exist only because offloading replaced a result
+            # the model was told to go and read. Counting them against the limit
+            # can refuse the very read the run needs to answer.
+            counts_against_limit = result_store is None or fc.function.name not in NEVER_OFFLOADED_TOOLS
+            if function_call_limit is not None and counts_against_limit:
                 current_function_call_count += 1
                 # We have reached the function call limit, so we add an error result to the function call results
                 if current_function_call_count > function_call_limit:
@@ -2693,6 +2808,11 @@ class Model(ABC):
                 )
             ]
 
+        # gather even for a single call: its cancel bookkeeping re-raises
+        # caller cancellation even when a tool swallows the CancelledError
+        # thrown into it, and its task wrapper isolates the tool's contextvars.
+        # A bare await loses both; replicating them needs Task.cancelling(),
+        # which requires Python 3.11.
         results = await asyncio.gather(
             *(self.arun_function_call(fc) for fc in function_calls_to_run), return_exceptions=True
         )
@@ -2727,12 +2847,7 @@ class Model(ABC):
             try:
                 async for item in function_call.result:
                     # This function yields agent/team/workflow run events
-                    if isinstance(
-                        item,
-                        tuple(get_args(RunOutputEvent))
-                        + tuple(get_args(TeamRunOutputEvent))
-                        + tuple(get_args(WorkflowRunOutputEvent)),
-                    ):
+                    if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                         # We only capture content events
                         if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                             if item.content is not None and isinstance(item.content, BaseModel):
@@ -2865,12 +2980,7 @@ class Model(ABC):
                 try:
                     for item in function_call.result:
                         # This function yields agent/team/workflow run events
-                        if isinstance(
-                            item,
-                            tuple(get_args(RunOutputEvent))
-                            + tuple(get_args(TeamRunOutputEvent))
-                            + tuple(get_args(WorkflowRunOutputEvent)),
-                        ):
+                        if isinstance(item, _ALL_RUN_OUTPUT_EVENT_TYPES):
                             # We only capture content events
                             if isinstance(item, RunContentEvent) or isinstance(item, TeamRunContentEvent):
                                 if item.content is not None and isinstance(item.content, BaseModel):
@@ -2955,6 +3065,13 @@ class Model(ABC):
                 tool_metrics.end_time = current_time
                 tool_metrics.start_time = current_time - function_call_timer.elapsed
 
+            # Replace an oversized successful result with its stored envelope
+            # BEFORE the tool message (and the ToolExecution derived from it)
+            # is built. Async parity: the a-prefixed store methods do the I/O.
+            if result_store is not None:
+                function_call_output = await self._asubstitute_tool_result(
+                    result_store, function_call, function_call_success, function_call_output
+                )
             # Create and yield function call result
             function_call_result = self.create_function_call_result(
                 function_call,

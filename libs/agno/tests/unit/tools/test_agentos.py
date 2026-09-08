@@ -7,7 +7,7 @@ full db read path is exercised, not mocked.
 import json
 import time
 import uuid
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from typing import Any, Dict, Optional
 
 import pytest
@@ -463,6 +463,24 @@ class TestGetToolActivity:
 
 
 class TestGetPlatformMetrics:
+    def test_a_day_with_two_owners_is_one_entry(self, db, toolkit):
+        """Metrics are stored one row per owner, and this reports days, not users."""
+        from agno.session.agent import AgentSession
+
+        now = int(time.time())
+        for owner in ("user-1", "user-2"):
+            db.upsert_session(
+                AgentSession(
+                    session_id=str(uuid.uuid4()), agent_id="agent-1", user_id=owner, created_at=now, updated_at=now
+                )
+            )
+
+        out = _loads(toolkit.get_platform_metrics(days=7))
+
+        assert len(out["daily"]) == 1
+        assert out["daily"][0]["distinct_users"] == 2
+        assert out["totals"]["agent_sessions"] == 2
+
     def test_calculates_and_reports(self, db, toolkit):
         from agno.session.agent import AgentSession
 
@@ -487,6 +505,29 @@ class TestGetPlatformMetrics:
 
         assert out["daily"] == []
         assert any("no metrics" in note for note in out["notes"])
+
+    @pytest.mark.parametrize(
+        "given, expected",
+        [(0, 1), (-1, 1), (1.9, 1), (999, 365), (365.9, 365)],
+    )
+    def test_reported_window_is_the_window_queried(self, toolkit, given, expected):
+        """A clamped window must be reported as clamped, or rates computed from it are wrong."""
+        metrics = _loads(toolkit.get_platform_metrics(days=given))
+        activity = _loads(toolkit.get_run_activity(days=given))
+        tools = _loads(toolkit.get_tool_activity(days=given))
+
+        assert metrics["window_days"] == expected
+        assert activity["window_days"] == expected
+        assert tools["window_days"] == expected
+        # The window reported must match the date range actually queried
+        spanned = (date.fromisoformat(metrics["end_date"]) - date.fromisoformat(metrics["start_date"])).days + 1
+        assert spanned == expected
+
+    def test_non_numeric_window_reports_an_error_not_a_number(self, toolkit):
+        out = _loads(toolkit.get_platform_metrics(days="last week"))
+
+        assert "error" in out
+        assert "window_days" not in out
 
 
 class TestLazyMetricsRefresh:
@@ -519,10 +560,11 @@ class TestLazyMetricsRefresh:
         rows, _ = db.get_metrics()
         assert rows[0]["agent_sessions_count"] == 1
 
-        # Expiring the throttle picks the new session up
+        # Expiring the throttle picks the new session up, one row per (user, date)
         db._metrics_refreshed_at = 0.0
         rows, _ = db.get_metrics()
-        assert rows[0]["agent_sessions_count"] == 2
+        assert len(rows) == 2
+        assert sum(row["agent_sessions_count"] for row in rows) == 2
 
     def test_explicit_calculate_stamps_the_throttle(self, db):
         self._seed_session(db)
@@ -530,6 +572,20 @@ class TestLazyMetricsRefresh:
         db.calculate_metrics()
 
         assert db._metrics_refreshed_at > 0.0
+
+    def test_metrics_tool_does_not_bypass_the_throttle(self, db, toolkit):
+        self._seed_session(db)
+        calls = []
+        original = type(db).calculate_metrics
+        type(db).calculate_metrics = lambda self, *a, **k: (calls.append(1), original(self, *a, **k))[1]
+        try:
+            for _ in range(3):
+                toolkit.get_platform_metrics(days=1)
+        finally:
+            type(db).calculate_metrics = original
+
+        # The tool must not refresh on its own; the db throttle governs
+        assert len(calls) == 1
 
 
 # ----------------------------------------------------------------------
@@ -598,12 +654,12 @@ class TestGetEvalHistory:
 
         # Seed through the writer's own shape so this breaks if it changes again
         perf = PerformanceEval(func=lambda: None)
-        perf.result = PerformanceResult(run_times=[1.0, 3.0])
+        perf.result = PerformanceResult(run_id="eval-perf", run_times=[1.0, 3.0])
         db.create_eval_run(
             EvalRunRecord(
                 run_id="eval-perf",
                 eval_type=EvalType.PERFORMANCE,
-                eval_data=perf._parse_eval_run_data(),
+                eval_data=perf._parse_eval_run_data(perf.result),
                 agent_id="agent-1",
                 name="perf check",
             )
@@ -773,6 +829,33 @@ class TestSchedules:
         assert _loads(schedules)["schedules"][0]["last_run"]["error"] == "HTTP 422"
         for run in out["runs"]:
             assert run["error"] is None or len(run["error"]) <= 200
+
+    def test_failed_run_keeps_the_scheduler_s_own_diagnosis(self, db, toolkit):
+        """A run that fails is still polled successfully, so its error rides on a 200.
+
+        Redacting whenever a status code is present would turn the one answer this
+        tool exists to give into "HTTP 200", which reads like success.
+        """
+        schedule = Schedule(id="sched-1", name="daily-report", cron_expr="0 9 * * *", endpoint="/agents/r/runs")
+        db.create_schedule(schedule.to_dict())
+        now = int(time.time())
+        diagnosis = "Run failed with status ERROR: tool 'send_email' raised ConnectionError"
+        db.create_schedule_run(
+            ScheduleRun(
+                id="run-1",
+                schedule_id="sched-1",
+                status="failed",
+                triggered_at=now - 60,
+                status_code=200,
+                error=diagnosis,
+                created_at=now - 60,
+            ).to_dict()
+        )
+
+        out = _loads(toolkit.get_schedule_history("sched-1"))
+
+        assert out["runs"][0]["error"] == diagnosis
+        assert _loads(toolkit.list_schedules())["schedules"][0]["last_run"]["error"] == diagnosis
 
     def test_framework_errors_keep_a_capped_first_line(self, db, toolkit):
         schedule = Schedule(id="sched-1", name="daily-report", cron_expr="0 9 * * *", endpoint="/agents/r/runs")

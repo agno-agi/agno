@@ -282,6 +282,57 @@ class TestAutoDetection:
 
         assert Claude(id="claude-sonnet-5-0").append_trailing_user_message is True
 
+    def test_thinking_enabled_auto_enabled_on_prefill_model(self):
+        # Prefill is rejected while thinking is on, so a prefill-capable model still needs the
+        # trailing user turn (a resumed run, or a response truncated inside its thinking).
+        from agno.models.anthropic import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "enabled", "budget_tokens": 1024})
+        assert model.append_trailing_user_message is True
+
+    def test_adaptive_thinking_auto_enabled_on_prefill_model(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "adaptive"})
+        assert model.append_trailing_user_message is True
+
+    def test_thinking_disabled_type_keeps_prefill_default(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "disabled"})
+        assert model.append_trailing_user_message is False
+
+    def test_user_override_respected_with_thinking(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(
+            id="claude-sonnet-4-5-20250929",
+            thinking={"type": "enabled", "budget_tokens": 1024},
+            append_trailing_user_message=False,
+        )
+        assert model.append_trailing_user_message is False
+
+    def test_thinking_via_request_params_auto_enabled(self):
+        # request_params are applied last and override the thinking field, so thinking supplied
+        # there must also turn on the trailing user turn.
+        from agno.models.anthropic import Claude
+
+        model = Claude(
+            id="claude-sonnet-4-5-20250929",
+            request_params={"thinking": {"type": "enabled", "budget_tokens": 1024}},
+        )
+        assert model.append_trailing_user_message is True
+
+    def test_request_params_disabling_thinking_keeps_prefill_default(self):
+        from agno.models.anthropic import Claude
+
+        model = Claude(
+            id="claude-sonnet-4-5-20250929",
+            thinking={"type": "enabled", "budget_tokens": 1024},
+            request_params={"thinking": {"type": "disabled"}},
+        )
+        assert model.append_trailing_user_message is False
+
 
 class TestAutoDetectionVertexAI:
     """Tests for VertexAI Claude auto-detection."""
@@ -339,3 +390,36 @@ class TestAutoDetectionLiteLLM:
         from agno.models.litellm.chat import LiteLLM
 
         assert LiteLLM(id="openai/gpt-4o").append_trailing_user_message is False
+
+
+class TestAutoDetectionAzureClaude:
+    """Azure Claude must run the shared auto-detection, not just its own overrides."""
+
+    def test_azure_sonnet_45_auto_disabled(self):
+        from agno.models.azure.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-5-20250929").append_trailing_user_message is False
+
+    def test_azure_sonnet_46_auto_enabled(self):
+        from agno.models.azure.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-6").append_trailing_user_message is True
+
+    def test_azure_thinking_auto_enabled_on_prefill_model(self):
+        from agno.models.azure.claude import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929", thinking={"type": "enabled", "budget_tokens": 1024})
+        assert model.append_trailing_user_message is True
+
+    def test_azure_user_override_respected(self):
+        from agno.models.azure.claude import Claude
+
+        assert Claude(id="claude-sonnet-4-6", append_trailing_user_message=False).append_trailing_user_message is False
+
+    def test_azure_still_disables_structured_outputs(self):
+        # The parent post-init enables native structured outputs for supported ids; Azure overrides it.
+        from agno.models.azure.claude import Claude
+
+        model = Claude(id="claude-sonnet-4-5-20250929")
+        assert model.supports_native_structured_outputs is False
+        assert model.supports_json_schema_outputs is False

@@ -1,28 +1,50 @@
 import asyncio
 import json
-from typing import TYPE_CHECKING, Any, Dict, Optional, Union
+from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol, runtime_checkable
 from uuid import uuid4
 
 from agno.utils.log import log_debug, log_error, log_exception
 
 try:
-    from mcp import ClientSession
-    from mcp.shared.exceptions import McpError
+    from mcp.shared.exceptions import MCPError
     from mcp.types import CallToolResult, EmbeddedResource, ImageContent, TextContent
     from mcp.types import Tool as MCPTool
-except (ImportError, ModuleNotFoundError):
-    raise ImportError("`mcp` not installed. Please install using `pip install mcp`")
+except ModuleNotFoundError:
+    raise ImportError("`mcp` not installed. Please install using `pip install 'mcp>=2.1.0,<3.0.0'`")
 
 
 from agno.media import Image
 from agno.tools.function import ToolResult
+
+
+@runtime_checkable
+class MCPSession(Protocol):
+    """The session surface this package uses, satisfied by both session types.
+
+    A connection is driven either by a ``fastmcp.Client`` the toolkit built or by a
+    ``ClientSession`` the caller supplied. The two are unrelated classes, so this
+    structural type is what lets the shared code paths stay checked instead of falling
+    back to ``Any``.
+
+    Only the three methods every caller needs are required. Liveness probing is left
+    out deliberately: ``ClientSession`` spells it ``send_ping`` and ``fastmcp.Client``
+    spells it ``ping``, so ``ping_session`` resolves it by name at the one call site.
+    """
+
+    async def call_tool(
+        self, name: str, arguments: Optional[Dict[str, Any]] = None, *args: Any, **kwargs: Any
+    ) -> Any: ...
+
+    async def list_tools(self, *args: Any, **kwargs: Any) -> Any: ...
+
+    async def initialize(self, *args: Any, **kwargs: Any) -> Any: ...
+
 
 if TYPE_CHECKING:
     from agno.agent import Agent
     from agno.run import RunContext
     from agno.team.team import Team
     from agno.tools.mcp.mcp import MCPTools
-    from agno.tools.mcp.multi_mcp import MultiMCPTools
 
 
 def get_default_toolkit_name(
@@ -85,11 +107,37 @@ def _strip_url_for_name(url: str) -> str:
     return authority + slash + path
 
 
+def _is_fastmcp_client(session: Any) -> bool:
+    """True when the session is a fastmcp Client rather than a raw ClientSession."""
+    try:
+        from fastmcp import Client
+    except ModuleNotFoundError:
+        return False
+    return isinstance(session, Client)
+
+
+async def ping_session(session: MCPSession) -> None:
+    """Send an MCP ping, or do nothing when the negotiated protocol has none.
+
+    The sessionless 2026-07-28 era removed ping, so a client that negotiated it would
+    raise "Method not found" on every probe. There is no connection to keep alive
+    there, so skipping is the correct behaviour rather than a swallowed failure.
+    """
+    protocol_version = getattr(session, "protocol_version", None)
+    # Compare only a real version string: a mock attribute must not look like an era.
+    if isinstance(protocol_version, str) and protocol_version >= "2026-07-28":
+        return
+
+    # A ClientSession exposes send_ping(); fastmcp's Client exposes ping(). Neither is
+    # on MCPSession, which is why both are resolved by name here rather than called.
+    ping = getattr(session, "send_ping", None) or getattr(session, "ping")
+    await ping()
+
+
 def get_entrypoint_for_tool(
     tool: MCPTool,
-    session: ClientSession,
-    mcp_tools_instance: Optional[Union["MCPTools", "MultiMCPTools"]] = None,
-    server_idx: int = 0,
+    session: MCPSession,
+    mcp_tools_instance: Optional["MCPTools"] = None,
 ):
     """
     Return an entrypoint for an MCP tool.
@@ -97,8 +145,7 @@ def get_entrypoint_for_tool(
     Args:
         tool: The MCP tool to create an entrypoint for
         session: The MCP ClientSession to use
-        mcp_tools_instance: Optional MCPTools or MultiMCPTools instance
-        server_idx: Index of the server (for MultiMCPTools)
+        mcp_tools_instance: Optional MCPTools instance
 
     Returns:
         Callable: The entrypoint function for the tool
@@ -119,17 +166,25 @@ def get_entrypoint_for_tool(
         # server as an ordinary argument of the declared tool.
         tool_name = tool.name
 
-        async def _call_with_session(active_session: ClientSession) -> ToolResult:
+        async def _call_with_session(active_session: MCPSession) -> ToolResult:
             try:
-                await active_session.send_ping()
+                await ping_session(active_session)
             except Exception as e:
                 log_exception(e)
 
             log_debug(f"Calling MCP Tool '{tool_name}' with args: {kwargs}")
-            result: CallToolResult = await active_session.call_tool(tool_name, kwargs)  # type: ignore
+            # fastmcp's Client raises ToolError on a failed call, where a ClientSession
+            # returns is_error=True. Ask it not to, so both types land on the is_error
+            # branch below: a failing tool is ordinary model-loop traffic, and routing it
+            # through the generic handler drops the result's meta/structured_content and
+            # logs a stack trace for it. Only fastmcp's Client takes the kwarg.
+            if _is_fastmcp_client(active_session):
+                result: CallToolResult = await active_session.call_tool(tool_name, kwargs, raise_on_error=False)
+            else:
+                result = await active_session.call_tool(tool_name, kwargs)
 
             # Return an error if the tool call failed
-            if result.isError:
+            if result.is_error:
                 return ToolResult(
                     content=f"Error from MCP tool '{tool_name}': {result.content}",
                     metadata=_build_mcp_metadata(result),
@@ -200,13 +255,13 @@ def get_entrypoint_for_tool(
                         id=str(uuid4()),
                         url=getattr(content_item, "url", None),
                         content=image_data,
-                        mime_type=getattr(content_item, "mimeType", "image/png"),
+                        mime_type=getattr(content_item, "mime_type", "image/png"),
                     )
                     images.append(img_artifact)
                     response_str += "Image has been generated and added to the response.\n"
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
-                    response_str += f"[Embedded resource: {content_item.resource.model_dump_json()}]\n"
+                    response_str += f"[Embedded resource: {content_item.resource.model_dump_json(by_alias=True)}]\n"
                 else:
                     # Handle other content types
                     response_str += f"[Unsupported content type: {content_item.type}]\n"
@@ -226,19 +281,6 @@ def get_entrypoint_for_tool(
             # If mcp_tools_instance has header_provider and run_context is provided,
             # this will create/reuse a session with dynamic headers.
             if mcp_tools_instance and hasattr(mcp_tools_instance, "get_session_for_run"):
-                # Import here to avoid circular imports
-                from agno.tools.mcp.multi_mcp import MultiMCPTools
-
-                # For MultiMCPTools, pass server_idx; for MCPTools, only pass run_context.
-                if isinstance(mcp_tools_instance, MultiMCPTools):
-                    active_session = await mcp_tools_instance.get_session_for_run(
-                        run_context=_agno_run_context,
-                        server_idx=server_idx,
-                        agent=_agno_agent,
-                        team=_agno_team,
-                    )
-                    return await _call_with_session(active_session)
-
                 if (
                     hasattr(mcp_tools_instance, "should_use_temporary_run_session")
                     and mcp_tools_instance.should_use_temporary_run_session(_agno_run_context)
@@ -259,7 +301,7 @@ def get_entrypoint_for_tool(
             return await _call_with_session(session)
         except asyncio.CancelledError:
             raise
-        except McpError as e:
+        except MCPError as e:
             msg = f"MCP tool '{tool_name}' failed: {e}. The MCP server may be unreachable or the request timed out."
             log_error(msg)
             return ToolResult(content=msg)
@@ -282,7 +324,7 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
     metadata: Dict[str, Any] = {}
     if getattr(result, "meta", None) is not None:
         metadata["meta"] = result.meta
-    structured_content = getattr(result, "structuredContent", None)
+    structured_content = getattr(result, "structured_content", None)
     if structured_content is not None:
         metadata["structured_content"] = structured_content
     return metadata or None
@@ -290,7 +332,7 @@ def _build_mcp_metadata(result: "CallToolResult") -> Optional[Dict[str, Any]]:
 
 def _serialize_structured_content(result: "CallToolResult") -> Optional[str]:
     """Serialize structuredContent so structured-only MCP responses reach the model loop."""
-    structured_content = getattr(result, "structuredContent", None)
+    structured_content = getattr(result, "structured_content", None)
     if structured_content is None:
         return None
 

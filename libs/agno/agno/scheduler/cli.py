@@ -43,29 +43,59 @@ class SchedulerConsole:
         """Create a SchedulerConsole from a database instance."""
         return cls(ScheduleManager(db))
 
-    def show_schedules(self, enabled: Optional[bool] = None) -> List[Schedule]:
-        """Display all schedules in a Rich table."""
+    def show_schedules(
+        self,
+        enabled: Optional[bool] = None,
+        user_id: Optional[str] = None,
+        managed_by: Optional[str] = None,
+    ) -> List[Schedule]:
+        """Display schedules in a Rich table.
+
+        The console is an operator view: it shows every row by default,
+        including control-plane-managed ones, and says who owns and manages
+        each so two actors' same-named schedules stay distinguishable. Filters
+        are explicit: ``user_id`` narrows to one owner, ``managed_by`` to one
+        control plane (for example "studio").
+        """
         from rich.console import Console
         from rich.table import Table
 
         console = Console()
-        schedules = self.manager.list(enabled=enabled)
+        # The owner filter is pushed down; pages are walked to the end so a
+        # row beyond the first page is never silently missing from an
+        # operator view.
+        schedules = []
+        page = 1
+        while True:
+            batch = self.manager.list(enabled=enabled, user_id=user_id, limit=100, page=page)
+            schedules.extend(batch)
+            if len(batch) < 100:
+                break
+            page += 1
+        if managed_by is not None:
+            schedules = [s for s in schedules if s.managed_by == managed_by]
 
         table = Table(title="Schedules", show_lines=True)
         table.add_column("Name", style="bold cyan")
         table.add_column("Cron", style="white")
         table.add_column("Endpoint", style="white")
         table.add_column("Enabled", justify="center")
+        table.add_column("Owner", style="white")
+        table.add_column("Managed by", style="white")
         table.add_column("Next Run", style="dim")
         table.add_column("ID", style="dim")
 
         for s in schedules:
             enabled_str = "[green]Yes[/green]" if s.enabled else "[red]No[/red]"
+            if not s.enabled and s.disabled_reason:
+                enabled_str = f"[red]No[/red] [dim]({s.disabled_reason})[/dim]"
             table.add_row(
                 s.name,
                 s.cron_expr,
                 f"{s.method} {s.endpoint}",
                 enabled_str,
+                s.user_id or "-",
+                s.managed_by or "-",
                 _ts(s.next_run_at),
                 s.id[:8] + "...",
             )

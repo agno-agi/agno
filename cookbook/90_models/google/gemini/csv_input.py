@@ -23,7 +23,7 @@ download_file(
 )
 
 agent = Agent(
-    model=Gemini(id="gemini-2.5-flash"),
+    model=Gemini(id="gemini-3.7-flash"),
     markdown=True,
 )
 

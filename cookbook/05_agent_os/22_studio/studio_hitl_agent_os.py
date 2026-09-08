@@ -39,6 +39,11 @@ BASE_URL = os.getenv("AGENT_OS_BASE_URL", f"http://127.0.0.1:{PORT}")
 AGENT_ID = "studio-hitl-agent"
 AUTO_INSTRUCTIONS = "Explain reliable research methods in concise steps."
 
+# Components created during a run are OWNED by the run's user: only that user
+# can edit or archive them. Drafts answer component_not_found to other scoped
+# users; published components are readable and runnable platform-wide.
+DEMO_USER_ID = "agentos-hitl-user"
+
 DB_DIR = Path(__file__).parent / "tmp"
 DB_DIR.mkdir(exist_ok=True)
 
@@ -66,6 +71,10 @@ studio_agent = Agent(
             registry=registry,
             db=db,
             default_model_id="gpt-5.5",
+            # The default pauses only the deletion-shaped tools
+            # (archive_component, delete_version, delete_schedule). Passing a
+            # list REPLACES that default: here creation itself must be
+            # approved, and archives run unprompted.
             requires_confirmation_tools=["create_agent"],
         ),
         UserFeedbackTools(),
@@ -73,14 +82,13 @@ studio_agent = Agent(
     ],
     instructions=[
         "Help the user compose one Agent from registry primitives.",
-        "Call list_tools, list_models, and list_dbs first.",
+        "Call list_tools and list_models first.",
         "If tools are missing, call ask_user with one multi-select question whose "
         "options are exact names returned by list_tools.",
         "If instructions are missing, call get_user_input with one string field.",
         "Do not combine the missing tool and instruction questions in chat.",
-        "Use the exact database id returned by list_dbs when creating the Agent. "
-        "Never pass an empty string or the word 'default' as db_id.",
         "Call create_agent only after both answers are available.",
+        "Leave the new agent as a draft: do not validate, publish, or run it.",
     ],
     db=db,
     markdown=True,
@@ -147,6 +155,7 @@ def run_demo() -> None:
             data={
                 "message": f"Create an agent called '{component_id}'.",
                 "session_id": session_id,
+                "user_id": DEMO_USER_ID,
                 "stream": "false",
             },
         )
@@ -163,6 +172,7 @@ def run_demo() -> None:
                 data={
                     "tools": json.dumps(tools),
                     "session_id": run["session_id"],
+                    "user_id": DEMO_USER_ID,
                     "stream": "false",
                 },
             )
@@ -185,10 +195,16 @@ def run_demo() -> None:
         component_response = client.get(f"/components/{component_id}")
         component_response.raise_for_status()
         component = component_response.json()
+        # The confirmed create wrote a DRAFT: current_version stays unset until
+        # publish_component promotes version 1, and POST /agents/{id}/runs for
+        # this component answers 404 until then.
+        if component.get("current_version") is not None:
+            raise RuntimeError(f"Expected a draft-only component, got {component}")
 
     print(f"Pause sequence: {observed}")
     print(f"Final run: {run['run_id']} -> {run['status']}")
-    print(f"Created component: {component['component_id']}")
+    print(f"Created component: {component['component_id']} (draft, unpublished)")
+    print(f"Owner: {component.get('user_id')}")
     print(run.get("content"))
 
 

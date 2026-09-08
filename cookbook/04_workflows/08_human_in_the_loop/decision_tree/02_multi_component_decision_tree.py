@@ -16,7 +16,7 @@ from agno.workflow import OnReject
 from agno.workflow.condition import Condition
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
-from agno.workflow.types import StepInput, StepOutput
+from agno.workflow.types import HumanReview, StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 
@@ -60,9 +60,11 @@ workflow = Workflow(
         # Decision 1: Analysis depth
         Condition(
             name="analysis_depth",
-            requires_confirmation=True,
-            confirmation_message="Run detailed analysis? (No = quick summary)",
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Run detailed analysis? (No = quick summary)",
+                on_reject=OnReject.else_branch,
+            ),
             steps=[Step(name="detailed", executor=detailed_analysis)],
             else_steps=[Step(name="quick", executor=quick_summary)],
         ),
@@ -71,16 +73,20 @@ workflow = Workflow(
             name="refinement",
             steps=[Step(name="refine", executor=refine_results)],
             max_iterations=3,
-            requires_confirmation=True,
-            confirmation_message="Start iterative refinement? (up to 3 passes)",
-            on_reject=OnReject.skip,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Start iterative refinement? (up to 3 passes)",
+                on_reject=OnReject.skip,
+            ),
         ),
         # Decision 3: Output format
         Condition(
             name="output_format",
-            requires_confirmation=True,
-            confirmation_message="Generate formal report? (No = internal notes)",
-            on_reject=OnReject.else_branch,
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="Generate formal report? (No = internal notes)",
+                on_reject=OnReject.else_branch,
+            ),
             steps=[Step(name="formal", executor=formal_report)],
             else_steps=[Step(name="notes", executor=internal_notes)],
         ),

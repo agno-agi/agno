@@ -24,7 +24,7 @@ if not CEL_AVAILABLE:
 # ---------------------------------------------------------------------------
 writer = Agent(
     name="Writer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     instructions="Write a short paragraph expanding on the topic. Build on previous content.",
     markdown=True,
 )

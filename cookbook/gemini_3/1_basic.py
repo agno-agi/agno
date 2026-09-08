@@ -25,7 +25,7 @@ from agno.models.google import Gemini
 # ---------------------------------------------------------------------------
 chat_agent = Agent(
     name="Chat Assistant",
-    model=Gemini(id="gemini-3.5-flash"),
+    model=Gemini(id="gemini-3.7-flash"),
     # markdown=True renders rich formatting in the terminal
     markdown=True,
 )

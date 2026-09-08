@@ -26,6 +26,7 @@ from agno.run.workflow import (
     WorkflowCompletedEvent,
 )
 from agno.tools import tool
+from agno.workflow import HumanReview
 from agno.workflow.loop import Loop
 from agno.workflow.step import Step
 from agno.workflow.workflow import Workflow
@@ -53,7 +54,7 @@ def publish_draft(title: str, content: str) -> str:
 
 writer_agent = Agent(
     name="WriterAgent",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[publish_draft],
     instructions=(
         "You are a writer. Write a short blog post and call publish_draft EXACTLY ONCE "
@@ -73,8 +74,10 @@ workflow = Workflow(
             steps=[Step(name="write_and_publish", agent=writer_agent)],
             max_iterations=3,
             # Loop-level HITL: confirm before loop starts
-            requires_confirmation=True,
-            confirmation_message="This will run a publishing loop (up to 3 iterations). Proceed?",
+            human_review=HumanReview(
+                requires_confirmation=True,
+                confirmation_message="This will run a publishing loop (up to 3 iterations). Proceed?",
+            ),
         ),
     ],
     telemetry=False,

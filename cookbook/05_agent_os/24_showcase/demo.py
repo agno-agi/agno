@@ -91,7 +91,7 @@ def run_accuracy_evaluation() -> AccuracyResult:
     )
     if result is None or not result.results:
         raise RuntimeError("The showcase AccuracyEval produced no result")
-    if showcase_db.get_eval_run(accuracy_evaluation.eval_id) is None:
+    if showcase_db.get_eval_run(result.run_id) is None:
         raise RuntimeError("The showcase AccuracyEval was not stored")
     print(
         f"AccuracyEval stored {len(result.results)} result(s); "
