@@ -51,7 +51,11 @@ class OpenAIResponses(Model):
     verbosity: Optional[Verbosity] = None
     reasoning_effort: Optional[ReasoningEffort] = None
     reasoning_summary: Optional[ReasoningSummary] = None
+    # Provider response storage is independent of automatic conversation chaining.
     store: Optional[bool] = None
+    # Set False to replay the supplied context even when responses are stored by OpenAI.
+    # Defaults to automatic chaining for supported reasoning models when store is not False.
+    use_previous_response_id: bool = True
     temperature: Optional[float] = None
     top_p: Optional[float] = None
     truncation: Optional[Literal["auto", "disabled"]] = None
@@ -363,21 +367,16 @@ class OpenAIResponses(Model):
 
         # Handle reasoning tools for o3 and o4-mini models
         if self._using_reasoning_model() and messages is not None:
-            if store is False:
-                request_params["store"] = False
+            request_params["store"] = store is not False
 
+            if store is False or not self.use_previous_response_id:
                 # Add encrypted reasoning content to include if not already present
-                include_list = request_params.get("include", []) or []
+                include_list = list(request_params.get("include") or [])
                 if "reasoning.encrypted_content" not in include_list:
                     include_list.append("reasoning.encrypted_content")
-                    if request_params.get("include") is None:
-                        request_params["include"] = include_list
-                    elif isinstance(request_params["include"], list):
-                        request_params["include"].extend(include_list)
+                request_params["include"] = include_list
 
             else:
-                request_params["store"] = True
-
                 # Check if the last assistant message has a previous_response_id to continue from
                 previous_response_id = None
                 for msg in reversed(messages):
@@ -621,7 +620,7 @@ class OpenAIResponses(Model):
         messages_to_format = messages
         previous_response_id: Optional[str] = None
 
-        if self._using_reasoning_model() and self.store is not False:
+        if self.use_previous_response_id and self._using_reasoning_model() and self.store is not False:
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
@@ -644,6 +643,17 @@ class OpenAIResponses(Model):
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 
         for message in messages_to_format:
+            # Without chaining, replay reasoning before the assistant's text or function calls.
+            if (
+                (self.store is False or not self.use_previous_response_id)
+                and message.role == "assistant"
+                and message.provider_data is not None
+                and message.provider_data.get("reasoning_output") is not None
+            ):
+                formatted_messages.append(
+                    ResponseReasoningItem.model_validate(message.provider_data["reasoning_output"])
+                )
+
             if message.role in ["user", "system"]:
                 message_dict: Dict[str, Any] = {
                     "role": self.role_map[message.role],
@@ -716,12 +726,6 @@ class OpenAIResponses(Model):
                 content = message.content if message.content is not None else ""
                 formatted_messages.append({"role": self.role_map[message.role], "content": content})
 
-                if self.store is False and hasattr(message, "provider_data") and message.provider_data is not None:
-                    if message.provider_data.get("reasoning_output") is not None:
-                        reasoning_output = ResponseReasoningItem.model_validate(
-                            message.provider_data["reasoning_output"]
-                        )
-                        formatted_messages.append(reasoning_output)
         return formatted_messages
 
     def count_tokens(
@@ -1254,8 +1258,8 @@ class OpenAIResponses(Model):
 
             # Handle reasoning output items
             elif output.type == "reasoning":
-                # Save encrypted reasoning content for ZDR mode
-                if self.store is False:
+                # Preserve reasoning for replay when automatic chaining is disabled.
+                if self.store is False or not self.use_previous_response_id:
                     if model_response.provider_data is None:
                         model_response.provider_data = {}
                     model_response.provider_data["reasoning_output"] = output.model_dump(exclude_none=True)
@@ -1373,8 +1377,8 @@ class OpenAIResponses(Model):
         elif stream_event.type == "response.completed":
             model_response = ModelResponse()
 
-            # Handle reasoning output items for ZDR mode (store=False)
-            if self.store is False:
+            # Preserve reasoning for replay when automatic chaining is disabled.
+            if self.store is False or not self.use_previous_response_id:
                 for out in getattr(stream_event.response, "output", []) or []:
                     if getattr(out, "type", None) == "reasoning":
                         if hasattr(out, "encrypted_content"):
