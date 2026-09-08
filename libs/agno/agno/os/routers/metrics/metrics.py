@@ -1,13 +1,18 @@
 import logging
 from datetime import date, datetime, timezone
-from typing import List, Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 from fastapi import BackgroundTasks, Depends, HTTPException, Query, Request, Response
 from fastapi.routing import APIRouter
 from starlette.concurrency import run_in_threadpool
 
 from agno.db.base import AsyncBaseDb, BaseDb
-from agno.db.utils import aggregate_metrics_by_date, identify_metrics_by_owner, is_legacy_metric
+from agno.db.utils import (
+    aggregate_metrics_by_date,
+    identify_metrics_by_owner,
+    is_legacy_metric,
+    merge_registration_counts,
+)
 from agno.exceptions import AgnoError
 from agno.os.auth import get_auth_token_from_request, get_authentication_dependency
 from agno.os.middleware.user_scope import resolve_db_and_scope
@@ -47,6 +52,48 @@ def get_metrics_router(
         },
     )
     return attach_routes(router=router, dbs=dbs)
+
+
+SECONDS_PER_DAY = 24 * 60 * 60
+
+
+def _day_bounds(starting_date: Optional[date], ending_date: Optional[date]) -> tuple[Optional[int], Optional[int]]:
+    """The requested range as epoch seconds: inclusive lower bound, exclusive upper bound."""
+    starting_at = (
+        int(datetime.combine(starting_date, datetime.min.time(), tzinfo=timezone.utc).timestamp())
+        if starting_date is not None
+        else None
+    )
+    ending_before = (
+        int(datetime.combine(ending_date, datetime.min.time(), tzinfo=timezone.utc).timestamp()) + SECONDS_PER_DAY
+        if ending_date is not None
+        else None
+    )
+    return starting_at, ending_before
+
+
+async def _with_registration_counts(
+    request: Request,
+    metrics: List[Dict[str, Any]],
+    starting_date: Optional[date],
+    ending_date: Optional[date],
+) -> List[Dict[str, Any]]:
+    """Fold managed-directory registration counts into the day rows.
+
+    A no-op unless AgentOS was given a user directory. The counts are read from the
+    directory on every request instead of being cached and refreshed: the table holds one
+    row per user, so the grouped count is cheap, and it cannot drift from the directory
+    the way a stored aggregate does.
+    """
+    user_store = getattr(request.app.state, "user_store", None)
+    if user_store is None:
+        return metrics
+
+    starting_at, ending_before = _day_bounds(starting_date, ending_date)
+    registrations = await run_in_threadpool(
+        user_store.registrations_by_day, starting_at=starting_at, ending_before=ending_before
+    )
+    return merge_registration_counts(metrics, registrations)
 
 
 def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBaseDb, RemoteDb]]]) -> APIRouter:
@@ -141,6 +188,9 @@ def attach_routes(router: APIRouter, dbs: dict[str, list[Union[BaseDb, AsyncBase
             # legacy one-row-per-day shape.
             if effective_user_id is None:
                 metrics = aggregate_metrics_by_date(metrics)
+                # Directory registrations are OS-level, not one owner's traffic, so they are
+                # attached only to the collapsed day rows an unscoped/admin read returns.
+                metrics = await _with_registration_counts(request, metrics, starting_date, ending_date)
             else:
                 # The unowned bucket is asked for by the same sentinel the SQL adapters stamp
                 # pre-ownership records with, and those hold every user's traffic

@@ -18,6 +18,15 @@ class DayAggregatedMetrics(BaseModel):
     workflow_runs_count: int = Field(..., description="Total number of workflow runs", ge=0)
     workflow_sessions_count: int = Field(..., description="Total number of workflow sessions", ge=0)
     users_count: int = Field(..., description="Total number of unique users", ge=0)
+    users_created_count: int = Field(
+        0,
+        description=(
+            "Users who joined the managed user directory on this day. Always 0 unless "
+            "AgentOS is configured with a user directory; derived from the directory on "
+            "read, so a removed user leaves the history immediately."
+        ),
+        ge=0,
+    )
     token_metrics: Dict[str, Any] = Field(..., description="Token usage metrics (input, output, cached, etc.)")
     model_metrics: List[Dict[str, Any]] = Field(..., description="Metrics grouped by model (model_id, provider, count)")
 
@@ -41,6 +50,7 @@ class DayAggregatedMetrics(BaseModel):
             created_at=created_at,
             updated_at=updated_at,
             users_count=metrics_dict.get("users_count", 0),
+            users_created_count=metrics_dict.get("users_created_count", 0),
             workflow_runs_count=metrics_dict.get("workflow_runs_count", 0),
             workflow_sessions_count=metrics_dict.get("workflow_sessions_count", 0),
         )

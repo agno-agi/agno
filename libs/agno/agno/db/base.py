@@ -2157,6 +2157,17 @@ class BaseDb(ABC):
         """How many directory rows match, for pagination alongside list_authz_users."""
         raise NotImplementedError
 
+    def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> Dict[int, int]:
+        """Directory rows created on each UTC day, keyed by the day's epoch start.
+
+        Bounded by ``starting_at`` / ``ending_before`` (epoch seconds) when given.
+        Computed on read from the directory itself, so a deleted user leaves the
+        history immediately.
+        """
+        raise NotImplementedError
+
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         """Create or update a directory row's profile fields. Never overwrites
         ``disabled`` on an existing row -- that is the revocation tombstone, changed only

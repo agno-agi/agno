@@ -7654,6 +7654,12 @@ class SqliteDb(BaseDb):
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         return authz_store.count_users(self.db_engine, table, include_disabled, search)
 
+    def count_authz_users_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> Dict[int, int]:
+        table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
+        return authz_store.count_users_by_day(self.db_engine, table, starting_at, ending_before)
+
     def upsert_authz_user(self, user_id: str, values: Dict[str, Any]) -> None:
         table = self._get_table(table_type=AUTHZ_USERS, create_table_if_not_found=True)
         authz_store.upsert_user(self.db_engine, table, user_id, values)

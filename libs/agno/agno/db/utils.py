@@ -816,6 +816,60 @@ def aggregate_metrics_by_date(rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
     return list(by_bucket.values())
 
 
+def merge_registration_counts(
+    rows: Sequence[Dict[str, Any]], registrations_by_day: Dict[int, int]
+) -> List[Dict[str, Any]]:
+    """Attach directory registration counts to day-aggregated metric records.
+
+    ``registrations_by_day`` maps a UTC day's epoch start to the number of users who
+    joined the directory that day. Counts are OS-level rather than per-owner, so this
+    runs on the aggregated day rows, after per-user buckets have been collapsed.
+
+    A day with registrations but no traffic has no stored record to attach to, so one is
+    synthesised with every session/token counter at zero. Without it a directory-only
+    deployment -- a user signs up today, runs nothing -- would report no day at all.
+    """
+    if not registrations_by_day:
+        return list(rows)
+
+    merged: List[Dict[str, Any]] = []
+    covered: set = set()
+    for row in rows:
+        bucket = metric_bucket_key(row)
+        if bucket is None or bucket[1] != "daily":
+            merged.append(row)
+            continue
+        day_iso, _ = bucket
+        day_epoch = int(datetime.fromisoformat(day_iso).replace(tzinfo=timezone.utc).timestamp())
+        covered.add(day_epoch)
+        merged.append({**row, "users_created_count": registrations_by_day.get(day_epoch, 0)})
+
+    now = int(time.time())
+    for day_epoch, count in registrations_by_day.items():
+        if day_epoch in covered or not count:
+            continue
+        day_date = datetime.fromtimestamp(day_epoch, tz=timezone.utc).date()
+        merged.append(
+            {
+                # Every traffic counter is present and zero, so a synthesised row has the
+                # same shape as a stored one and no reader has to special-case it.
+                **{field: 0 for field in _METRIC_COUNT_FIELDS},
+                "id": f"{day_date.isoformat()}_daily",
+                "date": day_date,
+                "aggregation_period": "daily",
+                "user_id": "",
+                "users_created_count": count,
+                "token_metrics": {},
+                "model_metrics": [],
+                "created_at": now,
+                "updated_at": now,
+            }
+        )
+
+    merged.sort(key=lambda record: _metric_day(record) or date.min)
+    return merged
+
+
 def identify_metrics_by_owner(rows: Sequence[Dict[str, Any]], user_id: str) -> List[Dict[str, Any]]:
     """Give one owner's rows the same id on every backend.
 

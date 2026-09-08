@@ -24,6 +24,9 @@ from sqlalchemy import delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
+# Directory rows carry epoch-second timestamps; day buckets are UTC midnights.
+SECONDS_PER_DAY = 24 * 60 * 60
+
 
 def _upsert(conn: Any, table: Any, values: Dict[str, Any], conflict_cols: List[str], update_cols: List[str]) -> None:
     """One INSERT ... ON CONFLICT, rather than DELETE-then-INSERT.
@@ -394,3 +397,27 @@ def count_events(
             stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
+
+
+def count_users_by_day(
+    engine: Engine,
+    table: Any,
+    starting_at: Optional[int] = None,
+    ending_before: Optional[int] = None,
+) -> Dict[int, int]:
+    """How many directory rows were created on each UTC day, keyed by the day's epoch start.
+
+    Read straight from the directory rather than from a cached aggregate: the table holds
+    one row per user, so this stays a small grouped count, and a deleted user drops out of
+    the history immediately instead of at the next refresh. ``starting_at`` /
+    ``ending_before`` bound the scan on the indexed ``created_at`` column.
+    """
+    day_start = (table.c.created_at - (table.c.created_at % SECONDS_PER_DAY)).label("date")
+    filters = []
+    if starting_at is not None:
+        filters.append(table.c.created_at >= starting_at)
+    if ending_before is not None:
+        filters.append(table.c.created_at < ending_before)
+    statement = select(day_start, func.count().label("users_created_count")).where(*filters).group_by(day_start)
+    with engine.connect() as conn:
+        return {int(row.date): int(row.users_created_count) for row in conn.execute(statement)}

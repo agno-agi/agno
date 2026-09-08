@@ -165,6 +165,50 @@ def test_user_listing_filters_and_sorts(db):
     assert [u["id"] for u in db.list_authz_users(sort_by="created_at", order="asc")] == ["u0", "u1", "u2"]
 
 
+def test_users_are_counted_by_utc_day(db):
+    for i, created_at in enumerate([100, 200, 86400 + 300]):
+        db.upsert_authz_user(
+            f"metric-user-{i}",
+            {
+                "email": None,
+                "name": None,
+                "disabled": False,
+                "created_at": created_at,
+                "updated_at": created_at,
+                "metadata": None,
+            },
+        )
+
+    assert db.count_authz_users_by_day() == {0: 2, 86400: 1}
+
+    # The range bounds the scan: lower bound inclusive, upper bound exclusive.
+    assert db.count_authz_users_by_day(starting_at=86400) == {86400: 1}
+    assert db.count_authz_users_by_day(ending_before=86400) == {0: 2}
+    assert db.count_authz_users_by_day(starting_at=0, ending_before=0) == {}
+
+
+def test_deleted_users_leave_the_daily_counts_immediately(db):
+    # No cached aggregate to refresh, so a removal is visible on the very next read.
+    for user_id in ("keep", "drop"):
+        db.upsert_authz_user(
+            user_id,
+            {"email": None, "name": None, "disabled": False, "created_at": 100, "updated_at": 100, "metadata": None},
+        )
+    assert db.count_authz_users_by_day() == {0: 2}
+
+    db.delete_authz_user("drop")
+    assert db.count_authz_users_by_day() == {0: 1}
+
+
+def test_disabled_users_still_count_as_registrations(db):
+    db.upsert_authz_user(
+        "revoked",
+        {"email": None, "name": None, "disabled": True, "created_at": 100, "updated_at": 100, "metadata": None},
+    )
+    # Revocation is not un-registration: the sign-up still happened that day.
+    assert db.count_authz_users_by_day() == {0: 1}
+
+
 def test_both_audit_trails_are_separate_and_searchable(db):
     db.record_authz_audit_event(
         {

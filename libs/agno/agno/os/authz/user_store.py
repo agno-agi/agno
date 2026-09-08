@@ -344,6 +344,32 @@ class ManagedUserStore:
 
         return int(self._db.count_authz_users(include_disabled=include_disabled, search=search))
 
+    def registrations_by_day(
+        self, starting_at: Optional[int] = None, ending_before: Optional[int] = None
+    ) -> Dict[int, int]:
+        """How many users joined the directory on each UTC day, keyed by the day's epoch start.
+
+        Derived on read from the directory table, which holds one row per user: there is no
+        cached aggregate to refresh, and a removed user drops out of the history straight
+        away. ``starting_at`` / ``ending_before`` (epoch seconds) bound the scan to the range
+        a caller is reporting on.
+        """
+        if self._mem is None:
+            return self._db.count_authz_users_by_day(starting_at=starting_at, ending_before=ending_before)
+
+        from agno.db.authz_store import SECONDS_PER_DAY
+
+        counts: Dict[int, int] = {}
+        for user in self._mem.values():
+            created_at = int(user["created_at"])
+            if starting_at is not None and created_at < starting_at:
+                continue
+            if ending_before is not None and created_at >= ending_before:
+                continue
+            day_start = created_at - (created_at % SECONDS_PER_DAY)
+            counts[day_start] = counts.get(day_start, 0) + 1
+        return counts
+
     def is_disabled(self, id: Optional[str]) -> bool:
         """Fast path for the enforcement point: True only if the user exists AND is
         disabled. Unknown subjects are NOT disabled (the app may legitimately mint

@@ -80,6 +80,24 @@ def test_store_crud_and_disable(tmp_path, db_url):
     assert store.remove("u2") is False
 
 
+@pytest.mark.parametrize("db_url", [None, "sqlite"])
+def test_store_registrations_by_day(tmp_path, db_url, monkeypatch):
+    url = None if db_url is None else f"sqlite:///{tmp_path / 'registrations.db'}"
+    store = ManagedUserStore(db_url=url)
+    timestamps = iter([100, 200, 86400 + 300])
+    monkeypatch.setattr("agno.os.authz.user_store._now", lambda: next(timestamps))
+
+    for user_id in ("u1", "u2", "u3"):
+        store.upsert(user_id)
+
+    assert store.registrations_by_day() == {0: 2, 86400: 1}
+    assert store.registrations_by_day(starting_at=86400) == {86400: 1}
+    assert store.registrations_by_day(ending_before=86400) == {0: 2}
+
+    store.remove("u1")
+    assert store.registrations_by_day() == {0: 1, 86400: 1}
+
+
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
     store = ManagedUserStore(audit=sink)
@@ -213,6 +231,85 @@ def test_users_api_is_admin_only():
 
     assert client.get("/users", headers=_auth("bob")).status_code == 403  # non-admin
     assert client.get("/users").status_code == 401  # anonymous
+
+
+def test_metrics_include_directory_registrations():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.assign("alice", "admin")
+    users = ManagedUserStore(db_url=_db_url())
+
+    client = TestClient(_os(roles, users).get_app())
+    client.post("/users", headers=_auth("alice"), json={"id": "bob"})
+    client.post("/users", headers=_auth("alice"), json={"id": "carol"})
+
+    # No agent traffic at all, so the day exists only because of the registrations.
+    metrics = client.get("/metrics", headers=_auth("alice")).json()["metrics"]
+    assert len(metrics) == 1
+    assert metrics[0]["users_created_count"] == 2
+    assert metrics[0]["agent_runs_count"] == 0
+
+    # Read straight from the directory, so a removal shows up without any refresh call.
+    client.delete("/users/bob", headers=_auth("alice"))
+    metrics = client.get("/metrics", headers=_auth("alice")).json()["metrics"]
+    assert metrics[0]["users_created_count"] == 1
+
+
+def test_metrics_registrations_honour_the_date_range():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.assign("alice", "admin")
+    users = ManagedUserStore(db_url=_db_url())
+
+    client = TestClient(_os(roles, users).get_app())
+    client.post("/users", headers=_auth("alice"), json={"id": "bob"})
+
+    assert (
+        client.get("/metrics?starting_date=1999-01-01&ending_date=1999-12-31", headers=_auth("alice")).json()["metrics"]
+        == []
+    )
+
+
+def test_metrics_without_a_directory_report_no_registrations():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.assign("alice", "admin")
+
+    # A plain roles-only OS has no user directory; /metrics must be unaffected.
+    agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
+    app = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET], algorithm="HS256", verify_audience=True, audience=OS_ID, role_store=roles
+        ),
+    ).get_app()
+
+    response = TestClient(app).get("/metrics", headers=_auth("alice"))
+    assert response.status_code == 200, response.text
+    assert all(row["users_created_count"] == 0 for row in response.json()["metrics"])
+
+
+def test_registrations_are_not_exposed_to_a_user_scoped_read():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.set_role_scopes("viewer", ["metrics:read"])
+    roles.assign("alice", "admin")
+    roles.assign("bob", "viewer")
+    users = ManagedUserStore(db_url=_db_url())
+
+    # user_isolation is what makes a non-admin read a scoped one. Without it /metrics is
+    # an OS-wide view for every metrics:read holder, registrations included, exactly as
+    # users_count and the run counters already are.
+    client = TestClient(_os(roles, users, user_isolation=True).get_app())
+    client.post("/users", headers=_auth("alice"), json={"id": "carol"})
+
+    # A scoped caller reads only their own rows, so OS-level directory totals are not
+    # theirs to see -- the directory holds a registration, and none of it reaches bob.
+    assert users.registrations_by_day() != {}
+    metrics = client.get("/metrics", headers=_auth("bob")).json()["metrics"]
+    assert all(row["users_created_count"] == 0 for row in metrics)
 
 
 def test_disabled_user_is_denied_even_with_valid_token():
