@@ -51,6 +51,10 @@ class OpenAIResponses(Model):
     verbosity: Optional[Verbosity] = None
     reasoning_effort: Optional[ReasoningEffort] = None
     reasoning_summary: Optional[ReasoningSummary] = None
+    # Whether OpenAI retains the response server-side. Left unset, reasoning models store responses
+    # and continue them with `previous_response_id` within a run. Set to False for zero data
+    # retention: reasoning state then rides on the request as `reasoning.encrypted_content` instead
+    # of living on OpenAI's servers, which makes per-request payloads larger.
     store: Optional[bool] = None
     temperature: Optional[float] = None
     top_p: Optional[float] = None
@@ -379,19 +383,9 @@ class OpenAIResponses(Model):
                 request_params["store"] = True
 
                 # Check if the last assistant message has a previous_response_id to continue from
-                previous_response_id = None
-                for msg in reversed(messages):
-                    if (
-                        msg.role == "assistant"
-                        and hasattr(msg, "provider_data")
-                        and msg.provider_data
-                        and "response_id" in msg.provider_data
-                    ):
-                        previous_response_id = msg.provider_data["response_id"]
-                        log_debug(f"Using previous_response_id: {previous_response_id}")
-                        break
-
+                previous_response_id, _ = self._find_chainable_response(messages)
                 if previous_response_id:
+                    log_debug(f"Using previous_response_id: {previous_response_id}")
                     request_params["previous_response_id"] = previous_response_id
 
         # Add additional request params if provided
@@ -401,6 +395,29 @@ class OpenAIResponses(Model):
         if request_params:
             log_debug(f"Calling {self.provider} with request parameters: {request_params}", log_level=2)
         return request_params
+
+    @staticmethod
+    def _find_chainable_response(messages: List[Message]) -> Tuple[Optional[str], Optional[int]]:
+        """Find the stored response this request may chain from, and its index in ``messages``.
+
+        Chaining sets ``previous_response_id``, which tells the Responses API to rebuild the
+        conversation from its own server-side copy. That is only correct while the copy and the
+        messages we hold describe the same conversation, which is true within a run (the tool-call
+        loop appends to both) but not across runs: replayed history is a *window* onto the
+        conversation, and chaining past it makes the provider restore the turns the window dropped.
+        The window would then be applied to the request body and silently discarded on the wire,
+        so billed input tokens grow without bound no matter how small the window is.
+
+        Walking backwards therefore stops at the first replayed message, keeping chaining to the
+        current run. Returns ``(None, None)`` when there is nothing safe to chain from.
+        """
+        for index in range(len(messages) - 1, -1, -1):
+            message = messages[index]
+            if message.from_history:
+                break
+            if message.role == "assistant" and message.provider_data and "response_id" in message.provider_data:
+                return message.provider_data["response_id"], index
+        return None, None
 
     @staticmethod
     def _has_file_search_tool(tools: Optional[List[Union[Function, Dict[str, Any]]]] = None) -> bool:
@@ -625,21 +642,10 @@ class OpenAIResponses(Model):
             # Detect whether we're chaining via previous_response_id. If so, we should NOT
             # re-send prior function_call items; the Responses API already has the state and
             # expects only the corresponding function_call_output items.
-
-            for msg in reversed(messages):
-                if (
-                    msg.role == "assistant"
-                    and hasattr(msg, "provider_data")
-                    and msg.provider_data
-                    and "response_id" in msg.provider_data
-                ):
-                    previous_response_id = msg.provider_data["response_id"]
-                    msg_index = messages.index(msg)
-
-                    # Include messages after this assistant message
-                    messages_to_format = messages[msg_index + 1 :]
-
-                    break
+            previous_response_id, msg_index = self._find_chainable_response(messages)
+            if msg_index is not None:
+                # Include messages after this assistant message
+                messages_to_format = messages[msg_index + 1 :]
 
         fc_id_to_call_id = self._build_fc_id_to_call_id_map(messages)
 

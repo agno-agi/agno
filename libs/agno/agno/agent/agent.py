@@ -148,7 +148,10 @@ class Agent:
     # --- Agent History ---
     # add_history_to_context=true adds messages from the chat history to the messages list sent to the Model.
     add_history_to_context: bool = False
-    # Number of historical runs to include in the messages
+    # Number of historical runs to include in the messages. Defaults to 3 when neither this nor
+    # num_history_messages is set. This bounds what is sent on the wire: providers that can rebuild
+    # a conversation from their own stored copy are only chained within a run, never across the
+    # window, so the limit set here is the limit the model sees.
     num_history_runs: Optional[int] = None
     # Number of historical messages to include in the messages list sent to the Model.
     num_history_messages: Optional[int] = None

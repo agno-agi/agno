@@ -188,3 +188,72 @@ def test_reasoning_previous_response_skips_prior_function_call_items(monkeypatch
 
     # Expect no re-sent function_call when previous_response_id is present for reasoning models
     assert all(x.get("type") != "function_call" for x in fm)
+
+
+def _history_message(role: str, content: str, response_id: Optional[str] = None) -> Message:
+    message = Message(role=role, content=content, from_history=True)
+    if response_id is not None:
+        message.provider_data = {"response_id": response_id}
+    return message
+
+
+def test_reasoning_does_not_chain_across_history_window(monkeypatch):
+    """A windowed history must reach the wire, so chaining stops at the window boundary."""
+    model = OpenAIResponses(id="o4-mini")
+    monkeypatch.setattr(model, "_using_reasoning_model", lambda: True)
+
+    messages = [
+        Message(role="system", content="s"),
+        _history_message("user", "turn 1"),
+        _history_message("assistant", "reply 1", response_id="resp_1"),
+        _history_message("user", "turn 2"),
+        _history_message("assistant", "reply 2", response_id="resp_2"),
+        Message(role="user", content="turn 3"),
+    ]
+
+    request_params = model.get_request_params(messages=messages)
+    assert "previous_response_id" not in request_params
+    assert request_params["store"] is True
+
+    # Every windowed message is still sent, so num_history_runs bounds what the model sees
+    formatted = model._format_messages(messages=messages)
+    assert [item["content"] for item in formatted] == ["s", "turn 1", "reply 1", "turn 2", "reply 2", "turn 3"]
+
+
+def test_reasoning_chains_within_the_current_run(monkeypatch):
+    """Chaining is still used for the tool-call loop inside a single run."""
+    model = OpenAIResponses(id="o4-mini")
+    monkeypatch.setattr(model, "_using_reasoning_model", lambda: True)
+
+    assistant_this_run = Message(role="assistant", content="thinking")
+    assistant_this_run.provider_data = {"response_id": "resp_current"}
+
+    messages = [
+        Message(role="system", content="s"),
+        _history_message("user", "turn 1"),
+        _history_message("assistant", "reply 1", response_id="resp_old"),
+        Message(role="user", content="turn 2"),
+        assistant_this_run,
+        Message(role="tool", tool_call_id="fc_1", tool_name="get_weather", content="sunny"),
+    ]
+
+    request_params = model.get_request_params(messages=messages)
+    assert request_params["previous_response_id"] == "resp_current"
+
+    # Only the messages after the chained response are re-sent
+    formatted = model._format_messages(messages=messages)
+    assert len(formatted) == 1
+    assert formatted[0]["type"] == "function_call_output"
+
+
+def test_reasoning_chaining_ignores_stale_history_response_id(monkeypatch):
+    """A run with no assistant turn yet must not chain off the last history response."""
+    model = OpenAIResponses(id="o4-mini")
+    monkeypatch.setattr(model, "_using_reasoning_model", lambda: True)
+
+    messages = [
+        _history_message("assistant", "reply 1", response_id="resp_old"),
+        Message(role="user", content="turn 2"),
+    ]
+
+    assert model._find_chainable_response(messages) == (None, None)
