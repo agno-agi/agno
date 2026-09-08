@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import os
 from typing import List, Optional
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -31,6 +31,7 @@ from agno.agent._run import (
 )
 from agno.agent.agent import Agent
 from agno.db.in_memory import InMemoryDb
+from agno.exceptions import SessionNotSavedError
 from agno.models.message import Message
 from agno.models.openai.responses import OpenAIResponses
 from agno.models.response import ModelResponse, ToolExecution
@@ -570,8 +571,7 @@ class TestModelLayerHookFailureContained:
 
     @pytest.mark.asyncio
     async def test_run_completes_when_checkpoint_write_fails_async(self):
-        """DB.upsert_session raises → checkpoint callback raises → real model
-        layer's try/except catches it → run still produces final output."""
+        """Checkpoint failures do not stop the model loop; the terminal save fails explicitly."""
         K = 2
         db = InMemoryDb()
         agent = _make_agent(checkpoint="tool-batch", db=db)
@@ -583,30 +583,33 @@ class TestModelLayerHookFailureContained:
 
         db.upsert_session = always_raising_upsert  # type: ignore[assignment]
 
-        with patch.object(agent.model, "aresponse", side_effect=_make_fake_aresponse(K)):
-            # The terminal write at end-of-run will also try and raise. acleanup_and_store
-            # does not have its own try/except so the terminal write WOULD propagate.
-            # For this test we accept that — the assertion is on the K mid-run hooks
-            # being contained. Wrap the run in try/except so the test can assert the
-            # in-flight model-loop behavior without the terminal write masking it.
-            try:
-                result = await agent.arun(input="hi")
-                terminal_raised = False
-            except RuntimeError:
-                # Terminal write propagates — that's expected and not what we're
-                # testing here. The point is the K mid-run hook failures did not
-                # propagate out of the model loop.
-                terminal_raised = True
-                result = None
+        executed = []
 
-        # If the model loop's try/except wrapping wasn't there, the FIRST hook
-        # firing (turn 1) would propagate and short-circuit the loop, the run
-        # would error out at turn 1 — not turn K. The test passing here means
-        # all K mid-run callback raises were swallowed.
-        # We can't directly assert "fully ran" without the terminal write, so we
-        # assert the model executed K turns by checking the messages list grew
-        # accordingly.
-        assert terminal_raised or result is not None
+        def checkpoint_tool() -> str:
+            executed.append("called")
+            return "ok"
+
+        agent.tools = [checkpoint_tool]
+        responses = [
+            ModelResponse(
+                role="assistant",
+                tool_calls=[
+                    {
+                        "id": f"call-{i}",
+                        "type": "function",
+                        "function": {"name": "checkpoint_tool", "arguments": "{}"},
+                    }
+                ],
+            )
+            for i in range(K)
+        ] + [ModelResponse(role="assistant", content="done")]
+        with (
+            patch.object(agent.model, "ainvoke", new_callable=AsyncMock, side_effect=responses),
+            pytest.raises(SessionNotSavedError),
+        ):
+            await agent.arun(input="hi")
+
+        assert executed == ["called", "called"]
 
 
 # ---------------------------------------------------------------------------

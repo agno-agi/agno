@@ -18,6 +18,7 @@ if TYPE_CHECKING:
     from agno.agent.agent import Agent
 
 from agno.db.base import SessionType
+from agno.exceptions import SessionNotSavedError
 from agno.metrics import SessionMetrics
 from agno.models.message import Message
 from agno.run import RunStatus
@@ -238,6 +239,9 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
     Args:
         agent: The Agent instance.
         session: The session to save.
+
+    Raises:
+        SessionNotSavedError: If the configured database does not save the session.
     """
     from agno.agent import _init, _storage
 
@@ -255,7 +259,8 @@ def save_session(agent: Agent, session: Union[AgentSession, TeamSession, Workflo
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
 
-        _storage.upsert_session(agent, session=session)
+        if _storage.upsert_session(agent, session=session) is None:
+            raise SessionNotSavedError(session.session_id)
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
@@ -269,6 +274,9 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
     Args:
         agent: The Agent instance.
         session: The session to save.
+
+    Raises:
+        SessionNotSavedError: If the configured database does not save the session.
     """
     from agno.agent import _init, _storage
 
@@ -284,9 +292,11 @@ async def asave_session(agent: Agent, session: Union[AgentSession, TeamSession, 
             session.session_data["session_state"].pop("current_user_id", None)
             session.session_data["session_state"].pop("current_run_id", None)
         if _init.has_async_db(agent):
-            await _storage.aupsert_session(agent, session=session)
+            result = await _storage.aupsert_session(agent, session=session)
         else:
-            _storage.upsert_session(agent, session=session)
+            result = _storage.upsert_session(agent, session=session)
+        if result is None:
+            raise SessionNotSavedError(session.session_id)
         log_debug(f"Created or updated AgentSession record: {session.session_id}")
 
 
