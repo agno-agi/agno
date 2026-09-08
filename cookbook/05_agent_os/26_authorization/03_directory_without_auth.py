@@ -1,7 +1,7 @@
 """
 Directory without auth - the user directory is just a roster, no login required
 
-managed_users.py showed the directory with a real kill switch, backed by verified
+02_managed_users.py showed the directory with a real kill switch, backed by verified
 tokens. This shows the OTHER end - NO auth at all. The whole config is:
 
     AgentOS(db=db, user_isolation=True, user_directory=True)
@@ -23,12 +23,12 @@ What you do NOT get without auth (read this):
 - Enforcement. With no verified identity the user_id is whatever the caller types, so
   both the `disabled` flag AND isolation are ADVISORY here, not a boundary - a caller
   could dodge them by sending a different id. They become real the moment you add
-  AgentOS(authorization=True) with a verification key. See managed_users.py.
+  AgentOS(authorization=True) with a verification key. See 02_managed_users.py.
 
 Run it:
     pip install "agno[roles]"
     export OPENAI_API_KEY=...   # this file makes a real (tiny) run per user
-    python directory_without_auth.py
+    python 03_directory_without_auth.py
 """
 
 import os
@@ -129,7 +129,7 @@ if __name__ == "__main__":
     print(
         "       not enforced here. Add AgentOS(authorization=True) with a key to make disable"
     )
-    print("       (and isolation) real - see managed_users.py.")
+    print("       (and isolation) real - see 02_managed_users.py.")
 
     print("=" * 80)
     print(

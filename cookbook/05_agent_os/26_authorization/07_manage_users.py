@@ -1,7 +1,7 @@
 """
 Run an AgentOS that serves the USER management API (no roles) - for a frontend
 
-Sibling of manage_users_and_roles.py, but users ONLY: a directory (who exists +
+Sibling of 06_manage_users_and_roles.py, but users ONLY: a directory (who exists +
 the disabled off-switch) with NO role store. End users are authorized by their
 token scopes (a control plane / IdP issues them); AgentOS just keeps the roster
 and the kill-switch. Use this when roles live elsewhere and you only need AgentOS
@@ -14,11 +14,11 @@ What it serves (admin-only):
 
 There is NO /authz roles API here (no role store), so a frontend renders a plain
 "User Management" page with no role selector - the difference from
-manage_users_and_roles.py.
+06_manage_users_and_roles.py.
 
 Run it:
     pip install "agno[roles]"
-    python manage_users.py
+    python 07_manage_users.py
 Then point your frontend at http://localhost:7777 (CORS open to the dev ports).
 The server keeps running until you Ctrl-C.
 
@@ -115,7 +115,7 @@ agent_os = AgentOS(
 )
 app = agent_os.get_app()
 # Mount ONLY the user directory API - no get_roles_router, so there is no /authz roles surface for
-# a frontend to render. This is the difference from manage_users_and_roles.py.
+# a frontend to render. This is the difference from 06_manage_users_and_roles.py.
 app.include_router(get_users_router(users))
 
 

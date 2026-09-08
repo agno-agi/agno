@@ -13,7 +13,7 @@ turns each AgentOS check into one relationship query:
     which agents can alice READ?          ->  fga.list_objects("user:alice", "read", "agents")
 
 Run this example:
-    python fga_relationship_based.py
+    python 10_fga_relationship_based.py
 
 It uses a tiny in-memory relationship store so it runs with zero infra. For
 production you swap that one object for OpenFGA (or WorkOS FGA) — see the bottom.

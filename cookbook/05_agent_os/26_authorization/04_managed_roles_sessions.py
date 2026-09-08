@@ -1,7 +1,7 @@
 """
 Roles protecting real data - who can delete a chat session
 
-(If roles are new to you, read managed_roles.py first.)
+(If roles are new to you, read 01_managed_roles.py first.)
 
 A "session" is one saved conversation with an agent. Deleting one throws away real
 data, so not everyone should be allowed to. This file shows roles protecting an
@@ -20,7 +20,7 @@ through, the wrong ones get stopped, before any data is touched.
 
 Run it:
     pip install "agno[roles]"
-    python managed_roles_sessions.py
+    python 04_managed_roles_sessions.py
 """
 
 import os

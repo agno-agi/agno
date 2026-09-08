@@ -1,7 +1,7 @@
 """
 Managed Roles - the audit trail (who changed what, and every allow/deny)
 
-New to this? Read managed_roles.py first.
+New to this? Read 01_managed_roles.py first.
 
 Once people can change roles at runtime, you need to answer two questions later:
 
@@ -26,7 +26,7 @@ trails. No server, no OpenAI key needed.
 
 Run it:
     pip install "agno[roles]"
-    python managed_roles_audit.py
+    python 05_managed_roles_audit.py
 """
 
 from datetime import UTC, datetime, timedelta

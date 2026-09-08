@@ -25,7 +25,7 @@ new login and no new token.
 
 Run it:
     pip install "agno[roles]"
-    python managed_roles.py
+    python 01_managed_roles.py
 (no OpenAI key needed here - we are only checking who is allowed, not actually chatting)
 """
 
@@ -66,7 +66,7 @@ os.makedirs("tmp", exist_ok=True)
 #                here, so roles come from this store's own assignments below.
 #   audit        an AuditSink: when set, every role/assignment change emits an
 #                append-only AuditEvent (the actor + before/after). Off here.
-#                See managed_roles_audit.py.
+#                See 05_managed_roles_audit.py.
 #   decision_log when True, raises the "agno.authz.engine" logger to INFO so every
 #                allow/deny decision is logged. Off by default. Off here.
 roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_roles.db")
