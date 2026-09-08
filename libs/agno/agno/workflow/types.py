@@ -51,8 +51,8 @@ class OnError(str, Enum):
     """Action to take when a step encounters an error during execution.
 
     Attributes:
-        fail: Fail the workflow immediately when an error occurs (default).
-        skip: Skip the failed step and continue with the next step.
+        fail: Fail the workflow immediately when an error occurs.
+        skip: Skip the failed step and continue with the next step (default).
         pause: Pause the workflow and allow the user to decide (retry or skip) via HITL.
     """
 
