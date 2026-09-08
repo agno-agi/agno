@@ -150,6 +150,48 @@ def is_valid_table(db_engine: Engine, table_name: str, table_type: str, db_schem
         raise
 
 
+# -- Session util methods --
+def filter_sessions_by_owner(existing_owners: Dict[str, Optional[str]], sessions: List[Any]) -> List[Any]:
+    """Drop sessions whose stored row belongs to a different user.
+
+    An owned session is only writable by its owner; an unowned session (stored
+    user_id IS NULL) can be claimed by anyone. The single-row upsert path
+    enforces this with a locking read; bulk upserts have no per-row WHERE
+    clause available, so the same rule is applied here before writing.
+
+    Args:
+        existing_owners: Map of session_id to the currently stored user_id.
+        sessions: The sessions submitted for upsert.
+
+    Returns:
+        The sessions that are allowed to be written.
+    """
+    allowed = []
+    # A batch can carry the same session_id twice. The first entry establishes
+    # the owner for the rows that follow, so later entries are checked against
+    # it as well as against the stored owner -- otherwise the last write in the
+    # batch would silently take over a row it does not own.
+    claimed_owners: Dict[str, Optional[str]] = {}
+    for session in sessions:
+        stored_user_id = existing_owners.get(session.session_id)
+        if session.session_id in claimed_owners:
+            stored_user_id = claimed_owners[session.session_id]
+        if stored_user_id is not None and stored_user_id != session.user_id:
+            log_warning(f"Skipping upsert of session {session.session_id}: it belongs to another user_id.")
+            continue
+        claimed_owners[session.session_id] = session.user_id if stored_user_id is None else stored_user_id
+        allowed.append(session)
+    return allowed
+
+
+def fetch_session_owners(session: Session, table: Table, session_ids: List[str]) -> Dict[str, Optional[str]]:
+    """Read the stored user_id for the given session ids, locking the rows."""
+    if not session_ids:
+        return {}
+    stmt = select(table.c.session_id, table.c.user_id).where(table.c.session_id.in_(session_ids)).with_for_update()
+    return {row[0]: row[1] for row in session.execute(stmt).fetchall()}
+
+
 # -- Metrics util methods --
 def _rewritten_metrics_delete(table: Table, metrics_records: list[dict]):
     """Build the DELETE clearing the buckets these records replace.
