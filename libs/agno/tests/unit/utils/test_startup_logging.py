@@ -2,6 +2,9 @@
 
 import io
 import logging
+import subprocess
+import sys
+import textwrap
 from uuid import uuid4
 
 import pytest
@@ -10,6 +13,46 @@ from sqlalchemy import create_engine
 
 from agno.db.postgres._bounded import bounded_engine
 from agno.utils.log import build_logger, center_header
+
+
+def test_import_and_headers_without_stdout():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent("""
+            import sys
+            sys.stdout = None
+            from agno.agent import Agent
+            from agno.utils.log import center_header
+            assert center_header("probe") == "probe"
+        """),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_jupyter_keeps_rich_handler():
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            textwrap.dedent("""
+            import builtins
+            builtins.get_ipython = lambda: type("ZMQInteractiveShell", (), {})()
+            from agno.utils.log import agent_logger
+            from rich.logging import RichHandler
+            handler = agent_logger.handlers[0]
+            assert isinstance(handler, RichHandler)
+            assert handler.console.is_jupyter
+        """),
+        ],
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.parametrize("terminal", [False, True])

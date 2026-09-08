@@ -10628,7 +10628,7 @@ class Workflow:
             run_id=run_id,
         )
 
-        log_info(f"Workflow started: {self.id or self.name} run={run_id}")
+        log_debug(f"Workflow started: {self.id or self.name} run={run_id}")
 
         # Use stream override value when necessary
         if stream is None:
@@ -10934,7 +10934,7 @@ class Workflow:
             metadata=resolved["metadata"],
         )
 
-        log_info(f"Workflow started: {self.id or self.name} run={run_id}")
+        log_debug(f"Workflow started: {self.id or self.name} run={run_id}")
 
         # Use stream override value when necessary
         if stream is None:
@@ -11367,10 +11367,7 @@ class Workflow:
             elapsed = f" duration={duration:.2f}s" if duration is not None else ""
             outcome = "failed" if status == RunStatus.error else status.value.lower()
             message = f"Workflow {outcome}: {self.id or self.name} run={run.run_id}{elapsed}"
-            if status == RunStatus.error:
-                log_error(message)
-            else:
-                log_info(message)
+            log_debug(message)
 
     def _update_session_metrics(self, session: WorkflowSession, workflow_run_response: WorkflowRunOutput):
         """Calculate and update session metrics - convert run Metrics to SessionMetrics."""

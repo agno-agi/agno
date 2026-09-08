@@ -4,6 +4,7 @@ from functools import lru_cache
 from os import getenv
 from typing import Any, Literal, Optional
 
+from rich import get_console
 from rich.logging import RichHandler
 from rich.text import Text
 
@@ -87,8 +88,10 @@ def build_logger(logger_name: str, source_type: Optional[str] = None) -> Any:
     # https://rich.readthedocs.io/en/latest/reference/logging.html#rich.logging.RichHandler
     # https://rich.readthedocs.io/en/latest/logging.html#handle-exceptions
     handler: logging.Handler
-    if sys.stdout.isatty():
+    console = get_console()
+    if console.is_terminal or console.is_jupyter:
         handler = ColoredRichHandler(
+            console=console,
             show_time=False,
             rich_tracebacks=False,
             show_path=getenv("AGNO_API_RUNTIME") == "dev",
@@ -168,7 +171,7 @@ def set_log_level_to_error(source_type: Optional[str] = None):
 
 
 def center_header(message: str, symbol: str = "*") -> str:
-    if not sys.stdout.isatty():
+    if not get_console().is_terminal:
         return message
     try:
         import shutil

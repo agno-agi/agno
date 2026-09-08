@@ -28,8 +28,7 @@ def _run_masked(code: str) -> None:
         check=False,
     )
     assert result.returncode == 0, f"subprocess failed. stdout={result.stdout!r} stderr={result.stderr!r}"
-    # Lifecycle logs may precede the sentinel printed after the subprocess assertions.
-    assert result.stdout.splitlines()[-1] == "OK"
+    assert result.stdout.strip() == "OK"
 
 
 def test_workflow_usable_without_fastapi():

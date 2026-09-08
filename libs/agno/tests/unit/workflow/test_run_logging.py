@@ -1,6 +1,9 @@
 """Workflow lifecycle summaries retain useful identifiers and truthful outcomes."""
 
 import logging
+import os
+import subprocess
+import sys
 
 import pytest
 
@@ -15,6 +18,38 @@ def output(step_input: StepInput) -> StepOutput:
 
 def broken(step_input: StepInput) -> StepOutput:
     raise ValueError("step failed")
+
+
+@pytest.mark.parametrize("async_mode", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+def test_default_run_is_silent(async_mode, stream):
+    code = """
+import asyncio
+from agno.workflow import Step, StepOutput, Workflow
+
+workflow = Workflow(steps=[Step(name="work", executor=lambda step_input: StepOutput(content="done"))], telemetry=False)
+async def run():
+    if ASYNC_MODE:
+        if STREAM:
+            async for _ in workflow.arun("hello", stream=True):
+                pass
+        else:
+            await workflow.arun("hello")
+    else:
+        result = workflow.run("hello", stream=STREAM)
+        if STREAM:
+            list(result)
+asyncio.run(run())
+""".replace("ASYNC_MODE", repr(async_mode)).replace("STREAM", repr(stream))
+    result = subprocess.run(
+        [sys.executable, "-c", code],
+        env={**os.environ, "AGNO_DEBUG": "false"},
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == ""
+    assert result.stderr == ""
 
 
 @pytest.mark.parametrize("stream", [False, True])
@@ -73,6 +108,12 @@ async def test_async_run_summary(caplog, stream, fails):
 
 
 def assert_summary(caplog, fails):
+    summaries = [
+        r
+        for r in caplog.records
+        if r.message.startswith(("Workflow started:", "Workflow failed:", "Workflow completed:"))
+    ]
+    assert all(r.levelno == logging.DEBUG for r in summaries)
     messages = [r.message for r in caplog.records]
     assert sum("Workflow started: logging-workflow run=logged-run" in m for m in messages) == 1
     outcome = "failed" if fails else "completed"
@@ -89,6 +130,7 @@ async def test_paused_run_has_one_pause_summary_and_no_success(caplog, async_mod
     workflow = Workflow(
         id="paused-workflow",
         steps=[Step(name="confirm", executor=output, human_review=HumanReview(requires_confirmation=True))],
+        debug_mode=True,
         telemetry=False,
     )
     if async_mode:

@@ -17,10 +17,10 @@ A preparation failure is reported; the existing lazy enqueue path remains
 available, but queue operations may fail until storage is provisioned.
 
 Agno prints plain, unwrapped log lines to container/file output and retains Rich
-formatting in interactive terminals. Custom application loggers are preserved.
-Workflow run summaries include the workflow and run IDs and the actual outcome;
-normal debug output includes session and step information. Set `AGNO_DEBUG=True`
-and `AGNO_DEBUG_LEVEL=2` for detailed preparation and storage diagnostics.
+formatting in interactive terminals and Jupyter notebooks. Custom application
+loggers are preserved. Set `AGNO_DEBUG=True` for workflow lifecycle summaries,
+including workflow/run IDs, session and step information, and the actual outcome.
+Set `AGNO_DEBUG_LEVEL=2` for detailed preparation and storage diagnostics.
 
 Connection pool health checks stay enabled. To diagnose pool activity explicitly:
 
@@ -34,15 +34,16 @@ logging.getLogger("sqlalchemy.pool").setLevel(logging.DEBUG)
 Alternatively, pass `echo_pool="debug"` to `create_postgres_engine`. Routine
 Agno debug output does not enable connection checkouts, pre-pings or resets.
 
-Example workflow output:
+Example workflow output with `AGNO_DEBUG=True`:
 
 ```text
 INFO    Workflow queued: sync-docs run=<run-id>
 DEBUG   Session: <session-id>
-INFO    Workflow started: sync-docs run=<run-id>
+DEBUG   Workflow started: sync-docs run=<run-id>
 DEBUG   Step started: sync-docs step=1/1 streaming=true
-INFO    Workflow completed: sync-docs run=<run-id> duration=2.31s
+DEBUG   Workflow completed: sync-docs run=<run-id> duration=2.31s
 ```
 
-A failed workflow reports `Workflow failed`; a paused or cancelled workflow keeps
-that status. A successful health/status HTTP request is not workflow completion.
+Debug summaries report `Workflow failed`, paused, or cancelled as appropriate.
+Existing execution errors remain visible without debug logging. A successful
+health/status HTTP request is not workflow completion.
