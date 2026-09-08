@@ -211,6 +211,13 @@ class MCPConfig(BaseModel):
     # ``authorize`` layers, in the order listed.
     middleware: Optional[List[Any]] = None
 
+    # Serve the MCP endpoint without session tracking: every request gets a fresh transport
+    # and nothing is kept between requests. Lets any replica answer any request, so a
+    # multi-instance deployment needs no session affinity. Costs the features that require a
+    # retained session -- server-initiated notifications and SSE resumability -- so it stays
+    # off by default.
+    stateless: bool = False
+
     @model_validator(mode="before")
     @classmethod
     def _map_deprecated_enable_builtin_tools(cls, data: Any) -> Any:
@@ -357,6 +364,9 @@ class AuthorizationConfig(BaseModel):
     verify_audience: Optional[bool] = None
     audience: Optional[str] = None
     admin_scope: Optional[str] = None
+    # Additional fnmatch path patterns that bypass all AgentOS authentication,
+    # merged with the default public-route exclusions.
+    excluded_route_paths: Optional[List[str]] = None
     # Opt-in per-user data isolation. When True, AgentOS:
     #   - threads the JWT sub as ``user_id`` on every user-scoped DB read
     #     (sessions, memory, traces) for non-admin callers

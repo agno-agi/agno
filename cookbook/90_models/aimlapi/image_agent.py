@@ -14,7 +14,7 @@ from agno.models.aimlapi import AIMLAPI
 # ---------------------------------------------------------------------------
 
 agent = Agent(
-    model=AIMLAPI(id="meta-llama/Llama-3.2-11B-Vision-Instruct-Turbo"),
+    model=AIMLAPI(id="gpt-5.6-luna"),
     markdown=True,
 )
 
