@@ -704,3 +704,121 @@ class TestSyncPostgresSubmissionOrder:
             assert claimed == ["r_old", "r_z", "r_a"]
         finally:
             self._drop(db)
+
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisSessionLineBackfill:
+    """A queue that predates the session-line index holds non-terminal jobs
+    that are in no line. Redis has no paused index (a paused job is removed
+    from both the queued and running sets and survives only in the `all`
+    index) and a paused job never heartbeats, so nothing would ever add it
+    back: a newer submission would sail straight past a HITL pause. The store
+    backfills every non-terminal job into its line before its first gated
+    claim. Postgres and in-memory read authoritative state and need none of
+    this."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _line_members(db, session_id: str = "s1"):
+        raw = db.redis_client.zrange(f"{db.db_prefix}:jobs:line:{session_id}", 0, -1)
+        return {member.decode() if isinstance(member, bytes) else member for member in raw}
+
+    @staticmethod
+    def _strip_line(db, session_id: str = "s1") -> None:
+        """Reduce the store to the shape an upgrade inherits: the jobs exist
+        and are non-terminal, but no session line was ever maintained."""
+        db.redis_client.delete(f"{db.db_prefix}:jobs:line:{session_id}")
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    def test_pre_upgrade_paused_head_holds_the_line(self):
+        prefix = f"parity_bfpaused_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert head is not None and head["id"] == "r_head"
+            assert db.complete_job("r_head", "w0", head["attempt"], "paused")
+            self._strip_line(db)
+
+            # A fresh instance is a freshly started replica: backfill pending
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert replica.claim_job("w1", queue_per_session=True) is None, (
+                "a pre-upgrade paused head must hold its session's line, not be bypassed"
+            )
+            assert self._line_members(replica) == {"r_head", "r_new"}
+        finally:
+            self._cleanup(prefix)
+
+    def test_pre_upgrade_running_head_holds_the_line(self):
+        prefix = f"parity_bfrunning_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert head is not None and head["id"] == "r_head"
+            self._strip_line(db)
+
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert replica.claim_job("w1", queue_per_session=True) is None, (
+                "a pre-upgrade running head must hold its session's line"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_backfill_skips_terminal_jobs(self):
+        """The correction must not overshoot: backfilling terminal jobs would
+        wedge the session behind a job that can never be released."""
+        prefix = f"parity_bfterm_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_done", session_id="s1", created_at=900))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert db.complete_job("r_done", "w0", head["attempt"], "completed")
+            self._strip_line(db)
+
+            replica = self._db(prefix)
+            replica.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            claimed = replica.claim_job("w1", queue_per_session=True)
+            assert claimed is not None and claimed["id"] == "r_new", (
+                "a completed pre-upgrade job must not hold the line"
+            )
+            assert "r_done" not in self._line_members(replica)
+        finally:
+            self._cleanup(prefix)
+
+    def test_backfill_is_idempotent_across_replicas(self):
+        prefix = f"parity_bfidem_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_head", session_id="s1", created_at=1000))
+            head = db.claim_job("w0", queue_per_session=True)
+            assert db.complete_job("r_head", "w0", head["attempt"], "paused")
+            self._strip_line(db)
+
+            first = self._db(prefix)
+            first.enqueue_job(make_job("r_new", session_id="s1", created_at=1001))
+            assert first.claim_job("w1", queue_per_session=True) is None
+            after_first = self._line_members(first)
+
+            second = self._db(prefix)
+            assert second.claim_job("w2", queue_per_session=True) is None
+            assert self._line_members(second) == after_first, "a second replica's backfill must change nothing"
+        finally:
+            self._cleanup(prefix)

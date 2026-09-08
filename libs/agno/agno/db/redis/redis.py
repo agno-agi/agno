@@ -123,6 +123,12 @@ class RedisDb(BaseDb):
         else:
             raise ValueError("One of redis_client or db_url must be provided")
 
+        # One-time migration latch for the job queue's session-line index
+        # (see _q_backfill_session_lines). Per process: the pass is cheap and
+        # idempotent, and a shared marker key would silently skip the
+        # migration forever if Redis were ever flushed or migrated.
+        self._q_lines_backfilled = False
+
     # -- DB methods --
 
     def table_exists(self, table_name: str) -> bool:
@@ -2633,6 +2639,14 @@ class RedisDb(BaseDb):
         head decision can never be committed. Same-second submissions are
         FIFO by seq (created_at has one-second resolution); the explicit
         running check covers legacy pairs that predate the gate."""
+        if queue_per_session and not self._q_lines_backfilled:
+            # Before the first gated decision, never after: a claim must not
+            # be arbitrated against a line that predates the index. The latch
+            # is set only on success, so a transient Redis fault retries on
+            # the next poll instead of leaving the gate half-informed.
+            self._q_backfill_session_lines()
+            self._q_lines_backfilled = True
+
         now = self._q_server_now()
         stale = now - lock_grace_seconds
 
@@ -2678,6 +2692,58 @@ class RedisDb(BaseDb):
         else:
             pipe.zrem(line_key, job["id"])
 
+    def _q_backfill_session_lines(self) -> None:
+        """Add every non-terminal job to its session line, once per process,
+        before the first gated claim.
+
+        A queue written by a version without the line index has jobs in no
+        line at all, and the claim path only ever self-heals the candidate it
+        is looking at. A running sibling would be re-added by its next
+        heartbeat, but a PAUSED one never beats and there is no paused index
+        to find it from (it is removed from both the queued and running sets
+        and survives only in `all`), so a newer submission would be admitted
+        straight past a human-in-the-loop pause. Hence the enumeration is
+        over `all`, which is also why terminal jobs must be filtered out: the
+        retained tail lives there too, and adding one would wedge its session
+        behind a job that can never be released.
+
+        Idempotent - ZADD of a member already present at the same score is a
+        no-op, so replicas racing this cost nothing. The one race is a job
+        terminalizing between the read and the add, which resurrects a dead
+        member; that is inert (_q_session_line_view skips members whose
+        document is terminal or missing) and retention cleanup removes it."""
+        page_size = 256
+        offset = 0
+        restored = 0
+        while True:
+            raw_ids = list(self.redis_client.zrange(self._q_key("all"), offset, offset + page_size - 1))  # type: ignore[arg-type]
+            if not raw_ids:
+                break
+            job_ids = [_q_to_str(raw_id) for raw_id in raw_ids]
+            raw_docs = list(self.redis_client.mget([self._q_job_key(job_id) for job_id in job_ids]))  # type: ignore[arg-type]
+            pipe = self.redis_client.pipeline(transaction=False)
+            pending = 0
+            for job_id, raw in zip(job_ids, raw_docs):
+                if raw is None:
+                    continue
+                try:
+                    doc = json.loads(raw if isinstance(raw, str) else raw.decode())
+                except (ValueError, AttributeError):
+                    continue
+                if doc.get("status") not in ("queued", "running", "paused"):
+                    continue
+                session_id = doc.get("session_id")
+                if not session_id:
+                    continue
+                pipe.zadd(self._q_line_key(session_id), {job_id: doc.get("created_at") or 0})
+                pending += 1
+            if pending:
+                pipe.execute()
+                restored += pending
+            offset += page_size
+        if restored:
+            log_info(f"Job queue: indexed {restored} existing job(s) into their session lines (per-session queueing)")
+
     def _q_session_line_view(self, session_id: str) -> List[Tuple[int, int, str, str]]:
         """(created_at, seq, id, status) of the session line's LIVE members,
         in claim order. Documents written before the enqueue sequence existed
@@ -2707,11 +2773,11 @@ class RedisDb(BaseDb):
     def _q_line_admits(self, candidate: Dict[str, Any]) -> bool:
         """Advisory pre-filter: the session line admits claiming this
         candidate when it is the line's head and no OTHER member is running.
-        Jobs enqueued before the line zset existed self-heal in here on
-        their first claim attempt; older pre-upgrade siblings converge on
-        their own attempts, so per-session queueing is best-effort until the
-        pre-upgrade backlog drains (noted on the flag). The claim CAS
-        re-validates under WATCH - this filter only saves CAS round-trips."""
+        Everything already in the store was indexed by
+        _q_backfill_session_lines before the first gated claim; the self-heal
+        below covers a job enqueued after that by a replica still running a
+        version without the index. The claim CAS re-validates under WATCH -
+        this filter only saves CAS round-trips."""
         session_id = candidate.get("session_id")
         if not session_id:
             return True
