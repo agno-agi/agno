@@ -54,7 +54,7 @@ def deploy_to_staging(service: str) -> str:
 
 prod_agent = Agent(
     name="ProdDeployer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[deploy_to_production],
     instructions="You deploy services to production. Always use deploy_to_production.",
     db=db,
@@ -63,7 +63,7 @@ prod_agent = Agent(
 
 staging_agent = Agent(
     name="StagingDeployer",
-    model=OpenAIChat(id="gpt-4o-mini"),
+    model=OpenAIChat(id="gpt-5.6-luna"),
     tools=[deploy_to_staging],
     instructions="You deploy services to staging. Always use deploy_to_staging.",
     db=db,

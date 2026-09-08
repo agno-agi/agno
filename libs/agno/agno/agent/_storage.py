@@ -577,15 +577,20 @@ def load_session_state(agent: Agent, session: AgentSession, session_state: Dict[
 
 
 def update_metadata(agent: Agent, session: AgentSession):
-    """Update the extra_data in the session"""
-    # Read metadata from the database
-    if session.metadata is not None:
-        # If metadata is set in the agent, update the database metadata with the agent's metadata
-        if agent.metadata is not None:
-            # Updates agent's session metadata in place
-            merge_dictionaries(session.metadata, agent.metadata)
-        # Update the current metadata with the metadata from the database which is updated in place
-        agent.metadata = session.metadata
+    """Merge the agent's metadata into the session's metadata.
+
+    Agent metadata provides defaults; the session's own stored values win on
+    conflict, matching resolve_run_options (agent < session), so a value set on
+    the session is not overwritten by an agent default and persists across runs.
+    Only the session is updated; the shared Agent instance is never mutated.
+    """
+    if session.metadata is not None and agent.metadata is not None:
+        from copy import deepcopy
+
+        merged = deepcopy(agent.metadata)
+        merge_dictionaries(merged, session.metadata)
+        session.metadata.clear()
+        session.metadata.update(merged)
 
 
 def get_session_metrics_internal(agent: Agent, session: AgentSession) -> SessionMetrics:
@@ -650,10 +655,10 @@ def read_or_create_session(
     if agent_session is None:
         # Creating new session if none found
         log_debug(f"Creating new AgentSession: {session_id}")
+        from copy import deepcopy
+
         session_data = {}
         if agent.session_state is not None:
-            from copy import deepcopy
-
             session_data["session_state"] = deepcopy(agent.session_state)
         agent_session = AgentSession(
             session_id=session_id,
@@ -661,7 +666,8 @@ def read_or_create_session(
             user_id=user_id,
             agent_data=get_agent_data(agent),
             session_data=session_data,
-            metadata=agent.metadata,
+            # Copy so the session record never aliases the shared Agent's dict
+            metadata=deepcopy(agent.metadata),
             created_at=int(time()),
         )
         if agent.introduction is not None:
@@ -721,10 +727,10 @@ async def aread_or_create_session(
     if agent_session is None:
         # Creating new session if none found
         log_debug(f"Creating new AgentSession: {session_id}")
+        from copy import deepcopy
+
         session_data = {}
         if agent.session_state is not None:
-            from copy import deepcopy
-
             session_data["session_state"] = deepcopy(agent.session_state)
         agent_session = AgentSession(
             session_id=session_id,
@@ -732,7 +738,8 @@ async def aread_or_create_session(
             user_id=user_id,
             agent_data=get_agent_data(agent),
             session_data=session_data,
-            metadata=agent.metadata,
+            # Copy so the session record never aliases the shared Agent's dict
+            metadata=deepcopy(agent.metadata),
             created_at=int(time()),
         )
         if agent.introduction is not None:

@@ -1013,6 +1013,7 @@ async def workflow_response_streamer(
     auth_token: Optional[str] = None,
     **kwargs: Any,
 ) -> AsyncGenerator:
+    emitted_error: Optional[WorkflowErrorEvent] = None
     try:
         # Pass background_tasks if provided
         if background_tasks is not None:
@@ -1037,6 +1038,8 @@ async def workflow_response_streamer(
         )
 
         async for run_response_chunk in run_response:
+            if isinstance(run_response_chunk, WorkflowErrorEvent) and run_response_chunk.workflow_id == workflow.id:
+                emitted_error = run_response_chunk
             yield format_sse_event(run_response_chunk)  # type: ignore
 
         # If the workflow paused, yield WorkflowPausedEvent as the new clean
@@ -1072,25 +1075,30 @@ async def workflow_response_streamer(
                 run_json = json.dumps(run_dict, default=json_serializer, separators=(",", ":"))
                 yield f"event: WorkflowRunOutput\ndata: {run_json}\n\n"
 
-    except (InputCheckError, OutputCheckError) as e:
-        error_response = WorkflowErrorEvent(
-            error=str(e),
-            error_type=e.type,
-            error_id=e.error_id,
-            additional_data=e.additional_data,
-        )
-        yield format_sse_event(error_response)
-
     except asyncio.CancelledError:
         return
     except Exception as e:
-        import traceback
-
-        traceback.print_exc()
+        if emitted_error is not None:
+            # Streaming failures re-raise after their terminal event. Log a
+            # different failure (such as answer composition) without repeating
+            # the reported rejection or adding another terminal frame.
+            if (
+                emitted_error.error != str(e)
+                or emitted_error.error_type != getattr(e, "type", None)
+                or emitted_error.error_id != getattr(e, "error_id", None)
+            ):
+                log_error(
+                    f"Workflow {workflow.id}, run {emitted_error.run_id} failed after its error event: {e}",
+                    exc_info=True,
+                )
+            return
+        if not isinstance(e, (InputCheckError, OutputCheckError)):
+            log_error(f"Workflow {workflow.id} stream failed: {e}", exc_info=True)
         error_response = WorkflowErrorEvent(
             error=str(e),
-            error_type=e.type if hasattr(e, "type") else None,
-            error_id=e.error_id if hasattr(e, "error_id") else None,
+            error_type=getattr(e, "type", None),
+            error_id=getattr(e, "error_id", None),
+            additional_data=getattr(e, "additional_data", None),
         )
         yield format_sse_event(error_response)
         return
@@ -2293,6 +2301,7 @@ def get_workflow_router(
                 media_type="text/event-stream",
             )
         else:
+            run_response = None
             try:
                 # Ownership already verified above; acontinue_run loads the run
                 # via {session_id, run_id} which we've proven the caller owns.
@@ -2302,21 +2311,6 @@ def get_workflow_router(
                     step_requirements=parsed_requirements,
                     stream=False,
                     background_tasks=background_tasks,
-                )
-                # Status-only stream sync (deliberate scope): a non-stream
-                # continue has no events to publish, but a formerly-queued/
-                # streamed run's stream view must stop saying PAUSED once the
-                # continue settles - only_if_tracked leaves never-streamed
-                # runs alone.
-                # Stream close + paused-ticket settle as one
-                # cancellation-proof unit (see the streaming twin)
-                await afinalize_continue_stream(
-                    workflow,
-                    run_id,
-                    session_id,
-                    queue_worker=getattr(request.app.state, "queue_worker", None),
-                    only_if_tracked=True,
-                    final_status=getattr(run_response, "status", None),
                 )
                 return run_response.to_dict()
             # Same typed mapping as the agents continue endpoint: a
@@ -2330,6 +2324,32 @@ def get_workflow_router(
                 raise HTTPException(status_code=409, detail=str(e))
             except (InputCheckError, ValueError) as e:
                 raise HTTPException(status_code=400, detail=str(e))
+            finally:
+                if run_response is not None:
+                    await afinalize_continue_stream(
+                        workflow,
+                        run_id,
+                        session_id,
+                        queue_worker=getattr(request.app.state, "queue_worker", None),
+                        only_if_tracked=True,
+                        final_status=run_response.status,
+                    )
+                else:
+                    # Execution may persist ERROR and then raise. Synchronize that
+                    # outcome without closing a racing request's still-running run
+                    # or masking the original exception if the database is down.
+                    with contextlib.suppress(Exception):
+                        failed_session = await workflow.aget_session(session_id=session_id)
+                        failed_run = failed_session.get_run(run_id) if failed_session else None
+                        if failed_run and failed_run.status in (RunStatus.error, RunStatus.cancelled):
+                            await afinalize_continue_stream(
+                                workflow,
+                                run_id,
+                                session_id,
+                                queue_worker=getattr(request.app.state, "queue_worker", None),
+                                only_if_tracked=True,
+                                final_status=failed_run.status,
+                            )
 
     @router.post(
         "/workflows/{workflow_id}/runs/{run_id}/cancel",

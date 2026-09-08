@@ -1,5 +1,12 @@
 # Test Log
 
+### atomic_mail_tools.py (AtomicMailTools + workflow)
+
+**Status:** PASS
+
+**Description:** Deterministic (no-LLM) Agno workflow exercising `AtomicMailTools` end to end against the live AtomicMail API: register (autonomous proof-of-work signup) -> read inbox (JMAP `Email/query` + `Email/get`) -> send email (`Email/set` + `EmailSubmission/set`). Username and recipient are supplied via `additional_data`/env so the committed example hardcodes no address.
+
+**Result:** 18 unit tests pass (`pytest libs/agno/tests/unit/tools/test_atomic_mail.py`). Live run registered `agno-818723@atomicmail.ai`, listed the inbox, and delivered an email (verified received by the recipient). A real-workflow bug was found and fixed: `send_email` used the capability JWT's bare `inboxId` local-part as the From address, which JMAP rejects with `forbiddenFrom` ("From address is malformed"). Fix derives the full `<inboxId>@<allowedFromDomain>` address from the capability JWT, prefers that live-derived address over any stale stored credential, and adds the required `identityId` to `EmailSubmission/set`. Added a regression test asserting the wire-level From address and identityId. Note: proof-of-work solve time is dynamic (observed 4s-160s depending on server-set difficulty).
 ### smallest_tools.py (switch to Gemini for audio-input support)
 
 **Status:** PASS

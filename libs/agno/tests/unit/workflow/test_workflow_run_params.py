@@ -11,17 +11,22 @@ Tests cover:
 - End-to-end: Full workflow.run() -> step -> agent.run() chain with MockTestModel
 """
 
+import time
+from copy import deepcopy
 from typing import Any, AsyncIterator, Dict, Iterator
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from agno.agent import Agent
+from agno.db.in_memory import InMemoryDb
 from agno.metrics import MessageMetrics
 from agno.models.base import Model
 from agno.models.response import ModelResponse
 from agno.run.base import RunContext
+from agno.session import WorkflowSession
 from agno.workflow.step import Step
+from agno.workflow.types import StepInput, StepOutput
 from agno.workflow.workflow import Workflow
 
 # =============================================================================
@@ -128,12 +133,12 @@ class TestResolveRunParamsMetadata:
         resolved = wf._resolve_run_params(metadata={"campaign": "launch"})
         assert resolved["metadata"] == {"campaign": "launch"}
 
-    def test_merge_class_wins_on_conflict(self, workflow_with_metadata):
-        """Class-level metadata wins on key conflicts (opposite of dependencies)."""
+    def test_merge_callsite_wins_on_conflict(self, workflow_with_metadata):
+        """Call-site metadata wins on key conflicts (matching Agent/Team)."""
         resolved = workflow_with_metadata._resolve_run_params(
             metadata={"project": "docs", "campaign": "launch"},
         )
-        assert resolved["metadata"]["project"] == "blog"  # class-level wins
+        assert resolved["metadata"]["project"] == "docs"  # call-site wins
         assert resolved["metadata"]["version"] == "1.0"  # class-level preserved
         assert resolved["metadata"]["campaign"] == "launch"  # call-site added
 
@@ -142,6 +147,77 @@ class TestResolveRunParamsMetadata:
         original = workflow_with_metadata.metadata.copy()
         workflow_with_metadata._resolve_run_params(metadata={"campaign": "launch"})
         assert workflow_with_metadata.metadata == original
+
+
+# =============================================================================
+# _resolve_run_params() — Session metadata layer
+# =============================================================================
+
+
+class TestResolveRunParamsSessionMetadata:
+    """Session-stored metadata sits between class-level and call-site values
+    (self < session < call-site, matching Agent/Team)."""
+
+    def test_session_only(self):
+        wf = Workflow(id="wf", name="WF")
+        resolved = wf._resolve_run_params(session_metadata={"tenant": "acme"})
+        assert resolved["metadata"] == {"tenant": "acme"}
+
+    def test_session_beats_class(self, workflow_with_metadata):
+        resolved = workflow_with_metadata._resolve_run_params(
+            session_metadata={"project": "docs", "tenant": "acme"},
+        )
+        assert resolved["metadata"]["project"] == "docs"  # session wins
+        assert resolved["metadata"]["tenant"] == "acme"  # session added
+
+    def test_callsite_beats_session(self):
+        wf = Workflow(id="wf", name="WF")
+        resolved = wf._resolve_run_params(
+            metadata={"shared": "call_value", "run_only": "r"},
+            session_metadata={"shared": "session_value", "session_only": "s"},
+        )
+        assert resolved["metadata"]["shared"] == "call_value"  # call-site wins
+        assert resolved["metadata"]["run_only"] == "r"
+        assert resolved["metadata"]["session_only"] == "s"
+
+    def test_three_layer_merge(self, workflow_with_metadata):
+        resolved = workflow_with_metadata._resolve_run_params(
+            metadata={"project": "docs", "run_only": "r"},
+            session_metadata={"project": "wiki", "session_only": "s"},
+        )
+        assert resolved["metadata"] == {
+            "project": "docs",  # call-site wins over session and class
+            "version": "1.0",
+            "session_only": "s",
+            "run_only": "r",
+        }
+
+    def test_callsite_nested_dicts_not_mutated(self, workflow_with_metadata):
+        # merge_dictionaries recurses in place: a shallow copy of the call-site
+        # dict would let session/class values contaminate its nested dicts.
+        callsite_meta = {"campaign": "launch", "nested": {"call": True}}
+        workflow_with_metadata._resolve_run_params(
+            metadata=callsite_meta,
+            session_metadata={"nested": {"session": True}},
+        )
+        assert callsite_meta == {"campaign": "launch", "nested": {"call": True}}
+
+    def test_class_metadata_not_mutated_by_session_layer(self, workflow_with_metadata):
+        original = deepcopy(workflow_with_metadata.metadata)
+        workflow_with_metadata._resolve_run_params(
+            metadata={"campaign": "launch"},
+            session_metadata={"tenant": "acme"},
+        )
+        assert workflow_with_metadata.metadata == original
+
+    def test_resolved_metadata_does_not_alias_workflow_nested_dicts(self):
+        # self.metadata is merged as a layer; a shallow merge would alias its
+        # nested dicts, so an in-run write to run_context.metadata would mutate
+        # the shared Workflow and bleed into the next session's run.
+        wf = Workflow(id="wf", name="WF", metadata={"tags": {"env": "prod"}})
+        resolved = wf._resolve_run_params()
+        resolved["metadata"]["tags"]["owner"] = "x"
+        assert wf.metadata == {"tags": {"env": "prod"}}
 
 
 # =============================================================================
@@ -780,3 +856,118 @@ class TestWorkflowRunE2EDependencies:
 
         assert captured_kwargs["add_dependencies_to_context"] is True
         assert captured_kwargs["add_session_state_to_context"] is True
+
+
+# =============================================================================
+# Run-level: session-stored metadata reaches RunContext (sync + async)
+# =============================================================================
+
+
+def _seed_workflow_session(db: InMemoryDb, session_id: str, metadata: Dict[str, Any]) -> None:
+    """Insert a session record with the given metadata, as if written by an earlier deployment."""
+    db.upsert_session(
+        WorkflowSession(
+            session_id=session_id, workflow_id="meta-run-wf", metadata=metadata, created_at=int(time.time())
+        )
+    )
+
+
+def _make_capture_workflow(db: InMemoryDb, captured: Dict[str, Any], **workflow_kwargs) -> Workflow:
+    """Workflow with a single function step that records run_context.metadata."""
+
+    def capture_executor(step_input: StepInput, run_context: RunContext) -> StepOutput:
+        captured["metadata"] = deepcopy(run_context.metadata)
+        return StepOutput(content="ok")
+
+    return Workflow(
+        id="meta-run-wf",
+        name="Meta Run WF",
+        db=db,
+        steps=[Step(name="capture", executor=capture_executor)],
+        **workflow_kwargs,
+    )
+
+
+class TestRunSessionMetadataPrecedence:
+    def test_session_metadata_visible_on_run(self):
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"tenant": "acme"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured)
+        workflow.run(input="hi", session_id="s1")
+        assert captured["metadata"] == {"tenant": "acme"}
+
+    def test_session_beats_workflow_on_run(self):
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"shared": "session_value", "session_only": "s"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured, metadata={"shared": "wf_value", "wf_only": "w"})
+        workflow.run(input="hi", session_id="s1")
+        assert captured["metadata"]["shared"] == "session_value"  # session wins
+        assert captured["metadata"]["session_only"] == "s"
+        assert captured["metadata"]["wf_only"] == "w"
+
+    def test_callsite_beats_session_on_run(self):
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"shared": "session_value"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured)
+        workflow.run(input="hi", session_id="s1", metadata={"shared": "call_value", "run_only": "r"})
+        assert captured["metadata"]["shared"] == "call_value"  # call-site wins
+        assert captured["metadata"]["run_only"] == "r"
+
+    def test_run_does_not_mutate_workflow_metadata(self):
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"leak": "from_session"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured, metadata={"env": "test"})
+        workflow.run(input="hi", session_id="s1")
+        assert captured["metadata"] == {"leak": "from_session", "env": "test"}
+        assert workflow.metadata == {"env": "test"}
+
+    @pytest.mark.asyncio
+    async def test_session_metadata_visible_on_arun(self):
+        # arun() pre-reads the session when the DB is sync
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"shared": "session_value", "session_only": "s"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured, metadata={"shared": "wf_value"})
+        await workflow.arun(input="hi", session_id="s1", metadata={"run_only": "r"})
+        assert captured["metadata"]["shared"] == "session_value"  # session beats workflow
+        assert captured["metadata"]["session_only"] == "s"
+        assert captured["metadata"]["run_only"] == "r"
+
+    @pytest.mark.asyncio
+    async def test_arun_does_not_mutate_workflow_metadata(self):
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"leak": "from_session"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured, metadata={"env": "test"})
+        await workflow.arun(input="hi", session_id="s1")
+        assert captured["metadata"] == {"leak": "from_session", "env": "test"}
+        assert workflow.metadata == {"env": "test"}
+
+    def test_session_metadata_persists_across_runs(self):
+        """Session metadata must persist across multiple runs.
+
+        Regression test: _update_metadata must preserve session values rather
+        than overwriting them with workflow defaults, otherwise session wins
+        only on the first run.
+        """
+        db = InMemoryDb()
+        _seed_workflow_session(db, "s1", {"shared": "session_value", "session_only": "s"})
+        captured: Dict[str, Any] = {}
+        workflow = _make_capture_workflow(db, captured, metadata={"shared": "wf_value", "wf_only": "w"})
+
+        # Run 1: session wins
+        workflow.run(input="hi", session_id="s1")
+        assert captured["metadata"]["shared"] == "session_value"
+
+        # Run 2: session must STILL win (not overwritten by _update_metadata)
+        captured.clear()
+        workflow.run(input="hello again", session_id="s1")
+        assert captured["metadata"]["shared"] == "session_value", (
+            "session metadata was overwritten by _update_metadata; should persist"
+        )
+        assert captured["metadata"]["session_only"] == "s"
+        assert captured["metadata"]["wf_only"] == "w"

@@ -28,7 +28,7 @@ def _capture_entries(knowledge, skip_owners=None):
     async def _anoop(entry):
         return None
 
-    def _should_skip(content_hash, skip_if_exists, user_id=None):
+    def _should_skip(content_hash, skip_if_exists, user_id=None, prior_status=None):
         if skip_owners is not None:
             skip_owners.append(user_id)
         return True

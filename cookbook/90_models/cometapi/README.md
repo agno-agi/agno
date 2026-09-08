@@ -80,7 +80,7 @@ CometAPI provides access to multiple LLM providers through a unified interface. 
 - `gpt-5-chat-latest`
 - `chatgpt-4o-latest`
 - `gpt-5-nano`
-- `gpt-4o-mini`
+- `gpt-5.6-luna`
 - `o4-mini-2025-04-16`
 - `o3-pro-2025-06-10`
 

@@ -35,7 +35,7 @@ db = AsyncSqliteDb(db_file=DB_FILE)
 # Create Team
 # ---------------------------------------------------------------------------
 team = Team(
-    model=OpenAIResponses(id="gpt-4o"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
     members=[],
     db=db,
     search_past_sessions=True,

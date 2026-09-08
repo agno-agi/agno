@@ -20,8 +20,8 @@ class ResolvedRunOptions:
 
     All values are fully resolved (call-site > agent default > fallback)
     at construction time. Two fields merge instead of replacing: ``metadata``
-    (agent-level values win on conflicting keys) and ``dependencies``
-    (call-site values win on conflicting keys).
+    (agent < session < call-site, later layers win on conflicting keys) and
+    ``dependencies`` (call-site values win on conflicting keys).
     """
 
     stream: bool
@@ -88,12 +88,19 @@ def resolve_run_options(
     dependencies: Optional[Dict[str, Any]] = None,
     knowledge_filters: Optional[Union[Dict[str, Any], List[FilterExpr]]] = None,
     metadata: Optional[Dict[str, Any]] = None,
+    session_metadata: Optional[Dict[str, Any]] = None,
     output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
 ) -> ResolvedRunOptions:
     """Resolve all run options from call-site values and agent defaults.
 
     Reads from ``agent`` but does not mutate it.
+
+    ``session_metadata`` is the session-stored metadata read by the dispatch
+    function; it sits between agent defaults and call-site values in the
+    metadata merge (agent < session < call-site).
     """
+    from copy import deepcopy
+
     from agno.agent._utils import get_effective_filters
     from agno.utils.merge_dict import merge_dictionaries
 
@@ -151,15 +158,16 @@ def resolve_run_options(
     if agent.knowledge_filters or knowledge_filters:
         resolved_filters = get_effective_filters(agent, knowledge_filters=knowledge_filters)
 
-    # metadata: merge call-site + agent.metadata (agent values take precedence)
+    # metadata: layered merge, call-site wins (agent < session < call-site),
+    # matching how dependencies resolve. Each layer is deep-copied before it is
+    # merged, so no nested dict in the result aliases a source dict
+    # (merge_dictionaries recurses in place).
     resolved_metadata: Optional[Dict[str, Any]] = None
-    if metadata is not None and agent.metadata is not None:
-        resolved_metadata = metadata.copy()
-        merge_dictionaries(resolved_metadata, agent.metadata)
-    elif metadata is not None:
-        resolved_metadata = metadata.copy()
-    elif agent.metadata is not None:
-        resolved_metadata = agent.metadata.copy()
+    for layer in (agent.metadata, session_metadata, metadata):
+        if layer is not None:
+            if resolved_metadata is None:
+                resolved_metadata = {}
+            merge_dictionaries(resolved_metadata, deepcopy(layer))
 
     # output_schema: call-site > agent.output_schema
     resolved_output_schema = output_schema if output_schema is not None else agent.output_schema

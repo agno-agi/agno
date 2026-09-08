@@ -31,7 +31,7 @@ if __name__ == "__main__":
     # Plus context explaining how to use them
 
     agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         knowledge=fs_knowledge,
         search_knowledge=True,
         instructions=(
@@ -87,7 +87,7 @@ if __name__ == "__main__":
     )
 
     docs_agent = Agent(
-        model=OpenAIChat(id="gpt-4o"),
+        model=OpenAIChat(id="gpt-5.6-luna"),
         knowledge=docs_knowledge,
         search_knowledge=True,
         instructions="You are a helpful assistant that answers questions from documents.",

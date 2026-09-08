@@ -13,7 +13,7 @@ from typing_extensions import TypeGuard
 
 from agno.agent import Agent
 from agno.db.base import BaseDb
-from agno.exceptions import RunCancelledException
+from agno.exceptions import InputCheckError, OutputCheckError, RunCancelledException
 from agno.media import Audio, Image, Video
 from agno.media.storage.base import AsyncMediaStorage, MediaStorage
 from agno.metrics import RunMetrics
@@ -30,6 +30,9 @@ from agno.run.agent import (
     RunContentEvent,
     RunOutput,
 )
+from agno.run.agent import (
+    RunErrorEvent as AgentRunErrorEvent,
+)
 from agno.run.base import BaseRunOutputEvent, RunStatus
 from agno.run.cancel import aregister_member_run, register_member_run
 from agno.run.team import (
@@ -40,6 +43,9 @@ from agno.run.team import (
 )
 from agno.run.team import (
     RunContentEvent as TeamRunContentEvent,
+)
+from agno.run.team import (
+    RunErrorEvent as TeamRunErrorEvent,
 )
 from agno.run.team import (
     TeamRunOutput,
@@ -77,6 +83,15 @@ _EXECUTOR_TERMINAL_EVENT_TYPES = (
     AgentRunCompletedEvent,
     TeamRunCancelledEvent,
     TeamRunCompletedEvent,
+)
+
+# Error events emitted by an Agent/Team when the run fails mid-stream (e.g. the
+# leader model raises after delegating). In that case the executor never yields a
+# (Team)RunOutput, so the Step must propagate this error instead of silently
+# producing empty content. See issue #7185.
+_EXECUTOR_ERROR_EVENT_TYPES = (
+    AgentRunErrorEvent,
+    TeamRunErrorEvent,
 )
 
 # Maximum nesting depth for nested workflow execution to prevent circular references or stack overflow.
@@ -1270,10 +1285,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -1557,10 +1575,13 @@ class Step:
                         )
 
                         active_executor_run_response = None
+                        executor_error_event = None
                         for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 continue
+                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
@@ -1571,6 +1592,12 @@ class Step:
                         # Update workflow session state
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
+
+                        # The executor failed mid-stream and never produced a run output
+                        # (e.g. the team leader raised after delegating). Propagate the
+                        # underlying error instead of silently emitting empty content.
+                        if active_executor_run_response is None and executor_error_event is not None:
+                            raise RuntimeError(self._executor_error_message(executor_error_event))
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -1657,10 +1684,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -1957,10 +1987,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -2235,10 +2268,13 @@ class Step:
                         )
 
                         active_executor_run_response = None
+                        executor_error_event = None
                         async for event in response_stream:
                             if isinstance(event, RunOutput) or isinstance(event, TeamRunOutput):
                                 active_executor_run_response = event
                                 break
+                            if isinstance(event, _EXECUTOR_ERROR_EVENT_TYPES):
+                                executor_error_event = event
                             # Only yield executor events if stream_executor_events is True
                             if stream_executor_events or isinstance(event, _EXECUTOR_TERMINAL_EVENT_TYPES):
                                 enriched_event = self._enrich_event_with_context(
@@ -2249,6 +2285,12 @@ class Step:
                         # Update workflow session state
                         if run_context is None and session_state is not None:
                             merge_dictionaries(session_state, session_state_copy)
+
+                        # The executor failed mid-stream and never produced a run output
+                        # (e.g. the team leader raised after delegating). Propagate the
+                        # underlying error instead of silently emitting empty content.
+                        if active_executor_run_response is None and executor_error_event is not None:
+                            raise RuntimeError(self._executor_error_message(executor_error_event))
 
                         if store_executor_outputs and workflow_run_response is not None:
                             self._store_executor_response(workflow_run_response, active_executor_run_response)  # type: ignore
@@ -2335,10 +2377,13 @@ class Step:
                 # retrying or skipping it would complete a run that did no work.
                 raise
             except Exception as e:
+                # Do not replay a nested workflow after a guardrail rejection,
+                # but still honor the step's explicit skip_on_failure policy.
+                stop_retrying = self._executor_type == "workflow" and isinstance(e, (InputCheckError, OutputCheckError))
                 self.retry_count = attempt + 1
                 log_warning(f"Step {self.name} failed (attempt {attempt + 1}): {str(e)}")
 
-                if attempt == self.max_retries:
+                if stop_retrying or attempt == self.max_retries:
                     if self.skip_on_failure:
                         log_debug(f"Step {self.name} failed but continuing due to skip_on_failure=True")
                         # Create empty StepOutput for skipped step
@@ -2346,6 +2391,7 @@ class Step:
                             content=f"Step {self.name} failed but skipped", success=False, error=str(e)
                         )
                         yield step_output
+                        return
                     else:
                         raise e
 
@@ -2427,6 +2473,19 @@ class Step:
             return session.get_messages(last_n_runs=last_n_runs, team_id=self.team.id)
 
         return []
+
+    def _executor_error_message(
+        self,
+        error_event: Union[AgentRunErrorEvent, TeamRunErrorEvent],
+    ) -> str:
+        """Build an error message from an executor's terminal error event.
+
+        Used when the Agent/Team fails mid-stream and never yields a run output, so
+        the Step can propagate the underlying error rather than silently emitting
+        empty content. See issue #7185.
+        """
+        error = error_event.content or error_event.error_type or "unknown error"
+        return f"Step '{self.name}' executor ({self._executor_type}) failed: {error}"
 
     def _store_executor_response(
         self,

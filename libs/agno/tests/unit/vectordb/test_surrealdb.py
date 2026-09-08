@@ -19,6 +19,7 @@ def mock_embedder() -> MagicMock:
     embedder.dimensions = 384
     embedder.get_embedding.return_value = [0.1] * 384
     embedder.get_embedding_and_usage.return_value = [0.1] * 384, {}
+    embedder.async_get_embedding_and_usage = AsyncMock(return_value=([0.1] * 384, {}))
     embedder.embedding_dim = 384
     return embedder
 

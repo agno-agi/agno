@@ -42,7 +42,7 @@ async def run_agent(message: str) -> None:
 
     async with MCPTools(server_params=server_params, timeout_seconds=60) as mcp_tools:
         agent = Agent(
-            model=OpenAIChat(id="gpt-4o"),
+            model=OpenAIChat(id="gpt-5.6-luna"),
             tools=[mcp_tools],
             instructions=dedent("""\
                 You are a web scraping assistant that creates concise reader's digests from Hacker News.

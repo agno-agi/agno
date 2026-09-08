@@ -2973,6 +2973,21 @@ class PostgresDb(BaseDb):
             log_error(f"Exception getting knowledge contents: {str(e)}")
             raise e
 
+    def _upsert_knowledge_content_on(self, conn, table, knowledge_row: KnowledgeRow) -> None:
+        """Publish a catalog record in the coordinator's existing transaction.
+
+        Trusted setup resolves the table first. Unlike the standalone upsert, explicit
+        nulls clear obsolete processing errors and this helper never opens or commits a transaction.
+        """
+        values = {key: value for key, value in knowledge_row.model_dump().items() if key in table.c}
+        stmt = postgresql.insert(table).values(values)
+        conn.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[table.c.id],
+                set_={key: value for key, value in values.items() if key not in ("id", "created_at")},
+            )
+        )
+
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.
 
@@ -6879,10 +6894,15 @@ class PostgresDb(BaseDb):
         limit: int = 100,
         page: int = 1,
         user_id: Optional[str] = None,
+        raise_on_error: bool = False,
     ) -> Tuple[List[Dict[str, Any]], int]:
         try:
             table = self._get_table(table_type="schedules")
             if table is None:
+                # _get_table also returns None on connection errors (is_table_available
+                # swallows them), so strict callers must not see this as an empty catalog
+                if raise_on_error:
+                    raise RuntimeError("schedules table unavailable (database error or table never created)")
                 return [], 0
             with self.Session() as sess:
                 # Build base query with filters
@@ -6899,12 +6919,15 @@ class PostgresDb(BaseDb):
                 # Calculate offset from page
                 offset = (page - 1) * limit
 
-                # Get paginated results
-                stmt = base_query.order_by(table.c.created_at.desc()).limit(limit).offset(offset)
+                # Get paginated results (id is a unique tiebreaker so offset pages do not overlap
+                # or skip rows when many schedules share a created_at second)
+                stmt = base_query.order_by(table.c.created_at.desc(), table.c.id.desc()).limit(limit).offset(offset)
                 results = sess.execute(stmt).fetchall()
                 return [dict(row._mapping) for row in results], total_count
         except Exception as e:
             log_debug(f"Error listing schedules: {e}")
+            if raise_on_error:
+                raise
             return [], 0
 
     def create_schedule(self, schedule_data: Dict[str, Any]) -> Dict[str, Any]:

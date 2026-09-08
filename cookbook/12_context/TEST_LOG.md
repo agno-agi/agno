@@ -1,7 +1,7 @@
 # Context Cookbook Test Log
 
 All end-to-end runs used the demo venv (`.venvs/demo/bin/python`)
-against real OpenAI (`gpt-5.4` / `gpt-5.4-mini`).
+against real OpenAI (`gpt-5.4` / `gpt-5.6-luna`).
 
 ## 2026-05-14
 

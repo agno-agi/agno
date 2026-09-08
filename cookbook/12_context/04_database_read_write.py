@@ -63,7 +63,7 @@ db = DatabaseContextProvider(
     id="contacts",
     sql_engine=engine,
     readonly_engine=engine,
-    model=OpenAIResponses(id="gpt-5.4-mini"),
+    model=OpenAIResponses(id="gpt-5.6-luna"),
 )
 
 # ---------------------------------------------------------------------------

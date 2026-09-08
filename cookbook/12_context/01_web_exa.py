@@ -23,7 +23,7 @@ from agno.models.openai import OpenAIResponses
 # Create the provider
 # ---------------------------------------------------------------------------
 backend = ExaBackend()  # reads EXA_API_KEY from env
-web = WebContextProvider(backend=backend, model=OpenAIResponses(id="gpt-5.4-mini"))
+web = WebContextProvider(backend=backend, model=OpenAIResponses(id="gpt-5.6-luna"))
 
 # ---------------------------------------------------------------------------
 # Create the Agent

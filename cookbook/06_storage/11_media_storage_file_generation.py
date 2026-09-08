@@ -29,7 +29,7 @@ from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.media.storage import S3MediaStorage
 from agno.models.openai import OpenAIResponses
-from agno.tools.file_generation import FileGenerationTools
+from agno.tools.file import FileGenerationTools
 
 # ---------------------------------------------------------------------------
 # Setup
