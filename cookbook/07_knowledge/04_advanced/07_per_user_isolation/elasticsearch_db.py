@@ -16,7 +16,9 @@ all belong to another owner.
 - Search with user_id=None: admin view, sees everything
 
 Requirements:
+- ./cookbook/scripts/run_elasticsearch.sh
 - uv pip install elasticsearch
+- OPENAI_API_KEY
 """
 
 import asyncio
