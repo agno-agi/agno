@@ -20,7 +20,7 @@ Two properties this layer must preserve, because the authorization model depends
 import json
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import delete, func, insert, or_, select
+from sqlalchemy import case, delete, func, insert, or_, select
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -394,3 +394,37 @@ def count_events(
             stmt = stmt.where(or_(*[c.like(needle) for c in columns]))
     with engine.connect() as conn:
         return int(conn.execute(stmt).scalar() or 0)
+
+
+def aggregate_decisions_by_day(engine: Engine, table: Any, starting_at: Optional[int] = None) -> List[Dict[str, Any]]:
+    """Count allowed and denied authorization decisions for each UTC day.
+
+    ``starting_at`` bounds the scan to rows created at or after that epoch second so an
+    incremental refresh only touches recent audit rows (the table gets one row per
+    authenticated request). The day grouping itself is an expression, so the bound on
+    the indexed ``created_at`` column is what keeps this cheap.
+    """
+    seconds_per_day = 24 * 60 * 60
+    day_start = (table.c.created_at - (table.c.created_at % seconds_per_day)).label("date")
+    filters = [table.c.action.in_(("access.allowed", "access.denied"))]
+    if starting_at is not None:
+        filters.append(table.c.created_at >= starting_at)
+    statement = (
+        select(
+            day_start,
+            func.sum(case((table.c.action == "access.allowed", 1), else_=0)).label("authorization_allowed_count"),
+            func.sum(case((table.c.action == "access.denied", 1), else_=0)).label("authorization_denied_count"),
+        )
+        .where(*filters)
+        .group_by(day_start)
+        .order_by(day_start.asc())
+    )
+    with engine.connect() as conn:
+        return [
+            {
+                "date": int(row.date),
+                "authorization_allowed_count": int(row.authorization_allowed_count or 0),
+                "authorization_denied_count": int(row.authorization_denied_count or 0),
+            }
+            for row in conn.execute(statement)
+        ]

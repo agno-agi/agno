@@ -80,6 +80,55 @@ def test_store_crud_and_disable(tmp_path, db_url):
     assert store.remove("u2") is False
 
 
+@pytest.mark.parametrize("db_url", [None, "sqlite"])
+def test_store_creation_metrics(tmp_path, db_url, monkeypatch):
+    url = None if db_url is None else f"sqlite:///{tmp_path / 'user-metrics.db'}"
+    store = ManagedUserStore(db_url=url)
+    timestamps = iter([100, 200, 86400 + 300, 172800])
+    monkeypatch.setattr("agno.os.authz.user_store._now", lambda: next(timestamps))
+
+    for user_id in ("u1", "u2", "u3"):
+        store.upsert(user_id)
+
+    rebuilt = store.calculate_os_metrics(
+        decision_metrics=[
+            {
+                "date": 0,
+                "authorization_allowed_count": 3,
+                "authorization_denied_count": 1,
+            },
+            {
+                "date": 172800,
+                "authorization_allowed_count": 2,
+                "authorization_denied_count": 0,
+            },
+        ]
+    )
+    assert [
+        (
+            row["date"],
+            row["users_created_count"],
+            row["authorization_allowed_count"],
+            row["authorization_denied_count"],
+        )
+        for row in rebuilt
+    ] == [(0, 2, 3, 1), (86400, 1, 0, 0), (172800, 0, 2, 0)]
+    cached, updated_at = store.os_metrics(starting_at=86400, ending_before=172800)
+    assert [(row["date"], row["users_created_count"]) for row in cached] == [(86400, 1)]
+    assert updated_at is not None
+
+    # Incremental refresh: days before ``decisions_since`` keep their cached counts.
+    timestamps = iter([259200])
+    incremental = store.calculate_os_metrics(
+        decision_metrics=[{"date": 172800, "authorization_allowed_count": 5, "authorization_denied_count": 2}],
+        decisions_since=172800,
+    )
+    assert [
+        (row["date"], row["users_created_count"], row["authorization_allowed_count"], row["authorization_denied_count"])
+        for row in incremental
+    ] == [(0, 2, 3, 1), (86400, 1, 0, 0), (172800, 0, 5, 2)]
+
+
 def test_store_emits_audit_with_actor_and_diff():
     sink = _CapturingSink()
     store = ManagedUserStore(audit=sink)
@@ -119,6 +168,7 @@ from agno.agent import Agent  # noqa: E402
 from agno.db.in_memory import InMemoryDb  # noqa: E402
 from agno.os import AgentOS  # noqa: E402
 from agno.os.authz.role_store import ManagedRoleStore  # noqa: E402
+from agno.os.authz.scope_provider import ScopeAuthorizationProvider  # noqa: E402
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig  # noqa: E402
 
 
@@ -188,6 +238,20 @@ def test_users_api_crud_and_role_merge():
     assert [u["id"] for u in by_id] == sorted(u["id"] for u in by_id)
     assert client.get("/users?sort_by=evil", headers=_auth("alice")).status_code == 422
 
+    # OS metrics are refreshed independently from database-scoped session metrics.
+    refreshed = client.post("/metrics/os/refresh?background=true", headers=_auth("alice"))
+    assert refreshed.status_code == 202 and refreshed.json()["status"] == "started"
+    metrics = client.get("/metrics/os?starting_date=2000-01-01&ending_date=2100-01-01", headers=_auth("alice")).json()[
+        "metrics"
+    ]
+    assert len(metrics) == 1 and metrics[0]["users_created_count"] == 2
+    assert (
+        client.get("/metrics/os?starting_date=2026-08-02&ending_date=2026-08-01", headers=_auth("alice")).status_code
+        == 422
+    )
+    status = client.get("/metrics/os/refresh/status", headers=_auth("alice")).json()
+    assert status["status"] == "completed" and status["finished_at"] is not None
+
     # update + delete; PATCH {"disabled": ...} is the revocation kill-switch
     client.patch("/users/bob", headers=_auth("alice"), json={"name": "Bob"})
     assert client.get("/users/bob", headers=_auth("alice")).json()["name"] == "Bob"
@@ -204,8 +268,10 @@ def test_users_api_is_admin_only():
     roles = ManagedRoleStore(db_url=_db_url())
     roles.set_role_scopes("admin", ["agent_os:admin"])
     roles.set_role_scopes("viewer", ["agents:*:read"])
+    roles.set_role_scopes("metrics-reader", ["metrics:read"])
     roles.assign("alice", "admin")
     roles.assign("bob", "viewer")
+    roles.assign("carol", "metrics-reader")
     users = ManagedUserStore(db_url=_db_url())  # AgentOS requires a persistable directory
 
     app = _os(roles, users).get_app()
@@ -213,6 +279,67 @@ def test_users_api_is_admin_only():
 
     assert client.get("/users", headers=_auth("bob")).status_code == 403  # non-admin
     assert client.get("/users").status_code == 401  # anonymous
+    assert client.get("/metrics/os", headers=_auth("bob")).status_code == 403
+    assert client.get("/metrics/os").status_code == 401
+    assert client.post("/metrics/os/refresh", headers=_auth("bob")).status_code == 403
+    assert client.get("/metrics/os", headers=_auth("carol")).status_code == 200
+    assert client.post("/metrics/os/refresh", headers=_auth("carol")).status_code == 403
+
+
+def test_os_metrics_include_authorization_decisions():
+    roles = ManagedRoleStore(db_url=_db_url())
+    roles.set_role_scopes("admin", ["agent_os:admin"])
+    roles.assign("alice", "admin")
+    metrics_db_url = _db_url()
+    users = ManagedUserStore(db_url=metrics_db_url)
+    audit = DbAuditSink(db_url=metrics_db_url)
+    audit.record(AuditEvent(action="access.allowed", actor="alice", target="GET /agents", timestamp=100))
+    audit.record(AuditEvent(action="access.denied", actor="bob", target="GET /agents", timestamp=200))
+
+    client = TestClient(_os(roles, users, audit=audit).get_app())
+    refreshed = client.post("/metrics/os/refresh", headers=_auth("alice"))
+    assert refreshed.status_code == 200, refreshed.text
+
+    metrics = client.get("/metrics/os?starting_date=1970-01-01&ending_date=1970-01-01", headers=_auth("alice")).json()[
+        "metrics"
+    ]
+    assert len(metrics) == 1
+    assert metrics[0]["users_created_count"] == 0
+    assert metrics[0]["authorization_allowed_count"] == 1
+    assert metrics[0]["authorization_denied_count"] == 1
+
+    # The refresh above recorded its own decisions (the metrics endpoints are
+    # authorized like any other route), so "today" now has cached counts too. A second
+    # refresh re-aggregates only from the day before the latest cached day: the seeded
+    # 1970 rows are untouched even though a new audit row landed there.
+    audit.record(AuditEvent(action="access.denied", actor="bob", target="GET /agents", timestamp=300))
+    assert client.post("/metrics/os/refresh", headers=_auth("alice")).status_code == 200
+    metrics = client.get("/metrics/os?starting_date=1970-01-01&ending_date=1970-01-01", headers=_auth("alice")).json()[
+        "metrics"
+    ]
+    assert (metrics[0]["authorization_allowed_count"], metrics[0]["authorization_denied_count"]) == (1, 1)
+
+
+def test_os_metrics_auto_mount_with_composite_authorization_provider():
+    roles = ManagedRoleStore(db_url=_db_url())
+    users = ManagedUserStore(db_url=_db_url())
+    agent = Agent(id="research-agent", name="Research Agent", db=InMemoryDb())
+
+    app = AgentOS(
+        id=OS_ID,
+        agents=[agent],
+        authorization=True,
+        authorization_config=AuthorizationConfig(
+            verification_keys=[SECRET],
+            algorithm="HS256",
+            authorization_provider=[ScopeAuthorizationProvider(), roles.provider],
+        ),
+        user_directory=UserDirectoryConfig(store=users),
+    ).get_app()
+
+    client = TestClient(app)
+    response = client.get("/metrics/os", headers=_auth("operator", scopes=["metrics:read"]))
+    assert response.status_code == 200, response.text
 
 
 def test_disabled_user_is_denied_even_with_valid_token():

@@ -18,6 +18,7 @@ import pytest
 pytest.importorskip("sqlalchemy")
 
 from agno.db.sqlite import SqliteDb  # noqa: E402
+from agno.exceptions import SchemaMismatchError  # noqa: E402
 
 
 @pytest.fixture
@@ -163,6 +164,141 @@ def test_user_listing_filters_and_sorts(db):
     assert db.count_authz_users(include_disabled=False) == 2
     assert [u["id"] for u in db.list_authz_users(search="user1")] == ["u1"]
     assert [u["id"] for u in db.list_authz_users(sort_by="created_at", order="asc")] == ["u0", "u1", "u2"]
+
+
+def test_os_metrics_are_cached_and_filtered_by_utc_day(db):
+    timestamps = [100, 200, 86400 + 300]
+    for i, created_at in enumerate(timestamps):
+        db.upsert_authz_user(
+            f"metric-user-{i}",
+            {
+                "email": None,
+                "name": None,
+                "disabled": False,
+                "created_at": created_at,
+                "updated_at": created_at,
+                "metadata": None,
+            },
+        )
+
+    for event_id, created_at, action in [
+        ("metric-decision-1", 300, "access.allowed"),
+        ("metric-decision-2", 400, "access.denied"),
+        ("metric-decision-3", 86400 + 500, "access.allowed"),
+    ]:
+        db.record_authz_decision(
+            {
+                "event_id": event_id,
+                "created_at": created_at,
+                "actor": "metric-user",
+                "action": action,
+                "target": "GET /agents",
+                "token_ref": None,
+                "required": None,
+                "scopes": None,
+            }
+        )
+
+    decision_metrics = db.aggregate_authz_decisions_by_day()
+    rebuilt = db.calculate_os_metrics(decision_metrics=decision_metrics)
+    assert [
+        (
+            row["date"],
+            row["users_created_count"],
+            row["authorization_allowed_count"],
+            row["authorization_denied_count"],
+        )
+        for row in rebuilt
+    ] == [(0, 2, 1, 1), (86400, 1, 1, 0)]
+    cached, updated_at = db.get_os_metrics(starting_at=86400, ending_before=172800)
+    assert [(row["date"], row["users_created_count"]) for row in cached] == [(86400, 1)]
+    assert updated_at is not None
+
+    # Reads use the aggregate table; source changes appear only after refresh.
+    db.upsert_authz_user(
+        "metric-user-3",
+        {
+            "email": None,
+            "name": None,
+            "disabled": False,
+            "created_at": 86400 + 400,
+            "updated_at": 86400 + 400,
+            "metadata": None,
+        },
+    )
+    cached, _ = db.get_os_metrics(starting_at=86400, ending_before=172800)
+    assert cached[0]["users_created_count"] == 1
+    db.calculate_os_metrics(decision_metrics=db.aggregate_authz_decisions_by_day())
+    cached, _ = db.get_os_metrics(starting_at=86400, ending_before=172800)
+    assert cached[0]["users_created_count"] == 2
+
+
+def _decision(db, event_id, created_at, action):
+    db.record_authz_decision(
+        {
+            "event_id": event_id,
+            "created_at": created_at,
+            "actor": "metric-user",
+            "action": action,
+            "target": "GET /agents",
+            "token_ref": None,
+            "required": None,
+            "scopes": None,
+        }
+    )
+
+
+def test_os_metrics_incremental_refresh_keeps_older_decision_counts(db):
+    _decision(db, "d-old", 300, "access.allowed")
+    _decision(db, "d-new", 86400 + 300, "access.denied")
+    first = db.calculate_os_metrics(decision_metrics=db.aggregate_authz_decisions_by_day())
+    assert [(r["date"], r["authorization_allowed_count"], r["authorization_denied_count"]) for r in first] == [
+        (0, 1, 0),
+        (86400, 0, 1),
+    ]
+    first_created_at = {r["date"]: r["created_at"] for r in first}
+
+    # New audit rows land on both days, but an incremental refresh only re-aggregates
+    # from ``starting_at`` on: the bounded scan is what keeps refreshes cheap.
+    _decision(db, "d-old-2", 400, "access.denied")
+    _decision(db, "d-new-2", 86400 + 400, "access.allowed")
+    bounded = db.aggregate_authz_decisions_by_day(starting_at=86400)
+    assert [row["date"] for row in bounded] == [86400]
+
+    second = db.calculate_os_metrics(decision_metrics=bounded, decisions_since=86400)
+    assert [(r["date"], r["authorization_allowed_count"], r["authorization_denied_count"]) for r in second] == [
+        (0, 1, 0),  # cached count preserved, the day-0 deny was not rescanned
+        (86400, 1, 1),
+    ]
+    # created_at marks when a day first appeared in the cache and survives refreshes.
+    assert {r["date"]: r["created_at"] for r in second} == first_created_at
+
+    # A full refresh (no lower bound) replaces every cached count.
+    full = db.calculate_os_metrics(decision_metrics=db.aggregate_authz_decisions_by_day())
+    assert [(r["date"], r["authorization_allowed_count"], r["authorization_denied_count"]) for r in full] == [
+        (0, 1, 1),
+        (86400, 1, 1),
+    ]
+
+
+def test_os_metrics_drops_days_with_no_remaining_data(db):
+    db.upsert_authz_user(
+        "only-user",
+        {"email": None, "name": None, "disabled": False, "created_at": 100, "updated_at": 100, "metadata": None},
+    )
+    assert [r["date"] for r in db.calculate_os_metrics()] == [0]
+
+    db.delete_authz_user("only-user")
+    assert db.calculate_os_metrics() == []
+    assert db.get_os_metrics() == ([], None)
+
+
+def test_invalid_os_metrics_table_is_rejected(db):
+    with db.db_engine.begin() as connection:
+        connection.exec_driver_sql("CREATE TABLE agno_os_metrics (id VARCHAR PRIMARY KEY)")
+
+    with pytest.raises(SchemaMismatchError, match="invalid schema"):
+        db.get_os_metrics()
 
 
 def test_both_audit_trails_are_separate_and_searchable(db):

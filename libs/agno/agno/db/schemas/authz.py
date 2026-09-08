@@ -76,7 +76,7 @@ AUTHZ_USERS_TABLE_SCHEMA = {
     "email": {"type": String, "nullable": True},
     "name": {"type": String, "nullable": True},
     "disabled": {"type": Boolean, "nullable": False},
-    "created_at": {"type": BigInteger, "nullable": False},
+    "created_at": {"type": BigInteger, "nullable": False, "index": True},
     "updated_at": {"type": BigInteger, "nullable": False, "index": True},
     "user_metadata": {"type": Text, "nullable": True},
 }
