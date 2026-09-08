@@ -1,7 +1,7 @@
 """
 Managed Users - a user directory for AgentOS, no identity provider needed
 
-Already did managed_roles.py? That showed ROLES (who can do what). This shows
+Already did 01_managed_roles.py? That showed ROLES (who can do what). This shows
 USERS (who exists), for the case where you DON'T have an external login system
 (no Okta/Auth0/WorkOS). Your own app still signs people in its own way and hands
 them a token; AgentOS keeps the list of users and decides what they can do.
@@ -28,18 +28,16 @@ This file creates a few users, gives them roles, then:
 
 Run it:
     pip install "agno[roles]"
-    python managed_users.py
+    python 02_managed_users.py
 (no OpenAI key needed - we are only checking who is allowed, not chatting)
 """
 
 import os
-from datetime import UTC, datetime, timedelta
 
-import jwt
 from agno.agent import Agent
 from agno.db.sqlite import SqliteDb
 from agno.models.openai import OpenAIResponses
-from agno.os import AgentOS
+from agno.os import AgentOS, create_dev_token
 from agno.os.authz.role_store import ManagedRoleStore
 from agno.os.authz.user_store import ManagedUserStore
 from agno.os.config import AuthorizationConfig, UserDirectoryConfig
@@ -49,7 +47,7 @@ OS_ID = "managed-users-os"
 
 os.makedirs("tmp", exist_ok=True)
 
-# Roles: what each role can do (same as managed_roles.py).
+# Roles: what each role can do (same as 01_managed_roles.py).
 roles = ManagedRoleStore(db_url="sqlite:///tmp/managed_users_roles.db")
 # Flag "viewer" as the DEFAULT role: a user who is auto-provisioned on first login (see
 # auto_provision below) is granted it automatically, so they land usable instead of with no
@@ -101,7 +99,7 @@ agent_os = AgentOS(
 app = agent_os.get_app()
 # We manage the directory through the store directly here (upsert / set_disabled), which is
 # all the enforcement needs for this transcript. Because we passed role_store=, AgentOS also
-# auto-mounts the admin HTTP API (/users, /authz/roles) -- see manage_users_and_roles.py for
+# auto-mounts the admin HTTP API (/users, /authz/roles) -- see 06_manage_users_and_roles.py for
 # a frontend that drives it.
 
 
@@ -114,15 +112,11 @@ if __name__ == "__main__":
     client = TestClient(app)
 
     def token(sub: str) -> str:
-        return jwt.encode(
-            {
-                "sub": sub,
-                "aud": OS_ID,
-                "scopes": [],
-                "exp": datetime.now(UTC) + timedelta(hours=24),
-            },
-            JWT_SECRET,
-            algorithm="HS256",
+        # create_dev_token (from agno.os) mints a local JWT so you can "be" any user without an
+        # IdP. It is the honest local path: the token runs the exact same verification / isolation
+        # pipeline as a production token, so what you see here is what you get in prod.
+        return create_dev_token(
+            sub, secret=JWT_SECRET, audience=OS_ID, expires_in=24 * 3600
         )
 
     def auth(sub: str) -> dict:

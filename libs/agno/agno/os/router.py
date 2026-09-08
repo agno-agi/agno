@@ -652,7 +652,7 @@ def get_websocket_router(
                     # client cannot attribute a run to another user by spoofing
                     # the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    is_admin = ws_is_admin()
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
@@ -676,7 +676,7 @@ def get_websocket_router(
                     # so reconnecting cannot read another user's run events by
                     # swapping user_id.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    is_admin = ws_is_admin()
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)
@@ -757,7 +757,7 @@ def get_websocket_router(
                     # callers so the client cannot continue another user's paused
                     # run by spoofing the field.
                     auth_user_id = websocket_user_context.get("user_id")
-                    is_admin = ws_admin_scope in websocket_user_context.get("scopes", [])
+                    is_admin = ws_is_admin()
                     if is_admin:
                         if auth_user_id:
                             message.setdefault("user_id", auth_user_id)

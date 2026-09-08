@@ -1,7 +1,7 @@
 """
 Run an AgentOS that serves the user + role management API (for a frontend)
 
-(New to this? Read managed_roles.py first, then managed_users.py.)
+(New to this? Read 01_managed_roles.py first, then 02_managed_users.py.)
 
 This is the "admin backend": it starts a real AgentOS server and leaves it
 running, exposing the /authz management API so a frontend (or your own admin UI)
@@ -26,7 +26,7 @@ makes ONE bootstrap admin (so someone can call the admin API).
 
 Run it:
     pip install "agno[roles]"
-    python manage_users_and_roles.py
+    python 06_manage_users_and_roles.py
 Then point your frontend at http://localhost:7777 (CORS is open to the usual dev
 ports). The server keeps running until you Ctrl-C.
 
@@ -53,7 +53,7 @@ To MANAGE roles/users over /authz you must be an admin. That comes from either a
 ``agent_os:admin`` scope on the token, OR being seeded in the store - so set
 ADMIN_SUBJECT to the `sub` of your token (decode it: the `sub` claim). e.g.
     OS_ID="<your-os-id>" JWT_VERIFICATION_KEY="<os public key>" \\
-    ADMIN_SUBJECT="you@company.com" python manage_users_and_roles.py
+    ADMIN_SUBJECT="you@company.com" python 06_manage_users_and_roles.py
 """
 
 import os

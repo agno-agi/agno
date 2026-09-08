@@ -910,36 +910,49 @@ class TestIssuerPinning:
         assert build_jwt_middleware_kwargs(config, authorization=True)["issuer"] == self.GOOD
 
 
-class TestConfigExcludedRoutePaths:
-    """``AuthorizationConfig(excluded_route_paths=...)`` opts extra routes public, ADDED to the
-    built-in defaults -- the #9140 need: a public ``/chat/token`` the frontend can reach without
-    a 401, without dropping ``/health`` / the docs from the public set."""
+class TestCreateDevToken:
+    """``create_dev_token`` mints a signed JWT the real validator accepts, carrying the claims
+    ``auto_provision`` needs -- the honest local path (same pipeline as production, dev key)."""
 
-    def _excluded(self, **cfg):
-        from agno.os.config import AuthorizationConfig
-        from agno.os.middleware.jwt import build_jwt_middleware_kwargs
+    def test_the_real_validator_accepts_it_with_its_claims(self):
+        from agno.os.auth import create_dev_token
+        from agno.os.middleware.jwt import JWTValidator
 
-        config = AuthorizationConfig(verification_keys=[JWT_SECRET], algorithm="HS256", **cfg)
-        return build_jwt_middleware_kwargs(config, authorization=True)["excluded_route_paths"]
+        tok = create_dev_token("alice", secret=JWT_SECRET, email="a@co", name="Alice", scopes=["agents:read"])
+        payload = JWTValidator(verification_keys=[JWT_SECRET], algorithm="HS256").validate_token(tok)
+        assert payload["sub"] == "alice"
+        assert payload["email"] == "a@co" and payload["name"] == "Alice"
+        assert "agents:read" in payload["scopes"]
 
-    def test_config_paths_are_merged_with_defaults(self):
-        excluded = self._excluded(excluded_route_paths=["/chat/token"])
-        assert "/chat/token" in excluded  # the operator's public route
-        assert "/health" in excluded and "/docs" in excluded  # defaults preserved, not replaced
+    def test_audience_and_standard_claims_are_stamped(self):
+        import jwt as pyjwt
 
-    def test_no_config_paths_leaves_the_middleware_defaults(self):
-        # None means "don't override" -- the middleware applies its own defaults itself.
-        assert self._excluded() is None
+        from agno.os.auth import create_dev_token
 
-    def test_a_path_overlapping_a_default_is_not_duplicated(self):
-        excluded = self._excluded(excluded_route_paths=["/health", "/chat/token"])
-        assert excluded.count("/health") == 1
+        tok = create_dev_token("alice", secret=JWT_SECRET, audience="os-1")
+        payload = pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"], audience="os-1")
+        assert payload["aud"] == "os-1" and payload["sub"] == "alice"
+        assert "exp" in payload and "iat" in payload and "jti" in payload
 
-    def test_the_merged_paths_actually_gate(self):
-        from agno.os.middleware import JWTMiddleware
+    def test_a_wrong_key_does_not_verify(self):
+        import jwt as pyjwt
 
-        excluded = self._excluded(excluded_route_paths=["/chat/*"])
-        mw = JWTMiddleware(app=None, verification_keys=[JWT_SECRET], algorithm="HS256", excluded_route_paths=excluded)
-        assert mw._is_route_excluded("/chat/token") is True  # opted public (fnmatch)
-        assert mw._is_route_excluded("/health") is True  # default still public
-        assert mw._is_route_excluded("/agents") is False  # still gated
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET)
+        with pytest.raises(pyjwt.InvalidSignatureError):
+            pyjwt.decode(tok, "a-completely-different-secret-key-padding-xxxx", algorithms=["HS256"])
+
+    def test_expired_token_is_rejected(self):
+        import jwt as pyjwt
+
+        from agno.os.auth import create_dev_token
+
+        tok = create_dev_token("alice", secret=JWT_SECRET, expires_in=-10)
+        with pytest.raises(pyjwt.ExpiredSignatureError):
+            pyjwt.decode(tok, JWT_SECRET, algorithms=["HS256"])
+
+    def test_exported_from_agno_os(self):
+        from agno.os import create_dev_token as exported
+
+        assert callable(exported)

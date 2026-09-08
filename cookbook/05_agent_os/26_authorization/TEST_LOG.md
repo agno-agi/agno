@@ -8,7 +8,7 @@ authorization engine: managed roles persist to throwaway SQLite under `tmp/`, th
 FGA example runs on an in-memory store, and the IdP example mints its own
 throwaway keys.
 
-### managed_roles.py
+### 01_managed_roles.py
 
 **Status:** PASS
 
@@ -23,7 +23,7 @@ runtime role change took effect on the next request with no new token.
 
 ---
 
-### managed_users.py
+### 02_managed_users.py
 
 **Status:** PASS
 
@@ -41,7 +41,7 @@ ALLOWED (200) immediately with `role=viewer` rather than landing inert.
 
 ---
 
-### managed_roles_sessions.py
+### 04_managed_roles_sessions.py
 
 **Status:** PASS
 
@@ -55,7 +55,7 @@ otherwise.
 
 ---
 
-### managed_roles_audit.py
+### 05_managed_roles_audit.py
 
 **Status:** PASS
 
@@ -69,7 +69,7 @@ were written and printed.
 
 ---
 
-### custom_authorization_provider.py
+### 08_custom_authorization_provider.py
 
 **Status:** PASS
 
@@ -83,7 +83,7 @@ route gate and the per-resource gate.
 
 ---
 
-### manage_users_and_roles.py
+### 06_manage_users_and_roles.py
 
 **Status:** PASS
 
@@ -98,7 +98,7 @@ unauthenticated request returned 401; a viewer token on an admin route returned
 
 ---
 
-### fga_relationship_based.py
+### 10_fga_relationship_based.py
 
 **Status:** PASS
 
@@ -113,7 +113,7 @@ relationship; bob and carol denied.
 
 ---
 
-### idp_workos_auth0.py
+### 09_idp_workos_auth0.py
 
 **Status:** PASS
 
@@ -141,7 +141,7 @@ verified. It is now enforced, and this example is the regression demo for it.
 
 **Description:** The static browser console for the `/authz` admin API, served
 from `http://localhost:3000` (a CORS-allowed origin) against a running
-`manage_users_and_roles.py` and driven end to end in a real browser: connect
+`06_manage_users_and_roles.py` and driven end to end in a real browser: connect
 with the printed admin token, become bob (viewer), exercise the playground,
 change his role live, and read every admin tab.
 
@@ -152,3 +152,45 @@ run returned 200; demoting back to viewer also took effect. Users, Roles and
 Scope-catalog tabs rendered from the API; the Change-audit tab showed the live
 `user.assigned bob ["viewer"] -> ["runner"]` entry and the Decisions tab showed
 every allow/deny with its jti reference. No console errors.
+
+---
+
+### 03_directory_without_auth.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (real gpt-5.5 runs via OpenAIResponses)
+
+**Description:** The `AgentOS(db=db, user_isolation=True, user_directory=True)`
+shape -- a user directory and per-user isolation with NO auth at all. Drives real,
+unauthenticated runs through a `TestClient` (a form `user_id`, no Authorization
+header) and checks the directory auto-provisions from them, then shows the
+`disabled` flag is advisory without a verified identity.
+
+**Result:** Boot logged the expected one-line warning that the disabled kill
+switch and isolation are advisory. Directory started empty; a no-token run as
+`chegizkhan` auto-registered him (`get` False -> True), and `subotai` registered
+on his run too, leaving a two-person roster. After `set_disabled("chegizkhan",
+True)`, his next no-token run still returned ALLOWED (200) -- confirming the flag
+is advisory, not enforced, without auth. Points to 02_managed_users.py for the
+enforced kill switch.
+
+---
+
+### 07_manage_users.py
+
+**Status:** PASS
+
+**Test mode:** LIVE (driven via TestClient; no model calls needed)
+
+**Description:** A users-ONLY serving backend -- a user directory with authorization
+(scope plane) but NO role store, mounting only `/users`. The users-only counterpart
+of 06_manage_users_and_roles.py, for a frontend that renders a plain User-Management
+page (no role selector).
+
+**Result:** Admin token (agent_os:admin scope) listed the seeded users
+(admin@example.com, bob, carol) and added `dave` -- both 200. A token with no admin
+scope was refused (403). After `PATCH /users/bob {"disabled": true}`, bob's next
+request bounced (403) -- the kill-switch is enforced here because auth is on. Route
+inspection confirmed NO `/authz` surface exists (only `/users`, `/users/{user_id}`),
+so a frontend gets a clean users-only API.

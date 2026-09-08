@@ -23,6 +23,48 @@ from agno.utils.log import log_warning
 security = HTTPBearer(auto_error=False)
 
 
+def verify_internal_service_request(request: Request) -> bool:
+    """Verify the scheduler credential before granting internal request handling."""
+    headers = request.headers.getlist("authorization")
+    if len(headers) != 1 or not headers[0].lower().startswith("bearer "):
+        return False
+    token = headers[0][7:]
+    internal = getattr(request.app.state, "internal_service_token", None)
+    if not internal or not hmac.compare_digest(token, internal):
+        return False
+    request.state.authenticated = True
+    request.state.user_id = INTERNAL_SCHEDULER_USER_ID
+    request.state.scopes = list(INTERNAL_SERVICE_SCOPES)
+    request.state._agno_verified_internal = True
+    return True
+
+
+async def require_verified_public_workflow(request: Request, settings: AgnoAPISettings, workflow_id: str) -> None:
+    """Require real bearer verification on selected workflows, including open instances."""
+    headers = request.headers.getlist("authorization")
+    if len(headers) != 1 or not headers[0].lower().startswith("bearer ") or not headers[0][7:]:
+        raise HTTPException(status_code=401, detail="Authorization required")
+    token = headers[0][7:]
+    if verify_internal_service_request(request):
+        return
+    if not getattr(request.state, "authenticated", False):
+        if token.startswith(SERVICE_ACCOUNT_TOKEN_PREFIX):
+            await _authenticate_service_account(request, token, treat_unverifiable_as_anonymous=False)
+        elif get_effective_auth_mode(settings, app=request.app) == "security_key" and hmac.compare_digest(
+            token, settings.os_security_key or ""
+        ):
+            request.state.authenticated = True
+        else:
+            raise HTTPException(status_code=401, detail="Invalid authentication token")
+    if not getattr(request.state, "authenticated", False):
+        raise HTTPException(status_code=401, detail="Invalid authentication token")
+    if getattr(request.state, "authorization_enabled", False):
+        action = "read" if request.method == "GET" else "run"
+        if not check_resource_access(request, workflow_id, "workflows", action):
+            raise HTTPException(status_code=403, detail="Insufficient permissions")
+    request.state._agno_public_workflow = True
+
+
 @lru_cache(maxsize=1)
 def _default_authorization_provider() -> AuthorizationProvider:
     """The default scope-based provider, cached so the fast path (no custom provider
@@ -109,6 +151,73 @@ def provision_user_with_default_role(
                 "they are denied until a role is assigned"
             )
     return user
+
+
+def create_dev_token(
+    sub: str,
+    *,
+    secret: str,
+    scopes: Optional[List[str]] = None,
+    audience: Optional[str] = None,
+    email: Optional[str] = None,
+    name: Optional[str] = None,
+    expires_in: int = 3600,
+    algorithm: str = "HS256",
+    extra_claims: Optional[Dict[str, Any]] = None,
+) -> str:
+    """Mint a signed JWT for LOCAL DEV / testing, so you can "be" any user without an IdP.
+
+    This is the honest local path: the token runs through the exact same verification,
+    provisioning and isolation pipeline as a production token, so what you see locally is what you
+    get in production. Sign it with the same key you put on
+    ``AuthorizationConfig(verification_keys=[secret])`` (HS256 by default).
+
+        secret = "dev-secret-at-least-256-bits-long-xxxxxxxxxxxxxxxx"
+        AgentOS(
+            db=db,
+            authorization=True,
+            authorization_config=AuthorizationConfig(verification_keys=[secret]),
+            user_directory=UserDirectoryConfig(store=True, auto_provision=True),
+        )
+        alice = create_dev_token("alice", secret=secret, email="alice@example.com", name="Alice")
+        client.get("/agents/x", headers={"Authorization": f"Bearer {alice}"})
+        # alice is authenticated -> her data is isolated AND she is auto-registered, for real.
+
+    NOT for production: there, tokens come from your IdP / control plane. This exists so a local
+    demo or test needs one line per user instead of an identity provider.
+
+    Args:
+        sub: the user id this token authenticates as (the JWT ``sub``).
+        secret: the signing key -- must match a value in ``verification_keys``.
+        scopes: optional scope strings (only meaningful on the scope plane; managed roles ignore them).
+        audience: the ``aud`` claim; set it to your ``os_id`` when ``verify_audience=True``.
+        email / name: written as claims so ``auto_provision`` can populate the directory row.
+        expires_in: token lifetime in seconds (default 1 hour).
+        algorithm: JWT algorithm (default HS256, the symmetric dev default).
+        extra_claims: any additional claims to stamp (e.g. a custom ``iss``).
+    """
+    from datetime import datetime, timedelta, timezone
+    from uuid import uuid4
+
+    import jwt as pyjwt
+
+    now = datetime.now(timezone.utc)
+    payload: Dict[str, Any] = {
+        "sub": sub,
+        "scopes": list(scopes or []),
+        "iat": now,
+        "exp": now + timedelta(seconds=expires_in),
+        "jti": uuid4().hex,
+    }
+    if audience is not None:
+        payload["aud"] = audience
+    if email is not None:
+        payload["email"] = email
+    if name is not None:
+        payload["name"] = name
+    if extra_claims:
+        payload.update(extra_claims)
+    return pyjwt.encode(payload, secret, algorithm=algorithm)
 
 
 def token_scopes_are_authoritative(app_or_request: Any) -> bool:
@@ -718,7 +827,18 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
 
         # Get the resource_id from path parameters
         resource_id = request.path_params.get(resource_id_param)
-        if resource_id and not check_resource_access(request, resource_id, resource_type, action):
+        # A verified public workflow GET is authorized as a read, even where the route's
+        # nominal action is stricter (main's public-workflow path).
+        effective_action = (
+            "read"
+            if (
+                getattr(request.state, "_agno_public_workflow", False)
+                and resource_type == "workflows"
+                and request.method == "GET"
+            )
+            else action
+        )
+        if resource_id and not check_resource_access(request, resource_id, resource_type, effective_action):
             # Record the per-resource DENY. The route gate already logged an allow for
             # this request (with the concrete resource in the path), so a per-resource
             # ALLOW would only duplicate it -- but a per-resource DENY is otherwise
@@ -732,7 +852,7 @@ def require_resource_access(resource_type: str, action: str, resource_id_param: 
                 allowed=False,
                 target=f"{request.method} /{resource_type}/{resource_id}",
                 principal=getattr(request.state, "user_id", None),
-                required_scopes=[f"{resource_type}:{resource_id}:{action}"],
+                required_scopes=[f"{resource_type}:{resource_id}:{effective_action}"],
                 scopes=list(getattr(request.state, "scopes", None) or []),
                 claims=getattr(request.state, "claims", None),
                 reason="resource_access_denied",

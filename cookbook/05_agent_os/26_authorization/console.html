@@ -3,7 +3,7 @@
   agno /authz console — a single-file test client for the /authz management API.
 
   Use it against the cookbook server:
-    1. python manage_users_and_roles.py        (prints a dev admin bearer token)
+    1. python 06_manage_users_and_roles.py        (prints a dev admin bearer token)
     2. open this file in your browser          (double-click / open console.html)
     3. paste the printed token, hit "let's go"
 
@@ -118,7 +118,7 @@
   <input id="base" class="mono" value="http://localhost:7777" size="20" title="AgentOS base URL" />
   <input id="token" placeholder="paste the token the server printed at startup ✨" />
   <button class="primary" onclick="connect()">let's go →</button>
-  <span id="status">not connected yet — run manage_users_and_roles.py first</span>
+  <span id="status">not connected yet — run 06_manage_users_and_roles.py first</span>
 </header>
 
 <nav>

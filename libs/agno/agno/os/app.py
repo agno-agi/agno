@@ -294,6 +294,7 @@ class AgentOS:
         a2a_interface: bool = False,
         authorization: bool = False,
         authorization_config: Optional[AuthorizationConfig] = None,
+        user_isolation: bool = False,
         user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
@@ -316,6 +317,7 @@ class AgentOS:
         scheduler_poll_interval: int = 15,
         scheduler_base_url: Optional[str] = None,
         internal_service_token: Optional[str] = None,
+        public: Optional[Any] = None,
     ):
         """Initialize AgentOS.
 
@@ -362,6 +364,11 @@ class AgentOS:
             auto_provision_dbs: Whether to automatically provision databases
             authorization: Whether to enable authorization
             authorization_config: Configuration for the authorization middleware
+            user_isolation: Opt in to per-user data isolation (each caller sees only their own
+                sessions/memories). Enforced under authorization=True; advisory without auth.
+            user_directory: A credential-less user directory (roster + disabled kill switch).
+                ``True`` builds a ManagedUserStore from the OS db with auto-provision on; pass a
+                UserDirectoryConfig for control.
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
@@ -429,6 +436,8 @@ class AgentOS:
         self.telemetry = telemetry
         self.tracing = tracing
 
+        self._public_explicit_id = id
+        self.public = public
         self.mcp_config: Optional[MCPConfig] = None
         # ``mcp_server`` is the deprecated alias for ``mcp``.
         if mcp is not None and mcp_server is not None and mcp != mcp_server:
@@ -453,9 +462,15 @@ class AgentOS:
         # between AgentOS instances: another OS's mirror must not look
         # user-registered here.
 
-        # RBAC
+        # RBAC. Authentication (verify WHO the caller is) is separable from authorization (decide
+        # what they may DO).
         self.authorization = authorization
         self.authorization_config = authorization_config
+        # Per-user data isolation is a top-level opt-in (each caller sees only their own
+        # sessions/memories). It ENFORCES under a verified identity (authorization=True); without
+        # auth it is advisory -- the user_id is self-asserted, so it scopes a run's own writes but
+        # is not a boundary. Kept as a peer of the directory: both key off identity, not roles.
+        self.user_isolation = user_isolation
         # The credential-less user directory is a PEER of authorization (who the users are +
         # the disabled kill-switch), configured separately from authorization_config.
         # ``user_directory=True`` (or ``store=True`` on the config) is a shorthand: AgentOS
@@ -782,10 +797,18 @@ class AgentOS:
 
         # Add A2A interface if relevant
         has_a2a_interface = False
+        self._public_interface_routes: List[tuple[str, str]] = []
         for interface in self.interfaces:
             if not has_a2a_interface and interface.__class__.__name__ == "A2A":
                 has_a2a_interface = True
             interface_router = interface.get_router()
+            if getattr(interface, "authenticates_own_requests", False):
+                self._public_interface_routes.extend(
+                    (method, route.path)
+                    for route in interface_router.routes
+                    if hasattr(route, "methods") and hasattr(route, "path")
+                    for method in route.methods
+                )
             self._add_router(app, interface_router)
         if self.a2a_interface and not has_a2a_interface:
             from agno.os.interfaces.a2a import A2A
@@ -1305,6 +1328,12 @@ class AgentOS:
         setup_tracing_for_os(db=db)
 
     def get_app(self) -> FastAPI:
+        if self.public is not None:
+            from agno.os.public import PublicSurface
+
+            if not isinstance(self.public, PublicSurface):
+                raise ValueError("AgentOS.public must be a PublicSurface")
+            self.public._bind(self)
         # Pick up MCP tools added to the registry after construction, before the
         # lifespan that connects them is assembled below
         collect_mcp_tools_from_registry(self.registry, self.mcp_tools)
@@ -1598,20 +1627,33 @@ class AgentOS:
         # author believes is governed by roles serves every route to anonymous callers.
         # Fail at construction rather than shipping a silently open instance.
         cfg = self.authorization_config
-        # Any plane that only takes effect through the auth middleware (seeded when the
-        # middleware is added) leaves a silently-open instance if authorization is off. The
-        # user directory is the same: its disabled-user kill switch is inert without the
-        # middleware, so a no-IdP directory deployment that forgets authorization=True serves
-        # every route to anonymous callers AND the revocation switch does nothing.
+        # A plane (role_store / custom provider) only takes effect through the auth middleware,
+        # so with authorization off it is a silently-open instance -- the author believes routes
+        # are governed by roles, but nothing consults the provider. That still raises. A user
+        # directory is different: it is a roster, valid without auth (the guard below only warns),
+        # because it is data, not an enforcement point.
         authz_plane_configured = cfg is not None and (
             getattr(cfg, "role_store", None) is not None or getattr(cfg, "authorization_provider", None) is not None
         )
-        if not self.authorization and (authz_plane_configured or self.user_directory is not None):
+        if not self.authorization and authz_plane_configured:
             raise ValueError(
-                "AuthorizationConfig(role_store=.../authorization_provider=...) or AgentOS(user_directory=...) "
-                "requires AgentOS(authorization=True). Without it the authorization plane is never enforced "
-                "(every route is served unauthenticated) and the user-directory kill switch does nothing. "
-                "Set authorization=True, or drop the config if you intended an open instance."
+                "AuthorizationConfig(role_store=.../authorization_provider=...) requires "
+                "AgentOS(authorization=True). Without enforcement the plane is never applied "
+                "(every route is served unauthenticated). Set authorization=True, or drop the "
+                "config if you intended an open instance."
+            )
+        if not self.authorization and (self.user_directory is not None or self.user_isolation):
+            # A user directory or per-user isolation without authorization is a valid, intentional
+            # shape for local/demo use: a run's user_id registers the person (a roster fills in) and
+            # scopes that run's own data. What it is NOT, without a verified identity, is a security
+            # boundary -- the caller asserts their own user_id, so the directory's `disabled` flag and
+            # isolation are ADVISORY here, not enforced. Warn (don't raise) so an operator who expected
+            # enforcement knows to add authorization.
+            log_warning(
+                "AgentOS is configured with a user directory / per-user isolation but no authorization. "
+                "They work off the run's user_id for local/demo use (a roster fills in, a run scopes its "
+                "own data), but that id is self-asserted -- so the disabled kill-switch and isolation are "
+                "ADVISORY, not enforced. Add AgentOS(authorization=True) with a verification key to enforce."
             )
         if self.authorization:
             # Set authorization_enabled flag on settings so security key validation is skipped
@@ -1634,12 +1676,42 @@ class AgentOS:
         if service_account_verifier is not None:
             fastapi_app.state.service_account_verifier = service_account_verifier
 
+        if self.public is not None:
+            from contextlib import asynccontextmanager
+
+            from agno.os.public._middleware import PublicMiddleware
+
+            original_lifespan = fastapi_app.router.lifespan_context
+
+            @asynccontextmanager
+            async def public_lifespan(app):
+                assert self.public is not None
+                await self.public._limiter._aprepare()
+                async with original_lifespan(app) as state:
+                    yield state
+
+            fastapi_app.router.lifespan_context = public_lifespan
+            fastapi_app.add_middleware(PublicMiddleware, surface=self.public, agent_os=self)
+
         auth_configured = bool(self.authorization or jwt_env_configured or security_key)
         if auth_configured:
             # In JWT mode the security key is ignored (JWT takes precedence), matching
             # get_effective_auth_mode; pass None so the middleware doesn't fall back to it.
             effective_key = None if (self.authorization or jwt_env_configured) else security_key
             self._add_auth_middleware(fastapi_app, security_key=effective_key)
+        elif self.user_directory is not None or self.user_isolation:
+            # No auth middleware is installed (that path seeds identity as a side effect), but a
+            # no-auth directory / isolation still key off the request's self-asserted user_id. Seed
+            # the directory store, record the isolation flag, and install a lightweight middleware
+            # that resolves the user_id (query string, never the body) to provision the directory
+            # and enable isolation scoping on any endpoint -- matching the authenticated path.
+            if self.user_directory is not None:
+                self._seed_user_directory(fastapi_app)
+            fastapi_app.state.user_isolation_enabled = self.user_isolation
+
+            from agno.os.middleware.no_auth_identity import NoAuthIdentityMiddleware
+
+            fastapi_app.add_middleware(NoAuthIdentityMiddleware, user_isolation=self.user_isolation)
 
         # Under mcp_auth, the OAuth flow routes must be reachable without an agno bearer.
         # AgentOS exempts them on the AuthMiddleware it installs itself, but an agno
@@ -1652,6 +1724,15 @@ class AgentOS:
         from agno.os.middleware.trailing_slash import TrailingSlashMiddleware
 
         fastapi_app.add_middleware(TrailingSlashMiddleware)
+
+        if self.public is not None:
+            from starlette.middleware.cors import CORSMiddleware
+
+            # Keep preflights and admission/auth failures under the configured CORS policy.
+            cors = [middleware for middleware in fastapi_app.user_middleware if middleware.cls is CORSMiddleware]
+            fastapi_app.user_middleware[:] = cors + [
+                middleware for middleware in fastapi_app.user_middleware if middleware.cls is not CORSMiddleware
+            ]
 
         if self.base_app is not None:
             self._base_app_prepared = True
@@ -1770,6 +1851,10 @@ class AgentOS:
             authorization=self.authorization,
             service_account_verifier=self._get_service_account_verifier(),
         )
+        # The top-level user_isolation flag is the primary spelling; OR it with the legacy
+        # AuthorizationConfig(user_isolation=...) so either turns per-user scoping on.
+        if self.user_isolation:
+            middleware_kwargs["user_isolation"] = True
         middleware_kwargs["security_key"] = security_key
         algorithm = middleware_kwargs["algorithm"]
         verification_keys = middleware_kwargs["verification_keys"]
@@ -1788,10 +1873,10 @@ class AgentOS:
         # the same invariant as a backstop for the manual add_middleware path.
         if self.authorization and not jwt_configured:
             raise ValueError(
-                "AgentOS(authorization=True) requires a JWT verification key: set JWT_VERIFICATION_KEY or "
-                "JWT_JWKS_FILE (or pass verification_keys / jwks_file via authorization_config). Without one, "
-                "JWT and anonymous requests are not authenticated and RBAC is not enforced. For "
-                "service-account-only enforcement, use a db without authorization=True."
+                "AgentOS(authorization=True) requires a JWT verification key: set "
+                "JWT_VERIFICATION_KEY or JWT_JWKS_FILE (or pass verification_keys / jwks_file via "
+                "authorization_config). Without one, tokens cannot be verified so no identity is established "
+                "and RBAC is not enforced. For service-account-only enforcement, use a db without either flag."
             )
         log_info("Adding AgentOS auth middleware" + (f" (JWT algorithm: {algorithm})" if jwt_configured else ""))
 
@@ -1830,8 +1915,8 @@ class AgentOS:
         # BaseInterface.authenticates_own_requests) are excluded from the central auth
         # layer alongside the public routes. Interfaces that do NOT self-authenticate
         # (e.g. A2A) stay behind AuthMiddleware, so enabling authentication protects them
-        # too. Passing excluded_route_paths replaces the middleware defaults, so the
-        # defaults are repeated here.
+        # too. Passing excluded_route_paths replaces the middleware defaults, so custom,
+        # interface, and MCP exclusions are merged with the defaults here.
         excluded_route_paths: Optional[List[str]] = None
         interface_prefixes: List[str] = []
         if self.interfaces:
@@ -1851,7 +1936,14 @@ class AgentOS:
             from agno.os.mcp_auth import mcp_auth_route_paths
 
             mcp_auth_paths = mcp_auth_route_paths(mcp_auth_provider)
-        if interface_prefixes or mcp_auth_paths:
+        # The Server Card is discovery before authentication: public by design, no secrets.
+        server_card_paths: List[str] = []
+        if self.mcp and (self.mcp_config is None or self.mcp_config.server_card):
+            from agno.os.config import MCP_SERVER_CARD_PATH
+
+            server_card_paths = [MCP_SERVER_CARD_PATH]
+        excluded_routes = (self.authorization_config.excluded_route_paths or []) if self.authorization_config else []
+        if excluded_routes or interface_prefixes or mcp_auth_paths or server_card_paths:
             excluded_route_paths = (
                 [
                     "/",
@@ -1862,8 +1954,10 @@ class AgentOS:
                     "/openapi.json",
                     "/docs/oauth2-redirect",
                 ]
+                + excluded_routes
                 + interface_prefixes
                 + mcp_auth_paths
+                + server_card_paths
             )
 
         middleware_kwargs["excluded_route_paths"] = excluded_route_paths
@@ -1968,7 +2062,10 @@ class AgentOS:
         if not user_directory:  # None or False
             return None
         if user_directory is True:
-            user_directory = UserDirectoryConfig(store=True)
+            # The bare ``True`` shorthand is the "just give me a working directory" path, so it
+            # defaults auto_provision on: a run's user_id registers the person with zero extra
+            # config. Pass an explicit UserDirectoryConfig to opt out (auto_provision=False).
+            user_directory = UserDirectoryConfig(store=True, auto_provision=True)
         if getattr(user_directory, "store", None) is True:
             if self.db is None:
                 raise ValueError(
@@ -2033,6 +2130,15 @@ class AgentOS:
                 "UserDirectoryConfig(default_role=...) is set but no role_store is configured. "
                 "Default roles are granted through the role store, so configure managed roles via "
                 "AuthorizationConfig(role_store=...) (not authorization_provider=) for it to apply."
+            )
+        elif fastapi_app.state.role_store is None:
+            # A directory with no role store is valid (a pure roster), but say so once at boot: no
+            # roles apply, provisioned users get none, and the /authz roles API is not mounted. This
+            # is the signal a UI uses to hide role management for this deployment.
+            log_info(
+                "AgentOS(user_directory=...) is configured without managed roles (no role_store). "
+                "The directory works as a roster; roles are not available and provisioned users get "
+                "none. Add AuthorizationConfig(role_store=...) to enable roles and the /authz API."
             )
 
     def get_routes(self) -> List[Any]:

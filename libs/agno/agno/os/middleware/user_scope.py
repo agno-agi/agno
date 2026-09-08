@@ -81,17 +81,30 @@ def _has_admin_scope(scopes: List[str], admin_scope: Optional[str] = None) -> bo
 
 
 def caller_is_admin(request: Request) -> bool:
-    """True when the caller holds the configured (or default) admin scope.
+    """True when the caller holds the configured (or default) admin scope AND that scope is
+    their actual authority.
 
     Not the same as ``get_scoped_user_id(request) is None``: that returns None for
     admins *and* for every caller on a non-isolated deployment (the default), so it
     cannot stand in for an admin check.
+
+    The admin scope in a token counts ONLY when the caller's scopes are authoritative -- a
+    scope plane, or a service-account PAT (``caller_scopes_are_authoritative``). Under a
+    managed-roles / ReBAC plane a JWT's ``scopes`` claim is inert (the store/engine decides),
+    so a bare ``agent_os:admin`` string must NOT be trusted here: this gate feeds
+    ``assert_session_writable(is_admin=...)``, and trusting it would let any validly-signed
+    token skip the cross-user session-ownership check and write a run into another user's
+    session. Mirrors the admin logic in :func:`get_scoped_user_id`.
     """
     admin_scope_raw = getattr(request.state, "admin_scope", None)
-    return _has_admin_scope(
+    if not _has_admin_scope(
         list(getattr(request.state, "scopes", None) or []),
         admin_scope=admin_scope_raw if isinstance(admin_scope_raw, str) else None,
-    )
+    ):
+        return False
+    from agno.os.auth import caller_scopes_are_authoritative
+
+    return caller_scopes_are_authoritative(request)
 
 
 def get_scoped_user_id(request: Request) -> Optional[str]:
@@ -169,6 +182,59 @@ def get_scoped_user_id(request: Request) -> Optional[str]:
         return _schedule_owner_from_header(request)
 
     return user_id
+
+
+def sync_directory_from_request(request: Request, user_id: Optional[str]) -> None:
+    """Register a request's self-asserted ``user_id`` in the user directory when the caller is NOT
+    authenticated.
+
+    The directory is a roster, not a security boundary: with no auth configured a request still
+    carries a ``user_id`` (a run's form field, or a query param), and this registers that person so
+    a no-IdP deployment still gets a working directory -- the "user id chegizkhan comes in and it
+    just works" path for local/demo/cookbook use. Called from the run endpoints (form user_id) and
+    from the no-auth identity middleware (query user_id) so any endpoint fills the roster, matching
+    the authenticated path where the middleware provisions on every request.
+
+    Deliberately narrow:
+      * Only for UNAUTHENTICATED requests. When a token was verified the auth middleware /
+        WebSocket / MCP gates already provisioned (and enforced ``disabled``), so we skip.
+      * Only PROVISIONS -- it does NOT enforce the ``disabled`` kill-switch. Here the id is
+        self-asserted (a caller could send any id), so ``disabled`` is a real revocation only
+        under authorization, where identity is verified.
+      * Respects ``auto_provision``: an unknown id is created only when the operator opted in,
+        exactly as the authenticated path does.
+    """
+    if not user_id:
+        return
+    from agno.os.middleware.jwt import is_reserved_principal
+
+    if is_reserved_principal(user_id):
+        # A self-asserted id must never provision (or key off) a system-reserved principal
+        # (sa:*, __scheduler__, __oauth__:) -- those are first-party identities, not roster users.
+        return
+    if getattr(request.state, "authenticated", False):
+        return  # verified identity -> already provisioned + enforced by the auth middleware
+    state = getattr(getattr(request, "app", None), "state", None)
+    if state is None:
+        return
+    user_store = getattr(state, "user_store", None)
+    if user_store is None or not getattr(state, "user_auto_provision", False):
+        return
+
+    from agno.os.auth import provision_user_with_default_role
+
+    try:
+        provision_user_with_default_role(
+            user_store,
+            getattr(state, "role_store", None),
+            getattr(state, "user_default_role", None),
+            user_id,
+            {},  # no token claims in the no-auth path: register by id alone
+            email_claim=getattr(state, "user_email_claim", "email"),
+            name_claim=getattr(state, "user_name_claim", "name"),
+        )
+    except Exception as e:  # a roster write must never break the run itself
+        log_warning(f"user directory sync failed for {user_id!r}: {e}")
 
 
 def _schedule_owner_from_header(request: Request) -> Optional[str]:

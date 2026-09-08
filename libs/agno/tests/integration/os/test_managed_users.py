@@ -662,21 +662,19 @@ def test_profile_upsert_does_not_clobber_the_disabled_flag():
     assert users.is_disabled("bob") is False
 
 
-def test_user_directory_without_authorization_flag_is_refused():
-    """Config-guard regression (FGA-2). A user directory's kill switch is inert unless the
-    auth middleware runs (authorization=True). Configuring it without the flag must fail
-    at construction, not ship a silently-open instance whose revocation does nothing."""
-    import pytest
-
+def test_user_directory_without_auth_is_allowed_as_a_roster():
+    """Behaviour change: a user directory is a roster, not a security boundary. Configuring one
+    without authentication/authorization no longer raises -- it builds (a no-IdP roster keyed off
+    the run's self-asserted user_id) and only WARNS that the disabled kill-switch is advisory
+    until auth is added. The store is still seeded onto app.state so the no-auth run hook works."""
     agent_os = AgentOS(
         id=OS_ID,
         agents=[Agent(id="research-agent", name="R", db=InMemoryDb())],
-        # authorization=True intentionally omitted
-        authorization_config=AuthorizationConfig(verification_keys=[SECRET]),
+        # neither authentication nor authorization: a plain roster
         user_directory=UserDirectoryConfig(store=ManagedUserStore(db_url=_db_url())),
     )
-    with pytest.raises(ValueError, match="authorization=True"):
-        agent_os.get_app()
+    app = agent_os.get_app()  # no raise
+    assert getattr(app.state, "user_store", None) is not None
 
 
 def test_assign_unknown_role_is_rejected():

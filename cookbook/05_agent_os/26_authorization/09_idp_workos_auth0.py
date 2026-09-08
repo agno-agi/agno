@@ -1,7 +1,7 @@
 """
 Using AgentOS with a login service (WorkOS / Auth0 / Okta) - you only enforce
 
-(New to this? Read managed_roles.py first.)
+(New to this? Read 01_managed_roles.py first.)
 
 When a company already has a login service, that service logs people in and puts
 each person's role on their token. You don't store any users or who-has-which-role
@@ -29,7 +29,7 @@ own WHAT those words are allowed to do.
 
 Run it:
     pip install agno
-    python idp_workos_auth0.py
+    python 09_idp_workos_auth0.py
 (no extra services, no database, no OpenAI key - we only check who is allowed.)
 """
 

@@ -1,8 +1,8 @@
 """
 Custom AuthorizationProvider - the minimal "bring your own decision engine" path.
 
-(New to authorization? Read managed_roles.py first. For a production-shaped custom
-provider that integrates a login service like WorkOS/Auth0, see idp_workos_auth0.py.)
+(New to authorization? Read 01_managed_roles.py first. For a production-shaped custom
+provider that integrates a login service like WorkOS/Auth0, see 09_idp_workos_auth0.py.)
 
 The scope tier (default) and the managed-roles tier both think in agno SCOPES. If
 your access model isn't scopes - it's ReBAC ("is this user an owner of this
@@ -36,7 +36,7 @@ your own engine and nothing else changes.
 
 Run it:
     pip install agno
-    python custom_authorization_provider.py
+    python 08_custom_authorization_provider.py
 (no extra services, no database needed - we only check who is allowed.)
 """
 
