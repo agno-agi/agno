@@ -1,5 +1,20 @@
 # Public pages test log
 
+### full_page.py — complete page reads and fence-aware normalization (2026-09-08)
+
+**Status:** PASS
+
+**Description:** Ran `full_page.py --help` and `--normalize` using the demo Python
+with this checkout on `PYTHONPATH`. The normalization input contains a four-backtick
+Markdown example with literal triple backticks, component markup and HTML entities.
+
+**Result:** CLI help passed without database/provider setup. Prose entities were
+decoded while the nested code example remained unchanged. Full-page API behavior
+is covered separately by sync/async unit and PostgreSQL integration tests.
+The cookbook's live corpus/provider modes were not run.
+
+---
+
 ### public_pages.py — callable dependency context (2026-09-06)
 
 **Status:** PASS
@@ -98,3 +113,22 @@ and toolkit but reads directly, without a provider call.
 **Result:** All three commands returned the expected published content. Separate
 deterministic Agent-loop tests cover sync/async tool selection, schemas, custom
 descriptions and page-error results. The live-provider `--ask` mode was not run.
+
+---
+
+### public_pages.py — public MCP lifecycle configuration (2026-09-08)
+
+**Status:** PASS
+
+**Description:** Ran `public_pages.py --help` after removing the unnecessary
+`lifecycle_tools=False` override. Module import builds the public AgentOS app,
+so this checks that the default lifecycle setting permits its custom MCP tools.
+
+**Result:** App construction and CLI help passed. The initial shared demo
+environment failed to import `MCPError` because it has an older MCP dependency.
+The successful run used the demo Python with the development environment's
+compatible packages and temporary `pgvector` dependencies on `PYTHONPATH`;
+neither shared environment was modified. Live database/provider modes were not
+run. The focused public-configuration and MCP suites passed all 204 tests.
+
+---

@@ -25,6 +25,7 @@ from agno.db.base import (
     project_config_identity,
 )
 from agno.db.migrations.manager import MigrationManager
+from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
@@ -68,7 +69,6 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
-    json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
@@ -207,9 +207,7 @@ class PostgresDb(BaseDb):
         if _engine is None and db_url is not None:
             _engine = create_engine(
                 db_url,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                json_serializer=json_serializer,
+                **_engine_options(),
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
