@@ -76,6 +76,12 @@ Export your API keys:
 export OPENAI_API_KEY="your_openai_api_key"
 ```
 
+For the Magic Hour example, create a key in the [developer dashboard](https://magichour.ai/developer) and export it:
+
+```bash
+export MAGIC_HOUR_API_KEY="your_magic_hour_api_key"
+```
+
 > For the GitHub example, create a Github PAT following [these steps](https://github.com/modelcontextprotocol/servers/tree/main/src/github#setup).
 
 ### Run the Examples
