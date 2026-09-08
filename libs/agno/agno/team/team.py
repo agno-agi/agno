@@ -240,6 +240,8 @@ class Team:
     references_format: Literal["json", "yaml"] = "json"
 
     # --- Tools ---
+    # If True, raise when any tool name collision is detected (default False)
+    error_on_tool_name_collision: bool = False
     # If True, add a tool to get information about the team members
     get_member_information_tool: bool = False
     # Add a tool to search the knowledge base (aka Agentic RAG)

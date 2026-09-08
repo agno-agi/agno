@@ -8,6 +8,7 @@ Regression test for: https://github.com/agno-agi/agno/issues/7039
 """
 
 from types import SimpleNamespace
+import pytest
 from unittest.mock import MagicMock
 
 from agno.agent import Agent
@@ -221,6 +222,30 @@ def test_framework_tool_wins_name_collision():
 
     assert len(delegation_tools) == 1
     assert delegation_tools[0].entrypoint is not user_delegate
+
+
+def test_tool_collision_can_raise_when_enabled():
+    def user_delegate() -> str:
+        return "user tool"
+
+    team = Team(
+        name="team",
+        members=[Agent(id="member", telemetry=False)],
+        tools=[
+            Function(
+                name="delegate_task_to_member",
+                entrypoint=user_delegate,
+            )
+        ],
+        error_on_tool_name_collision=True,
+        telemetry=False,
+    )
+
+    with pytest.raises(
+        ValueError,
+        match=r"Duplicate tool name 'delegate_task_to_member' already registered on team",
+    ):
+        _resolve(team)
 
 
 def test_bare_function_instructions_reach_team():
