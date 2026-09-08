@@ -11,6 +11,7 @@ from agno.tools.function import Function, FunctionCall, ToolResult
 from agno.tools.mcp import MCPTools
 from agno.tools.mcp.params import SSEClientParams, StreamableHTTPClientParams
 from agno.utils.mcp import get_entrypoint_for_tool
+from agno.utils.openai import audio_to_message
 
 
 class _AsyncContextManager:
@@ -1131,6 +1132,53 @@ async def test_mcp_tool_result_preserves_audio_content():
     assert len(result.audios) == 1
     assert result.audios[0].content == audio_bytes
     assert result.audios[0].mime_type == "audio/wav"
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_mime_type_preserves_openai_audio_format():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+    audio_bytes = b"format-probe-sentinel"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[
+                AudioContent(
+                    data=base64.b64encode(audio_bytes).decode(),
+                    mimeType="audio/mpeg",
+                )
+            ],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert result.audios is not None
+    assert result.audios[0].format == "mp3"
+    assert audio_to_message(result.audios)[0]["input_audio"]["format"] == "mp3"
+
+
+@pytest.mark.asyncio
+async def test_mcp_audio_invalid_base64_returns_error_tool_result():
+    mock_tool = MagicMock()
+    mock_tool.name = "speak"
+
+    session = AsyncMock()
+    session.send_ping = AsyncMock()
+    session.call_tool = AsyncMock(
+        return_value=CallToolResult(
+            content=[AudioContent(data="not valid base64!", mimeType="audio/wav")],
+            is_error=False,
+        )
+    )
+
+    result = await get_entrypoint_for_tool(mock_tool, session)()
+
+    assert result.content.startswith("Error: ")
+    assert result.audios is None
 
 
 @pytest.mark.asyncio

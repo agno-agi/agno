@@ -1,4 +1,5 @@
 import asyncio
+import base64
 import json
 from typing import TYPE_CHECKING, Any, Dict, Optional, Protocol, runtime_checkable
 from uuid import uuid4
@@ -116,6 +117,14 @@ def _is_fastmcp_client(session: Any) -> bool:
     return isinstance(session, Client)
 
 
+def _audio_format_from_mime_type(mime_type: Optional[str]) -> Optional[str]:
+    if not mime_type:
+        return None
+
+    subtype = mime_type.partition("/")[2].split(";", 1)[0].lower()
+    return {"mpeg": "mp3", "x-wav": "wav"}.get(subtype, subtype or None)
+
+
 async def ping_session(session: MCPSession) -> None:
     """Send an MCP ping, or do nothing when the negotiated protocol has none.
 
@@ -214,8 +223,6 @@ def get_entrypoint_for_tool(
                             mime_type = parsed_json.get("mimeType", "image/png")
 
                             if image_data and isinstance(image_data, str):
-                                import base64
-
                                 image_bytes: Optional[bytes]
                                 try:
                                     image_bytes = base64.b64decode(image_data)
@@ -244,8 +251,6 @@ def get_entrypoint_for_tool(
                     image_data = getattr(content_item, "data", None)
 
                     if image_data and isinstance(image_data, str):
-                        import base64
-
                         try:
                             image_data = base64.b64decode(image_data)
                         except Exception as e:
@@ -265,18 +270,18 @@ def get_entrypoint_for_tool(
                     audio_data = getattr(content_item, "data", None)
 
                     if audio_data and isinstance(audio_data, str):
-                        try:
-                            audio_artifact = Audio.from_base64(
-                                base64_content=audio_data,
-                                id=str(uuid4()),
-                                mime_type=getattr(content_item, "mime_type", None),
-                            )
-                            audios.append(audio_artifact)
-                            response_str += "Audio has been generated and added to the response.\n"
-                        except Exception as e:
-                            log_debug(f"Failed to decode base64 audio data: {e}")
+                        mime_type = getattr(content_item, "mime_type", None)
+                        audio_bytes = base64.b64decode(audio_data, validate=True)
+                        audio_artifact = Audio(
+                            id=str(uuid4()),
+                            content=audio_bytes,
+                            format=_audio_format_from_mime_type(mime_type),
+                            mime_type=mime_type,
+                        )
+                        audios.append(audio_artifact)
+                        response_str += "Audio has been generated and added to the response.\n"
                     else:
-                        log_debug("MCP AudioContent did not contain valid base64 audio data")
+                        raise ValueError("MCP AudioContent did not contain valid base64 audio data")
 
                 elif isinstance(content_item, EmbeddedResource):
                     # Handle embedded resources
