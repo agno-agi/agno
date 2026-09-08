@@ -2650,6 +2650,11 @@ class RedisDb(BaseDb):
         now = self._q_server_now()
         stale = now - lock_grace_seconds
 
+        # Scoped to this call and to the ADVISORY filter: never handed to
+        # _q_try_claim, whose re-check under WATCH on the line key is what
+        # makes a stale head decision uncommittable.
+        line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]] = {} if queue_per_session else None
+
         job = self._q_scan_claim(
             self._q_key("queued"),
             now,
@@ -2658,6 +2663,7 @@ class RedisDb(BaseDb):
             expect_status="queued",
             deployment_id=deployment_id,
             queue_per_session=queue_per_session,
+            line_cache=line_cache,
         )
         if job is not None:
             return job
@@ -2670,6 +2676,7 @@ class RedisDb(BaseDb):
             stale_before=stale,
             deployment_id=deployment_id,
             queue_per_session=queue_per_session,
+            line_cache=line_cache,
         )
 
     def _q_line_key(self, session_id: str) -> str:
@@ -2770,7 +2777,32 @@ class RedisDb(BaseDb):
         entries.sort()
         return entries
 
-    def _q_line_admits(self, candidate: Dict[str, Any]) -> bool:
+    def _q_cached_line_view(
+        self, session_id: str, line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]]
+    ) -> List[Tuple[int, int, str, str]]:
+        """The session line view, loaded at most once per session per scan.
+
+        The VERDICT is not cacheable - "is this candidate the head" has a
+        different answer for every candidate - but the view it is computed
+        from is shared by every candidate of that session, and loading it is
+        the expensive part (range read, multi-get, sort). A peer claiming
+        mid-scan makes a cached view stale, which is no new exposure: the
+        uncached filter was equally a snapshot the moment it was read, and
+        the claim CAS is what arbitrates. Callers on the authoritative path
+        pass no cache."""
+        if line_cache is None:
+            return self._q_session_line_view(session_id)
+        entries = line_cache.get(session_id)
+        if entries is None:
+            entries = self._q_session_line_view(session_id)
+            line_cache[session_id] = entries
+        return entries
+
+    def _q_line_admits(
+        self,
+        candidate: Dict[str, Any],
+        line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]] = None,
+    ) -> bool:
         """Advisory pre-filter: the session line admits claiming this
         candidate when it is the line's head and no OTHER member is running.
         Everything already in the store was indexed by
@@ -2781,10 +2813,15 @@ class RedisDb(BaseDb):
         session_id = candidate.get("session_id")
         if not session_id:
             return True
-        line_key = self._q_line_key(session_id)
-        if self.redis_client.zscore(line_key, candidate["id"]) is None:
-            self.redis_client.zadd(line_key, {candidate["id"]: candidate.get("created_at") or 0})
-        entries = self._q_session_line_view(session_id)
+        entries = self._q_cached_line_view(session_id, line_cache)
+        if not any(member_id == candidate["id"] for _, _, member_id, _ in entries):
+            # Self-heal, and the membership test rides the view rather than a
+            # per-candidate ZSCORE: the candidate's document was just read as
+            # non-terminal, so it appears in the view whenever it is a member.
+            self.redis_client.zadd(self._q_line_key(session_id), {candidate["id"]: candidate.get("created_at") or 0})
+            entries = self._q_session_line_view(session_id)
+            if line_cache is not None:
+                line_cache[session_id] = entries
         if not entries or entries[0][2] != candidate["id"]:
             return False
         return not any(status == "running" and member_id != candidate["id"] for _, _, member_id, status in entries)
@@ -2799,6 +2836,7 @@ class RedisDb(BaseDb):
         stale_before: Optional[int] = None,
         deployment_id: Optional[str] = None,
         queue_per_session: bool = False,
+        line_cache: Optional[Dict[str, List[Tuple[int, int, str, str]]]] = None,
     ) -> Optional[Dict[str, Any]]:
         """Page through ready jobs oldest-first, cheaply pre-filter each page
         by deployment affinity (MGET, advisory only), and CAS-claim the first
@@ -2827,7 +2865,7 @@ class RedisDb(BaseDb):
                     continue
                 if candidate.get("deployment_id") is not None and candidate.get("deployment_id") != deployment_id:
                     continue
-                if queue_per_session and not self._q_line_admits(candidate):
+                if queue_per_session and not self._q_line_admits(candidate, line_cache):
                     continue
                 job = self._q_try_claim(
                     job_id,

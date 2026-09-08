@@ -822,3 +822,106 @@ class TestRedisSessionLineBackfill:
             assert self._line_members(second) == after_first, "a second replica's backfill must change nothing"
         finally:
             self._cleanup(prefix)
+
+
+@pytest.mark.skipif(not _REDIS_AVAILABLE, reason="Redis not available on localhost:6379")
+class TestRedisSessionLineScanCost:
+    """The advisory pre-filter asks, per candidate, whether the session line
+    admits it - and each ask reloaded the whole line (range read, multi-get,
+    sort). Behind a blocked head every queued successor is a rejected
+    candidate, so the work was quadratic in that session's backlog and paid
+    again every poll tick. The view is loaded once per session per claim.
+
+    The verdict itself is NOT cacheable: "is this candidate the head" has a
+    different answer for every candidate. What is cached is the view, from
+    which each verdict is computed."""
+
+    @staticmethod
+    def _db(prefix: str):
+        from redis import Redis
+
+        from agno.db.redis import RedisDb
+
+        return RedisDb(redis_client=Redis.from_url(REDIS_URL), db_prefix=prefix)
+
+    @staticmethod
+    def _cleanup(prefix: str) -> None:
+        from redis import Redis
+
+        client = Redis.from_url(REDIS_URL)
+        for key in client.scan_iter(f"{prefix}:*"):
+            client.delete(key)
+        client.close()
+
+    @staticmethod
+    def _count_line_views(db) -> list:
+        loads: list = []
+        original = db._q_session_line_view
+
+        def counting(session_id: str):
+            loads.append(session_id)
+            return original(session_id)
+
+        db._q_session_line_view = counting
+        return loads
+
+    @staticmethod
+    def _pause_head(db, session_id: str, job_id: str, created_at: int) -> None:
+        db.enqueue_job(make_job(job_id, session_id=session_id, created_at=created_at))
+        head = db.claim_job("w0", queue_per_session=True)
+        assert head is not None and head["id"] == job_id
+        assert db.complete_job(job_id, "w0", head["attempt"], "paused")
+
+    def test_blocked_backlog_loads_the_line_once(self):
+        prefix = f"parity_scan1_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            self._pause_head(db, "s1", "r_head", 1000)
+            for i in range(5):
+                db.enqueue_job(make_job(f"r_{i}", session_id="s1", created_at=1001 + i))
+
+            loads = self._count_line_views(db)
+            assert db.claim_job("w1", queue_per_session=True) is None
+            assert loads.count("s1") == 1, (
+                f"one line load per blocked session per claim, got {loads.count('s1')} for a backlog of 5"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_cache_is_scoped_per_session(self):
+        prefix = f"parity_scan2_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            self._pause_head(db, "s1", "r1_head", 1000)
+            self._pause_head(db, "s2", "r2_head", 1001)
+            for i in range(3):
+                db.enqueue_job(make_job(f"r1_{i}", session_id="s1", created_at=1010 + i))
+                db.enqueue_job(make_job(f"r2_{i}", session_id="s2", created_at=1010 + i))
+
+            loads = self._count_line_views(db)
+            assert db.claim_job("w1", queue_per_session=True) is None
+            assert loads.count("s1") == 1 and loads.count("s2") == 1, (
+                f"each blocked session is loaded once, got {loads}"
+            )
+        finally:
+            self._cleanup(prefix)
+
+    def test_authoritative_check_inside_the_cas_is_never_cached(self):
+        """The pre-filter is advisory; the check under WATCH on the line key
+        is what makes a stale head decision uncommittable. Serving that one
+        from the scan's cache would reintroduce the snapshot-versus-CAS race
+        the gate was hardened against, so a successful claim must load the
+        view again inside the transaction."""
+        prefix = f"parity_scan3_{uuid.uuid4().hex[:6]}"
+        try:
+            db = self._db(prefix)
+            db.enqueue_job(make_job("r_only", session_id="s1", created_at=1000))
+
+            loads = self._count_line_views(db)
+            claimed = db.claim_job("w1", queue_per_session=True)
+            assert claimed is not None and claimed["id"] == "r_only"
+            assert loads.count("s1") == 2, (
+                f"expected one advisory load plus one authoritative load inside the CAS, got {loads.count('s1')}"
+            )
+        finally:
+            self._cleanup(prefix)
