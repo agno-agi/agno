@@ -1586,6 +1586,9 @@ class Agent:
         yield_run_output: Optional[bool] = None,
         debug_mode: Optional[bool] = None,
         background: bool = False,
+        # Raw event objects instead of SSE strings on the background stream;
+        # transport-internal (AG-UI), only meaningful with background + stream
+        raw_events: bool = False,
         **kwargs: Any,
     ) -> Union[RunOutput, AsyncIterator[RunOutputEvent]]:
         return _run.arun_dispatch(
@@ -1612,6 +1615,7 @@ class Agent:
             yield_run_output=yield_run_output,
             debug_mode=debug_mode,
             background=background,
+            raw_events=raw_events,
             **kwargs,
         )
 
@@ -1758,6 +1762,9 @@ class Agent:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         background: bool = False,
+        # Raw event objects instead of SSE strings on the background stream;
+        # transport-internal (AG-UI), only meaningful with background + stream
+        raw_events: bool = False,
         **kwargs,
     ) -> Union[RunOutput, AsyncIterator[Union[RunOutputEvent, RunOutput]]]:
         return _run.acontinue_run_dispatch(
@@ -1782,6 +1789,7 @@ class Agent:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             background=background,
+            raw_events=raw_events,
             **kwargs,
         )
 

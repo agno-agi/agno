@@ -119,6 +119,7 @@ async def resume_paused_run(
     tool_messages: List[AGUIToolMessage],
     run_context: RunContext,
     run_kwargs: dict,
+    background: bool = False,
 ):
     if not isinstance(entity, (Agent, Team)):
         raise ValueError("Frontend tool resume requires a local Agent or Team")
@@ -162,6 +163,9 @@ async def resume_paused_run(
         stream=True,
         stream_events=True,
         run_context=run_context,
+        # raw_events: the background stream hands raw event objects to the
+        # AG-UI converter instead of pre-formatted SSE strings
+        **({"background": True, "raw_events": True} if background else {}),
         **run_kwargs,
     )
 
@@ -184,7 +188,12 @@ async def resume_paused_run(
             async for chunk in inner:
                 yield chunk
         finally:
-            with contextlib.suppress(Exception):
-                await acomplete_continue_stream(entity, run_id, session_id, only_if_tracked=True)
+            if not background:
+                # Background continues own their terminal sentinel via the
+                # detached producer. Syncing here would read the row mid-run
+                # (RUNNING) on a client disconnect and falsely complete the
+                # stream while the producer is still writing to it.
+                with contextlib.suppress(Exception):
+                    await acomplete_continue_stream(entity, run_id, session_id, only_if_tracked=True)
 
     return _stream_then_sync()

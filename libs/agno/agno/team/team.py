@@ -1041,6 +1041,9 @@ class Team:
         yield_run_output: bool = False,
         output_schema: Optional[Union[Type[BaseModel], Dict[str, Any]]] = None,
         background: bool = False,
+        # Raw event objects instead of SSE strings on the background stream;
+        # transport-internal (AG-UI), only meaningful with background + stream
+        raw_events: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[RunOutputEvent, TeamRunOutputEvent]]]:
         return _run.arun_dispatch(
@@ -1067,6 +1070,7 @@ class Team:
             yield_run_output=yield_run_output,
             output_schema=output_schema,
             background=background,
+            raw_events=raw_events,
             **kwargs,
         )
 
@@ -1219,6 +1223,9 @@ class Team:
         debug_mode: Optional[bool] = None,
         yield_run_output: bool = False,
         background: bool = False,
+        # Raw event objects instead of SSE strings on the background stream;
+        # transport-internal (AG-UI), only meaningful with background + stream
+        raw_events: bool = False,
         **kwargs: Any,
     ) -> Union[TeamRunOutput, AsyncIterator[Union[TeamRunOutputEvent, RunOutputEvent, TeamRunOutput]]]:
         return _run.acontinue_run_dispatch(
@@ -1243,6 +1250,7 @@ class Team:
             debug_mode=debug_mode,
             yield_run_output=yield_run_output,
             background=background,
+            raw_events=raw_events,
             **kwargs,
         )
 
