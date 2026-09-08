@@ -8,8 +8,9 @@ import json
 import zlib
 from ipaddress import IPv6Address, ip_address, ip_network
 from pathlib import PurePath
+from types import SimpleNamespace
 from typing import Any, Optional
-from urllib.parse import parse_qsl
+from urllib.parse import parse_qsl, urlencode
 from uuid import UUID, uuid4
 
 from fastapi import HTTPException
@@ -20,6 +21,7 @@ from starlette.responses import JSONResponse
 
 from agno.os.auth import require_verified_public_workflow, verify_internal_service_request
 from agno.os.public import _client_id
+from agno.os.public._execution import _authorize, _resolutions
 from agno.os.public._policy import RUN_ROUTE, PublicRoutePolicy
 from agno.utils.bounded import BoundedWorkers
 from agno.utils.log import log_warning
@@ -53,6 +55,15 @@ class PublicMiddleware:
         }
         self.oauth_paths = self.policy.oauth_paths
         self.interface_routes = set(getattr(agent_os, "_public_interface_routes", []))
+
+    async def _admit_execution(self, action: str, identity: str) -> None:
+        decision = await self.surface.limiter.aconsume("cancel" if action == "cancel" else "run", client_id=identity)
+        if not decision.allowed:
+            raise HTTPException(429, "rate_limited", headers={"Retry-After": str(decision.retry_after)})
+        if action != "cancel":
+            if self.active_runs >= self.surface.max_active_runs:
+                raise HTTPException(503, "run_capacity")
+            self.active_runs += 1
 
     async def _identity(self, request: Request) -> str:
         if self.surface.client_id is not None:
@@ -100,7 +111,9 @@ class PublicMiddleware:
         except asyncio.TimeoutError as exc:
             raise Rejected(408, "body_timeout") from exc
 
-    async def _validate_form(self, scope: Any, body: bytes, *, workflow: bool, cancel: bool) -> None:
+    async def _validate_form(
+        self, scope: Any, body: bytes, *, workflow: bool, cancel: bool, continuing: bool = False, kind: str = "agents"
+    ) -> dict:
         used = False
 
         async def receive():
@@ -123,9 +136,12 @@ class PublicMiddleware:
                 allowed = {"message", "stream", "session_id", "background"}
                 if cancel:
                     allowed = {"session_id"}
+                requirement_field = {"agents": "tools", "teams": "requirements", "workflows": "step_requirements"}[kind]
+                if continuing:
+                    allowed = {"session_id", "stream", requirement_field}
                 for key, value in form.multi_items():
                     if isinstance(value, UploadFile):
-                        if workflow or uploads is None or key != "files":
+                        if workflow or cancel or continuing or uploads is None or key != "files":
                             raise Rejected(400, "uploads_not_allowed")
                         pair = (PurePath(value.filename or "").suffix.lower(), (value.content_type or "").lower())
                         if (
@@ -140,7 +156,21 @@ class PublicMiddleware:
                         scalar[key] = value
                 if "session_id" in scalar:
                     _uuid(scalar["session_id"])
-                if not cancel:
+                if continuing:
+                    if not scalar.get("session_id"):
+                        raise Rejected(400, "invalid_handle")
+                    if scalar.get("stream", "true").lower() not in ("true", "false"):
+                        raise Rejected(400, "invalid_run_mode")
+                    raw = scalar.get(requirement_field, "")
+                    if raw:
+                        requirements = json.loads(raw)
+                        if (
+                            not isinstance(requirements, list)
+                            or len(requirements) > 128
+                            or any(not isinstance(r, dict) for r in requirements)
+                        ):
+                            raise Rejected(400, "invalid_requirements")
+                elif not cancel:
                     message = scalar.get("message", "")
                     if not isinstance(message, str) or not message.strip() or len(message.encode()) > 32768:
                         raise Rejected(400, "invalid_message")
@@ -155,6 +185,7 @@ class PublicMiddleware:
                             json.loads(message)
                         except ValueError as exc:
                             raise Rejected(400, "invalid_workflow_input") from exc
+                return scalar
             finally:
                 await form.close()
         except Rejected:
@@ -226,6 +257,7 @@ class PublicMiddleware:
         error_headers = {}
         capacity = None
         identity_token = None
+        active_binding = None
         mcp = False
         public_run = False
         decoder = None
@@ -315,6 +347,28 @@ class PublicMiddleware:
                         except ValueError:
                             event = {}
                         if isinstance(event, dict) and event.get("event") in (
+                            "RunStarted",
+                            "TeamRunStarted",
+                            "WorkflowStarted",
+                        ):
+                            nonlocal active_binding
+                            if active_binding is None and event.get("run_id") and event.get("session_id"):
+                                expected = {"agents": "agent_id", "teams": "team_id", "workflows": "workflow_id"}[
+                                    component_kind
+                                ]
+                                if event.get(expected) == component_id:
+                                    _uuid(event["run_id"])
+                                    _uuid(event["session_id"])
+                                    lease = await self.surface._bindings._claim(
+                                        component_kind,
+                                        component_id,
+                                        event["session_id"],
+                                        event["run_id"],
+                                        getattr(request.state, "user_id", None),
+                                        self.surface.max_run_seconds,
+                                    )
+                                    active_binding = (event["run_id"], lease)
+                        if isinstance(event, dict) and event.get("event") in (
                             "RunError",
                             "TeamRunError",
                             "WorkflowRunError",
@@ -344,9 +398,10 @@ class PublicMiddleware:
                 raise Rejected(401, "ambiguous_authorization")
             internal = verify_internal_service_request(request)
             match = RUN_ROUTE.fullmatch(path)
-            component_kind = component_id = run_id = cancellation = ""
+            component_kind = component_id = run_id = operation = ""
             if match:
-                component_kind, component_id, run_id, cancellation = match.groups()
+                component_kind, component_id, run_id, operation = match.groups()
+            cancellation, continuing = operation == "/cancel", operation == "/continue"
             if internal and match and component_id in self.registered[component_kind]:
                 # Verification, not bearer-header presence, grants scheduler schemas and quota bypass.
                 await self.app(scope, receive, send)
@@ -431,9 +486,9 @@ class PublicMiddleware:
                     _uuid(params[0][1])
                     await asyncio.wait_for(self.app(scope, receive, bounded_send), timeout=10)
                     return
-                if method != "POST" or (run_id and not cancellation) or (workflow and cancellation):
+                if method != "POST" or (run_id and not (cancellation or continuing)):
                     raise Rejected(404, "not_found")
-                if scope.get("query_string"):
+                if scope.get("query_string") and not cancellation:
                     raise Rejected(400, "query_overrides_not_allowed")
             else:
                 workflow = False
@@ -442,22 +497,23 @@ class PublicMiddleware:
             identity = await asyncio.wait_for(self._identity(request), timeout=3)
             scope.setdefault("state", {})["public_client_id"] = identity
             identity_token = _client_id.set(identity)
-            bucket = "mcp" if mcp else "cancel" if cancellation else "run"
-            decision = await self.surface.limiter.aconsume(bucket, client_id=identity)
-            if not decision.allowed:
-                await error(429, "rate_limited", {"Retry-After": str(decision.retry_after)})
-                return
             if mcp:
+                scope["state"]["_agno_public_execution"] = SimpleNamespace(
+                    middleware=self, identity=identity, request=Request(dict(scope))
+                )
+                decision = await self.surface.limiter.aconsume("mcp", client_id=identity)
+                if not decision.allowed:
+                    await error(429, "rate_limited", {"Retry-After": str(decision.retry_after)})
+                    return
                 if self.active_mcp >= 32:
                     raise Rejected(503, "request_capacity")
                 self.active_mcp += 1
                 capacity = "mcp"
-            elif not cancellation:
-                if self.active_runs >= self.surface.max_active_runs:
-                    raise Rejected(503, "run_capacity")
-                self.active_runs += 1
-                capacity = "run"
-            maximum = 128 * 1024 if mcp else 16 * 1024 if workflow else self.surface.max_body_bytes
+            else:
+                await self._admit_execution("cancel" if cancellation else "run", identity)
+                if not cancellation:
+                    capacity = "run"
+            maximum = 128 * 1024 if mcp or continuing else 16 * 1024 if workflow else self.surface.max_body_bytes
             body = await self._body(receive, maximum, 10 if mcp else 15)
             if mcp:
                 try:
@@ -467,8 +523,57 @@ class PublicMiddleware:
                 # The pinned stateless transport does not support JSON-RPC batches.
                 if not isinstance(payload, dict):
                     raise Rejected(400, "mcp_batch_not_supported")
+                rpc_params = payload.get("params")
+                run_tool = (
+                    payload.get("method") == "tools/call"
+                    and isinstance(rpc_params, dict)
+                    and isinstance(rpc_params.get("name"), str)
+                    and rpc_params["name"] in self.surface._mcp_run_tools
+                )
             else:
-                await self._validate_form(scope, body, workflow=workflow, cancel=bool(cancellation))
+                scalar = await self._validate_form(
+                    scope, body, workflow=workflow, cancel=cancellation, continuing=continuing, kind=component_kind
+                )
+                if cancellation:
+                    params = parse_qsl(scope.get("query_string", b"").decode(), keep_blank_values=True)
+                    if params:
+                        if len(params) != 1 or params[0][0] != "session_id" or "session_id" in scalar:
+                            raise Rejected(400, "invalid_query")
+                        scalar["session_id"] = params[0][1]
+                    if not scalar.get("session_id"):
+                        raise Rejected(400, "invalid_handle")
+                    _uuid(scalar["session_id"])
+                    scope["query_string"] = ("session_id=" + scalar["session_id"]).encode()
+                action = "cancel" if cancellation else "continue" if continuing else "run"
+                run = await _authorize(
+                    self.agent_os, request, component_kind, component_id, action, scalar.get("session_id"), run_id
+                )
+                if continuing:
+                    field = {"agents": "tools", "teams": "requirements", "workflows": "step_requirements"}[
+                        component_kind
+                    ]
+                    resolutions = _resolutions(
+                        run,
+                        json.loads(scalar.get(field) or "[]"),
+                        workflow=workflow,
+                        legacy_tools=component_kind == "agents",
+                    )
+                    scalar[field] = json.dumps(resolutions)
+                    body = urlencode(scalar).encode()
+                    scope["headers"] = [(k, v) for k, v in scope["headers"] if k.lower() != b"content-length"] + [
+                        (b"content-length", str(len(body)).encode())
+                    ]
+                    lease = await self.surface._bindings._claim(
+                        component_kind,
+                        component_id,
+                        scalar["session_id"],
+                        run_id,
+                        getattr(request.state, "user_id", None),
+                        self.surface.max_run_seconds,
+                    )
+                    active_binding = (run_id, lease)
+                if cancellation or continuing:
+                    request.state._agno_public_lifecycle = (component_kind, component_id, scalar["session_id"], run_id)
                 public_run = component_kind in ("agents", "teams") and not cancellation
             delivered = False
 
@@ -480,12 +585,29 @@ class PublicMiddleware:
                 return await receive()
 
             await asyncio.wait_for(
-                self.app(scope, replay, bounded_send), timeout=60 if mcp else self.surface.max_run_seconds
+                self.app(scope, replay, bounded_send),
+                timeout=(max(60, self.surface.max_run_seconds) if run_tool else 60)
+                if mcp
+                else self.surface.max_run_seconds,
             )
         except HTTPException as exc:
             await error(
                 exc.status_code,
-                "authentication_unavailable" if exc.status_code == 503 else "access_denied",
+                exc.detail
+                if isinstance(exc.detail, str)
+                and exc.detail
+                in {
+                    "not_found",
+                    "invalid_handle",
+                    "invalid_requirements",
+                    "run_not_paused",
+                    "run_in_progress",
+                    "rate_limited",
+                    "run_capacity",
+                }
+                else "authentication_unavailable"
+                if exc.status_code == 503
+                else "access_denied",
                 exc.headers,
             )
         except asyncio.CancelledError:
@@ -524,3 +646,8 @@ class PublicMiddleware:
                 self.active_runs -= 1
             if identity_token is not None:
                 _client_id.reset(identity_token)
+            if active_binding is not None:
+                try:
+                    await self.surface._bindings._release(*active_binding)
+                except Exception:
+                    log_warning("Public run binding cleanup failed; the binding will expire")

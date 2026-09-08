@@ -619,6 +619,7 @@ async def run_continuation_blocked_reason(
     *,
     authorization_enabled: bool,
     user_scopes: List[str],
+    fail_closed: bool = False,
 ) -> Optional[str]:
     """Whether a paused run may NOT be continued yet, as a 403 detail string (else None).
 
@@ -630,6 +631,8 @@ async def run_continuation_blocked_reason(
     Fails open only for the approval feature itself: if the db has no approvals support the
     check is skipped, so non-approval deployments are unaffected. It never fails open on the
     authorization decision — that is the caller's ``authorization_enabled`` gate.
+    Public execution sets ``fail_closed=True`` so a database failure cannot skip
+    verification of an administrator-required approval.
     """
     # Mirror require_resource_access: skip entirely when authorization is disabled.
     if not authorization_enabled or db is None or not run_id:
@@ -655,6 +658,8 @@ async def run_continuation_blocked_reason(
         if approvals:
             return "This run requires admin approval before it can be continued"
     except Exception as exc:
+        if fail_closed:
+            raise HTTPException(status_code=503, detail="Approval verification unavailable") from exc
         # DB doesn't support approvals or another transient error — let the run continue
         # so non-approval setups are unaffected.
         from agno.utils.log import log_warning

@@ -1123,9 +1123,14 @@ def get_team_router(
         # a global cancellation intent keyed solely on run_id.
         factory = find_factory_by_id(team_id, os.teams)
         if factory:
+            from agno.os.public._execution import _lifecycle_verified
             from agno.team._run import acancel_run
 
-            scoped_user_id = get_scoped_user_id(request)
+            scoped_user_id = (
+                None
+                if _lifecycle_verified(request, "teams", team_id, session_id, run_id)
+                else get_scoped_user_id(request)
+            )
             if scoped_user_id is not None:
                 if not session_id:
                     raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
@@ -1168,7 +1173,11 @@ def get_team_router(
 
         # Ownership check: non-admin JWT callers must supply a session_id and the
         # run must live in a session they own. Admins / unauthenticated bypass.
-        scoped_user_id = get_scoped_user_id(request)
+        from agno.os.public._execution import _lifecycle_verified
+
+        scoped_user_id = (
+            None if _lifecycle_verified(request, "teams", team_id, session_id, run_id) else get_scoped_user_id(request)
+        )
         if scoped_user_id is not None:
             if not session_id:
                 raise HTTPException(status_code=400, detail=SESSION_ID_REQUIRED)
