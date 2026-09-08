@@ -632,4 +632,5 @@ def get_websocket_router(
             await cancel_subscription_pump(websocket)
             await websocket_manager.disconnect_websocket(websocket)
 
+    setattr(workflow_websocket_endpoint, "_agno_authenticated_workflow_socket", True)
     return ws_router

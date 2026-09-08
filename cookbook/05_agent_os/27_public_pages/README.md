@@ -1,5 +1,32 @@
 # Public documentation pages
 
+## Public chat with Control Plane access
+
+`public_control_plane.py` combines `authorization=True` with `PublicSurface` on
+one runtime URL. Configure the Control Plane's RS256 public key in
+`JWT_VERIFICATION_KEY` (or use `JWT_JWKS_FILE`) before starting it:
+
+```sh
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_control_plane.py --check
+.venvs/demo/bin/python cookbook/05_agent_os/27_public_pages/public_control_plane.py
+```
+
+Anonymous clients retain the selected chat routes, compact roster and public
+limits. `/info` reports the authentication mode so the Control Plane can connect.
+JWT callers get the normal REST API only after signature and endpoint permission
+checks; their responses are private and non-cacheable. Invalid credentials are
+rejected, including on anonymous routes. Do not use `excluded_route_paths` for
+public chat: exclusions skip credential verification altogether.
+
+Workflow WebSockets authenticate through their existing message-based protocol.
+MCP always keeps its explicit tool catalog and public admission limits, even for
+admin JWTs. Use `mcp_auth` if MCP itself requires OAuth authentication. Internal
+scheduler and service-account requests retain their existing public contracts.
+Without `authorization=True`, the public surface continues to close management
+routes and WebSockets.
+
+## Page storage and retrieval
+
 `public_pages.py` uses one PostgreSQL database for the Knowledge catalog, quota-bounded FileSystem, vectors, sessions, durable jobs and shared public request counters. It demonstrates application-owned retrieval through an explicit callable dependency, explicit search/read/grep tools, native MCP and a typed protected sync workflow.
 
 The `docs_context` dependency is an async function that receives `run_input`, calls the application's `search_docs` function and returns evidence. Agno awaits it before pre-hooks and prompt construction. The application chooses the query and places the result through `{docs_context}` in its instructions. `add_dependencies_to_context` already defaults to `False`; it stays unset so dependencies are not additionally appended to the user message. Callables can also request `session` for previous-turn retrieval policy, plus `agent` and `run_context`.

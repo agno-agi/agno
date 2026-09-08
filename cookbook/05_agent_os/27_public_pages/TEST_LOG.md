@@ -1,5 +1,20 @@
 # Public pages test log
 
+### public_control_plane.py (2026-09-08)
+
+**Status:** PASS
+
+**Description:** Ran `public_control_plane.py --check` with the demo environment,
+this worktree on `PYTHONPATH`, and a locally generated RS256 verification public
+key. No model or database call was needed for the configuration check.
+
+**Result:** Public chat, the explicit MCP tool and JWT API access assembled
+successfully. Composed HTTP/WebSocket coverage is in
+`libs/agno/tests/integration/os/test_public_authorization.py`; a hosted Control
+Plane connection remains a deployment check.
+
+---
+
 ### full_page.py — complete page reads and fence-aware normalization (2026-09-08)
 
 **Status:** PASS

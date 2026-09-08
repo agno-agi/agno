@@ -1562,6 +1562,9 @@ class AgentOS:
             from contextlib import asynccontextmanager
 
             from agno.os.public._middleware import PublicMiddleware
+            from agno.os.public._policy import PublicRoutePolicy
+
+            fastapi_app.state.public_route_policy = PublicRoutePolicy(self.public, self)
 
             original_lifespan = fastapi_app.router.lifespan_context
 
@@ -1573,7 +1576,9 @@ class AgentOS:
                     yield state
 
             fastapi_app.router.lifespan_context = public_lifespan
-            fastapi_app.add_middleware(PublicMiddleware, surface=self.public, agent_os=self)
+            fastapi_app.add_middleware(
+                PublicMiddleware, surface=self.public, agent_os=self, policy=fastapi_app.state.public_route_policy
+            )
 
         auth_configured = bool(self.authorization or jwt_env_configured or security_key)
         if auth_configured:
