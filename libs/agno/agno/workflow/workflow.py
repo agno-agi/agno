@@ -288,22 +288,11 @@ def _find_inner_step_by_executor(
     If no executor_id or executor_name is provided, returns the first
     inner Step that has an agent or team executor.
     """
-    has_filter = bool(executor_id or executor_name)
-
-    # Base case: if this is a Step with an agent/team/hitl_executor, return it
+    # Base case: if this is a Step with an agent/team, return it
     if isinstance(step, Step):
-        executor = (
-            getattr(step, "_get_hitl_executor", lambda: None)()
-            or getattr(step, "agent", None)
-            or getattr(step, "team", None)
-        )
+        executor = getattr(step, "agent", None) or getattr(step, "team", None)
         if executor is not None:
-            if not has_filter:
-                return step
-            eid = getattr(executor, "id", None) or getattr(executor, "agent_id", None)
-            ename = getattr(executor, "name", None)
-            if (executor_id and eid == executor_id) or (executor_name and ename == executor_name):
-                return step
+            return step
         return None
 
     # Collect all inner steps from composite step types
@@ -312,13 +301,11 @@ def _find_inner_step_by_executor(
     for attr in ("steps", "else_steps", "choices"):
         inner_steps.extend(getattr(step, attr, None) or [])
 
+    has_filter = bool(executor_id or executor_name)
+
     for inner in inner_steps:
         if isinstance(inner, Step):
-            executor = (
-                getattr(inner, "_get_hitl_executor", lambda: None)()
-                or getattr(inner, "agent", None)
-                or getattr(inner, "team", None)
-            )
+            executor = getattr(inner, "agent", None) or getattr(inner, "team", None)
             if executor is not None:
                 if not has_filter:
                     # No filter — return first inner step with an agent/team executor
