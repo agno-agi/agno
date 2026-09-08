@@ -94,15 +94,17 @@ class PublicSurface:
             setattr(self, field_name, selected)
         if self.mcp:
             config = agent_os.mcp_config
-            if (
-                not agent_os.mcp
-                or config is None
-                or config.default_tools
-                or config.lifecycle_tools
-                or not config.stateless
-            ):
+            if not agent_os.mcp or config is None or config.default_tools or not config.stateless:
+                raise ValueError("Public MCP requires MCPConfig(tools=[...], default_tools=False, stateless=True)")
+            from agno.os.mcp import _enabled_builtin_tags, _split_tool_entries
+
+            _, exposures = _split_tool_entries(config, agent_os)
+            enabled_tags = _enabled_builtin_tags(config, has_exposures=bool(exposures))
+            if enabled_tags & {"core", "lifecycle"}:
                 raise ValueError(
-                    "Public MCP requires explicit tools, disabled default/lifecycle tools and stateless=True"
+                    "Public MCP cannot expose continue_run or cancel_run. Exposing agents, teams or workflows "
+                    "as MCP tools enables them automatically; set lifecycle_tools=False or "
+                    'exclude_tags={"lifecycle"} in MCPConfig to disable them.'
                 )
         if self._limiter is None:
             self._limiter = PublicLimiter(agent_os.db.db_engine, namespace, self.limits)
