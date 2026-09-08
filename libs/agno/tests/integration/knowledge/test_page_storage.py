@@ -2037,3 +2037,72 @@ async def test_page_filesystem_section_search_and_explicit_files_bound_database_
         assert sum(kind == "grep" for kind, _ in calls) == int(command.endswith(" /agents"))
         if command.endswith(".md") and not command.startswith("cat"):
             assert ("list", "/agents/") not in calls
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_full_page_read_bounds_unicode_and_preserves_publication_errors(corpus, async_mode):
+    from sqlalchemy import event
+
+    from agno.knowledge.page import PageNotFound
+
+    knowledge, _, site = corpus
+    site["https://docs.example.com/agent.md"] = "# Agent\n\n" + ('你好😀\\"\n' * 5000)
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    page = knowledge.list_pages().pages[0]
+    short = knowledge.read_page(page.path, revision=page.revision, max_chars=24000)
+    assert short.next_offset is not None
+    statements = []
+
+    def capture(conn, cursor, statement, parameters, context, many):
+        if " AS total_chars" in statement:
+            statements.append((statement, parameters))
+
+    async def read(**kwargs):
+        if async_mode:
+            return await knowledge.aread_full_page(page.path, **kwargs)
+        return knowledge.read_full_page(page.path, **kwargs)
+
+    event.listen(knowledge._page_engine, "before_cursor_execute", capture)
+    try:
+        body = await read(revision=page.revision, max_chars=short.total_chars)
+        assert body == site["https://docs.example.com/agent.md"]
+        assert len(statements) == 1 and "substr(" in statements[0][0]
+        assert await read(revision=page.revision, max_chars=short.total_chars - 1) is None
+        statements.clear()
+        assert await read(max_chars=0) is None
+        assert not statements
+    finally:
+        event.remove(knowledge._page_engine, "before_cursor_execute", capture)
+
+    site["https://docs.example.com/agent.md"] = "# Agent\n\nNew publication.\n"
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+    with pytest.raises(PageChanged):
+        await read(revision=page.revision, max_chars=1)
+    assert await read() == site["https://docs.example.com/agent.md"]
+    if async_mode:
+        with pytest.raises(PageNotFound):
+            await knowledge.aread_full_page("/missing")
+    else:
+        with pytest.raises(PageNotFound):
+            knowledge.read_full_page("/missing")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_full_page_database_deadline_recovers_after_lock(corpus, async_mode):
+    knowledge, _, site = corpus
+    knowledge.sync_pages(url="https://docs.example.com/llms.txt")
+
+    async def read(timeout):
+        if async_mode:
+            return await knowledge.aread_full_page("/agent", timeout=timeout)
+        return knowledge.read_full_page("/agent", timeout=timeout)
+
+    with knowledge.page_store.backend.db_engine.begin() as conn:
+        table = knowledge.page_store.backend.table
+        quoted = conn.dialect.identifier_preparer.format_table(table)
+        conn.execute(text(f"LOCK TABLE {quoted} IN ACCESS EXCLUSIVE MODE"))
+        with pytest.raises(PageError):
+            await read(0.05)
+    assert await read(2) == site["https://docs.example.com/agent.md"]
