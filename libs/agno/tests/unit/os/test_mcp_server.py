@@ -1285,6 +1285,8 @@ def test_authz_mirror_survives_a_rebuilt_mcp_subapp():
         os._mount_mcp_app(app)
         assert sub.state.authorization_provider is provider
         assert sub.state.authz_audit is sink
+
+
 # ----------------------------- stateless transport -----------------------------
 
 
