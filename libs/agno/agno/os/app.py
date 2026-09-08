@@ -2035,6 +2035,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
@@ -2059,6 +2060,7 @@ class AgentOS:
             try:
                 if hasattr(db, "_create_all_tables") and callable(db._create_all_tables):
                     await db._create_all_tables()
+                    log_info(f"Database ready: {db.__class__.__name__} id={db.id}")
             except Exception as e:
                 log_warning(f"Failed to initialize async {db.__class__.__name__} (id: {db.id}): {str(e)}")
 
