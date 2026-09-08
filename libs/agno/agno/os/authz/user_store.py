@@ -115,6 +115,15 @@ class ManagedUserStore:
         for row in pending:
             self._write(row, insert=True)
 
+    def attach_audit(self, sink: Optional["AuditSink"]) -> None:
+        """Adopt ``sink`` as the change-audit sink if one wasn't set explicitly.
+
+        Mirrors :meth:`attach_db`: ``AgentOS(audit=...)`` feeds both the decision trail and this
+        directory's change trail, but an ``audit=`` passed to the store directly wins. No-op when
+        the store already has a sink or ``sink`` is None."""
+        if self._audit is None and sink is not None:
+            self._audit = sink
+
     # ------------------------------------------------------------------ audit
     def _emit(
         self,

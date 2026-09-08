@@ -96,6 +96,7 @@ if TYPE_CHECKING:
     # runtime here would break `import agno.os` when the extra is not installed.
     from fastmcp.server.auth import AuthProvider
 
+    from agno.os.authz.audit import AuditSink
     from agno.os.authz.provider import AuthorizationProvider
 
 
@@ -296,6 +297,7 @@ class AgentOS:
         authorization_config: Optional[AuthorizationConfig] = None,
         user_isolation: bool = False,
         user_directory: Optional[Union[bool, UserDirectoryConfig]] = None,
+        audit: Optional["AuditSink"] = None,
         cors_allowed_origins: Optional[List[str]] = None,
         media_storage: Optional[Union[MediaStorage, AsyncMediaStorage]] = None,
         config: Optional[Union[str, AgentOSConfig]] = None,
@@ -369,6 +371,9 @@ class AgentOS:
             user_directory: A credential-less user directory (roster + disabled kill switch).
                 ``True`` builds a ManagedUserStore from the OS db with auto-provision on; pass a
                 UserDirectoryConfig for control.
+            audit: One AuditSink for BOTH audit trails -- the change log (who edited roles/users)
+                and the decision log (every allow/deny). Turns audit on for the whole OS. A sink
+                passed to a store or to AuthorizationConfig(audit=...) still wins there.
             cors_allowed_origins: List of allowed CORS origins (will be merged with default Agno domains)
             media_storage: Backend the media routes read stored media from. Defaults to the first
                 one configured on an agent, team or workflow.
@@ -471,6 +476,12 @@ class AgentOS:
         # auth it is advisory -- the user_id is self-asserted, so it scopes a run's own writes but
         # is not a boundary. Kept as a peer of the directory: both key off identity, not roles.
         self.user_isolation = user_isolation
+        # One audit switch for BOTH trails: the CHANGE log (who edited roles/users -> authz_audit)
+        # and the DECISION log (every allow/deny -> authz_decisions). Passing AgentOS(audit=sink)
+        # wires the sink to the stores' change trail AND the decision recorder, so "audit on" means
+        # everything is logged and "off" means nothing. A sink passed directly to a store or to
+        # AuthorizationConfig(audit=...) still wins there, for anyone who wants just one trail.
+        self.audit = audit
         # The credential-less user directory is a PEER of authorization (who the users are +
         # the disabled kill-switch), configured separately from authorization_config.
         # ``user_directory=True`` (or ``store=True`` on the config) is a shorthand: AgentOS
@@ -1992,6 +2003,14 @@ class AgentOS:
           ScopeAuthorizationProvider (v2.7 behaviour).
         """
         config = self.authorization_config
+        # Decision trail: AgentOS(audit=...) is a single switch that also feeds the decision log
+        # (authz_decisions). An explicit AuthorizationConfig(audit=...) wins; else fall back to the
+        # top-level sink. Seeded even without an AuthorizationConfig, since the default scope plane
+        # still records decisions.
+        decision_sink = getattr(config, "audit", None) or self.audit
+        if decision_sink is not None:
+            fastapi_app.state.authz_audit = decision_sink
+
         if config is None:
             return
 
@@ -2003,6 +2022,8 @@ class AgentOS:
             # Adopt the OS db so a store created without one persists to it (no-op if the
             # store already has its own db or the OS db isn't SQL-capable).
             role_store.attach_db(self.db)
+            # Change trail: adopt the top-level audit sink if the store has none of its own.
+            role_store.attach_audit(self.audit)
             if not role_store.is_bound:
                 raise ValueError(
                     "AuthorizationConfig(role_store=...) needs a SQL database: managed roles must be "
@@ -2028,10 +2049,6 @@ class AgentOS:
 
         if resolved_provider is not None:
             fastapi_app.state.authorization_provider = resolved_provider
-
-        audit = getattr(config, "audit", None)
-        if audit is not None:
-            fastapi_app.state.authz_audit = audit
 
         # The MCP tools run in a mounted sub-app whose ``request.app`` is NOT this app,
         # so everything the tool gate resolves off ``app.state`` (the provider, the audit
@@ -2088,6 +2105,11 @@ class AgentOS:
             attach = getattr(user_store, "attach_db", None)
             if callable(attach):
                 attach(self.db)
+            # Change trail: adopt the top-level AgentOS(audit=...) sink if the directory store has
+            # none of its own, so one switch records directory changes too (user.created/disabled).
+            attach_audit = getattr(user_store, "attach_audit", None)
+            if callable(attach_audit):
+                attach_audit(self.audit)
             if getattr(user_store, "is_bound", True) is False:
                 # A store that cannot persist is not a working deployment mode: the directory
                 # backs the disabled-user kill switch, so an unpersisted one means a revocation
