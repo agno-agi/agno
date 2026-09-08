@@ -1,5 +1,20 @@
 # Public pages test log
 
+### full_page.py — complete page reads and fence-aware normalization (2026-09-08)
+
+**Status:** PASS
+
+**Description:** Ran `full_page.py --help` and `--normalize` using the demo Python
+with this checkout on `PYTHONPATH`. The normalization input contains a four-backtick
+Markdown example with literal triple backticks, component markup and HTML entities.
+
+**Result:** CLI help passed without database/provider setup. Prose entities were
+decoded while the nested code example remained unchanged. Full-page API behavior
+is covered separately by sync/async unit and PostgreSQL integration tests.
+The cookbook's live corpus/provider modes were not run.
+
+---
+
 ### public_pages.py — callable dependency context (2026-09-06)
 
 **Status:** PASS
