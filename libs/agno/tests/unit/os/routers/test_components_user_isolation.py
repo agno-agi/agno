@@ -413,7 +413,7 @@ class TestComponentResolutionIsolation:
     def test_agent_listing_follows_stage(self, client, alice_agent, alice_draft):
         resp = client.get("/agents", headers=auth_header(create_token("user-b")))
         assert resp.status_code == 200
-        listed = [a["id"] for a in resp.json()]
+        listed = [a["id"] for a in resp.json()["data"]]
         assert alice_draft not in listed
         assert alice_agent in listed
 

@@ -63,6 +63,8 @@ from agno.os.schema import (
     BadRequestResponse,
     InternalServerErrorResponse,
     NotFoundResponse,
+    PaginatedResponse,
+    PaginationInfo,
     UnauthenticatedResponse,
     ValidationErrorResponse,
 )
@@ -1756,13 +1758,13 @@ def get_team_router(
 
     @router.get(
         "/teams",
-        response_model=List[TeamResponse],
+        response_model=PaginatedResponse[TeamResponse],
         response_model_exclude_none=True,
         tags=["Teams"],
         operation_id="get_teams",
-        summary="List All Teams",
+        summary="List Teams",
         description=(
-            "Retrieve a comprehensive list of all teams configured in this OS instance.\n\n"
+            "Retrieve a paginated list of teams configured in this OS instance.\n\n"
             "**Returns team information including:**\n"
             "- Team metadata (ID, name, description, execution mode)\n"
             "- Model configuration for team coordination\n"
@@ -1774,69 +1776,84 @@ def get_team_router(
                 "description": "List of teams retrieved successfully",
                 "content": {
                     "application/json": {
-                        "example": [
-                            {
-                                "team_id": "basic-team",
-                                "name": "Basic Team",
-                                "mode": "coordinate",
-                                "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
-                                "tools": [
-                                    {
-                                        "name": "transfer_task_to_member",
-                                        "description": "Use this function to transfer a task to the selected team member.\nYou must provide a clear and concise description of the task the member should achieve AND the expected output.",
-                                        "parameters": {
-                                            "type": "object",
-                                            "properties": {
-                                                "member_id": {
-                                                    "type": "string",
-                                                    "description": "(str) The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.",
+                        "example": {
+                            "data": [
+                                {
+                                    "team_id": "basic-team",
+                                    "name": "Basic Team",
+                                    "mode": "coordinate",
+                                    "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                    "tools": [
+                                        {
+                                            "name": "transfer_task_to_member",
+                                            "description": "Use this function to transfer a task to the selected team member.\nYou must provide a clear and concise description of the task the member should achieve AND the expected output.",
+                                            "parameters": {
+                                                "type": "object",
+                                                "properties": {
+                                                    "member_id": {
+                                                        "type": "string",
+                                                        "description": "(str) The ID of the member to transfer the task to. Use only the ID of the member, not the ID of the team followed by the ID of the member.",
+                                                    },
+                                                    "task_description": {
+                                                        "type": "string",
+                                                        "description": "(str) A clear and concise description of the task the member should achieve.",
+                                                    },
+                                                    "expected_output": {
+                                                        "type": "string",
+                                                        "description": "(str) The expected output from the member (optional).",
+                                                    },
                                                 },
-                                                "task_description": {
-                                                    "type": "string",
-                                                    "description": "(str) A clear and concise description of the task the member should achieve.",
-                                                },
-                                                "expected_output": {
-                                                    "type": "string",
-                                                    "description": "(str) The expected output from the member (optional).",
+                                                "additionalProperties": False,
+                                                "required": ["member_id", "task_description"],
+                                            },
+                                        }
+                                    ],
+                                    "members": [
+                                        {
+                                            "agent_id": "basic-agent",
+                                            "name": "Basic Agent",
+                                            "model": {
+                                                "name": "OpenAIChat",
+                                                "model": "gpt-4o",
+                                                "provider": "OpenAI gpt-4o",
+                                            },
+                                            "memory": {
+                                                "app_name": "Memory",
+                                                "app_url": None,
+                                                "model": {
+                                                    "name": "OpenAIChat",
+                                                    "model": "gpt-4o",
+                                                    "provider": "OpenAI",
                                                 },
                                             },
-                                            "additionalProperties": False,
-                                            "required": ["member_id", "task_description"],
-                                        },
-                                    }
-                                ],
-                                "members": [
-                                    {
-                                        "agent_id": "basic-agent",
-                                        "name": "Basic Agent",
-                                        "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI gpt-4o"},
-                                        "memory": {
-                                            "app_name": "Memory",
-                                            "app_url": None,
-                                            "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
-                                        },
-                                        "session_table": "agno_sessions",
-                                        "memory_table": "agno_memories",
-                                    }
-                                ],
-                                "enable_agentic_context": False,
-                                "memory": {
-                                    "app_name": "agno_memories",
-                                    "app_url": "/memory/1",
-                                    "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
-                                },
-                                "async_mode": False,
-                                "session_table": "agno_sessions",
-                                "memory_table": "agno_memories",
-                            }
-                        ]
+                                            "session_table": "agno_sessions",
+                                            "memory_table": "agno_memories",
+                                        }
+                                    ],
+                                    "enable_agentic_context": False,
+                                    "memory": {
+                                        "app_name": "agno_memories",
+                                        "app_url": "/memory/1",
+                                        "model": {"name": "OpenAIChat", "model": "gpt-4o", "provider": "OpenAI"},
+                                    },
+                                    "async_mode": False,
+                                    "session_table": "agno_sessions",
+                                    "memory_table": "agno_memories",
+                                }
+                            ],
+                            "meta": {"page": 1, "limit": 20, "total_pages": 1, "total_count": 1},
+                        }
                     }
                 },
             }
         },
     )
-    async def get_teams(request: Request) -> List[TeamResponse]:
-        """Return the list of all Teams present in the contextual OS"""
+    async def get_teams(
+        request: Request,
+        limit: int = Query(20, ge=1, le=1000),
+        page: int = Query(1, ge=1),
+    ) -> PaginatedResponse[TeamResponse]:
+        """Return a paginated list of Teams present in the contextual OS."""
         # Filter teams based on user's scopes (only if authorization is enabled)
         if getattr(request.state, "authorization_enabled", False):
             from agno.os.auth import (
@@ -1858,14 +1875,7 @@ def get_team_router(
         else:
             accessible_teams = os.teams or []
 
-        teams = []
-        for team in accessible_teams:
-            if isinstance(team, Team):
-                teams.append(await TeamResponse.from_team(team=team, is_component=False))
-            elif isinstance(team, TeamFactory):
-                teams.append(TeamResponse.from_factory(team))
-            elif isinstance(team, RemoteTeam):
-                teams.append(await team.get_team_config())
+        available_teams = [(team, False) for team in accessible_teams]
 
         # Also load teams from database
         if os.db and isinstance(os.db, BaseDb):
@@ -1888,11 +1898,31 @@ def get_team_router(
                 # config here (the agents endpoint already filters)
                 if getattr(request.state, "authorization_enabled", False):
                     db_teams = filter_resources_by_access(request, db_teams, "teams")
-                for db_team in db_teams:
-                    team_response = await TeamResponse.from_team(team=db_team, is_component=True)
-                    teams.append(team_response)
+                available_teams.extend((team, True) for team in db_teams)
 
-        return teams
+        total_count = len(available_teams)
+        total_pages = (total_count + limit - 1) // limit if total_count > 0 else 0
+        start = (page - 1) * limit
+        paginated_teams = available_teams[start : start + limit]
+
+        teams: List[TeamResponse] = []
+        for team, is_component in paginated_teams:
+            if isinstance(team, Team):
+                teams.append(await TeamResponse.from_team(team=team, is_component=is_component))
+            elif isinstance(team, TeamFactory):
+                teams.append(TeamResponse.from_factory(team))
+            elif isinstance(team, RemoteTeam):
+                teams.append(await team.get_team_config())
+
+        return PaginatedResponse(
+            data=teams,
+            meta=PaginationInfo(
+                page=page,
+                limit=limit,
+                total_pages=total_pages,
+                total_count=total_count,
+            ),
+        )
 
     @router.get(
         "/teams/{team_id}",

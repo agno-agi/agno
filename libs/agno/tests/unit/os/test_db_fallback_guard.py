@@ -136,4 +136,4 @@ class TestDispatchRefusalOverHttp:
 
         listed = client.get("/agents")
         assert listed.status_code == 200
-        assert any(item["id"] == "redirected-agent" for item in listed.json())
+        assert any(item["id"] == "redirected-agent" for item in listed.json()["data"])
