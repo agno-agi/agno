@@ -4,8 +4,6 @@ REM # Format the agno library using ruff
 REM # Usage: scripts\format.bat
 REM ###########################################################################
 
-SETLOCAL ENABLEDELAYEDEXPANSION
-
 REM Get current directory and set AGNO_DIR to parent folder
 SET "CURR_DIR=%~dp0"
 SET "AGNO_DIR=%CURR_DIR%\.."
@@ -17,10 +15,10 @@ FOR %%I IN ("%VENV_PATH%") DO SET "VENV_PATH=%%~fI"
 
 REM Try to activate virtual environment if it exists
 IF EXIST "%VENV_PATH%\Scripts\activate.bat" (
-    ECHO [INFO] Activating virtual environment: %VENV_PATH%
+    ECHO [INFO] Activating virtual environment: "%VENV_PATH%"
     CALL "%VENV_PATH%\Scripts\activate.bat"
 ) ELSE (
-    ECHO [INFO] No virtual environment found at %VENV_PATH%
+    ECHO [INFO] No virtual environment found at "%VENV_PATH%"
 )
 
 ECHO.
@@ -38,7 +36,7 @@ IF %ERRORLEVEL% NEQ 0 (
 
 ECHO.
 ECHO ##################################################
-ECHO # Running: ruff format %AGNO_DIR%
+ECHO # Running: ruff format "%AGNO_DIR%"
 ECHO ##################################################
 ECHO.
 
@@ -46,7 +44,7 @@ python -m ruff format "%AGNO_DIR%"
 
 ECHO.
 ECHO ##################################################
-ECHO # Running: ruff check --select I --fix %AGNO_DIR%
+ECHO # Running: ruff check --select I --fix "%AGNO_DIR%"
 ECHO ##################################################
 ECHO.
 
