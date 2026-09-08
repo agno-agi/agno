@@ -216,6 +216,147 @@ def test_read_range_is_inclusive(store):
     assert page.text == "line 2\nline 3\nline 4"
 
 
+def test_read_json_pointer_projects_an_object_subtree_without_changing_payload(store):
+    payload = json.dumps(
+        {
+            "meta": {"count": 2},
+            "data": {"items": [{"name": "éclair", "active": True}, {"name": "tea"}]},
+        }
+    )
+    ref = _offload(store, payload)
+
+    page = store.read(ref.result_id, json_pointer="/data/items/0")
+
+    assert json.loads(page.text) == {"name": "éclair", "active": True}
+    assert page.line_count == 4
+    assert store._read_payload(store.get_row(ref.result_id)) == payload
+
+
+def test_read_json_pointer_supports_root_arrays_and_escaped_keys(store):
+    payload = json.dumps({"": "empty-key", "a/b": {"~key": ["first", "second"]}})
+    ref = _offload(store, payload)
+
+    empty_key = store.read(ref.result_id, json_pointer="/")
+    selected = store.read(ref.result_id, json_pointer="/a~1b/~0key/1")
+    root = store.read(ref.result_id, json_pointer="")
+
+    assert json.loads(empty_key.text) == "empty-key"
+    assert json.loads(selected.text) == "second"
+    assert json.loads(root.text) == json.loads(payload)
+    assert root.text.startswith("{") and "\n" in root.text
+
+
+@pytest.mark.parametrize(
+    "pointer, message",
+    [
+        ("data/items", "start with"),
+        ("/data/~2items", "only '~0' and '~1'"),
+        ("/data/items/-", "array index"),
+        ("/data/items/9", "outside the array"),
+        ("/data/missing", "does not resolve"),
+    ],
+)
+def test_read_json_pointer_rejects_invalid_or_missing_paths(store, pointer, message):
+    ref = _offload(store, json.dumps({"data": {"items": ["one"]}}))
+
+    with pytest.raises(ValueError, match=message):
+        store.read(ref.result_id, json_pointer=pointer)
+
+
+def test_read_json_pointer_rejects_non_json_payload(store):
+    ref = _offload(store, "plain text that is deliberately long enough to store")
+
+    with pytest.raises(ValueError, match="only supported for stored JSON"):
+        store.read(ref.result_id, json_pointer="/data")
+
+
+def test_read_json_pointer_reports_corrupt_json_indexed_as_json(store, monkeypatch):
+    ref = _offload(store, "{not valid json")
+    row = store.get_row(ref.result_id)
+    assert row is not None
+    row["content_type"] = "json"
+    monkeypatch.setattr(store, "get_row", lambda _result_id: row)
+
+    with pytest.raises(ValueError, match="not valid JSON"):
+        store.read(ref.result_id, json_pointer="")
+
+
+def test_read_json_pointer_pages_the_projection_and_requires_the_same_pointer(store):
+    payload = json.dumps({"metadata": "do not return", "items": [f"item-{i:04d}" for i in range(3000)]})
+    ref = _offload(store, payload)
+    pointer = "/items"
+
+    first = store.read(ref.result_id, json_pointer=pointer)
+    assert first.truncated is True
+    assert first.next_start_line is not None
+    assert '"metadata"' not in first.text
+
+    second = store.read(ref.result_id, start_line=first.next_start_line, json_pointer=pointer)
+    assert second.text
+    assert second.text != first.text
+    assert '"metadata"' not in second.text
+
+    # Omitting the pointer intentionally reads the original document, not a
+    # continuation of the projected view.
+    original = store.read(ref.result_id, start_line=1)
+    assert '"metadata"' in original.text
+
+
+@pytest.mark.asyncio
+async def test_aread_json_pointer_matches_sync_projection(store):
+    payload = json.dumps({"data": {"items": [{"id": 1}, {"id": 2}]}})
+    ref = _offload(store, payload)
+
+    sync_page = store.read(ref.result_id, json_pointer="/data/items")
+    async_page = await store.aread(ref.result_id, json_pointer="/data/items")
+
+    assert async_page.text == sync_page.text
+    assert async_page.line_count == sync_page.line_count
+
+
+def test_async_read_result_tool_projects_json_pointer(store):
+    import asyncio
+
+    from agno.offload.tools import get_read_result_function
+    from agno.run import RunContext
+
+    class Owner:
+        _result_store = store
+
+    payload = json.dumps({"data": {"name": "async"}})
+    ref = _offload(store, payload)
+    tool = get_read_result_function(
+        Owner(),
+        run_context=RunContext(session_id="S1", run_id="read-run"),
+        async_mode=True,
+    )
+
+    reply = asyncio.run(tool.entrypoint(result_id=ref.result_id, json_pointer="/data/name"))
+
+    assert 'JSON pointer "/data/name"' in reply
+    assert '"async"' in reply
+
+
+def test_read_result_tool_repeats_pointer_in_pagination_hint(store):
+    from agno.offload.tools import get_read_result_function
+    from agno.run import RunContext
+
+    class Owner:
+        _result_store = store
+
+    payload = json.dumps({"items": [f"item-{i:05d}" for i in range(4000)]})
+    ref = _offload(store, payload)
+    tool = get_read_result_function(
+        Owner(),
+        run_context=RunContext(session_id="S1", run_id="read-run"),
+    )
+
+    reply = tool.entrypoint(result_id=ref.result_id, json_pointer="/items")
+
+    assert "More follows:" in reply
+    assert 'json_pointer="/items"' in reply
+
+
 def test_round_trip_returns_the_exact_original_bytes(store):
     payload = "unicode é ü 😀\nsecond line\n\ttabbed\n" * 200
     ref = _offload(store, payload)
