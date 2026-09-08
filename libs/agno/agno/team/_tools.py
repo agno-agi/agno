@@ -402,10 +402,7 @@ def _determine_tools_for_model(
             toolkit_functions = tool.get_async_functions() if async_mode else tool.get_functions()
             for name, _func in toolkit_functions.items():
                 if name in _function_names:
-                    log_warning(
-                        f"Duplicate tool name '{name}' from toolkit '{tool.name}' "
-                        f"already registered on team; skipping the duplicate."
-                    )
+                    _handle_tool_name_collision(team, name)
                     continue
                 _function_names.append(name)
                 _func = _func._per_run_copy()
@@ -436,7 +433,7 @@ def _determine_tools_for_model(
                 source_toolkit, tool_index
             )
             if tool.name in _function_names:
-                log_warning(f"Duplicate tool name '{tool.name}' already registered on team; skipping the duplicate.")
+                _handle_tool_name_collision(team, tool.name)
                 if emit_toolkit_instructions and source_toolkit is not None:
                     add_toolkit_instructions(source_toolkit)
                 continue
@@ -473,9 +470,7 @@ def _determine_tools_for_model(
                 # per-run copy, so no further copy is needed before mutating it.
                 _func = Function.from_callable(tool, strict=strict)
                 if _func.name in _function_names:
-                    log_warning(
-                        f"Duplicate tool name '{_func.name}' already registered on team; skipping the duplicate."
-                    )
+                    _handle_tool_name_collision(team, _func.name)
                     continue
                 _function_names.append(_func.name)
 
@@ -512,6 +507,15 @@ def _determine_tools_for_model(
                 func._videos = joint_videos
 
     return _functions
+
+
+def _handle_tool_name_collision(team: "Team", name: str) -> None:
+    if team.error_on_tool_name_collision:
+        raise ValueError(
+            f"Duplicate tool name '{name}' already registered on team; set "
+            "error_on_tool_name_collision=False to keep skip-by-default behavior."
+        )
+    log_warning(f"Duplicate tool name '{name}' already registered on team; skipping the duplicate.")
 
 
 def get_member_information(team: "Team", run_context: Optional["RunContext"] = None) -> str:
