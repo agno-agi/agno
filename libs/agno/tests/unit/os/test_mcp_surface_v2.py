@@ -92,11 +92,11 @@ async def test_annotations_mark_reads_and_destructive_tools():
     async with Client(build_mcp_server(os)) as client:
         tools = {t.name: t for t in await client.list_tools()}
 
-    assert tools["get_agentos_config"].annotations.readOnlyHint is True
-    assert tools["get_sessions"].annotations.readOnlyHint is True
-    assert tools["get_session_runs"].annotations.readOnlyHint is True
-    assert tools["cancel_run"].annotations.destructiveHint is True
-    assert tools["run_agent"].annotations.readOnlyHint is False
+    assert tools["get_agentos_config"].annotations.read_only_hint is True
+    assert tools["get_sessions"].annotations.read_only_hint is True
+    assert tools["get_session_runs"].annotations.read_only_hint is True
+    assert tools["cancel_run"].annotations.destructive_hint is True
+    assert tools["run_agent"].annotations.read_only_hint is False
 
 
 async def test_config_payload_is_compact():

@@ -25,6 +25,7 @@ from agno.db.base import (
     project_config_identity,
 )
 from agno.db.migrations.manager import MigrationManager
+from agno.db.postgres.engine import _engine_options
 from agno.db.postgres.schemas import get_table_schema_definition
 from agno.db.postgres.utils import (
     apply_sorting,
@@ -59,7 +60,6 @@ from agno.db.utils import (
     deserialize_session,
     deserialize_sessions,
     filter_context_runs,
-    json_serializer,
     learning_search_patterns,
     merge_runs_table_with_legacy_blob,
     metrics_starting_date_from_days,
@@ -198,9 +198,7 @@ class PostgresDb(BaseDb):
         if _engine is None and db_url is not None:
             _engine = create_engine(
                 db_url,
-                pool_pre_ping=True,
-                pool_recycle=3600,
-                json_serializer=json_serializer,
+                **_engine_options(),
             )
         if _engine is None:
             raise ValueError("One of db_url or db_engine must be provided")
@@ -2986,6 +2984,21 @@ class PostgresDb(BaseDb):
         except Exception as e:
             log_error(f"Exception getting knowledge contents: {str(e)}")
             raise e
+
+    def _upsert_knowledge_content_on(self, conn, table, knowledge_row: KnowledgeRow) -> None:
+        """Publish a catalog record in the coordinator's existing transaction.
+
+        Trusted setup resolves the table first. Unlike the standalone upsert, explicit
+        nulls clear obsolete processing errors and this helper never opens or commits a transaction.
+        """
+        values = {key: value for key, value in knowledge_row.model_dump().items() if key in table.c}
+        stmt = postgresql.insert(table).values(values)
+        conn.execute(
+            stmt.on_conflict_do_update(
+                index_elements=[table.c.id],
+                set_={key: value for key, value in values.items() if key not in ("id", "created_at")},
+            )
+        )
 
     def upsert_knowledge_content(self, knowledge_row: KnowledgeRow):
         """Upsert knowledge content in the database.

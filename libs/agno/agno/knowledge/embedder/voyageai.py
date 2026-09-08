@@ -1,7 +1,13 @@
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional, Tuple
 
-from agno.knowledge.embedder.base import Embedder
+from agno.knowledge.embedder.base import (
+    Embedder,
+    aembed_texts_individually,
+    first_embedding,
+    pad_batch_embeddings,
+    raise_embedding_error,
+)
 from agno.utils.log import log_warning, logger
 
 try:
@@ -69,20 +75,22 @@ class VoyageAIEmbedder(Embedder):
         return self.client.embed(**_request_params)
 
     def get_embedding(self, text: str) -> List[float]:
-        response: EmbeddingsObject = self._response(text=text)
         try:
-            embedding = response.embeddings[0]
+            response: EmbeddingsObject = self._response(text=text)
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
-            log_warning(f"Failed to get embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
 
     def get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
-        response: EmbeddingsObject = self._response(text=text)
+        try:
+            response: EmbeddingsObject = self._response(text=text)
 
-        embedding = response.embeddings[0]
-        usage = {"total_tokens": response.total_tokens}
-        return [float(x) for x in embedding], usage
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
+            usage = {"total_tokens": response.total_tokens}
+            return [float(x) for x in embedding], usage
+        except Exception as e:
+            raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
 
     async def _async_response(self, text: str) -> EmbeddingsObject:
         """Async version of _response using AsyncVoyageClient."""
@@ -98,22 +106,20 @@ class VoyageAIEmbedder(Embedder):
         """Async version of get_embedding."""
         try:
             response: EmbeddingsObject = await self._async_response(text=text)
-            embedding = response.embeddings[0]
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
             return [float(x) for x in embedding]  # Ensure all values are float
         except Exception as e:
-            log_warning(f"Error getting embedding: {str(e)}")
-            return []
+            raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
 
     async def async_get_embedding_and_usage(self, text: str) -> Tuple[List[float], Optional[Dict]]:
         """Async version of get_embedding_and_usage."""
         try:
             response: EmbeddingsObject = await self._async_response(text=text)
-            embedding = response.embeddings[0]
+            embedding = first_embedding(response.embeddings, "VoyageAI") or []
             usage = {"total_tokens": response.total_tokens}
             return [float(x) for x in embedding], usage
         except Exception as e:
-            log_warning(f"Error getting embedding and usage: {str(e)}")
-            return [], None
+            raise_embedding_error(e, model_id=self.id, provider="VoyageAI")
 
     async def async_get_embeddings_batch_and_usage(
         self, texts: List[str]
@@ -143,7 +149,9 @@ class VoyageAIEmbedder(Embedder):
 
             try:
                 response: EmbeddingsObject = await self.aclient.embed(**req)
-                batch_embeddings = [[float(x) for x in emb] for emb in response.embeddings]
+                batch_embeddings = pad_batch_embeddings(
+                    [[float(x) for x in emb] for emb in response.embeddings], batch_texts, "VoyageAI"
+                )
                 all_embeddings.extend(batch_embeddings)
 
                 # For each embedding in the batch, add the same usage information
@@ -151,15 +159,11 @@ class VoyageAIEmbedder(Embedder):
                 all_usage.extend([usage_dict] * len(batch_embeddings))
             except Exception as e:
                 log_warning(f"Error in async batch embedding: {str(e)}")
-                # Fallback to individual calls for this batch
-                for text in batch_texts:
-                    try:
-                        embedding, usage = await self.async_get_embedding_and_usage(text)
-                        all_embeddings.append(embedding)
-                        all_usage.append(usage)
-                    except Exception as e2:
-                        log_warning(f"Error in individual async embedding fallback: {e2}")
-                        all_embeddings.append([])
-                        all_usage.append(None)
+                # Fall back to individual calls: a whole-batch failure is often transient
+                # (or caused by a single bad text). Successes are kept so one bad chunk
+                # does not discard the rest of the batch.
+                batch_embeddings, batch_usage = await aembed_texts_individually(self, batch_texts)
+                all_embeddings.extend(batch_embeddings)
+                all_usage.extend(batch_usage)
 
         return all_embeddings, all_usage

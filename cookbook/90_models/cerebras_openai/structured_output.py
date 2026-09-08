@@ -38,7 +38,7 @@ class MovieScript(BaseModel):
 
 # Agent that uses a structured output
 structured_output_agent = Agent(
-    model=CerebrasOpenAI(id="llama-4-scout-17b-16e-instruct"),
+    model=CerebrasOpenAI(id="gpt-oss-120b"),
     description="You are a helpful assistant. Summarize the movie script based on the location in a JSON object.",
     output_schema=MovieScript,
 )
