@@ -1341,11 +1341,9 @@ jobs:
   # The pgvector service is on localhost:5532 — the exact host/port/creds the
   # conftest targets — so both the sqlite and postgresql lanes run in CI.
   #
-  # The page-storage suite rides along: it is skipped unless
-  # AGNO_PAGE_TEST_DB_URL points at a local server whose user can CREATE and
-  # DROP a throwaway database per module, which the service user here can.
-  # It is listed by file because the knowledge shards have no Postgres and
-  # would only ever skip it. -rs surfaces the skip if the gate ever trips.
+  # Run page-storage tests here because the knowledge jobs have no Postgres.
+  # AGNO_PAGE_TEST_DB_URL uses this service to create and drop a temporary
+  # database for the suite. Report skipped tests with -rs.
   test-fs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
