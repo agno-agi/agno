@@ -156,10 +156,10 @@ class QueueConfig:
     stop_timeout_seconds: Optional[int] = None
     # At most ONE live job per session, executed in submission order. A job is
     # claimable only while it is the oldest non-terminal (queued/running/
-    # paused) job of its session AND no session sibling is currently running
-    # (the explicit running check covers same-second submissions, where
-    # created_at ties and the id tiebreak alone could elect a new head while
-    # an earlier job executes). Concurrent submissions to one session run
+    # paused) job of its session AND no session sibling is currently running.
+    # "Oldest" is (created_at, seq): seq is the store-assigned enqueue
+    # sequence, so same-second submissions (created_at has one-second
+    # resolution) stay FIFO. Concurrent submissions to one session run
     # FIFO instead of racing each other's context reads and session-state
     # writes; different sessions still run concurrently under max_concurrency.
     # PAUSED blocks the line deliberately: runs queued behind a HITL pause

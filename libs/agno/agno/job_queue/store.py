@@ -21,6 +21,8 @@ class InMemoryQueueStore:
     def __init__(self) -> None:
         self._jobs: Dict[str, Dict[str, Any]] = {}
         self._lock = asyncio.Lock()
+        # Store-assigned enqueue sequence: orders same-second siblings FIFO
+        self._seq = 0
 
     async def enqueue_job(self, job: Dict[str, Any], max_depth: int = 0) -> Dict[str, Any]:
         async with self._lock:
@@ -48,6 +50,8 @@ class InMemoryQueueStore:
             # fenced out.
             if job["id"] in self._jobs:
                 raise RuntimeError(f"enqueue_job: job {job['id']} already exists; ids are never reused")
+            self._seq += 1
+            job = {**job, "seq": self._seq}
             self._jobs[job["id"]] = dict(job)
             return {"accepted": True, "reason": None, "job": dict(job)}
 
@@ -63,10 +67,10 @@ class InMemoryQueueStore:
         # claiming only unstamped jobs (mixed fleets safe by construction).
         # queue_per_session restricts claims to each session's HEAD: the
         # oldest non-terminal (queued/running/paused) job, ordered by
-        # (created_at, id). The additional running-sibling check is what makes
-        # the exclusion hard under same-second submissions: created_at ties
-        # resolve by id, and a later submission with a smaller uuid would
-        # otherwise become the head while its sibling is still executing.
+        # (created_at, seq) - seq is the store-assigned enqueue sequence, so
+        # same-second submissions (created_at has one-second resolution) stay
+        # FIFO. The additional running-sibling check covers legacy pairs
+        # that predate the gate.
         async with self._lock:
             now = int(time.time())
             stale = now - lock_grace_seconds
@@ -80,7 +84,10 @@ class InMemoryQueueStore:
                     if j["status"] == "running":
                         session_running[session_id] = j["id"]
                     head = session_heads.get(session_id)
-                    if head is None or (j["created_at"], j["id"]) < (self._jobs[head]["created_at"], head):
+                    if head is None or (j["created_at"], j.get("seq") or 0) < (
+                        self._jobs[head]["created_at"],
+                        self._jobs[head].get("seq") or 0,
+                    ):
                         session_heads[session_id] = j["id"]
             candidates = [
                 j
@@ -107,7 +114,7 @@ class InMemoryQueueStore:
             ]
             if not candidates:
                 return None
-            job = min(candidates, key=lambda j: j["created_at"])
+            job = min(candidates, key=lambda j: (j["created_at"], j.get("seq") or 0))
             job.update(
                 status="running",
                 locked_by=worker_id,

@@ -585,3 +585,122 @@ class TestSyncPostgresQueuePerSession:
             with engine.begin() as conn:
                 conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
             engine.dispose()
+
+
+class TestSubmissionOrderParity:
+    """FIFO by submission must hold within a session even when created_at
+    ties: it has one-second resolution, and a random uuid tiebreak let a
+    later submission with a smaller id run first and read session history
+    the earlier one had not written yet. Stores now carry a monotonic
+    enqueue sequence and order same-second siblings by it."""
+
+    @pytest.mark.asyncio
+    async def test_same_second_fifo_holds_under_uuid_inversion(self, store):
+        # r_z submitted first, r_a second, both in the same second; the id
+        # order is the inverse of the submission order
+        await store.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+        await store.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+        head = await store.claim_job("w1", queue_per_session=True)
+        assert head is not None and head["id"] == "r_z", "the earlier submission must run first"
+        assert await store.claim_job("w2", queue_per_session=True) is None
+        assert await store.complete_job("r_z", "w1", head["attempt"], "completed")
+        nxt = await store.claim_job("w2", queue_per_session=True)
+        assert nxt is not None and nxt["id"] == "r_a"
+
+    @pytest.mark.asyncio
+    async def test_enqueue_sequence_is_monotonic_and_survives_round_trip(self, store):
+        first = (await store.enqueue_job(make_job("r1", session_id="s1", created_at=1000)))["job"]
+        second = (await store.enqueue_job(make_job("r2", session_id="s2", created_at=1000)))["job"]
+        assert first.get("seq") is not None and second.get("seq") is not None
+        assert first["seq"] < second["seq"]
+        stored = await store.get_job("r2")
+        assert stored is not None and stored.get("seq") == second["seq"]
+
+
+@pytest.mark.skipif(not _PG_AVAILABLE, reason="Postgres not available on localhost:5532")
+class TestSyncPostgresSubmissionOrder:
+    """Sync Postgres twin of the same-second FIFO pin, plus the upgrade path:
+    a jobs table created before the sequence column existed must gain it on
+    first use instead of failing schema validation or claiming out of order."""
+
+    @staticmethod
+    def _drop(db):
+        import sqlalchemy
+
+        engine = sqlalchemy.create_engine(PG_URL)
+        with engine.begin() as conn:
+            conn.execute(sqlalchemy.text(f'DROP TABLE IF EXISTS {db.db_schema}."{db.job_table_name}"'))
+        engine.dispose()
+
+    def test_same_second_fifo_holds_under_uuid_inversion(self):
+        from agno.db.postgres import PostgresDb
+
+        db = PostgresDb(db_url=PG_URL, job_table=f"parity_syncseq_{uuid.uuid4().hex[:8]}")
+        try:
+            db.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            db.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            head = db.claim_job("w1", queue_per_session=True)
+            assert head is not None and head["id"] == "r_z"
+            assert db.claim_job("w2", queue_per_session=True) is None
+            assert db.complete_job("r_z", "w1", head["attempt"], "completed")
+            nxt = db.claim_job("w2", queue_per_session=True)
+            assert nxt is not None and nxt["id"] == "r_a"
+        finally:
+            self._drop(db)
+
+    def test_pre_sequence_jobs_table_is_upgraded_on_first_use(self):
+        import sqlalchemy
+
+        from agno.db.postgres import PostgresDb
+
+        table_name = f"parity_upgrade_{uuid.uuid4().hex[:8]}"
+        db = PostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            db.enqueue_job(make_job("r_old", session_id="s1", created_at=999))
+            # Simulate a table created before the column existed
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = PostgresDb(db_url=PG_URL, job_table=table_name)
+            reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            old = reopened.get_job("r_old")
+            assert old is not None and old.get("seq") is not None, "pre-existing rows are backfilled"
+            claimed = [reopened.claim_job("w1", queue_per_session=True)["id"]]
+            for _ in range(2):
+                reopened.complete_job(claimed[-1], "w1", 1, "completed")
+                claimed.append(reopened.claim_job("w1", queue_per_session=True)["id"])
+            assert claimed == ["r_old", "r_z", "r_a"]
+        finally:
+            self._drop(db)
+
+    @pytest.mark.asyncio
+    async def test_pre_sequence_jobs_table_is_upgraded_on_first_use_async(self):
+        """The async adapter's twin of the upgrade path."""
+        import sqlalchemy
+
+        from agno.db.postgres import AsyncPostgresDb
+
+        table_name = f"parity_aupgrade_{uuid.uuid4().hex[:8]}"
+        db = AsyncPostgresDb(db_url=PG_URL, job_table=table_name)
+        try:
+            await db.enqueue_job(make_job("r_old", session_id="s1", created_at=999))
+            engine = sqlalchemy.create_engine(PG_URL)
+            with engine.begin() as conn:
+                conn.execute(sqlalchemy.text(f'ALTER TABLE {db.db_schema}."{table_name}" DROP COLUMN seq'))
+            engine.dispose()
+
+            reopened = AsyncPostgresDb(db_url=PG_URL, job_table=table_name)
+            await reopened.enqueue_job(make_job("r_z", session_id="s1", created_at=1000))
+            await reopened.enqueue_job(make_job("r_a", session_id="s1", created_at=1000))
+            old = await reopened.get_job("r_old")
+            assert old is not None and old.get("seq") is not None, "pre-existing rows are backfilled"
+            claimed = [(await reopened.claim_job("w1", queue_per_session=True))["id"]]
+            for _ in range(2):
+                await reopened.complete_job(claimed[-1], "w1", 1, "completed")
+                claimed.append((await reopened.claim_job("w1", queue_per_session=True))["id"])
+            assert claimed == ["r_old", "r_z", "r_a"]
+        finally:
+            self._drop(db)
