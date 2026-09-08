@@ -955,14 +955,6 @@ def json_serializer(obj: Any) -> str:
 def deserialize_session_json_fields(session: dict) -> dict:
     """Deserialize JSON fields in the given Session dictionary.
 
-    Values that are already dicts/lists are left untouched; only string values
-    are parsed. Both cases occur in the wild: current SQLite adapters bind
-    dicts to the JSON columns (the fetch parse yields objects), but rows
-    written by older versions of those adapters were double-encoded -
-    pre-dumped to a string that the JSON column encoded again - so their fetch
-    parse yields a string that needs this second parse. Mongo/Firestore store
-    objects natively and hit the no-op path.
-
     Args:
         session (dict): The dictionary to deserialize.
 

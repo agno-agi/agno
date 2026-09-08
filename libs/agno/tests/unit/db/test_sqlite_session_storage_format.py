@@ -17,12 +17,14 @@ Two invariants pinned here, for both the sync and async adapters:
 import json
 import sqlite3
 import time
+from typing import Optional
 
 import pytest
 
 from agno.db.base import SessionType
 from agno.db.sqlite import SqliteDb
 from agno.db.sqlite.async_sqlite import AsyncSqliteDb
+from agno.session import Session
 from agno.session.agent import AgentSession
 
 JSON_FIELDS = ("session_data", "agent_data", "metadata")
@@ -67,8 +69,10 @@ def _assert_stored_as_plain_json(db_file: str, session_id: str) -> None:
 
 
 def _insert_legacy_row(db_file: str, session_id: str) -> None:
-    """Write a row the way the adapters did before the fix: pre-dumped strings
-    that the JSON column then encoded again."""
+    """Write a row the way older SQLite adapter releases did.
+
+    The JSON fields were pre-dumped to strings that the JSON column encoded again.
+    """
     conn = sqlite3.connect(db_file)
     try:
         conn.execute(
@@ -91,7 +95,7 @@ def _insert_legacy_row(db_file: str, session_id: str) -> None:
         conn.close()
 
 
-def _assert_legacy_row_reads_back(session) -> None:
+def _assert_legacy_row_reads_back(session: Optional[Session]) -> None:
     assert isinstance(session, AgentSession)
     assert session.session_data == LEGACY_SESSION_DATA
     assert session.agent_data == LEGACY_AGENT_DATA
@@ -180,3 +184,22 @@ class TestAsyncSqliteSessionStorageFormat:
         session = await db.get_session(session_id="legacy-session", session_type=SessionType.AGENT)
         await db.db_engine.dispose()
         _assert_legacy_row_reads_back(session)
+
+    @pytest.mark.asyncio
+    async def test_get_sessions_returns_dicts_for_mixed_formats(self, tmp_path):
+        db_file = str(tmp_path / "sessions.db")
+        db = AsyncSqliteDb(db_file=db_file)
+
+        await db.upsert_session(_make_session("new-session"))
+        _insert_legacy_row(db_file, "legacy-session")
+
+        sessions, total = await db.get_sessions(session_type=SessionType.AGENT, deserialize=False)
+        await db.db_engine.dispose()
+        assert total == 2
+        assert {s["session_id"] for s in sessions} == {"new-session", "legacy-session"}
+        for session_dict in sessions:
+            for field in JSON_FIELDS:
+                assert isinstance(session_dict[field], dict), (
+                    f"{field} of {session_dict['session_id']} came back as "
+                    f"{type(session_dict[field]).__name__} instead of dict"
+                )

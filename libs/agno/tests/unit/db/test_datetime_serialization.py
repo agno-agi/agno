@@ -9,6 +9,12 @@ import json
 from datetime import date, datetime, timezone
 from uuid import uuid4
 
+from sqlalchemy import create_engine
+from sqlalchemy.ext.asyncio import create_async_engine
+
+from agno.db.base import SessionType
+from agno.db.sqlite import SqliteDb
+from agno.db.sqlite.async_sqlite import AsyncSqliteDb
 from agno.db.utils import CustomJSONEncoder, json_serializer
 from agno.session.agent import AgentSession
 
@@ -155,9 +161,6 @@ class TestDatetimeSerializationRegression:
         SQLite binds the metadata dict straight to the JSON column, so the
         engine's json_serializer (CustomJSONEncoder) is what handles datetimes.
         """
-        from agno.db.base import SessionType
-        from agno.db.sqlite import SqliteDb
-
         # This is the exact scenario from the bug report
         session_metadata = {
             "created_at": datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc),
@@ -184,6 +187,48 @@ class TestDatetimeSerializationRegression:
         assert stored.metadata["created_at"] == "2025-01-15T10:00:00+00:00"
         assert stored.metadata["environment"] == "test"
         assert "last_updated" in stored.metadata["nested"]
+
+    def test_issue_6327_user_supplied_engine(self, tmp_path):
+        """
+        A caller-built db_engine stores datetime metadata when created with json_serializer.
+
+        SqliteDb binds the metadata dict to the JSON column, so a db_engine passed in
+        must carry json_serializer, the same as for PostgresDb and MySQLDb.
+        """
+        session = AgentSession(
+            session_id="test-session-123",
+            agent_id="test-agent",
+            metadata={"created_at": datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)},
+        )
+
+        db = SqliteDb(db_engine=create_engine(f"sqlite:///{tmp_path / 'engine.db'}", json_serializer=json_serializer))
+
+        assert db.upsert_session(session) is not None
+
+        stored = db.get_session(session_id="test-session-123", session_type=SessionType.AGENT)
+        assert stored is not None
+        assert stored.metadata["created_at"] == "2025-01-15T10:00:00+00:00"
+
+    async def test_issue_6327_user_supplied_async_engine(self, tmp_path):
+        """Async twin of the user-supplied engine test."""
+        session = AgentSession(
+            session_id="test-session-123",
+            agent_id="test-agent",
+            metadata={"created_at": datetime(2025, 1, 15, 10, 0, 0, tzinfo=timezone.utc)},
+        )
+
+        db = AsyncSqliteDb(
+            db_engine=create_async_engine(
+                f"sqlite+aiosqlite:///{tmp_path / 'engine.db'}", json_serializer=json_serializer
+            )
+        )
+
+        assert await db.upsert_session(session) is not None
+
+        stored = await db.get_session(session_id="test-session-123", session_type=SessionType.AGENT)
+        await db.db_engine.dispose()
+        assert stored is not None
+        assert stored.metadata["created_at"] == "2025-01-15T10:00:00+00:00"
 
     def test_issue_6327_json_serializer_for_postgres(self):
         """

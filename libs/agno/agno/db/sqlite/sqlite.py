@@ -1783,9 +1783,7 @@ class SqliteDb(BaseDb):
             if table is None:
                 return None
 
-            # Dicts are bound to the JSON columns as-is: the engine's json_serializer
-            # handles the encoding (incl. datetime/UUID/etc). Pre-dumping to a string
-            # here would double-encode, storing a JSON string instead of a JSON object.
+            # The JSON columns take the dicts as-is; the engine's json_serializer encodes them
             session_dict = session.to_dict(include_runs=False)
 
             if isinstance(session, AgentSession):
@@ -1922,22 +1920,20 @@ class SqliteDb(BaseDb):
                 if agent_sessions:
                     agent_data = []
                     for session in agent_sessions:
-                        # Dicts bind to the JSON columns as-is (the engine's json_serializer
-                        # encodes them); pre-dumping to a string would double-encode.
-                        upsert_dict = session.to_dict(include_runs=False)
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = upsert_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         agent_data.append(
                             {
-                                "session_id": upsert_dict.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.AGENT.value,
-                                "agent_id": upsert_dict.get("agent_id"),
-                                "user_id": upsert_dict.get("user_id"),
-                                "agent_data": upsert_dict.get("agent_data"),
-                                "session_data": upsert_dict.get("session_data"),
-                                "metadata": upsert_dict.get("metadata"),
-                                "summary": upsert_dict.get("summary"),
-                                "created_at": upsert_dict.get("created_at"),
+                                "agent_id": session_dict.get("agent_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "agent_data": session_dict.get("agent_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
                             }
                         )
@@ -1977,21 +1973,21 @@ class SqliteDb(BaseDb):
                 if team_sessions:
                     team_data = []
                     for session in team_sessions:
-                        upsert_dict = session.to_dict(include_runs=False)
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = upsert_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         team_data.append(
                             {
-                                "session_id": upsert_dict.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.TEAM.value,
-                                "team_id": upsert_dict.get("team_id"),
-                                "user_id": upsert_dict.get("user_id"),
-                                "summary": upsert_dict.get("summary"),
-                                "created_at": upsert_dict.get("created_at"),
+                                "team_id": session_dict.get("team_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "team_data": upsert_dict.get("team_data"),
-                                "session_data": upsert_dict.get("session_data"),
-                                "metadata": upsert_dict.get("metadata"),
+                                "team_data": session_dict.get("team_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
@@ -2030,21 +2026,21 @@ class SqliteDb(BaseDb):
                 if workflow_sessions:
                     workflow_data = []
                     for session in workflow_sessions:
-                        upsert_dict = session.to_dict(include_runs=False)
+                        session_dict = session.to_dict(include_runs=False)
                         # Use preserved updated_at if flag is set and value exists, otherwise use current time
-                        updated_at = upsert_dict.get("updated_at") if preserve_updated_at else int(time.time())
+                        updated_at = session_dict.get("updated_at") if preserve_updated_at else int(time.time())
                         workflow_data.append(
                             {
-                                "session_id": upsert_dict.get("session_id"),
+                                "session_id": session_dict.get("session_id"),
                                 "session_type": SessionType.WORKFLOW.value,
-                                "workflow_id": upsert_dict.get("workflow_id"),
-                                "user_id": upsert_dict.get("user_id"),
-                                "summary": upsert_dict.get("summary"),
-                                "created_at": upsert_dict.get("created_at"),
+                                "workflow_id": session_dict.get("workflow_id"),
+                                "user_id": session_dict.get("user_id"),
+                                "summary": session_dict.get("summary"),
+                                "created_at": session_dict.get("created_at"),
                                 "updated_at": updated_at,
-                                "workflow_data": upsert_dict.get("workflow_data"),
-                                "session_data": upsert_dict.get("session_data"),
-                                "metadata": upsert_dict.get("metadata"),
+                                "workflow_data": session_dict.get("workflow_data"),
+                                "session_data": session_dict.get("session_data"),
+                                "metadata": session_dict.get("metadata"),
                             }
                         )
 
